@@ -1,7 +1,8 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { BEAT_GROUPS, BEAT_LIBRARY, ECHO_TIMES, FX_DEFAULTS, MAX_BARS, STEP_VELOCITY, STYLE_KITS, VIBES, applyKit, applyUserKit, barsOf, clearBeat, copyBar, findPattern, fxOf, kitFrom, levelAt, removeBar, setBars, setStep, soundOf, varyBeat, vibeOf, voiceOf, type Beat, type BeatFx, type BeatGroupId, type BeatPattern, type StepLevel, type UserKit } from "../../audio/beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, ECHO_TIMES, FX_DEFAULTS, MAX_BARS, STEP_VELOCITY, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, applyKit, applyUserKit, barsOf, clearBeat, copyBar, findPattern, fxOf, kitFrom, levelAt, removeBar, setBars, setStep, soundOf, varyBeat, vibeOf, voiceOf, type Beat, type BeatFx, type BeatGroupId, type BeatPattern, type StepLevel, type UserKit } from "../../audio/beats";
 import { playDrum, setDrumSolo, syncDrums } from "../../audio/drumbus";
-import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SHAPE_KEYS, TONE_LABEL, defaultParams, getKit, renderDrum, type DrumId, type DrumParams, type KitId } from "../../audio/drums";
+import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LABEL, defaultParams, getKit, isMachine, renderDrum, type DrumId, type DrumParams, type KitId, type VoiceId } from "../../audio/drums";
+import { RECIPES, getRecipe } from "../../audio/voices";
 import { newId, useApp } from "../state";
 import { letterClass } from "../letters";
 import { Seg } from "./common";
@@ -13,6 +14,10 @@ const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: 
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
 const pct = (v: number) => String(Math.round(v * 100));
+/** A drum's sound by name: a library sound ("Felt"), or the machine's ("808"). */
+const soundName = (v: VoiceId) => getRecipe(v)?.name ?? (isMachine(v) ? getKit(v).name : v);
+/** Every sound a drum can have: the library's for that drum, then each machine's version. */
+const choicesFor = (id: DrumId): VoiceId[] => [...RECIPES[id].map((r) => r.id), ...KITS.map((k) => k.id)];
 const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : "0");
 const panText = (v: number) => (Math.abs(v) < 0.025 ? "C" : `${v < 0 ? "L" : "R"}${Math.round(Math.abs(v) * 100)}`);
 const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low" : "High"} ${Math.round(Math.abs(v) * 100)}`);
@@ -215,7 +220,11 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
   };
 
   // ── Kits ──
-  const kits = useMemo(() => [...STYLE_KITS.map((k) => ({ id: k.id, name: k.name, preset: k as UserKit })), ...KITS.map((k) => ({ id: k.id as string, name: k.name, preset: null })), ...myKits.map((k) => ({ id: k.id, name: k.name, preset: k }))], [myKits]);
+  const kits = useMemo(() => [
+    ...BUILTIN_KITS.map((k) => ({ id: k.id, name: k.name, hint: k.hint, preset: k as UserKit })),
+    ...KITS.map((k) => ({ id: k.id as string, name: k.name, hint: k.hint, preset: null })),
+    ...myKits.map((k) => ({ id: k.id, name: k.name, hint: "Saved by you", preset: k as UserKit | null })),
+  ], [myKits]);
   // a kit that was saved and later deleted falls back to the machine it was built on
   const preset = beat.userKit ? kits.findIndex((k) => k.preset && k.id === beat.userKit) : -1;
   const kitAt = preset >= 0 ? preset : Math.max(0, kits.findIndex((k) => !k.preset && k.id === beat.kit));
@@ -254,7 +263,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
     audition(id, { ...beat, sounds: { ...beat.sounds, [id]: { ...beat.sounds[id], ...patch } } });
     setBeat((b) => ({ ...b, sounds: { ...b.sounds, [id]: { ...b.sounds[id], ...patch } } }));
   };
-  const setVoice = (k: KitId) => {
+  const setVoice = (k: VoiceId) => {
     const id = sel;
     audition(id, { ...beat, voices: { ...beat.voices, [id]: k } });
     setBeat((b) => ({ ...b, voices: { ...b.voices, [id]: k } }));
@@ -272,11 +281,10 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
   const muted = (id: DrumId) => (solo ? solo !== id : !!beat.mutes?.includes(id));
   const vibe = vibeOf(beat);
   const changed = Object.keys(beat.sounds[sel] ?? {}).length > 0 || !!beat.voices?.[sel];
-  const tile = (k: (typeof kits)[number], like?: string, onDelete?: () => void) => (
+  const tile = (k: (typeof kits)[number], onDelete?: () => void) => (
     <span key={k.id} className={`dm-tile${kits[kitAt]?.id === k.id ? " on" : ""}`}>
-      <button role="radio" aria-checked={kits[kitAt]?.id === k.id} onClick={() => { pickKit(k); setDrawer(null); }}>
+      <button role="radio" aria-checked={kits[kitAt]?.id === k.id} title={k.hint} onClick={() => { pickKit(k); setDrawer(null); }}>
         <b>{k.name}</b>
-        {like && <span>{like}</span>}
       </button>
       {onDelete && <button className="dm-x" aria-label={`Delete ${k.name}`} onClick={onDelete}>✕</button>}
     </span>
@@ -304,12 +312,12 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
 
       {drawer === "kit" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Drum kit">
-          <div className="dm-tiles">{kits.slice(0, STYLE_KITS.length).map((k, i) => tile(k, STYLE_KITS[i].like))}</div>
+          <div className="dm-tiles">{kits.slice(0, BUILTIN_KITS.length).map((k) => tile(k))}</div>
           <span className="kb-label">Machines</span>
-          <div className="dm-tiles">{kits.slice(STYLE_KITS.length, STYLE_KITS.length + KITS.length).map((k) => tile(k))}</div>
+          <div className="dm-tiles">{kits.slice(BUILTIN_KITS.length, BUILTIN_KITS.length + KITS.length).map((k) => tile(k))}</div>
           <span className="kb-label">Mine</span>
           <div className="dm-tiles">
-            {kits.slice(STYLE_KITS.length + KITS.length).map((k) => tile(k, undefined, () => set((s) => ({ ...s, myKits: s.myKits.filter((x) => x.id !== k.id) }))))}
+            {kits.slice(BUILTIN_KITS.length + KITS.length).map((k) => tile(k, () => set((s) => ({ ...s, myKits: s.myKits.filter((x) => x.id !== k.id) }))))}
             <button className="dm-tile add" title="Keep this kit, its sounds and effects for other songs" onClick={saveKit}>+ Save this kit</button>
           </div>
         </div>
@@ -369,7 +377,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
       <div className={`beat-grid${editing ? "" : " locked"}`} style={{ "--steps": beat.steps } as CSSProperties}>
         <div className="bg-labels">
           {DRUM_IDS.map((id) => (
-            <button key={id} className={`bg-label d-${id}${panel === "sound" && sel === id ? " on" : ""}${muted(id) ? " muted" : ""}`} aria-pressed={panel === "sound" && sel === id} title={`${getKit(voiceOf(beat, id)).names[id]}: tap to hear it and shape its sound`}
+            <button key={id} className={`bg-label d-${id}${panel === "sound" && sel === id ? " on" : ""}${muted(id) ? " muted" : ""}`} aria-pressed={panel === "sound" && sel === id} title={`${soundName(voiceOf(beat, id))}: tap to hear it and shape its sound`}
               onClick={() => { hit(id); setSel(id); setPanel("sound"); }}>{DRUM_LABEL[id]}</button>
           ))}
         </div>
@@ -400,14 +408,20 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
         <div className={`dm-panel d-${sel}`} role="group" aria-label={`${DRUM_LABEL[sel]} sound`}>
           <div className="dm-phead">
             <button className="dm-wave" aria-label={`Hear the ${DRUM_LABEL[sel].toLowerCase()}`} title="Tap to hear it" onClick={() => hit(sel)}>
-              <Wave kit={voice} id={sel} p={p} />
+              <Wave voice={voice} id={sel} p={p} />
             </button>
             <select className="dm-drum" aria-label="Drum" value={sel} onChange={(e) => { const id = e.target.value as DrumId; setSel(id); hit(id); }}>
-              {DRUM_IDS.map((id) => <option key={id} value={id}>{getKit(voiceOf(beat, id)).names[id]}</option>)}
+              {DRUM_IDS.map((id) => <option key={id} value={id}>{DRUM_LABEL[id]}</option>)}
             </select>
-            <select aria-label="Machine" title="Which machine this drum comes from" value={voice} onChange={(e) => setVoice(e.target.value as KitId)}>
-              {KITS.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}
-            </select>
+            <div className="beat-pick dm-sound">
+              <button aria-label="Previous sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) - 1 + c.length) % c.length]); }}>‹</button>
+              <select aria-label="Sound" title="Which sound this drum plays" value={voice} onChange={(e) => setVoice(e.target.value)}>
+                <optgroup label="Sounds">{RECIPES[sel].map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</optgroup>
+                <optgroup label="Machines">{KITS.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}</optgroup>
+                {!choicesFor(sel).includes(voice) && <option value={voice}>{soundName(voice)}</option>}
+              </select>
+              <button aria-label="Next sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) + 1) % c.length]); }}>›</button>
+            </div>
             <span className="spacer" />
             <button className={`chip${beat.mutes?.includes(sel) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(sel)} aria-label="Mute" title="Mute" onClick={() => toggleMute(sel)}>M</button>
             <button className={`chip${solo === sel ? " on" : ""}`} aria-pressed={solo === sel} aria-label="Solo" title="Hear only this drum" onClick={() => setSolo(solo === sel ? null : sel)}>S</button>
@@ -442,21 +456,44 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
             <Knob label="Volume" value={fx.level} def={FX_DEFAULTS.level} onChange={(v) => setFx({ level: v })} />
             {beat.div % 2 === 0 && <Knob label="Swing" title="Delays every second step" value={beat.swing} def={0} onChange={(v) => setFx({ swing: v })} />}
             <Knob label="Human" title="Looser timing and touch, like a player" value={fx.human} def={0} onChange={(v) => setFx({ human: v })} />
+          </div>
+          <div className="knobs">
+            <Choice label="Reverb type" value={fx.verb} options={VERBS} onChange={(v) => { setFx({ verb: v }); if (!playing) window.setTimeout(() => hit("snare"), 180); }} />
             <Knob label="Reverb" value={fx.space} def={FX_DEFAULTS.space} onChange={(v) => setFx({ space: v })} />
-            <Knob label="Room" title="Small room … long hall" value={fx.size} def={FX_DEFAULTS.size} onChange={(v) => setFx({ size: v })} />
+            <Knob label="Size" title="Small and short … big and long" value={fx.size} def={FX_DEFAULTS.size} onChange={(v) => setFx({ size: v })} />
             <Knob label="Echo" value={fx.echo} def={0} onChange={(v) => setFx({ echo: v })} />
             <div className="knob wide">
               <span><i>Echo time</i></span>
               <Seg value={fx.echoTime} options={ECHO_TIMES.map((e) => ({ value: e.id, label: e.label }))} onChange={(v) => setFx({ echoTime: v })} label="Echo time" />
             </div>
+          </div>
+          <div className="knobs">
+            <Choice label="Sampler" value={fx.sampler} options={SAMPLERS} onChange={(v) => { setFx({ sampler: v }); if (!playing) hit("snare", { ...beat, sampler: v }); }} />
+            <Choice label="Noise" value={fx.noise} options={NOISE_BEDS} onChange={(v) => setFx({ noise: v })} />
+            {fx.noise !== "off" && <Knob label="Noise level" value={fx.noiseAmt} def={FX_DEFAULTS.noiseAmt} onChange={(v) => setFx({ noiseAmt: v })} />}
             <Knob label="Grit" title="Distortion on the whole kit" value={fx.grit} def={FX_DEFAULTS.grit} onChange={(v) => setFx({ grit: v })} />
             <Knob label="Tape" title="Wobbly and dull, like an old cassette" value={fx.tape} def={0} onChange={(v) => setFx({ tape: v })} />
+          </div>
+          <div className="knobs">
             <Knob label="Tone" min={-1} max={1} value={fx.tone} def={0} fmt={toneText} onChange={(v) => setFx({ tone: v })} />
-            <Knob label="Glue" title="Squashes the kit together so it pumps" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
+            <Knob label="Glue" title="Squashes the kit together" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
+            <Knob label="Pump" title="The guitar ducks under every kick, then swells back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
           </div>
         </div>
       )}
     </section>
+  );
+}
+
+/** A small labelled menu, the same size as a knob. */
+function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { id: T; name: string; hint: string }[]; onChange: (v: T) => void }) {
+  return (
+    <label className="knob choice" title={options.find((o) => o.id === value)?.hint}>
+      <span><i>{label}</i></span>
+      <select value={value} aria-label={label} onChange={(e) => onChange(e.target.value as T)}>
+        {options.map((o) => <option key={o.id} value={o.id} title={o.hint}>{o.name}</option>)}
+      </select>
+    </label>
   );
 }
 
@@ -494,11 +531,11 @@ function Knob({ label, value, onChange, min = 0, max = 1, step = 0.05, title, de
 const WAVE_SEC: Record<DrumId, number> = { kick: 2.8, snare: 0.5, clap: 0.75, hat: 0.19, open: 1.7, tom: 0.98, rim: 0.19, shaker: 0.55, bell: 2.4 };
 
 /** A picture of the sound: its shape changes as the knobs move. */
-const Wave = memo(function Wave({ kit, id, p }: { kit: KitId; id: DrumId; p: DrumParams }) {
+const Wave = memo(function Wave({ voice, id, p }: { voice: VoiceId; id: DrumId; p: DrumParams }) {
   const key = SHAPE_KEYS.map((k) => p[k]).join("|");
   const path = useMemo(() => {
     const sr = 16000;
-    const data = renderDrum(sr, kit, id, p);
+    const data = renderDrum(sr, voice, id, p);
     const cols = 110;
     // time runs faster towards the right, so a short hit and a long boom both fill the picture
     const at = (c: number) => Math.floor(Math.pow(c / cols, 2) * WAVE_SEC[id] * sr);
@@ -514,7 +551,7 @@ const Wave = memo(function Wave({ kit, id, p }: { kit: KitId; id: DrumId; p: Dru
       d += `M${c + 0.5} ${(20 - (hi / peak) * 18 - 0.5).toFixed(1)}V${(20 - (lo / peak) * 18 + 0.5).toFixed(1)}`;
     }
     return d;
-  }, [kit, id, key]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [voice, id, key]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <svg viewBox="0 0 110 40" preserveAspectRatio="none" aria-hidden="true">
       <path d={path} stroke="currentColor" strokeWidth="1" fill="none" />

@@ -6,7 +6,8 @@
  * number of steps per beat, so 4/4 in 16ths is 16 × 4, a 12/8 shuffle is 12 × 3
  * and a 3/4 waltz is 12 × 4. Each drum's row holds `steps × bars` characters.
  */
-import { DRUM_IDS, KITS, defaultParams, type DrumId, type DrumParams, type KitId } from "./drums";
+import { DRUM_IDS, KITS, SAMPLERS, defaultParams, isMachine, type DrumId, type DrumParams, type KitId, type SamplerId, type VoiceId } from "./drums";
+import { getRecipe } from "./voices";
 
 export type BeatGroupId = "dream" | "indie" | "dark" | "box" | "808" | "rock" | "slow" | "world";
 
@@ -45,6 +46,24 @@ export const ECHO_TIMES: { id: EchoTime; beats: number; label: string }[] = [
   { id: "1/4", beats: 1, label: "Beat" },
 ];
 
+export type VerbId = "room" | "hall" | "plate" | "spring" | "gated" | "dark";
+export const VERBS: { id: VerbId; name: string; hint: string }[] = [
+  { id: "room", name: "Room", hint: "A real room around the kit" },
+  { id: "hall", name: "Hall", hint: "Long and smooth" },
+  { id: "plate", name: "Plate", hint: "Dense, bright and immediate: the classic studio drum reverb" },
+  { id: "spring", name: "Spring", hint: "Boingy and drippy, like a guitar amp's reverb" },
+  { id: "gated", name: "Gated", hint: "A big burst that stops dead: the 80s snare" },
+  { id: "dark", name: "Lo-fi", hint: "Dark and grainy, like a cheap old digital reverb" },
+];
+export type NoiseBed = "off" | "vinyl" | "tape" | "room" | "hum";
+export const NOISE_BEDS: { id: NoiseBed; name: string; hint: string }[] = [
+  { id: "off", name: "None", hint: "Silence between the hits" },
+  { id: "vinyl", name: "Vinyl", hint: "Crackle, pops and surface noise" },
+  { id: "tape", name: "Tape", hint: "Cassette hiss" },
+  { id: "room", name: "Room", hint: "The air of a quiet room" },
+  { id: "hum", name: "Hum", hint: "Old amp hum" },
+];
+
 /** The effects every drum passes through. */
 export interface BeatFx {
   /** drum volume 0…1 */
@@ -66,14 +85,23 @@ export interface BeatFx {
   glue: number;
   /** loose, human timing and touch 0…1 */
   human: number;
+  /** the kind of reverb */
+  verb: VerbId;
+  /** sampler character for every drum */
+  sampler: SamplerId;
+  /** a bed of noise under the drums while they play */
+  noise: NoiseBed;
+  noiseAmt: number;
+  /** the guitar ducks under every kick 0…1 */
+  pump: number;
 }
 
 export interface Beat extends Partial<Omit<BeatFx, "level" | "space" | "grit">> {
   on: boolean;
   /** the machine every drum uses… */
   kit: KitId;
-  /** …unless a drum has been given another machine's voice */
-  voices?: Partial<Record<DrumId, KitId>>;
+  /** …unless a drum has been given another sound (another machine's, or one from the library) */
+  voices?: Partial<Record<DrumId, VoiceId>>;
   /** the saved kit this came from, if any */
   userKit?: string | null;
   /** library (or saved) pattern this started from */
@@ -260,7 +288,7 @@ export const BEAT_LIBRARY: BeatPattern[] = [
 export const findPattern = (id: string | null | undefined, mine: BeatPattern[] = []): BeatPattern | undefined =>
   id ? (BEAT_LIBRARY.find((p) => p.id === id) ?? mine.find((p) => p.id === id)) : undefined;
 
-export const FX_DEFAULTS: BeatFx = { level: 0.8, space: 0.25, size: 0.45, echo: 0, echoTime: "1/8.", grit: 0.1, tape: 0, tone: 0, glue: 0.3, human: 0 };
+export const FX_DEFAULTS: BeatFx = { level: 0.8, space: 0.25, size: 0.45, echo: 0, echoTime: "1/8.", grit: 0.1, tape: 0, tone: 0, glue: 0.3, human: 0, verb: "room", sampler: "off", noise: "off", noiseAmt: 0.3, pump: 0 };
 const FX_KEYS = Object.keys(FX_DEFAULTS) as (keyof BeatFx)[];
 
 /** The beat's effect settings, with defaults for anything an older beat does not have. */
@@ -270,78 +298,115 @@ export function fxOf(b: Partial<BeatFx>): BeatFx {
   return out as unknown as BeatFx;
 }
 
-/** Which machine a drum's voice comes from. */
-export const voiceOf = (b: Pick<Beat, "kit" | "voices">, id: DrumId): KitId => b.voices?.[id] ?? b.kit;
+/** Which sound a drum plays: its own choice, or the kit machine's. */
+export const voiceOf = (b: Pick<Beat, "kit" | "voices">, id: DrumId): VoiceId => b.voices?.[id] ?? b.kit;
+export const knownVoice = (v: unknown): v is VoiceId => typeof v === "string" && (isMachine(v) || !!getRecipe(v));
 /** A drum's full sound settings. */
 export const soundOf = (b: Pick<Beat, "sounds">, id: DrumId): DrumParams => ({ ...defaultParams(id), ...b.sounds[id] });
 
-/** One-tap effect settings for the whole kit. Volume, swing and feel are left alone. */
-export const VIBES: { id: string; name: string; hint: string; fx: Omit<BeatFx, "level" | "human"> }[] = [
-  { id: "clean", name: "Clean", hint: "Dry and clear", fx: { space: 0.12, size: 0.3, echo: 0, echoTime: "1/8.", grit: 0.05, tape: 0, tone: 0, glue: 0.25 } },
-  { id: "dreamy", name: "Dreamy", hint: "Long reverb, soft echo, slightly dark and wobbly", fx: { space: 0.55, size: 0.8, echo: 0.25, echoTime: "1/8.", grit: 0.1, tape: 0.35, tone: -0.25, glue: 0.35 } },
-  { id: "tape", name: "Bedroom tape", hint: "Warm, dull and wobbly, like a four-track cassette", fx: { space: 0.2, size: 0.4, echo: 0, echoTime: "1/8.", grit: 0.45, tape: 0.7, tone: -0.4, glue: 0.5 } },
-  { id: "big", name: "Big room", hint: "Loud, wide and punchy", fx: { space: 0.45, size: 0.6, echo: 0, echoTime: "1/8.", grit: 0.2, tape: 0, tone: 0.15, glue: 0.7 } },
-  { id: "crunch", name: "Crunchy", hint: "Driven hard and squashed", fx: { space: 0.1, size: 0.25, echo: 0, echoTime: "1/8.", grit: 0.8, tape: 0.15, tone: 0.1, glue: 0.8 } },
-  { id: "dub", name: "Echoes", hint: "Repeats trailing off into a room", fx: { space: 0.3, size: 0.5, echo: 0.5, echoTime: "1/8.", grit: 0.15, tape: 0.25, tone: -0.1, glue: 0.3 } },
+/** One-tap effect settings for the whole kit. Volume and feel are left alone. */
+type VibeFx = Omit<BeatFx, "level" | "human">;
+const vibe = (fx: Partial<VibeFx>): VibeFx => {
+  const { level: _l, human: _h, ...rest } = { ...FX_DEFAULTS, ...fx };
+  return rest;
+};
+export const VIBES: { id: string; name: string; hint: string; fx: VibeFx }[] = [
+  { id: "clean", name: "Clean", hint: "Dry and clear", fx: vibe({ space: 0.12, size: 0.3 }) },
+  { id: "dreamy", name: "Dreamy", hint: "A long plate, soft echo, slightly dark and wobbly", fx: vibe({ verb: "plate", space: 0.55, size: 0.8, echo: 0.22, tape: 0.35, tone: -0.25, glue: 0.35, noise: "tape", noiseAmt: 0.15 }) },
+  { id: "cassette", name: "Cassette", hint: "Warm, dull and wobbly, with hiss", fx: vibe({ space: 0.2, size: 0.4, grit: 0.4, tape: 0.65, tone: -0.4, glue: 0.5, sampler: "mpc", noise: "tape", noiseAmt: 0.35 }) },
+  { id: "dusty", name: "Dusty", hint: "A 12-bit sampler and a crackly record", fx: vibe({ space: 0.18, size: 0.35, grit: 0.25, tape: 0.35, tone: -0.35, glue: 0.55, sampler: "sp", noise: "vinyl", noiseAmt: 0.4 }) },
+  { id: "gated", name: "Gated 80s", hint: "A big gated room that stops dead", fx: vibe({ verb: "gated", space: 0.5, size: 0.5, grit: 0.2, tone: 0.15, glue: 0.6 }) },
+  { id: "big", name: "Big Room", hint: "Loud, wide and punchy", fx: vibe({ space: 0.45, size: 0.6, grit: 0.2, tone: 0.15, glue: 0.7 }) },
+  { id: "crunch", name: "Crunch", hint: "Driven hard and squashed", fx: vibe({ space: 0.1, size: 0.25, grit: 0.8, tape: 0.15, tone: 0.1, glue: 0.8 }) },
+  { id: "dub", name: "Dub", hint: "A spring reverb and echoes trailing off", fx: vibe({ verb: "spring", space: 0.4, size: 0.5, echo: 0.5, grit: 0.15, tape: 0.25, tone: -0.1 }) },
+  { id: "pump", name: "Pump", hint: "Everything breathes with the kick", fx: vibe({ verb: "plate", space: 0.3, size: 0.5, grit: 0.3, tone: -0.1, glue: 0.65, pump: 0.6 }) },
 ];
 
 /** The vibe whose settings the beat has right now, if any. */
 export function vibeOf(b: Beat): string | null {
   const fx = fxOf(b);
-  return VIBES.find((v) => (Object.keys(v.fx) as (keyof typeof v.fx)[]).every((k) => v.fx[k] === fx[k]))?.id ?? null;
+  return VIBES.find((v) => (Object.keys(v.fx) as (keyof VibeFx)[]).every((k) => v.fx[k] === fx[k]))?.id ?? null;
 }
 
-/** A whole drum setup: machine, per-drum voices and sounds, and the effects. Built in, or saved by you. */
+/** A whole drum setup: a machine, a sound for each drum, knob settings and effects. Built in, or saved by you. */
 export interface UserKit {
   id: string;
   name: string;
+  /** the machine any drum without its own sound falls back on */
   kit: KitId;
-  voices: Partial<Record<DrumId, KitId>>;
+  voices: Partial<Record<DrumId, VoiceId>>;
   sounds: Partial<Record<DrumId, Partial<DrumParams>>>;
   fx: BeatFx;
 }
 
-/** A built-in kit made in the spirit of a record or a band. */
-export interface StyleKit extends UserKit {
-  /** what it is modelled on */
-  like: string;
-}
+type Nine = [VoiceId, VoiceId, VoiceId, VoiceId, VoiceId, VoiceId, VoiceId, VoiceId, VoiceId];
+/** A built-in kit: one sound for each of the nine drums (kick, snare, clap, hat, open, tom, rim, shaker, perc), in that order. */
+const kitOf = (id: string, name: string, hint: string, base: KitId, nine: Nine, fx: Partial<BeatFx>, sounds: UserKit["sounds"] = {}): UserKit & { hint: string } => ({
+  id: `kit-${id}`,
+  name,
+  hint,
+  kit: base,
+  voices: Object.fromEntries(DRUM_IDS.map((d, i) => [d, nine[i]])) as UserKit["voices"],
+  sounds,
+  fx: { ...FX_DEFAULTS, ...fx },
+});
 
-const style = (id: string, name: string, like: string, kit: KitId, voices: UserKit["voices"], sounds: UserKit["sounds"], fx: Partial<BeatFx>): StyleKit => ({ id: `style-${id}`, name, like, kit, voices, sounds, fx: { ...FX_DEFAULTS, ...fx } });
-
-export const STYLE_KITS: StyleKit[] = [
-  // drums patched on a modular synth, crushed and dry, with short echoes that stutter
-  style("glitch", "Glitch", "Kid A", "mod", {}, {
-    kick: { decay: 0.45, drive: 0.35 }, snare: { decay: 0.4, space: 0.3, echo: 0.5 }, clap: { echo: 0.6 }, hat: { decay: 0.3, pan: 0.35 },
-    tom: { echo: 0.5 }, rim: { echo: 0.7, pan: -0.4 }, bell: { echo: 0.6, space: 0.5 },
-  }, { space: 0.2, size: 0.3, echo: 0.3, echoTime: "1/16", grit: 0.5, tape: 0.1, tone: -0.05, glue: 0.75 }),
-  // an old organ's rhythm box, slowed, softened and left in a very long reverb
-  style("dream", "Dream", "Beach House", "box", {}, {
-    kick: { tune: -2, decay: 0.65, tone: 0.3 }, snare: { decay: 0.7, tone: 0.4, space: 0.75, filter: -0.15 }, hat: { decay: 0.35, filter: -0.2, space: 0.3 },
-    open: { filter: -0.2, space: 0.4 }, tom: { space: 0.5 }, rim: { space: 0.7, echo: 0.5 }, shaker: { space: 0.4 },
-  }, { space: 0.6, size: 0.85, echo: 0.18, echoTime: "1/8.", grit: 0.15, tape: 0.45, tone: -0.3, glue: 0.35, human: 0.15 }),
-  // a cheap 8-bit drum machine recorded hot to cassette in a bedroom
-  style("bedroom", "Bedroom", "Current Joys", "lofi", {}, {
-    kick: { decay: 0.4, tone: 0.6, drive: 0.3 }, snare: { decay: 0.75, drive: 0.25, space: 0.7 }, clap: { space: 0.7 }, hat: { filter: -0.15 },
-  }, { space: 0.5, size: 0.6, grit: 0.5, tape: 0.65, tone: -0.35, glue: 0.6, human: 0.1 }),
-  // huge, roomy, played-sounding drums pushed hard
-  style("anthem", "Anthem", "Florence · Free", "linn", { clap: "909" }, {
-    kick: { decay: 0.55, tone: 0.7, punch: 0.7, drive: 0.2 }, snare: { decay: 0.75, tone: 0.65, punch: 0.8, drive: 0.15, space: 0.6 }, clap: { space: 0.7 },
-    hat: { decay: 0.4 }, tom: { decay: 0.7, space: 0.5 },
-  }, { space: 0.45, size: 0.6, grit: 0.25, tone: 0.15, glue: 0.8, human: 0.2 }),
-  // a hard dance-floor kick, a snare in a big dark room, tight machine hats
-  style("darkwave", "Darkwave", "Boy Harsher", "909", { snare: "707", hat: "707", open: "707", rim: "707", bell: "808" }, {
-    kick: { tune: -1, decay: 0.35, tone: 0.6, punch: 0.65, drive: 0.3 }, snare: { decay: 0.6, tone: 0.6, filter: -0.1, space: 0.7 }, clap: { decay: 0.6, space: 0.65 },
-    hat: { decay: 0.3, filter: 0.1 }, tom: { tune: -3, space: 0.5 },
-  }, { space: 0.4, size: 0.5, echo: 0.15, echoTime: "1/8", grit: 0.35, tape: 0.1, tone: -0.2, glue: 0.65 }),
-  // a stiff 80s drum machine, cold and bright at the snare, dulled by tape
-  style("postpunk", "Post-punk", "Molchat Doma", "707", { clap: "lofi" }, {
-    kick: { tune: 2, decay: 0.3, tone: 0.7 }, snare: { tune: 1, decay: 0.65, tone: 0.7, space: 0.75 }, hat: { decay: 0.25 }, tom: { space: 0.6 },
-  }, { space: 0.45, size: 0.45, grit: 0.4, tape: 0.5, tone: -0.3, glue: 0.6 }),
-  // light, clean and bouncy: a small kick, a sidestick, a tambourine
-  style("jangle", "Jangle", "Her's", "linn", { kick: "707", hat: "707" }, {
-    kick: { decay: 0.35, tone: 0.55 }, snare: { tune: 2, decay: 0.4, tone: 0.55, space: 0.4 }, hat: { decay: 0.3, level: 0.7 }, rim: { space: 0.4 }, shaker: { level: 0.7 },
-  }, { space: 0.28, size: 0.4, echo: 0.08, echoTime: "1/8", grit: 0.08, tape: 0.15, tone: 0.1, glue: 0.4, human: 0.1 }),
+/** Kits by sound and genre, built from the library. */
+export const BUILTIN_KITS: (UserKit & { hint: string })[] = [
+  kitOf("soft", "Soft Box", "Soft kick, brushy snare, airy hats, a long plate", "box",
+    ["kick.soft", "snare.soft", "clap.soft", "hat.soft", "open.808", "tom.808", "rim.claves", "shaker.maraca", "bell.vibes"],
+    { verb: "plate", space: 0.55, size: 0.8, echo: 0.15, tape: 0.35, tone: -0.25, glue: 0.35, human: 0.12, noise: "tape", noiseAmt: 0.15 }, { open: { filter: -0.25 } }),
+  kitOf("cassette", "Cassette", "A small kit recorded to a four-track: warm, wobbly, hissy", "lofi",
+    ["kick.tight", "snare.acoustic", "clap.808", "hat.noise", "open.808", "tom.909", "rim.sidestick", "shaker.16th", "bell.808"],
+    { space: 0.25, size: 0.4, grit: 0.35, tape: 0.6, tone: -0.35, glue: 0.55, human: 0.1, sampler: "mpc", noise: "tape", noiseAmt: 0.35 }),
+  kitOf("dusty", "Dusty", "12-bit sampler, crackly record, round and soft", "lofi",
+    ["kick.dusty", "snare.dusty", "clap.dusty", "hat.dusty", "open.dusty", "tom.dusty", "rim.sidestick", "shaker.egg", "bell.vibes"],
+    { space: 0.18, size: 0.35, grit: 0.25, tape: 0.35, tone: -0.35, glue: 0.55, human: 0.15, sampler: "sp", noise: "vinyl", noiseAmt: 0.4 }),
+  kitOf("cold", "Cold Wave", "Stiff 8-bit machine, cracking snare in a gated room", "707",
+    ["kick.stiff", "snare.cold", "clap.cold", "hat.808", "open.606", "tom.cold", "rim.linn", "shaker.808", "bell.808"],
+    { verb: "gated", space: 0.45, size: 0.45, grit: 0.3, tape: 0.2, tone: 0.15, glue: 0.6 }, { snare: { space: 0.8 } }),
+  kitOf("dark", "Dark Club", "Hard kick, gated snare, tight hats; everything pumps", "909",
+    ["kick.909hard", "snare.gated", "clap.909", "hat.909", "open.909", "tom.simmons", "rim.909", "shaker.808", "bell.clang"],
+    { verb: "plate", space: 0.35, size: 0.5, echo: 0.12, echoTime: "1/8", grit: 0.35, tone: -0.2, glue: 0.65, pump: 0.5 }),
+  kitOf("neon", "Neon", "Big gated snare, electronic toms, a hall and a little tape", "808",
+    ["kick.909", "snare.gated", "clap.gated", "hat.808", "open.disco", "tom.simmons", "rim.808", "shaker.16th", "bell.fm"],
+    { verb: "hall", space: 0.4, size: 0.6, echo: 0.15, grit: 0.2, tape: 0.3, tone: 0.1, glue: 0.55, pump: 0.35, noise: "tape", noiseAmt: 0.15 }),
+  kitOf("arena", "Arena", "A real kit, hit hard, in a big room", "linn",
+    ["kick.felt", "snare.acoustic", "clap.crowd", "hat.acoustic", "open.acoustic", "tom.floor", "rim.sidestick", "shaker.tamb", "bell.crash"],
+    { space: 0.45, size: 0.7, grit: 0.25, tone: 0.1, glue: 0.75, human: 0.2 }, { kick: { punch: 0.7, tone: 0.6 }, snare: { punch: 0.7, decay: 0.65 } }),
+  kitOf("studio", "Studio", "A real kit, close and dry", "linn",
+    ["kick.felt", "snare.acoustic", "clap.crowd", "hat.acoustic", "open.acoustic", "tom.rack", "rim.sidestick", "shaker.maraca", "bell.ride"],
+    { space: 0.15, size: 0.3, grit: 0.1, glue: 0.45, human: 0.25 }),
+  kitOf("brushes", "Brushes", "Brushes on a snare, felt beater, a soft ride", "box",
+    ["kick.felt", "snare.brush", "clap.snap", "hat.pedal", "open.half", "tom.floor", "rim.sidestick", "shaker.egg", "bell.ridebell"],
+    { space: 0.25, size: 0.4, tone: -0.15, glue: 0.35, human: 0.3 }, { kick: { tone: 0.2, decay: 0.6 } }),
+  kitOf("trap", "Trap", "Long sub kick, tight snare and clap, crisp hats", "808",
+    ["kick.sub", "snare.tight", "clap.tight", "hat.crisp", "open.trap", "tom.808", "rim.808", "shaker.808", "bell.808"],
+    { level: 0.65, space: 0.15, size: 0.3, grit: 0.2, glue: 0.5 }),
+  kitOf("techno", "Techno", "Rumbling kick, 909 hats, echoes in a hall", "909",
+    ["kick.rumble", "snare.909", "clap.909", "hat.909", "open.909", "tom.909", "rim.909", "shaker.16th", "bell.ride"],
+    { verb: "hall", space: 0.3, size: 0.6, echo: 0.2, grit: 0.25, glue: 0.6, pump: 0.4 }),
+  kitOf("industrial", "Industrial", "Distorted kick, ring-modulated snare, metal", "909",
+    ["kick.industrial", "snare.industrial", "clap.crunch", "hat.grind", "open.sizzle", "tom.syn", "rim.tink", "shaker.cabasa", "bell.china"],
+    { level: 0.65, verb: "dark", space: 0.3, size: 0.5, grit: 0.5, tone: -0.1, glue: 0.7 }),
+  kitOf("glitch", "Glitch", "Blips, clicks and ticks, chopped by fast echoes", "mod",
+    ["kick.blip", "snare.hyper", "clap.snap", "hat.tick", "open.swell", "tom.syn", "rim.tick", "shaker.cabasa", "bell.glass"],
+    { space: 0.15, size: 0.25, echo: 0.35, echoTime: "1/16", grit: 0.3, glue: 0.6, sampler: "crush" }, { rim: { echo: 0.8 }, bell: { echo: 0.7 } }),
+  kitOf("dub", "Dub", "Round kick, high rim snare, a spring reverb and echoes", "box",
+    ["kick.round", "snare.steppers", "clap.dry", "hat.ring", "open.half", "tom.dub", "rim.dub", "shaker.16th", "bell.agogo"],
+    { verb: "spring", space: 0.45, size: 0.5, echo: 0.45, tape: 0.25, tone: -0.1, glue: 0.4 }, { snare: { echo: 0.6, space: 0.7 }, rim: { echo: 0.7 } }),
+  kitOf("breaks", "Breaks", "Punchy and squashed, like a sampled break", "lofi",
+    ["kick.tight", "snare.crack", "clap.909", "hat.noise", "open.808", "tom.909", "rim.909", "shaker.tamb", "bell.ride"],
+    { space: 0.2, size: 0.35, grit: 0.35, glue: 0.75, human: 0.1, sampler: "sp" }),
+  kitOf("analog", "Analog", "Circuit-accurate 808: booming kick, snappy snare, cowbell", "808",
+    ["kick.808long", "snare.808", "clap.808", "hat.808", "open.808", "tom.808", "rim.808", "shaker.808", "bell.808cym"],
+    { level: 0.65, verb: "plate", space: 0.25, size: 0.45, glue: 0.4 }),
+  kitOf("mallets", "Mallets", "Soft hits, marimba and sleigh bells in a long hall", "box",
+    ["kick.soft", "snare.soft", "clap.soft", "hat.soft", "open.swell", "tom.conga", "rim.woodlo", "shaker.sleigh", "bell.marimba"],
+    { verb: "hall", space: 0.6, size: 0.85, echo: 0.15, tone: -0.2, glue: 0.3, human: 0.15, noise: "room", noiseAmt: 0.2 }),
+  kitOf("hands", "Hand Drums", "Congas, bongos, claves, guiro and agogo", "box",
+    ["kick.felt", "snare.modal", "clap.snap", "hat.pedal", "open.half", "tom.conga", "rim.claves", "shaker.guiro", "bell.agogo"],
+    { space: 0.25, size: 0.45, glue: 0.35, human: 0.3 }),
 ];
 
 export const kitFrom = (b: Beat, id: string, name: string): UserKit => ({ id, name, kit: b.kit, voices: { ...b.voices }, sounds: JSON.parse(JSON.stringify(b.sounds)), fx: fxOf(b) });
@@ -541,7 +606,12 @@ export function reviveBeat(raw: unknown): Beat | undefined {
   const rhythm = cleanRhythm(b);
   if (!rhythm) return undefined;
   const kit: KitId = KITS.some((k) => k.id === b.kit) ? (b.kit as KitId) : DEFAULT_BEAT.kit;
-  return { ...DEFAULT_BEAT, ...b, kit, ...rhythm, sounds: b.sounds ?? {}, voices: b.voices ?? {} };
+  const voices = Object.fromEntries(Object.entries(b.voices ?? {}).filter(([d, v]) => (DRUM_IDS as string[]).includes(d) && knownVoice(v)));
+  const fx = fxOf(b);
+  if (!VERBS.some((v) => v.id === fx.verb)) fx.verb = FX_DEFAULTS.verb;
+  if (!SAMPLERS.some((v) => v.id === fx.sampler)) fx.sampler = FX_DEFAULTS.sampler;
+  if (!NOISE_BEDS.some((v) => v.id === fx.noise)) fx.noise = FX_DEFAULTS.noise;
+  return { ...DEFAULT_BEAT, ...b, ...fx, kit, ...rhythm, sounds: b.sounds ?? {}, voices };
 }
 
 /** Tidy up a section's stored rhythm. */

@@ -414,6 +414,9 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .dm-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px 12px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); border-top: 3px solid var(--dc, var(--border-2)); }
 .dm-phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; min-height: 46px; }
 .dm-phead select { padding: 6px 8px; font-weight: 650; font-size: 0.88rem; }
+.dm-sound select { border: none; border-inline: 1px solid var(--border-2); border-radius: 0; background: none; max-width: 160px; font-weight: 800; }
+.knob.choice select { width: 100%; padding: 4px 8px; font-size: 0.85rem; font-weight: 650; }
+.dm-mix .knobs + .knobs { border-top: 1px solid var(--border); padding-top: 10px; }
 .dm-phead .dm-drum { font-weight: 800; }
 .dm-phead > .chip { min-width: 34px; justify-content: center; padding: 5px 8px; }
 .dm-wave { width: 116px; height: 46px; flex-shrink: 0; padding: 2px 3px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--bg-2); color: var(--dc); }

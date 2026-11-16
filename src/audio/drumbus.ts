@@ -5,13 +5,17 @@
  *                            ├─ reverb send ─► room ─┤
  *                            └─ echo send ──► echo ──┤
  *                                                    ▼
+ *                    noise bed ─────────────────────────┤
  *                     tape wobble ─ tone ─ glue ─ volume ─ soft ceiling ─ out
+ *
+ * Every sound is rendered in three slightly different takes that are played in turn
+ * (round robin), so repeated hits never sound machine-gunned.
  *
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
-import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx } from "./beats";
+import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
-import { DRUM_IDS, SHAPE_KEYS, renderDrum, renderSpace, type DrumId, type DrumParams, type KitId } from "./drums";
+import { DRUM_IDS, SHAPE_KEYS, VARIANTS, drumRng, renderDrum, renderNoiseBed, renderSpace, type DrumId, type DrumParams, type SamplerId, type VoiceId } from "./drums";
 
 interface Channel {
   input: GainNode;
@@ -36,6 +40,7 @@ interface Bus {
   air: BiquadFilterNode;
   comp: DynamicsCompressorNode;
   makeup: GainNode;
+  bed: GainNode;
   channels: Record<DrumId, Channel>;
 }
 
@@ -102,8 +107,8 @@ export function softCeiling(): Float32Array<ArrayBuffer> {
   return curve;
 }
 
-function impulse(c: AudioContext, size: number): AudioBuffer {
-  const sides = renderSpace(c.sampleRate, size);
+function impulse(c: AudioContext, size: number, type: VerbId): AudioBuffer {
+  const sides = renderSpace(c.sampleRate, size, drumRng(7), type);
   const buf = c.createBuffer(2, sides[0].length, c.sampleRate);
   sides.forEach((d, ch) => buf.getChannelData(ch).set(d));
   return buf;
@@ -178,6 +183,9 @@ function getBus(): Bus {
   const limiter = c.createWaveShaper();
   limiter.curve = softCeiling();
   limiter.oversample = "2x";
+  const bed = c.createGain();
+  bed.gain.value = 0;
+  bed.connect(mix);
   mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(c.destination);
 
   const channels = {} as Record<DrumId, Channel>;
@@ -192,7 +200,7 @@ function getBus(): Bus {
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  bus = { dry, shaper, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, channels };
+  bus = { dry, shaper, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
   applied = {};
   mixed.clear();
   return bus;
@@ -207,12 +215,18 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
   const was = applied;
   const to = (param: AudioParam, value: number, tc = 0.03) => param.setTargetAtTime(value, t, tc);
   if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
-  if (fx.size !== was.size) {
+  if (fx.size !== was.size || fx.verb !== was.verb) {
     // building a room takes a moment: wait until the knob stops moving
     window.clearTimeout(sizeTimer);
-    if (!b.verb.buffer) b.verb.buffer = impulse(c, fx.size);
-    else sizeTimer = window.setTimeout(() => (b.verb.buffer = impulse(c, fx.size)), 140);
+    if (!b.verb.buffer) b.verb.buffer = impulse(c, fx.size, fx.verb);
+    else sizeTimer = window.setTimeout(() => (b.verb.buffer = impulse(c, fx.size, fx.verb)), 140);
   }
+  if (fx.noise !== was.noise || fx.noiseAmt !== was.noiseAmt) {
+    // −66 dB at the bottom of the knob, about −30 dB at the top
+    to(b.bed.gain, fx.noise === "off" ? 0 : Math.pow(10, (-66 + 36 * fx.noiseAmt) / 20) * BED_LEVEL[fx.noise], 0.05);
+    if (fx.noise !== was.noise && bedOn) startBed(fx.noise);
+  }
+  pump = fx.pump;
   if (fx.echo !== was.echo) {
     to(b.echoWet.gain, fx.echo * 1.8);
     to(b.echoFb.gain, fx.echo > 0 ? 0.25 + 0.4 * fx.echo : 0);
@@ -261,17 +275,103 @@ export function syncDrums(beat: Beat, bpm: number) {
   }
 }
 
-function drumBuffer(c: AudioContext, kit: KitId, id: DrumId, p: DrumParams): AudioBuffer {
-  const key = `${kit}|${id}|${SHAPE_KEYS.map((k) => p[k].toFixed(2)).join("|")}`;
+const keyOf = (voice: VoiceId, id: DrumId, p: DrumParams, sampler: SamplerId, variant: number) =>
+  `${voice}|${id}|${SHAPE_KEYS.map((k) => p[k].toFixed(2)).join("|")}|${sampler}|${variant}`;
+
+function drumBuffer(c: AudioContext, voice: VoiceId, id: DrumId, p: DrumParams, sampler: SamplerId, variant = 0): AudioBuffer {
+  const key = keyOf(voice, id, p, sampler, variant);
   let buf = drumBuffers.get(key);
   if (!buf) {
-    const data = renderDrum(c.sampleRate, kit, id, p);
+    const data = renderDrum(c.sampleRate, voice, id, p, { variant, sampler });
     buf = c.createBuffer(1, data.length, c.sampleRate);
     buf.getChannelData(0).set(data);
-    if (drumBuffers.size > 200) drumBuffers.clear();
+    if (drumBuffers.size > 400) drumBuffers.clear();
     drumBuffers.set(key, buf);
   }
   return buf;
+}
+
+/** The other takes are rendered a little later, a few at a time, so playback never waits for them. */
+const later: (() => void)[] = [];
+let laterTimer: number | undefined;
+function renderLater(job: () => void) {
+  later.push(job);
+  if (laterTimer !== undefined) return;
+  const run = () => {
+    const until = performance.now() + 12;
+    while (later.length && performance.now() < until) later.shift()!();
+    laterTimer = later.length ? window.setTimeout(run, 30) : undefined;
+  };
+  laterTimer = window.setTimeout(run, 60);
+}
+
+/** Pick the next take of a sound: never the same one twice in a row, and only takes that are ready. */
+const lastTake = new Map<DrumId, number>();
+function takeFor(c: AudioContext, beat: Beat, id: DrumId): AudioBuffer {
+  const voice = voiceOf(beat, id);
+  const p = soundOf(beat, id);
+  const sampler = fxOf(beat).sampler;
+  const first = drumBuffer(c, voice, id, p, sampler, 0);
+  const ready = [0];
+  for (let v = 1; v < VARIANTS; v++) {
+    if (drumBuffers.has(keyOf(voice, id, p, sampler, v))) ready.push(v);
+    else renderLater(() => drumBuffer(c, voice, id, p, sampler, v));
+  }
+  const prev = lastTake.get(id) ?? -1;
+  const choices = ready.length > 1 ? ready.filter((v) => v !== prev) : ready;
+  const v = choices[Math.floor(Math.random() * choices.length)];
+  lastTake.set(id, v);
+  return v === 0 ? first : drumBuffer(c, voice, id, p, sampler, v);
+}
+
+// ── noise bed ──
+const BED_LEVEL: Record<NoiseBed, number> = { off: 0, vinyl: 1, tape: 1, room: 1.4, hum: 0.8 };
+const beds = new Map<NoiseBed, AudioBuffer>();
+let bedSrc: AudioBufferSourceNode | null = null;
+let bedType: NoiseBed = "off";
+let bedOn = false;
+function startBed(type: NoiseBed) {
+  const c = audioContext();
+  const b = getBus();
+  if (bedSrc) {
+    try { bedSrc.stop(); } catch { /* stopped */ }
+    bedSrc = null;
+  }
+  bedType = type;
+  if (type === "off") return;
+  let buf = beds.get(type);
+  if (!buf) {
+    const [l, r] = renderNoiseBed(c.sampleRate, type);
+    buf = c.createBuffer(2, l.length, c.sampleRate);
+    buf.getChannelData(0).set(l);
+    buf.getChannelData(1).set(r);
+    beds.set(type, buf);
+  }
+  bedSrc = c.createBufferSource();
+  bedSrc.buffer = buf;
+  bedSrc.loop = true;
+  bedSrc.connect(b.bed);
+  bedSrc.start();
+}
+/** The noise bed runs while the drums are playing. */
+export function setBedPlaying(on: boolean, beat: Beat | null) {
+  bedOn = on && !!beat?.on;
+  const want = bedOn ? fxOf(beat!).noise : "off";
+  if (want === "off") {
+    if (bedSrc) {
+      try { bedSrc.stop(); } catch { /* stopped */ }
+      bedSrc = null;
+    }
+    bedType = "off";
+  } else if (!bedSrc || bedType !== want) startBed(want);
+}
+
+// ── pump: other instruments duck under the kick ──
+let pump = 0;
+let onKick: ((when: number, depth: number) => void) | null = null;
+/** The guitar registers here to duck under the kick when Pump is turned up. */
+export function onKickHit(fn: ((when: number, depth: number) => void) | null) {
+  onKick = fn;
 }
 
 function damp(r: Ringing, at: number) {
@@ -293,7 +393,7 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const b = getBus();
   const t = when ?? c.currentTime + 0.01;
   const src = c.createBufferSource();
-  src.buffer = drumBuffer(c, voiceOf(beat, id), id, soundOf(beat, id));
+  src.buffer = takeFor(c, beat, id);
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
   const g = c.createGain();
   g.gain.value = velocity * velocity * 1.1;
@@ -314,6 +414,7 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   live.add(r);
   src.onended = () => live.delete(r);
   src.start(t);
+  if (id === "kick" && pump > 0 && onKick) onKick(t, pump * velocity);
 }
 
 /** Play one step of the grid for a drum, respecting mute, solo and the "human" setting. */
@@ -330,7 +431,14 @@ export function playStep(beat: Beat, id: DrumId, level: number, when: number) {
 /** Render a beat's sounds ahead of time so the first bar plays without a hiccup. */
 export function prepareBeat(beat: Beat) {
   const c = audioContext();
-  for (const id of DRUM_IDS) if (/[123]/.test(beat.rows[id] ?? "")) drumBuffer(c, voiceOf(beat, id), id, soundOf(beat, id));
+  const sampler = fxOf(beat).sampler;
+  for (const id of DRUM_IDS) {
+    if (!/[123]/.test(beat.rows[id] ?? "")) continue;
+    const voice = voiceOf(beat, id);
+    const p = soundOf(beat, id);
+    drumBuffer(c, voice, id, p, sampler, 0);
+    for (let v = 1; v < VARIANTS; v++) renderLater(() => drumBuffer(c, voice, id, p, sampler, v));
+  }
 }
 
 export function stopDrums() {

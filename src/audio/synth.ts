@@ -7,11 +7,13 @@
 import { midiToFreq } from "../theory/notes";
 import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
-import { playStep, prepareBeat, stopDrums, syncDrums } from "./drumbus";
+import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
 import { DRUM_IDS } from "./drums";
 import { PatternId, patternEvents } from "./patterns";
 
 let master: GainNode | null = null;
+/** The guitar's own volume dip under each kick (the drums' Pump control). */
+let duck: GainNode | null = null;
 const buffers = new Map<number, { buf: AudioBuffer; rate: number }>();
 
 export function getAudio(): AudioContext {
@@ -35,7 +37,15 @@ export function getAudio(): AudioContext {
     const comp = ctx.createDynamicsCompressor();
     comp.threshold.value = -16;
     comp.ratio.value = 3;
-    master.connect(body).connect(presence).connect(air).connect(comp).connect(ctx.destination);
+    duck = ctx.createGain();
+    master.connect(duck).connect(body).connect(presence).connect(air).connect(comp).connect(ctx.destination);
+    // Pump: the guitar dips under every kick and swells back, like a sidechained compressor
+    onKickHit((when, depth) => {
+      const g = duck!.gain;
+      g.cancelScheduledValues(when);
+      g.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
+      g.setTargetAtTime(1, when + 0.03, 0.09);
+    });
   }
   return ctx;
 }
@@ -239,6 +249,7 @@ export class ProgressionPlayer {
     this.nextTime = this.startTime;
     this.endAt = null;
     this.dDiv = beat?.div ?? 4;
+    setBedPlaying(true, beat);
     if (beat) {
       syncDrums(beat, bpm);
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
@@ -257,6 +268,7 @@ export class ProgressionPlayer {
     this.pattern = pattern;
     this.loop = loop || !items.length;
     if (beat) syncDrums(beat, bpm);
+    setBedPlaying(this.playing, beat);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
@@ -368,6 +380,9 @@ export class ProgressionPlayer {
     this.cur = null;
     this.drumMarks = [];
     this.onDrumStep(-1);
+    setBedPlaying(false, null);
+    duck?.gain.cancelScheduledValues(0);
+    duck?.gain.setValueAtTime(1, getAudio().currentTime);
     stopAll();
     stopDrums();
   }

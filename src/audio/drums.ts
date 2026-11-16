@@ -22,6 +22,8 @@
  * can be tested without a browser.
  */
 
+import { getRecipe, renderRecipe, sampler } from "./voices";
+
 export type KitId = "box" | "808" | "909" | "707" | "linn" | "volca" | "lofi" | "mod";
 export type DrumId = "kick" | "snare" | "clap" | "hat" | "open" | "tom" | "rim" | "shaker" | "bell";
 
@@ -69,7 +71,7 @@ const MIX: Record<DrumId, Partial<DrumParams>> = {
 export const defaultParams = (id: DrumId): DrumParams => ({ ...BASE, ...MIX[id] });
 
 /** Short labels for the step grid. */
-export const DRUM_LABEL: Record<DrumId, string> = { kick: "Kick", snare: "Snare", clap: "Clap", hat: "Hat", open: "Open", tom: "Tom", rim: "Rim", shaker: "Shake", bell: "Bell" };
+export const DRUM_LABEL: Record<DrumId, string> = { kick: "Kick", snare: "Snare", clap: "Clap", hat: "Hat", open: "Open", tom: "Tom", rim: "Rim", shaker: "Shake", bell: "Perc" };
 
 /** What the "tone" and "punch" controls do for each drum. */
 export const TONE_LABEL: Record<DrumId, string> = { kick: "Click", snare: "Snap", clap: "Bright", hat: "Bright", open: "Bright", tom: "Stick", rim: "Bright", shaker: "Bright", bell: "Bright" };
@@ -103,6 +105,18 @@ export const getKit = (id: KitId): Kit => KITS.find((k) => k.id === id) ?? KITS[
  * so every machine's version of a drum sits at the same place in the mix.
  */
 const LOUDNESS: Record<DrumId, number> = { kick: 0.6, snare: 0.17, clap: 0.14, hat: 0.056, open: 0.1, tom: 0.34, rim: 0.078, shaker: 0.082, bell: 0.1 };
+/**
+ * …and never carrying more energy over 300 ms (and, for kicks, over a second) than the loudest of the
+ * classic machines does. Without this, a long sub kick or a dense distorted hit would be far louder in
+ * a groove than its first 40 ms suggest.
+ */
+const LONG: Record<DrumId, number> = { kick: 0.34, snare: 0.068, clap: 0.066, hat: 0.021, open: 0.055, tom: 0.155, rim: 0.03, shaker: 0.034, bell: 0.053 };
+const KICK_SECOND = 0.19;
+const rmsOver = (d: Float32Array, n: number) => {
+  let s = 0;
+  for (let i = 0; i < Math.min(n, d.length); i++) s += d[i] * d[i];
+  return Math.sqrt(s / n);
+};
 /** …but never with a peak above this, however short and spiky the sound is. */
 const PEAK: Record<DrumId, number> = { kick: 0.98, snare: 0.8, clap: 0.7, hat: 0.42, open: 0.4, tom: 0.8, rim: 0.55, shaker: 0.4, bell: 0.42 };
 
@@ -612,26 +626,66 @@ function sweep(data: Float32Array, amount: number, sr: number) {
 }
 
 /** Render one drum hit. Pure: the same inputs always give the same samples. */
-export function renderDrum(sr: number, kit: KitId, id: DrumId, params: Partial<DrumParams> = {}): Float32Array {
-  const p = { ...defaultParams(id), ...params };
-  const out = VOICES[id]({ sr, p, rand: drumRng(DRUM_IDS.indexOf(id) * 7919 + 17), r: ratioOf(p.tune) }, kit);
+/** A sound for one drum: a whole machine's version of it ("808"), or a sound from the library ("kick.felt"). */
+export type VoiceId = string;
+export const isMachine = (v: VoiceId): v is KitId => KITS.some((k) => k.id === v);
+
+/**
+ * Sampler character for the whole kit, as the classic sampling drum machines and samplers had it:
+ * a lower sample rate held without filtering (so it aliases), fewer bits, sometimes companding.
+ */
+export type SamplerId = "off" | "sp" | "mpc" | "linn" | "toy" | "crush";
+export const SAMPLERS: { id: SamplerId; name: string; hint: string; rate: number; bits: number; mulaw: boolean; lp: number }[] = [
+  { id: "off", name: "Off", hint: "Clean", rate: 0, bits: 0, mulaw: false, lp: 0 },
+  { id: "sp", name: "12-bit", hint: "26 kHz, 12-bit, unfiltered: the classic dusty sampler crunch", rate: 26040, bits: 12, mulaw: false, lp: 11000 },
+  { id: "mpc", name: "Warm 12", hint: "40 kHz, companded 12-bit: punchy and soft-edged", rate: 40000, bits: 12, mulaw: true, lp: 15000 },
+  { id: "linn", name: "8-bit", hint: "28 kHz, companded 8-bit: early-80s drum machines", rate: 28000, bits: 8, mulaw: true, lp: 11000 },
+  { id: "toy", name: "Toy", hint: "9.4 kHz, 8-bit: a toy keyboard sampler", rate: 9380, bits: 8, mulaw: false, lp: 5000 },
+  { id: "crush", name: "Crushed", hint: "6-bit: broken and glitchy", rate: 22050, bits: 6, mulaw: false, lp: 0 },
+];
+
+export interface RenderOptions {
+  /** which of the round-robin takes (each one very slightly different, like hitting a drum twice) */
+  variant?: number;
+  sampler?: SamplerId;
+}
+/** Round robin: how many takes of each sound, and how far each is detuned (cents). */
+export const VARIANTS = 3;
+const VARIANT_CENTS = [0, 6, -5];
+
+export function renderDrum(sr: number, voice: VoiceId, id: DrumId, params: Partial<DrumParams> = {}, opts: RenderOptions = {}): Float32Array {
+  const v = Math.max(0, Math.min(VARIANTS - 1, opts.variant ?? 0));
+  const base = { ...defaultParams(id), ...params };
+  const p = { ...base, tune: base.tune + VARIANT_CENTS[v] / 100 };
+  const rand = drumRng(DRUM_IDS.indexOf(id) * 7919 + 17 + v * 101);
+  const recipe = getRecipe(voice);
+  const kit: KitId = recipe ? "box" : isMachine(voice) ? voice : "box";
+  const out = recipe ? renderRecipe(sr, recipe, p, rand) : VOICES[id]({ sr, p, rand, r: ratioOf(p.tune) }, kit);
   scale(out, 0.95 / (peakOf(out) || 1));
   if (p.drive > 0.001) {
     saturate(out, p.drive, sr);
     scale(out, 0.95 / (peakOf(out) || 1));
   }
-  if (kit === "lofi") crush(out, Math.max(1, Math.round(sr / 24000)), 8);
-  if (kit === "707") crush(out, 1, 8); // 8-bit, but at full speed: clean with a fine grain
-  if (kit === "mod" && id !== "kick") crush(out, Math.max(1, Math.round(sr / 22000)), 9);
-  if (kit === "linn") {
+  if (!recipe && kit === "lofi") crush(out, Math.max(1, Math.round(sr / 24000)), 8);
+  if (!recipe && kit === "707") crush(out, 1, 8); // 8-bit, but at full speed: clean with a fine grain
+  if (!recipe && kit === "mod" && id !== "kick") crush(out, Math.max(1, Math.round(sr / 22000)), 9);
+  if (!recipe && kit === "linn") {
     if (id !== "hat" && id !== "open" && id !== "shaker") {
       const lp = biquad("lp", 11000, 0.7, sr);
       for (let i = 0; i < out.length; i++) out[i] = lp(out[i]);
     }
     compand(out);
   }
+  const smp = SAMPLERS.find((x) => x.id === opts.sampler);
+  if (smp && smp.rate) sampler(out, sr, smp.rate, smp.bits, smp.mulaw, smp.lp);
   // same loudness whichever machine and settings, without ever clipping
   scale(out, Math.min(LOUDNESS[id] / (loudest(out, sr) || 1), PEAK[id] / (peakOf(out) || 1)));
+  const long = rmsOver(out, Math.floor(sr * 0.3));
+  if (long > LONG[id]) scale(out, LONG[id] / long);
+  if (id === "kick") {
+    const sec = rmsOver(out, sr);
+    if (sec > KICK_SECOND) scale(out, KICK_SECOND / sec);
+  }
   if (Math.abs(p.filter) > 0.001) {
     sweep(out, p.filter, sr);
     const peak = peakOf(out);
@@ -642,38 +696,185 @@ export function renderDrum(sr: number, kit: KitId, id: DrumId, params: Partial<D
   return out;
 }
 
-// ── Reverb ───────────────────────────────────────────────────
+// ── Reverb ───────────────────────────────────────────────
+
+export type SpaceType = "room" | "hall" | "plate" | "spring" | "gated" | "dark";
+
+/** One-pole low-pass and high-pass, cheap enough to sweep every sample. */
+const onePole = (sr: number) => {
+  let y = 0;
+  return (x: number, f: number) => (y += (1 - Math.exp((-TAU * f) / sr)) * (x - y));
+};
+
+/** Unit energy: whatever the size or type, the reverb gives back as much sound as it is sent. */
+function unitEnergy(d: Float32Array) {
+  const fade = Math.min(d.length, Math.floor(d.length * 0.02) + 32);
+  for (let i = 0; i < fade; i++) d[d.length - 1 - i] *= i / fade;
+  let energy = 0;
+  for (let i = 0; i < d.length; i++) energy += d[i] * d[i];
+  scale(d, 1 / Math.sqrt(energy || 1));
+}
 
 /**
- * The room the drums play in, as a stereo impulse response: a few early reflections and a
- * tail of noise that gets darker as it dies away. `size` 0 is a small room, 1 a long hall.
+ * The space the drums play in, as a stereo impulse response, rendered once.
+ * `size` 0 is small and short, 1 big and long. The types follow the classic studio reverbs:
+ * a room (early reflections, then a tail that darkens), a hall (later onset, long and smooth),
+ * a plate (dense from the first instant, bright, its highs dying first), a spring (each echo a
+ * dispersive "boing", from a chain of all-pass filters in a feedback loop), the 80s gated room
+ * (a flat burst that stops dead) and a lo-fi one (dark, grainy, from a cheap old digital unit).
  */
-export function renderSpace(sr: number, size: number, rand: () => number = Math.random): [Float32Array, Float32Array] {
+export function renderSpace(sr: number, size: number, rand: () => number = Math.random, type: SpaceType = "room"): [Float32Array, Float32Array] {
   const s = Math.min(1, Math.max(0, size));
-  const t60 = 0.35 + s * s * 4.2;
-  const pre = 0.004 + s * 0.022;
-  const len = Math.floor(sr * Math.min(6, pre + t60 * 1.05));
-  const make = () => {
+  const side = (ch: number) => {
+    if (type === "spring") return spring(sr, s, ch, rand);
+    const cfg = {
+      room: { t60: 0.3 + s * 1.1, pre: 0.002 + s * 0.012, ers: 10, erSpan: 0.025 + s * 0.04, build: 0.004, lp0: 9000, lp1: 2500, hp: 100 },
+      hall: { t60: 1.4 + s * 3.2, pre: 0.018 + s * 0.025, ers: 8, erSpan: 0.08, build: 0.06 + s * 0.06, lp0: 8000, lp1: 1800, hp: 60 },
+      plate: { t60: 0.9 + s * 2.8, pre: 0.001 + s * 0.008, ers: 0, erSpan: 0, build: 0.002, lp0: 14000, lp1: 3500, hp: 110 },
+      gated: { t60: 9, pre: 0.003, ers: 0, erSpan: 0, build: 0.003, lp0: 8000, lp1: 6000, hp: 200 },
+      dark: { t60: 1.2 + s * 2, pre: 0.015 + s * 0.015, ers: 0, erSpan: 0, build: 0.03, lp0: 2800, lp1: 1600, hp: 150 },
+    }[type];
+    const hold = 0.12 + s * 0.22; // gated: how long the burst stays up
+    const len = Math.floor(sr * Math.min(6, type === "gated" ? cfg.pre + hold + 0.06 : cfg.pre + cfg.t60 * 1.05));
     const d = new Float32Array(len);
-    const start = Math.floor(pre * sr);
-    for (let k = 0; k < 6 + Math.floor(s * 6); k++) {
-      const at = pre + 0.004 + rand() * 0.07 * (0.4 + s);
+    const start = Math.floor(cfg.pre * sr);
+    for (let k = 0; k < cfg.ers; k++) {
+      const at = cfg.pre + 0.002 + rand() * cfg.erSpan;
       const i = Math.floor(at * sr);
-      if (i < len) d[i] += (rand() < 0.5 ? -1 : 1) * 0.6 * Math.exp(-(at - pre) / 0.05);
+      if (i < len) d[i] += (rand() < 0.5 ? -1 : 1) * (0.4 + 0.4 * rand()) * Math.exp(-(at - cfg.pre) / (cfg.erSpan * 0.6 + 0.01));
     }
-    let lp = 0;
+    const lp = onePole(sr);
+    const hp = onePole(sr);
     for (let i = start; i < len; i++) {
-      const t = i / sr - pre;
-      lp += (0.12 + 0.75 * Math.exp(-t / (0.25 + s * 0.6))) * (rand() * 2 - 1 - lp);
-      d[i] += lp * fall(t, t60) * Math.min(1, t / 0.012);
+      const t = i / sr - cfg.pre;
+      // the tail darkens as it dies: the highs of a room or plate fade first
+      const f = cfg.lp1 + (cfg.lp0 - cfg.lp1) * Math.exp(-t / (cfg.t60 * 0.25));
+      const x = lp(rand() * 2 - 1, f);
+      const y = x - hp(x, cfg.hp);
+      let env = Math.min(1, t / cfg.build);
+      if (type === "gated") env *= (t < hold ? 1 + 0.25 * (t / hold) : Math.exp(-(t - hold) / 0.012));
+      else env *= fall(t, cfg.t60);
+      // a plate's first instant is extra bright
+      const bright = type === "plate" ? 1 + 0.6 * Math.exp(-t / 0.04) : 1;
+      d[i] += y * env * bright;
     }
-    const fade = Math.floor(sr * 0.02);
-    for (let i = 0; i < fade && i < len; i++) d[len - 1 - i] *= i / fade;
-    // unit energy: whatever the size, the room gives back as much sound as it is sent
-    let energy = 0;
-    for (let i = 0; i < len; i++) energy += d[i] * d[i];
-    scale(d, 1 / Math.sqrt(energy || 1));
+    if (type === "dark") {
+      // a cheap 80s reverb: 11-bit, 14 kHz, no smoothing
+      const hold = Math.max(1, Math.round(sr / 14000));
+      let held = 0;
+      let peak = 0;
+      for (const x of d) peak = Math.max(peak, Math.abs(x));
+      for (let i = 0; i < len; i++) {
+        if (i % hold === 0) held = Math.round((d[i] / (peak || 1)) * 1024) / 1024 * peak;
+        d[i] = held;
+      }
+    }
+    unitEnergy(d);
     return d;
   };
-  return [make(), make()];
+  return [side(0), side(1)];
+}
+
+/** A spring: an impulse goes round a loop of all-pass filters, so every echo comes back as a chirp. */
+function spring(sr: number, s: number, ch: number, rand: () => number): Float32Array {
+  const t60 = 1.2 + s * 1.8;
+  const loop = Math.round(sr * (ch ? 0.037 : 0.033) * (0.9 + 0.2 * s));
+  const len = Math.floor(sr * Math.min(5, t60 * 1.05));
+  const g = Math.pow(10, (-3 * (loop / sr)) / t60);
+  const stages = 60;
+  const K = 2;
+  const a = 0.6;
+  // all-pass chain state: y[n] = a·x[n] + x[n−K] − a·y[n−K]
+  const xs = Array.from({ length: stages }, () => new Float64Array(K));
+  const ys = Array.from({ length: stages }, () => new Float64Array(K));
+  const line = new Float64Array(loop);
+  const d = new Float32Array(len);
+  const lp = onePole(sr);
+  const hp = onePole(sr);
+  let w = 0;
+  for (let i = 0; i < len; i++) {
+    let x = (i === 0 ? 1 : 0) + g * line[w];
+    const k = i % K;
+    for (let st = 0; st < stages; st++) {
+      const y = a * x + xs[st][k] - a * ys[st][k];
+      xs[st][k] = x;
+      ys[st][k] = y;
+      x = y;
+    }
+    line[w] = x;
+    w = (w + 1) % loop;
+    // a little diffuse "drip" on top, and the spring's narrow band
+    const v = lp(x + 0.04 * (rand() * 2 - 1) * Math.exp(-i / (sr * t60 * 0.3)), 4500);
+    d[i] = v - hp(v, 100);
+  }
+  unitEnergy(d);
+  return d;
+}
+
+// ── Noise beds ───────────────────────────────────────────────
+
+/**
+ * A loop of background noise played under the drums: vinyl crackle, cassette hiss, the air of a
+ * room or mains hum. Rendered once, stereo, with the loop seam crossfaded. Each has the same loudness.
+ */
+export function renderNoiseBed(sr: number, type: "vinyl" | "tape" | "room" | "hum" | "off", seconds = 8): [Float32Array, Float32Array] {
+  const rand = drumRng(type.length * 31 + 5);
+  const xf = Math.floor(sr * 0.15);
+  const n = Math.floor(sr * seconds);
+  const side = (ch: number) => {
+    const d = new Float32Array(n + xf);
+    if (type === "off") return d.subarray(0, n);
+    const lp = onePole(sr), hp = onePole(sr), lp2 = onePole(sr), hp2 = onePole(sr);
+    let b0 = 0, b1 = 0, b2 = 0;
+    for (let i = 0; i < d.length; i++) {
+      const t = i / sr;
+      const w = rand() * 2 - 1;
+      // pink-ish noise
+      b0 = 0.997 * b0 + w * 0.029591; b1 = 0.985 * b1 + w * 0.032534; b2 = 0.95 * b2 + w * 0.048056;
+      const pinkN = b0 + b1 + b2 + w * 0.1848;
+      if (type === "tape") {
+        const x = w - hp(w, 1000);
+        d[i] = lp(x * 0.6 + (x - hp2(x, 5000)) * 0.4, 12000);
+      } else if (type === "room") {
+        const x = lp(pinkN, 3000);
+        d[i] = (x - hp(x, 40)) * (1 + 0.15 * Math.sin(TAU * 0.11 * t + ch));
+      } else if (type === "hum") {
+        const f = 60;
+        d[i] = (Math.sin(TAU * f * t) + 0.3 * Math.sin(TAU * 3 * f * t) + 0.15 * Math.sin(TAU * 5 * f * t) + 0.08 * Math.sin(TAU * 7 * f * t)) * (1 + 0.1 * Math.sin(TAU * 0.1 * t)) + 0.02 * pinkN;
+      } else {
+        // vinyl: surface hiss turning with the record, and rumble
+        const surf = pinkN - hp(pinkN, 400);
+        d[i] = (pinkN - surf) * 0.5 * (1 + 0.18 * Math.sin(TAU * 0.556 * t)) + lp2(w, 20) * 2;
+      }
+    }
+    if (type === "vinyl") {
+      // crackle: random clicks, most small, a few big; a pop every turn of the record
+      const bp1 = biquad("bp", 3000, 0.8, sr);
+      const clicks = new Float32Array(d.length);
+      let at = 0;
+      while (at < d.length) {
+        at += Math.floor((-Math.log(1 - rand()) / 14) * sr);
+        if (at >= d.length) break;
+        const amp = Math.min(6, 0.25 * Math.pow(1 - rand(), -1 / 2.5)) * (rand() < 0.5 ? -1 : 1);
+        const w = 2 + Math.floor(rand() * sr * 0.0008);
+        for (let k = 0; k < w && at + k < d.length; k++) clicks[at + k] += amp * Math.sin((Math.PI * k) / w);
+      }
+      for (let turn = 0.4 + ch * 0.05; turn < seconds + 0.2; turn += 1.8 * (0.98 + 0.04 * rand())) {
+        const i0 = Math.floor(turn * sr);
+        for (let k = 0; k < sr * 0.006 && i0 + k < d.length; k++) clicks[i0 + k] += 3 * Math.exp(-k / (sr * 0.0015)) * (k % 2 ? -1 : 1);
+      }
+      for (let i = 0; i < d.length; i++) d[i] += bp1(clicks[i]) * 2.5;
+    }
+    // seamless loop: fade the extra tail into the start
+    for (let i = 0; i < xf; i++) {
+      const g = i / xf;
+      d[i] = d[i] * g + d[n + i] * (1 - g);
+    }
+    const out = d.slice(0, n);
+    let sum = 0;
+    for (const x of out) sum += x * x;
+    scale(out, 0.5 / Math.sqrt(sum / out.length || 1));
+    return out;
+  };
+  return [side(0), side(1)];
 }

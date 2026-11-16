@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, STYLE_KITS, VIBES, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, knownVoice, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
 import { driveCurve, softCeiling } from "./drumbus";
-import { DRUM_IDS, KITS, defaultParams, drumRng, renderDrum, renderSpace } from "./drums";
+import { DRUM_IDS, KITS, SAMPLERS, VARIANTS, defaultParams, drumRng, renderDrum, renderNoiseBed, renderSpace } from "./drums";
+import { ALL_RECIPES, RECIPES } from "./voices";
 import { GM_DRUM, progressionToMidi } from "./midi";
 
 const SR = 44100;
@@ -155,8 +156,10 @@ describe("sound design", () => {
     const third = (d: Float32Array) => level(d, 3 * f0) / level(d, f0);
     expect(third(clean)).toBeLessThan(0.05);
     expect(third(driven)).toBeGreaterThan(0.12);
-    expect(loudest(driven) / loudest(clean)).toBeGreaterThan(0.8);
-    expect(loudest(driven) / loudest(clean)).toBeLessThan(1.25);
+    // loudness held over the length of a hit, which is what the ear judges for a long kick
+    const sec = (d: Float32Array) => rms(d, 0, Math.min(SR, d.length)) * Math.sqrt(Math.min(SR, d.length) / SR);
+    expect(sec(driven) / sec(clean)).toBeGreaterThan(0.8);
+    expect(sec(driven) / sec(clean)).toBeLessThan(1.25);
     expect(peakOf(driven)).toBeLessThanOrEqual(1);
   });
 
@@ -226,13 +229,78 @@ describe("sound design", () => {
     expect(reviveUserKits("nope")).toEqual([]);
   });
 
-  it("style kits are complete, in range, and built only from real machines", () => {
-    expect(STYLE_KITS.map((k) => k.like)).toEqual(["Kid A", "Beach House", "Current Joys", "Florence · Free", "Boy Harsher", "Molchat Doma", "Her's"]);
-    expect(new Set(STYLE_KITS.map((k) => k.id)).size).toBe(STYLE_KITS.length);
+  it("the library: about a hundred sounds, every drum with plenty to choose from", () => {
+    expect(ALL_RECIPES.length).toBeGreaterThanOrEqual(100);
+    expect(new Set(ALL_RECIPES.map((r) => r.id)).size).toBe(ALL_RECIPES.length);
+    for (const id of DRUM_IDS) {
+      expect(RECIPES[id].length, id).toBeGreaterThanOrEqual(10);
+      expect(new Set(RECIPES[id].map((r) => r.name)).size, id).toBe(RECIPES[id].length);
+      for (const r of RECIPES[id]) expect(r.id.startsWith(id + "."), r.id).toBe(true);
+    }
+  });
+
+  it("every library sound renders cleanly, even with every knob at an extreme", () => {
+    for (const id of DRUM_IDS)
+      for (const r of RECIPES[id])
+        for (const p of [{}, { tune: -12, decay: 0, tone: 0, punch: 0, drive: 0, filter: -0.5 }, { tune: 12, decay: 1, tone: 1, punch: 1, drive: 1, filter: 0.5 }]) {
+          const d = renderDrum(SR, r.id, id, p);
+          const peak = peakOf(d);
+          expect(Number.isFinite(peak), r.id).toBe(true);
+          expect(peak, `${r.id} ${JSON.stringify(p)}`).toBeGreaterThan(0.005); // a hat through a dark filter is quiet, but there
+          expect(peak, r.id).toBeLessThanOrEqual(1);
+          expect(Math.abs(d[d.length - 1]), r.id).toBeLessThan(0.01);
+        }
+  }, 120000);
+
+  it("library sounds sit at the same loudness as the machines", () => {
+    for (const id of DRUM_IDS) {
+      const ref = loudest(renderDrum(SR, "808", id));
+      for (const r of RECIPES[id]) {
+        const l = loudest(renderDrum(SR, r.id, id));
+        // a few sounds are all spikes and cannot reach the level without clipping; none is louder
+        expect(l / ref, r.id).toBeLessThan(1.35);
+        expect(l / ref, r.id).toBeGreaterThan(0.25);
+      }
+    }
+  }, 60000);
+
+  it("round robin: each take is a little different, never a different sound", () => {
+    for (const v of ["kick.909", "snare.acoustic", "hat.808", "808"]) {
+      const id = v === "808" ? "snare" : (v.split(".")[0] as (typeof DRUM_IDS)[number]);
+      const takes = Array.from({ length: VARIANTS }, (_, i) => renderDrum(SR, v, id, {}, { variant: i }));
+      for (let i = 1; i < takes.length; i++) {
+        let diff = 0;
+        for (let k = 0; k < Math.min(4000, takes[0].length, takes[i].length); k++) diff += Math.abs(takes[i][k] - takes[0][k]);
+        expect(diff, v).toBeGreaterThan(0.5);
+        expect(loudest(takes[i]) / loudest(takes[0]), v).toBeGreaterThan(0.8);
+        expect(loudest(takes[i]) / loudest(takes[0]), v).toBeLessThan(1.25);
+      }
+    }
+  });
+
+  it("sampler modes: fewer levels, held samples, same loudness", () => {
+    const clean = renderDrum(SR, "snare.acoustic", "snare");
+    for (const smp of SAMPLERS.filter((x) => x.id !== "off")) {
+      const d = renderDrum(SR, "snare.acoustic", "snare", {}, { sampler: smp.id });
+      expect(peakOf(d), smp.id).toBeLessThanOrEqual(1);
+      expect(loudest(d) / loudest(clean), smp.id).toBeGreaterThan(0.7);
+      expect(loudest(d) / loudest(clean), smp.id).toBeLessThan(1.3);
+      expect(Array.from(d).some((x, i) => x !== clean[i]), smp.id).toBe(true);
+    }
+    // the toy sampler holds each value for about five samples at 48 kHz
+    const toy = renderDrum(SR, "snare.acoustic", "snare", { filter: 0 }, { sampler: "toy" });
+    expect(brightness(toy, 6000)).toBeLessThan(brightness(clean, 6000));
+  });
+
+  it("built-in kits are complete, in range, and use only real sounds", () => {
+    expect(BUILTIN_KITS.length).toBeGreaterThanOrEqual(15);
+    expect(new Set(BUILTIN_KITS.map((k) => k.id)).size).toBe(BUILTIN_KITS.length);
+    expect(new Set(BUILTIN_KITS.map((k) => k.name)).size).toBe(BUILTIN_KITS.length);
     const machines = KITS.map((k) => k.id);
-    for (const k of STYLE_KITS) {
+    for (const k of BUILTIN_KITS) {
       expect(machines, k.name).toContain(k.kit);
-      for (const v of Object.values(k.voices)) expect(machines, k.name).toContain(v);
+      expect(Object.keys(k.voices).sort(), k.name).toEqual([...DRUM_IDS].sort());
+      for (const v of Object.values(k.voices)) expect(knownVoice(v), `${k.name} ${v}`).toBe(true);
       for (const [id, snd] of Object.entries(k.sounds)) {
         expect(DRUM_IDS, k.name).toContain(id);
         for (const [key, v] of Object.entries(snd!)) {
@@ -243,39 +311,69 @@ describe("sound design", () => {
       }
       expect(Object.keys(k.fx).sort()).toEqual(Object.keys(FX_DEFAULTS).sort());
       expect(ECHO_TIMES.map((e) => e.id)).toContain(k.fx.echoTime);
-      for (const key of ["level", "space", "size", "echo", "grit", "tape", "glue", "human"] as const) expect(k.fx[key] >= 0 && k.fx[key] <= 1, `${k.name} ${key}`).toBe(true);
+      expect(VERBS.map((e) => e.id)).toContain(k.fx.verb);
+      expect(SAMPLERS.map((e) => e.id)).toContain(k.fx.sampler);
+      expect(NOISE_BEDS.map((e) => e.id)).toContain(k.fx.noise);
+      for (const key of ["level", "space", "size", "echo", "grit", "tape", "glue", "human", "noiseAmt", "pump"] as const) expect(k.fx[key] >= 0 && k.fx[key] <= 1, `${k.name} ${key}`).toBe(true);
     }
+    // no two kits are the same setup
+    expect(new Set(BUILTIN_KITS.map((k) => JSON.stringify([k.voices, k.sounds, k.fx]))).size).toBe(BUILTIN_KITS.length);
   });
 
-  it("a style kit sets the whole sound, leaves the rhythm alone, and renders cleanly", () => {
+  it("names nothing after artists", () => {
+    const text = JSON.stringify([BUILTIN_KITS, KITS, VIBES, ALL_RECIPES.map((r) => r.name), BEAT_LIBRARY.map((p) => p.name)]).toLowerCase();
+    for (const name of ["radiohead", "kid a", "beach house", "current joys", "florence", "boy harsher", "molchat", "her's", "joy division", "cure"]) expect(text, name).not.toContain(name);
+  });
+
+  it("a kit sets the whole sound and leaves the rhythm alone", () => {
     const rhythm = applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Motorik")!);
-    for (const k of STYLE_KITS) {
+    for (const k of BUILTIN_KITS) {
       const b = applyUserKit(rhythm, k);
       expect(b.userKit).toBe(k.id);
       expect(b.rows).toBe(rhythm.rows);
       expect(fxOf(b)).toEqual(k.fx);
-      for (const id of DRUM_IDS) {
-        const d = renderDrum(SR, voiceOf(b, id), id, soundOf(b, id));
-        const peak = peakOf(d);
-        expect(peak > 0.02 && peak <= 1, `${k.name} ${id}`).toBe(true);
-      }
-      // picking a plain machine afterwards lets go of the style
+      for (const id of DRUM_IDS) expect(voiceOf(b, id)).toBe(k.voices[id]);
+      // picking a plain machine afterwards lets go of the kit
       expect(applyKit(b, "808").userKit).toBeNull();
+      expect(voiceOf(applyKit(b, "808"), "snare")).toBe("808");
     }
-    // no two style kits are the same setup
-    expect(new Set(STYLE_KITS.map((k) => JSON.stringify([k.kit, k.voices, k.sounds, k.fx]))).size).toBe(STYLE_KITS.length);
   });
 
-  it("the reverb gets longer with size, dies away, and differs left to right", () => {
-    const small = renderSpace(SR, 0, drumRng(1));
-    const big = renderSpace(SR, 1, drumRng(1));
-    expect(big[0].length).toBeGreaterThan(small[0].length * 5);
-    const [l, r] = renderSpace(SR, 0.5, drumRng(2));
-    expect(rms(l, 0, 8000)).toBeGreaterThan(rms(l, l.length - 8000, l.length) * 20);
-    let same = 0;
-    for (let i = 0; i < l.length; i++) if (l[i] === r[i]) same++;
-    expect(same).toBeLessThan(l.length * 0.1);
-    for (const x of l) expect(Number.isFinite(x)).toBe(true);
+  it("every reverb type: unit energy, stereo, finite; size makes it longer", () => {
+    for (const v of VERBS) {
+      const [l, r] = renderSpace(SR, 0.5, drumRng(2), v.id);
+      let e = 0, same = 0;
+      for (let i = 0; i < l.length; i++) {
+        expect(Number.isFinite(l[i])).toBe(true);
+        e += l[i] * l[i];
+        if (l[i] === r[i]) same++;
+      }
+      expect(e, v.id).toBeCloseTo(1, 3);
+      expect(same, v.id).toBeLessThan(l.length * 0.5);
+      if (v.id !== "gated") expect(renderSpace(SR, 1, drumRng(1), v.id)[0].length, v.id).toBeGreaterThan(renderSpace(SR, 0, drumRng(1), v.id)[0].length);
+    }
+    // the gated room stays up, then stops dead
+    const [g] = renderSpace(SR, 0.5, drumRng(3), "gated");
+    const win = (from: number) => rms(g, Math.floor(from * SR), Math.floor((from + 0.03) * SR));
+    expect(win(0.2) / win(0.02)).toBeGreaterThan(0.8);
+    expect(win(g.length / SR - 0.03)).toBeLessThan(win(0.1) * 0.05);
+    // a hall dies away
+    const [h] = renderSpace(SR, 0.5, drumRng(2), "hall");
+    expect(rms(h, 0, 8000)).toBeGreaterThan(rms(h, h.length - 8000, h.length) * 20);
+  });
+
+  it("noise beds loop seamlessly at the same loudness", () => {
+    for (const n of NOISE_BEDS.filter((x) => x.id !== "off")) {
+      const [l, r] = renderNoiseBed(SR, n.id, 2);
+      expect(l.length).toBe(SR * 2);
+      expect(rms(l), n.id).toBeCloseTo(0.5, 2);
+      // the seam: the end runs into the start without a jump
+      const jump = Math.abs(l[l.length - 1] - l[0]);
+      expect(jump, n.id).toBeLessThan(0.5 * 4);
+      let same = 0;
+      for (let i = 0; i < l.length; i++) if (l[i] === r[i]) same++;
+      if (n.id !== "hum") expect(same, n.id).toBeLessThan(l.length * 0.5);
+    }
   });
 
   it("the output ceiling is transparent until it is needed, and grit keeps its level", () => {
