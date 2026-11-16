@@ -8,6 +8,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 - *"How else can I play this chord?"* Every playable voicing on the neck, not just the barre shape.
 - *"What could come next?"* Suggestions from safe to wild, each with a plain-English reason.
 - *"What mode is this, and how do I make it sound like that mode?"*
+- *"What does it sound like over a beat?"* A drum machine with 90 rhythms you can edit by tapping.
 
 ---
 
@@ -29,7 +30,15 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - **Strings** (Any / 3 / 4 / 5–6) and **Inversions** (let the bass note change for smoother moves) re-deal the set.
    - **‹ ›** under each chord in the tray sifts that one chord through its other shapes, best fit with its neighbours first, while everything else stays put. Do it while the loop is playing to hear each option in context.
    - Chords you add later land in the same area. **My shapes** switches back to each chord's own shape.
-7. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export**, copy chords + tab, and saved ideas.
+7. **Beat** (the top row of the tray): a built-in drum machine that plays under your chords.
+   - **Beat on / off**, and **‹ ›** to flip through rhythms while it plays. **Edit** opens the drum machine.
+   - **4 kits**, all synthesized in the app (no samples): **Vintage** (the rhythm box built into old organs: soft thud, ticking hats, tambourine), **808** (long boomy kick, snappy snare, metallic hats, cowbell), **Volca** (clicky punchy analog kick, grainy hats) and **Lo-fi** (crunchy 8-bit 80s sample machine).
+   - **90 rhythms** in 7 styles: Dream pop · Lo-fi indie · Organ presets (Rock, Bossa nova, Rhumba, Waltz, Samba…) · 808 · Rock & pop · 6/8 & shuffle · World. Tap one and it plays.
+   - **Edit by tapping squares.** Rows are drums, columns are steps; tap to add or remove a hit, drag along a row to paint. Soft / Normal / Loud sets how hard new hits are. **✨ Vary** makes a small random change, **Save** keeps your rhythm under "Mine".
+   - Tap a drum's name to hear it and shape it: **Tune, Decay, Click / Snap / Grain, Level**, Mute.
+   - **Tempo, Swing, Volume, Space** (reverb) and **Grit** (saturation) for the whole kit.
+   - Picking a 3/4 or 6/8 rhythm changes whole-bar chords to match (4 beats become 3 in a waltz). With no chords in the tray, ▶ plays the beat alone so you can jam over it.
+8. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export** (guitar + a drum track on channel 10), copy chords + tab, and saved ideas.
 
 A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
@@ -54,7 +63,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 52 tests: theory, voicings, progressions, synth tuning, MIDI
+npm test          # 68 tests: theory, voicings, progressions, synth tuning, drums, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -86,7 +95,9 @@ src/
     arrange.ts     easy default shapes, voice-leading optimizer (dynamic programming), capo finder
     tunings.ts
   audio/
-    synth.ts       Karplus-Strong guitar synth + look-ahead progression player
+    synth.ts       Karplus-Strong guitar synth + look-ahead player for chords and drums
+    drums.ts       drum machine voices (4 kits × 9 drums), synthesized from oscillators and noise
+    beats.ts       step-grid format, the rhythm library, swing, variation
     patterns.ts    rhythm patterns (shared by playback and MIDI export)
     midi.ts        Standard MIDI File writer
   ui/            React app: the guitar page, shape finder, tray, drag & drop
@@ -95,5 +106,7 @@ src/
 - **Voicings** are found by scanning 4-fret windows up the neck (plus open strings), trying every combination of chord tones per string, then keeping only shapes with all required tones, at most one muted string in the middle, and a feasible fingering. Each is scored for difficulty (fingers, barres, stretch, mutes) and usefulness (root position, fullness, low-end mud).
 - **Suggestions** score every candidate chord by root motion (falling 5ths, steps, 3rds, chromatic slides), shared notes, voice-leading distance and resolution of tension, then group them by character.
 - **Progression voicings** use dynamic programming to minimise total difficulty plus hand movement and top-note jumps across the whole progression.
+
+- **Drums** are modelled on how the classic machines make sound: a decaying sine with a pitch blip for the kick, two tuned pings plus filtered noise for the snare, six detuned square waves through band-pass filters for 808-style hats and cowbell, three quick noise bursts for the clap. The Lo-fi kit is then reduced to 8 bits at half the sample rate. The drum grid re-locks to every chord change, so the beat and the chords cannot drift apart.
 
 Everything runs locally in your browser. Your progressions are saved in the browser's local storage.

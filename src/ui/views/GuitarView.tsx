@@ -1,4 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barBeats, findPattern, type Beat, type BeatPattern } from "../../audio/beats";
+import { getKit } from "../../audio/drums";
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio, playSequence, strum } from "../../audio/synth";
@@ -13,14 +15,18 @@ import { MOODS, sparkProgression, suggestNext, type Mood, type SuggestionGroup }
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
+import { BeatPanel } from "../components/BeatPanel";
 import { ShapeFinder } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
-import { newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
+import { chordBeats, newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
-  const { state, set, shapeOf, sheet, openSheet, tuning } = useApp();
+  const { state, set, shapeOf, sheet, openSheet, tuning, toast } = useApp();
   const prog = state.progression;
+  const beat = prog.beat ?? DEFAULT_BEAT;
+  const [beatOpen, setBeatOpen] = useState(false);
+  const stepSink = useRef<((step: number) => void) | null>(null);
   const [nowIdx, setNowIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
   const [menu, setMenu] = useState(false);
@@ -71,10 +77,24 @@ export function GuitarView() {
   const items = prog.chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
 
   useEffect(() => {
-    if (player.current?.playing) player.current.update(items, prog.bpm, prog.pattern, prog.loop);
+    if (player.current?.playing) player.current.update(items, prog.bpm, prog.pattern, prog.loop, beat);
   });
   useEffect(() => () => player.current?.stop(), []);
+  // one of the two panels above the tray at a time
+  useEffect(() => {
+    if (sheet) setBeatOpen(false);
+  }, [sheet]);
 
+  const startPlay = (list: typeof items, b: Beat) => {
+    if (!list.length && !b.on) return;
+    getAudio();
+    const p = (player.current ??= new ProgressionPlayer());
+    p.onStep = (i) => setNowIdx(list.length ? i : -1);
+    p.onDrumStep = (n) => stepSink.current?.(n);
+    p.onEnd = () => { setPlaying(false); setNowIdx(-1); };
+    p.start(list, prog.bpm, prog.pattern, prog.loop, b);
+    setPlaying(true);
+  };
   const togglePlay = () => {
     if (playing) {
       player.current?.stop();
@@ -82,13 +102,33 @@ export function GuitarView() {
       setNowIdx(-1);
       return;
     }
-    if (!items.length) return;
-    getAudio();
-    const p = (player.current ??= new ProgressionPlayer());
-    p.onStep = (i) => setNowIdx(i);
-    p.onEnd = () => { setPlaying(false); setNowIdx(-1); };
-    p.start(items, prog.bpm, prog.pattern, prog.loop);
-    setPlaying(true);
+    startPlay(items, beat);
+  };
+
+  const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
+  /** Load a rhythm. Chords that lasted whole bars keep lasting whole bars (4 beats become 3 in a waltz). */
+  const pickBeat = (p: BeatPattern) => {
+    const from = barBeats(beat);
+    const to = barBeats(p);
+    const resize = from !== to && Number.isInteger(from) && Number.isInteger(to);
+    const chords = resize ? prog.chords.map((c) => (c.beats % from === 0 ? { ...c, beats: Math.min(16, (c.beats / from) * to) } : c)) : prog.chords;
+    const next = applyPattern(beat, p);
+    set((s) => ({ ...s, progression: { ...s.progression, chords, beat: next } }));
+    if (resize && chords.some((c, i) => c.beats !== prog.chords[i].beats)) toast(`Chords: ${to} beats each`);
+    // hear it straight away
+    if (!playing) startPlay(chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats })), next);
+  };
+  /** Step to the previous / next rhythm of the same style. */
+  const stepBeat = (dir: -1 | 1) => {
+    const cur = findPattern(beat.patternId, state.myBeats);
+    const list = cur?.group === "mine" ? state.myBeats : BEAT_LIBRARY.filter((x) => x.group === (cur?.group ?? "dream"));
+    if (!list.length) return;
+    const at = list.findIndex((x) => x.id === beat.patternId);
+    pickBeat(list[(Math.max(at, 0) + dir + list.length) % list.length]);
+  };
+  const openBeat = () => {
+    openSheet(null);
+    setBeatOpen((v) => !v);
   };
 
   const drop = useCallback((p: Payload, index: number | null) => {
@@ -100,7 +140,7 @@ export function GuitarView() {
         const from = cs.findIndex((c) => c.id === p.slotId);
         if (from < 0) return s;
         [item] = cs.splice(from, 1);
-      } else item = { id: newId(), ref: p.ref, beats: 4, voicingId: p.voicingId };
+      } else item = { id: newId(), ref: p.ref, beats: chordBeats(s.progression), voicingId: p.voicingId };
       cs.splice(Math.min(index, cs.length), 0, item);
       return { ...s, progression: { ...s.progression, chords: cs } };
     });
@@ -207,13 +247,15 @@ export function GuitarView() {
         <ChordBoard />
       </div>
       {/* the finder sits directly on top of the tray, so shapes can be dragged straight in */}
-      <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
-        {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
+      <div className={`bottom-layer${sheet || beatOpen ? " open" : ""}${drag ? " dragging" : ""}`}>
+        {(sheet || beatOpen) && <div className="finder-backdrop" onClick={() => { openSheet(null); setBeatOpen(false); }} />}
         <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} />
+        {beatOpen && !sheet && <BeatPanel beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onPlay={togglePlay} onClose={() => setBeatOpen(false)} stepSink={stepSink} />}
+        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange}
+          beat={beat} beatOpen={beatOpen} onBeat={openBeat} onBeatToggle={() => setBeat((b) => ({ ...b, on: !b.on }))} onBeatStep={stepBeat} />
       </div>
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
-      {menu && <SongMenu voicings={voicings} items={items} onClose={() => setMenu(false)} />}
+      {menu && <SongMenu voicings={voicings} items={items} beat={beat} onClose={() => setMenu(false)} />}
     </DragCtx.Provider>
   );
 }
@@ -438,7 +480,7 @@ function NextChords() {
 
 // ── Progression dock ─────────────────────────────────────────
 
-function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange }: {
+function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beat, beatOpen, onBeat, onBeatToggle, onBeatStep }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -448,6 +490,11 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   onMenu: () => void;
   onStep: (i: number, dir: -1 | 1) => void;
   onArrange: (a: ArrangeSettings | null) => void;
+  beat: Beat;
+  beatOpen: boolean;
+  onBeat: () => void;
+  onBeatToggle: () => void;
+  onBeatStep: (dir: -1 | 1) => void;
 }) {
   const { state, set, toast } = useApp();
   const chords = state.progression.chords;
@@ -457,7 +504,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   const idea = () => {
     if (chords.length) setUndo(chords);
     const refs = sparkProgression(state.key, { length: 4, mood: "any", adventure: 0.3, startHome: true });
-    set((s) => ({ ...s, progression: { ...s.progression, chords: refs.map((r) => ({ id: newId(), ref: r, beats: 4 })) } }));
+    set((s) => ({ ...s, progression: { ...s.progression, chords: refs.map((r) => ({ id: newId(), ref: r, beats: chordBeats(s.progression) })) } }));
   };
   const marker = <span key="marker" className="drop-marker" />;
   const els: React.ReactNode[] = [];
@@ -475,6 +522,18 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   return (
     <div className={`dock${chords.length ? "" : " empty"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
       <div className="dock-inner">
+        <div className="arrange beatbar">
+          <button className={`chip${beat.on ? " on" : ""}`} aria-pressed={beat.on} title="Play a drum beat under the chords" onClick={onBeatToggle}>{beat.on ? "Beat on" : "Beat off"}</button>
+          <div className="beat-pick">
+            <button aria-label="Previous rhythm" title="Previous rhythm" onClick={() => onBeatStep(-1)}>‹</button>
+            <button className={`beat-name${beatOpen ? " on" : ""}`} aria-expanded={beatOpen} title="Rhythms, sounds and the step editor" onClick={onBeat}>
+              <b>{beat.name}{beat.edited ? "*" : ""}</b>
+              <span>{getKit(beat.kit).name}</span>
+            </button>
+            <button aria-label="Next rhythm" title="Next rhythm" onClick={() => onBeatStep(1)}>›</button>
+          </div>
+          <button className={`btn sm${beatOpen ? " primary" : ""}`} onClick={onBeat}>{beatOpen ? "Done" : "Edit"}</button>
+        </div>
         {chords.length >= 2 && (
           <div className="arrange">
             <span className="kb-label">Arrange</span>
@@ -496,7 +555,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
           </div>
         )}
         <div className="dock-main">
-        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!chords.length}>{playing ? "■" : "▶"}</button>
+        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!chords.length && !beat.on}>{playing ? "■" : "▶"}</button>
         <div className="dock-slots">
           {chords.length === 0 && !drag ? <span className="dock-empty">Drag chords here</span> : els}
           {chords.length === 0 && drag && drag.index === null && <span className="dock-empty">Drop here</span>}
@@ -548,7 +607,7 @@ function tabText(vs: (Voicing | undefined)[], names: string[], stringNames: stri
   return [header, ...lines].join("\n");
 }
 
-function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined)[]; items: { midi: (number | null)[]; beats: number }[]; onClose: () => void }) {
+function SongMenu({ voicings, items, beat, onClose }: { voicings: (Voicing | undefined)[]; items: { midi: (number | null)[]; beats: number }[]; beat: Beat; onClose: () => void }) {
   const { state, set, tuning, toast } = useApp();
   const prog = state.progression;
   const has = prog.chords.length > 0;
@@ -588,7 +647,7 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
     }
   };
   const midi = async () => {
-    const r = await saveFile(progressionToMidi(items, prog.bpm, prog.pattern, name || "M-Theory idea"), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
+    const r = await saveFile(progressionToMidi(items, prog.bpm, prog.pattern, name || "M-Theory idea", beat), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
     toast(r === "saved" ? "MIDI saved" : r === "failed" ? "Can't save files here" : "Cancelled");
   };
   const save = () => {
@@ -605,7 +664,7 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
     });
   const generate = () => {
     const refs = sparkProgression(state.key, { length, mood, adventure, startHome: true });
-    setProg((p) => ({ ...p, chords: refs.map((r) => ({ id: newId(), ref: r, beats: 4 })) }));
+    setProg((p) => ({ ...p, chords: refs.map((r) => ({ id: newId(), ref: r, beats: chordBeats(p) })) }));
   };
 
   return (
@@ -618,7 +677,7 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
         <div className="menu">
           <div className="menu-row">
             <span className="kb-label">Tempo</span>
-            <input type="range" min={40} max={180} value={prog.bpm} aria-label="Tempo" onChange={(e) => setProg((p) => ({ ...p, bpm: Number(e.target.value) }))} />
+            <input type="range" min={40} max={200} value={prog.bpm} aria-label="Tempo" onChange={(e) => setProg((p) => ({ ...p, bpm: Number(e.target.value) }))} />
             <b className="mono">{prog.bpm}</b>
           </div>
           <div className="menu-row">
@@ -644,7 +703,7 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
           </div>
           <div className="menu-row">
             <span className="kb-label">Export</span>
-            <button className="btn sm" disabled={!has} onClick={midi}>MIDI</button>
+            <button className="btn sm" disabled={!has && !beat.on} onClick={midi}>MIDI</button>
             <button className="btn sm" disabled={!has} onClick={copy}>Copy tab</button>
           </div>
           <div className="menu-row">

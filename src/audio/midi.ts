@@ -3,6 +3,8 @@
  * Ableton, Reaper, FL…) and your progression shows up with the exact voicings
  * and rhythm you heard in the app.
  */
+import { beatHits, type Beat } from "./beats";
+import type { DrumId } from "./drums";
 import { PatternId, patternEvents } from "./patterns";
 import type { PlayItem } from "./synth";
 
@@ -22,7 +24,14 @@ const str = (s: string) => [...s].map((ch) => ch.charCodeAt(0) & 0x7f);
 const u32 = (n: number) => [(n >>> 24) & 255, (n >>> 16) & 255, (n >>> 8) & 255, n & 255];
 const u16 = (n: number) => [(n >>> 8) & 255, n & 255];
 
-export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression"): Uint8Array {
+/** General MIDI drum notes (channel 10), so the beat lands on any DAW's drum kit. */
+export const GM_DRUM: Record<DrumId, number> = { kick: 36, snare: 38, clap: 39, hat: 42, open: 46, tom: 45, rim: 37, shaker: 70, bell: 56 };
+
+/**
+ * The progression as a MIDI file. With a beat switched on, the file has two tracks:
+ * guitar, and drums on channel 10. With no chords, the beat is exported as four bars.
+ */
+export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null): Uint8Array {
   type Ev = { tick: number; data: number[]; order: number };
   const events: Ev[] = [];
   const secPerTick = 60 / bpm / TPQ;
@@ -57,10 +66,29 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     track.push(...vlq(e.tick - last), ...e.data);
     last = e.tick;
   }
-  track.push(...vlq(Math.max(0, chordStart - last)), 0xff, 0x2f, 0x00);
+  const drums = beat?.on ? beat : null;
+  const totalTicks = chordStart || (drums ? Math.round((drums.steps / drums.div) * 4 * TPQ) : 0);
+  track.push(...vlq(Math.max(0, totalTicks - last)), 0xff, 0x2f, 0x00);
+  const chunk = (t: number[]) => [...str("MTrk"), ...u32(t.length), ...t];
+  if (!drums) return new Uint8Array([...str("MThd"), ...u32(6), ...u16(0), ...u16(1), ...u16(TPQ), ...chunk(track)]);
 
-  const bytes = [...str("MThd"), ...u32(6), ...u16(0), ...u16(1), ...u16(TPQ), ...str("MTrk"), ...u32(track.length), ...track];
-  return new Uint8Array(bytes);
+  const hits: Ev[] = [];
+  for (const h of beatHits(drums, totalTicks / TPQ)) {
+    const on = Math.round(h.beat * TPQ);
+    if (on >= totalTicks) continue;
+    const vel = Math.max(1, Math.min(127, Math.round(h.velocity * 118)));
+    hits.push({ tick: on, data: [0x99, GM_DRUM[h.id], vel], order: 1 });
+    hits.push({ tick: Math.min(totalTicks, on + 60), data: [0x89, GM_DRUM[h.id], 0], order: 0 });
+  }
+  hits.sort((a, b) => a.tick - b.tick || a.order - b.order);
+  const dtrack: number[] = [0, 0xff, 0x03, ...vlq(5), ...str("Drums")];
+  let dl = 0;
+  for (const e of hits) {
+    dtrack.push(...vlq(e.tick - dl), ...e.data);
+    dl = e.tick;
+  }
+  dtrack.push(...vlq(Math.max(0, totalTicks - dl)), 0xff, 0x2f, 0x00);
+  return new Uint8Array([...str("MThd"), ...u32(6), ...u16(1), ...u16(2), ...u16(TPQ), ...chunk(track), ...chunk(dtrack)]);
 }
 
 // ── Saving files ─────────────────────────────────────────────

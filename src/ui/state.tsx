@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { reviveBeat, type Beat, type BeatPattern } from "../audio/beats";
 import type { PatternId } from "../audio/patterns";
 import { strum } from "../audio/synth";
 import { easyVoicing, voicingsFor } from "../guitar/arrange";
@@ -27,6 +28,8 @@ export interface Progression {
   loop: boolean;
   /** When set, shapes are arranged together in one area of the neck. null = each chord uses your own shape. */
   arrange?: ArrangeSettings | null;
+  /** The drum beat under the chords (undefined = never touched). */
+  beat?: Beat;
 }
 
 export interface ArrangeSettings {
@@ -65,6 +68,8 @@ export interface AppState {
   saved: SavedProgression[];
   /** Your chosen way to play each chord (by tuning, capo and chord) */
   shapes: Record<string, string>;
+  /** Rhythms you saved from the beat editor */
+  myBeats: BeatPattern[];
 }
 
 export interface SheetState {
@@ -90,6 +95,7 @@ export const DEFAULT_STATE: AppState = {
   },
   saved: [],
   shapes: {},
+  myBeats: [],
 };
 
 function load(): AppState {
@@ -105,7 +111,8 @@ function load(): AppState {
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},
-      progression: { ...DEFAULT_STATE.progression, ...parsed.progression },
+      myBeats: Array.isArray(parsed.myBeats) ? parsed.myBeats : [],
+      progression: { ...DEFAULT_STATE.progression, ...parsed.progression, beat: reviveBeat(parsed.progression?.beat) },
     };
   } catch {
     return DEFAULT_STATE;
@@ -130,6 +137,12 @@ interface Ctx {
 }
 
 const AppCtx = createContext<Ctx | null>(null);
+
+/** How long a new chord lasts: one bar of the current beat (3 in a waltz), otherwise 4 beats. */
+export function chordBeats(p: Progression): number {
+  const n = p.beat?.on ? p.beat.steps / p.beat.div : 4;
+  return Number.isInteger(n) && n >= 1 ? n : 4;
+}
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
 
@@ -195,7 +208,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const addChord = useCallback(
     (ref: ChordRef, opts: { voicingId?: string; afterId?: string } = {}) => {
       setState((s) => {
-        const item: ProgChord = { id: newId(), ref, beats: 4, voicingId: opts.voicingId };
+        const item: ProgChord = { id: newId(), ref, beats: chordBeats(s.progression), voicingId: opts.voicingId };
         const chords = [...s.progression.chords];
         const at = opts.afterId ? chords.findIndex((c) => c.id === opts.afterId) : -1;
         if (at >= 0) chords.splice(at + 1, 0, item);
