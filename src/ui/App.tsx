@@ -1,4 +1,5 @@
 import { Component, useState, type ReactNode } from "react";
+import { IdeasPanel } from "./components/IdeasPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, useApp, type Tab } from "./state";
 import { GuitarView } from "./views/GuitarView";
@@ -26,8 +27,17 @@ class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void 
 }
 
 function Shell() {
-  const { state, set } = useApp();
+  const { state, set, idea, dirty, saveIdea, toast, syncNow } = useApp();
   const [settings, setSettings] = useState(false);
+  const [ideas, setIdeas] = useState<false | "open" | "named">(false);
+  const save = () => {
+    const r = saveIdea();
+    if (r === "nothing") return toast("Nothing to save yet");
+    syncNow();
+    // the first save opens the library so the idea can be named
+    if (r === "new") setIdeas("named");
+    else toast("Saved");
+  };
   const go = (tab: Tab) => {
     set((s) => ({ ...s, tab }));
     window.scrollTo({ top: 0 });
@@ -43,6 +53,8 @@ function Shell() {
               <button key={t.id} className={`tab${state.tab === t.id ? " active" : ""}`} aria-current={state.tab === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}</button>
             ))}
           </nav>
+          <button className={`btn sm save-btn${dirty ? " primary" : ""}`} onClick={save} disabled={!dirty} title={idea ? `Save "${idea.name}"` : "Save this idea to your library"}>{dirty || !idea ? "Save" : "Saved ✓"}</button>
+          <button className="btn sm ideas-btn" onClick={() => setIdeas("open")} title="Your saved ideas" aria-haspopup="dialog">Ideas{state.saved.length ? <span className="count">{state.saved.length}</span> : null}</button>
           <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Guitar setup" title="Tuning, capo & display">⚙</button>
         </div>
       </header>
@@ -52,6 +64,7 @@ function Shell() {
         </ViewBoundary>
       </main>
       {settings && <SettingsPanel onClose={() => setSettings(false)} />}
+      {ideas && <IdeasPanel onClose={() => setIdeas(false)} justSaved={ideas === "named"} />}
     </div>
   );
 }

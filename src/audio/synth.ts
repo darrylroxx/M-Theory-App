@@ -371,7 +371,8 @@ export class ProgressionPlayer {
     this.pattern = pattern;
     this.loop = loop || !items.length;
     if (beat) setDrumFx(beat);
-    if (this.nextIndex >= this.items.length) this.nextIndex = 0;
+    // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
+    if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
 
   private schedule() {

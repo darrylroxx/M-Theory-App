@@ -129,6 +129,17 @@ export function zipStore(files: { name: string; data: Uint8Array }[]): Uint8Arra
   return new Uint8Array([...chunks, ...central, ...end]);
 }
 
+/** Read the first file out of a ZIP made by zipStore (uncompressed entries only). */
+export function unzipFirst(zip: Uint8Array): Uint8Array | null {
+  if (zip.length < 30 || zip[0] !== 0x50 || zip[1] !== 0x4b || zip[2] !== 3 || zip[3] !== 4) return null;
+  const le16 = (o: number) => zip[o] | (zip[o + 1] << 8);
+  const le32 = (o: number) => (zip[o] | (zip[o + 1] << 8) | (zip[o + 2] << 16) | (zip[o + 3] << 24)) >>> 0;
+  if (le16(8) !== 0) return null; // compressed: not ours
+  const start = 30 + le16(26) + le16(28);
+  const size = le32(18);
+  return start + size <= zip.length ? zip.slice(start, start + size) : null;
+}
+
 type DownloadsCap = { save(req: { filename: string; data: Uint8Array | string }): Promise<{ status: string }> };
 type ClaudeHost = { use(name: string): Promise<unknown> };
 
@@ -146,9 +157,9 @@ export async function saveFile(bytes: Uint8Array, filename: string, mime = "appl
     if (!downloads) return "failed";
     let name = filename;
     let data = bytes;
-    if (/\.mid$/i.test(filename)) {
+    if (/\.(mid|json)$/i.test(filename)) {
       data = zipStore([{ name: filename, data: bytes }]);
-      name = filename.replace(/\.mid$/i, ".zip");
+      name = filename.replace(/\.(mid|json)$/i, ".zip");
     }
     try {
       await downloads.save({ filename: name, data });

@@ -116,8 +116,10 @@ main {
   flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding-block: 16px 40px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
-main.has-dock { padding-bottom: 310px; }
-@media (max-width: 520px) { .brand span { display: none; } .tab { padding: 6px 12px; } }
+main.has-dock { padding-bottom: 350px; }
+.save-btn:disabled { opacity: 0.55; }
+.ideas-btn .count { min-width: 18px; padding: 0 5px; border-radius: 999px; background: var(--accent); color: var(--accent-ink); font-size: 0.7rem; line-height: 18px; text-align: center; }
+@media (max-width: 520px) { .brand span { display: none; } .tab { padding: 6px 10px; } .topbar-inner { gap: 6px; padding-inline: 10px; } }
 
 .stack { display: flex; flex-direction: column; gap: 14px; }
 .row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
@@ -151,7 +153,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .mini-play { border: 1px solid var(--border-2); background: var(--card); border-radius: 50%; width: 30px; height: 30px; display: inline-grid; place-items: center; font-size: 0.7rem; padding: 0; flex-shrink: 0; }
 .mini-play:hover { border-color: var(--accent); color: var(--accent); }
 .empty { text-align: center; padding: 24px 10px; color: var(--muted); }
-.toast { position: fixed; left: 50%; bottom: calc(290px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 80; background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; box-shadow: var(--shadow); pointer-events: none; }
+.toast { position: fixed; left: 50%; bottom: calc(330px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 80; background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; box-shadow: var(--shadow); pointer-events: none; }
 
 /* ── Tone & role colours ── */
 .t-root { --tone: var(--root); } .t-third { --tone: var(--third); } .t-fifth { --tone: var(--fifth); } .t-seventh { --tone: var(--seventh); } .t-ext { --tone: var(--ext); } .t-other { --tone: var(--other); }
@@ -295,6 +297,36 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .kc:active, .slot:active, .chip.draggable:active { transform: scale(0.98); }
 .slot-step .slot-shapes { display: inline-grid; place-items: center; }
 @media (max-width: 620px) { .finder { padding: 10px; } .finder-head h2 { font-size: 1.35rem; } .shape-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .shapes-btn { height: 28px; padding: 0 7px 0 5px; font-size: 0.7rem; gap: 3px; } }
+/* ── Song structure ── */
+.k-intro { --kc: var(--stable); } .k-verse { --kc: var(--third); } .k-pre { --kc: var(--fifth); } .k-chorus { --kc: var(--accent); } .k-bridge { --kc: var(--seventh); } .k-solo { --kc: var(--chromatic); } .k-outro { --kc: var(--other); }
+.songbar { gap: 6px; }
+.songbar.open { flex-wrap: wrap; overflow: visible; }
+.song-play { height: 32px; padding: 0 12px; border-radius: 999px; border: none; background: var(--text); color: var(--bg); font-weight: 800; font-size: 0.85rem; white-space: nowrap; }
+.song-play.stop { background: var(--tension); color: #fff; }
+.sec { display: inline-flex; align-items: stretch; height: 32px; border-radius: 10px; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--kc) 65%, var(--border)); background: color-mix(in srgb, var(--kc) 16%, var(--card-2)); }
+.sec button { border: none; background: none; padding: 0 7px; font-weight: 700; font-size: 0.8rem; white-space: nowrap; color: inherit; }
+.sec button:disabled { opacity: 0.35; }
+.sec .sec-name { padding: 0 12px; font-size: 0.88rem; font-weight: 750; }
+.sec.on { background: var(--kc); border-color: var(--kc); color: #14161a; }
+.sec.on button:not(.sec-name) { border-left: 1px solid rgba(0, 0, 0, 0.18); }
+.sec.on button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.25); }
+.sec-add { height: 32px; padding: 0 11px; border-radius: 10px; border: 1.5px dashed color-mix(in srgb, var(--kc) 70%, var(--border)); background: none; font-weight: 750; font-size: 0.85rem; white-space: nowrap; }
+.sec-add:hover { background: color-mix(in srgb, var(--kc) 22%, transparent); }
+.sec-plus { width: 34px; height: 32px; border-radius: 10px; border: 1.5px dashed var(--border-2); background: none; font-size: 1.15rem; font-weight: 800; line-height: 1; padding: 0; }
+.sec-plus:hover { border-color: var(--accent); color: var(--accent); }
+
+/* ── Ideas ── */
+.ideas-list { display: flex; flex-direction: column; gap: 8px; }
+.idea { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 12px; background: var(--card); border: 1px solid var(--border); }
+.idea.here { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent) inset; }
+.idea-main { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 1px; }
+input.idea-name { background: none; border: 1px solid transparent; padding: 2px 4px; margin-left: -5px; font-weight: 800; font-size: 1rem; border-radius: 6px; width: 100%; }
+input.idea-name:hover, input.idea-name:focus { border-color: var(--border-2); background: var(--bg-2); }
+.ideas-ask { display: flex; flex-direction: column; gap: 8px; padding: 10px 12px; margin-bottom: 10px; border-radius: 12px; border: 1px solid var(--accent); background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.ideas-copy { margin-top: 10px; align-self: flex-start; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.ideas-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--border); }
+.btn.danger.solid { background: var(--tension); border-color: var(--tension); color: #fff; }
+
 /* ── Beat ── */
 .d-kick { --dc: var(--root); } .d-snare { --dc: var(--third); } .d-clap { --dc: var(--chromatic); } .d-hat { --dc: var(--ext); } .d-open { --dc: var(--motion); }
 .d-tom { --dc: var(--fifth); } .d-rim { --dc: var(--seventh); } .d-shaker { --dc: var(--stable); } .d-bell { --dc: var(--borrowed); }

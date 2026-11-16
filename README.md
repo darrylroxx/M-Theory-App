@@ -39,7 +39,13 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - Tap a drum's name to hear it and shape it: **Tune, Decay, Click / Snap / Grain, Level**, Mute.
    - **Tempo, Swing, Volume, Space** (reverb) and **Grit** (saturation) for the whole kit.
    - Picking a 3/4 or 6/8 rhythm changes whole-bar chords to match (4 beats become 3 in a waltz). With no chords in the tray, ▶ plays the beat alone so you can jam over it.
-8. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export** (guitar + a drum track on channel 10), copy chords + tab, and saved ideas.
+8. **Song** (the first row of the tray): turn ideas into a whole song.
+   - Tap **+ Verse**, **+ Chorus**, **+ Intro**, **+ Bridge**… to add sections. The first one names the chords already in the tray. Tap a section to work on it: the tray shows its chords.
+   - Sections of the same kind share their chords, like the choruses of a real song: add a second Verse and it arrives with the Verse chords, numbered Verse 1 and Verse 2. Change one and they all change. **Make different** gives a section its own chords.
+   - ◀ ▶ move a section, ✕ removes it. **▶ Song** plays the whole thing once from the top while the tray follows along; the round ▶ loops just the section you are on.
+   - MIDI export and "Copy tab" cover the whole song.
+9. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
+10. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export** (guitar + a drum track on channel 10), copy chords + tab, and saved ideas.
 
 A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
@@ -64,7 +70,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 79 tests: theory, voicings, progressions, synth tuning, drums, MIDI
+npm test          # 97 tests: theory, voicings, shapes, song structure, library, synth, drums, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -90,6 +96,9 @@ src/
     scales.ts      36 scales/modes with moods, signature notes, brightness
     keys.ts        diatonic harmony, roles, every chord in a key, borrowed & chromatic chords
     progression.ts suggestion engine, Spark generator, substitutions, colourizing
+  song/
+    structure.ts   sections of a song, shared chords between sections of one kind
+    library.ts     saving ideas, what counts as a change, merging the library between devices
   guitar/
     voicings.ts    the voicing generator: search, fingering/barre detection, difficulty, tags
     shapes.ts      the shape book: textbook open chords, playability rules, shape families
@@ -112,4 +121,4 @@ src/
 
 - **Drums** are modelled on how the classic machines make sound: a decaying sine with a pitch blip for the kick, two tuned pings plus filtered noise for the snare, six detuned square waves through band-pass filters for 808-style hats and cowbell, three quick noise bursts for the clap. The Lo-fi kit is then reduced to 8 bits at half the sample rate. The drum grid re-locks to every chord change, so the beat and the chords cannot drift apart.
 
-Everything runs locally in your browser. Your progressions are saved in the browser's local storage.
+Everything runs locally in your browser. Your ideas are saved in the browser's local storage. When the app is opened as a claude.ai artifact, each saved idea is also written to your private area of the artifact's database, so the same library shows up on your other devices.
