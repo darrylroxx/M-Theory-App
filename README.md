@@ -5,7 +5,7 @@
 M-Theory answers the questions that matter when you're writing songs on guitar:
 
 - *"I'm in B. What chords can I use?"* All of them: diatonic, colour chords, borrowed, chromatic.
-- *"How else can I play this chord?"* Every playable voicing on the neck, not just the barre shape.
+- *"How else can I play this chord?"* The shapes guitarists really use, starting from the common ones and branching out, not just the barre shape.
 - *"What could come next?"* Suggestions from safe to wild, each with a plain-English reason.
 - *"What mode is this, and how do I make it sound like that mode?"*
 - *"What does it sound like over a beat?"* A drum machine with 90 rhythms you can edit by tapping.
@@ -18,14 +18,15 @@ One page, very little text. (A **Piano** tab is reserved for later.)
 
 1. **Key**: tap one of the 12 notes.
 2. **Mode**: Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor (27 more under "More…").
-3. **Chords appear**, each drawn as an easy shape with finger numbers. Card colours show each chord's job: 🟢 Home · 🔵 Near home · 🟠 Away · 🔴 Tension; ★ = holds the mode's signature note. Small tabs switch to **7ths**, **Outside** (borrowed and surprise chords) and **Next ✨** (what could follow your last chord).
-4. **Tap a chord to open the shape finder.** Every way to play it is laid out as a map:
-   - **Across = up the neck**: Open · frets 1–3 · 4–6 · 7–9 · 10–12 · 13+
-   - **Down = the note in the bass**: root, 3rd, 5th (7th…), i.e. root position and each inversion
-   - Each square shows the best shape for that spot; ‹ › flips through the others there. Tap a shape to hear it and use it.
-   - **Flavours** along the top swap the chord itself (C → Cmaj7, Cadd9, Csus2, C6…; "All…" has all 44 types).
-   - Filters: strings (Any / 3 / 4 / 5–6), **No barre**, **Open strings**; dots can show fingers, notes or intervals.
-5. **Build the progression in the tray** at the bottom. Drag chords in (touch: press and hold, then drag; or tap **+**), drag to reorder, ✕ to remove. The finder stays open above the tray, so you can **drag one exact shape straight into the tray**. Tap a chord in the tray to change that spot's shape, flavour, length or position.
+3. **Chords appear**, each drawn as an easy shape with finger numbers. **Tap a chord to hear it.** Card colours show each chord's job: 🟢 Home · 🔵 Near home · 🟠 Away · 🔴 Tension; ★ = holds the mode's signature note. Small tabs switch to **7ths**, **Outside** (borrowed and surprise chords) and **Next ✨** (what could follow your last chord).
+4. **Shapes** (the button on every chord) opens the shape finder: the ways guitarists really play that chord, starting from the ones everybody knows.
+   - **Common**: the textbook open chord, the two movable barre shapes (root on the 6th string, root on the 5th string), the small four-string shape, and for seventh chords the standard jazz grips.
+   - **Small**: three- and four-string shapes with no big barre, grouped by string set and running up the neck. The way out of playing barre chords for everything.
+   - **Inversions**: the same chord with another note in the bass (C/E, C/G), grouped by bass note.
+   - **All**: everything playable, grouped by where it sits on the neck.
+   - Tap a shape to hear it and use it. **Flavours** along the top swap the chord itself (C → Cmaj7, Cadd9, Csus2, C6…; "All…" has all 44 types).
+   - Only comfortable grips are listed: no muted strings in the middle of a chord (except the classic thumb-muted ones like 3x0003 and 5x555x), no stretch wider than four frets, no open strings mixed with notes far up the neck.
+5. **Build the progression in the tray** at the bottom. Drag chords in (touch: press and hold, then drag; or tap **+**), drag to reorder, ✕ to remove. The finder stays open above the tray, so you can **drag one exact shape straight into the tray**. Tap a chord in the tray to hear it; the small grid button under it opens the finder for that spot (shape, flavour, length, position).
 6. **Arrange** (the bar on top of the tray, once you have two chords): tap a neck area (**Open · 1–3 · 4–6 · 7–9 · 10–12**) and every chord in the progression is re-voiced there together, picking the set of shapes that needs the least hand movement. The bar shows the frets the whole progression now spans.
    - **Strings** (Any / 3 / 4 / 5–6) and **Inversions** (let the bass note change for smoother moves) re-deal the set.
    - **‹ ›** under each chord in the tray sifts that one chord through its other shapes, best fit with its neighbours first, while everything else stays put. Do it while the loop is playing to hear each option in context.
@@ -63,7 +64,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 68 tests: theory, voicings, progressions, synth tuning, drums, MIDI
+npm test          # 79 tests: theory, voicings, progressions, synth tuning, drums, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -91,7 +92,8 @@ src/
     progression.ts suggestion engine, Spark generator, substitutions, colourizing
   guitar/
     voicings.ts    the voicing generator: search, fingering/barre detection, difficulty, tags
-    shapeMap.ts    organises voicings into the finder map (neck position × bass note)
+    shapes.ts      the shape book: textbook open chords, playability rules, shape families
+    shapeMap.ts    areas of the neck
     arrange.ts     easy default shapes, voice-leading optimizer (dynamic programming), capo finder
     tunings.ts
   audio/
@@ -103,6 +105,7 @@ src/
   ui/            React app: the guitar page, shape finder, tray, drag & drop
 ```
 
+- **The shape book** keeps about one in six of the generated voicings. A shape has to be holdable (stretch, finger order, muted strings) and it is then filed under the families guitar teaching uses: open chords, the two barre shapes, triads on neighbouring strings, four-string shapes and shell voicings. Default shapes, Arrange and the ‹ › steppers only ever use these.
 - **Voicings** are found by scanning 4-fret windows up the neck (plus open strings), trying every combination of chord tones per string, then keeping only shapes with all required tones, at most one muted string in the middle, and a feasible fingering. Each is scored for difficulty (fingers, barres, stretch, mutes) and usefulness (root position, fullness, low-end mud).
 - **Suggestions** score every candidate chord by root motion (falling 5ths, steps, 3rds, chromatic slides), shared notes, voice-leading distance and resolution of tension, then group them by character.
 - **Progression voicings** use dynamic programming to minimise total difficulty plus hand movement and top-note jumps across the whole progression.

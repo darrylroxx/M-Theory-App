@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barBeats, findPattern, type Beat, type BeatPattern } from "../../audio/beats";
 import { getKit } from "../../audio/drums";
 import { progressionToMidi, saveFile } from "../../audio/midi";
@@ -16,7 +16,7 @@ import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scal
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
 import { BeatPanel } from "../components/BeatPanel";
-import { ShapeFinder } from "../components/ShapeFinder";
+import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { chordBeats, newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
 
@@ -344,8 +344,14 @@ const KeyBar = memo(function KeyBar() {
 type View = "triads" | "sevenths" | "more" | "outside" | "next";
 const GROUP_LABEL: Record<SuggestionGroup["id"], string> = { natural: "Safe", smooth: "Smooth", color: "Colorful", bold: "Bold" };
 
+/** The chord last tapped in one of the chord lists: it gets the Shapes and + buttons. */
+const PickCtx = createContext<{ sel: ChordRef | null; setSel: (r: ChordRef) => void }>({ sel: null, setSel: () => {} });
+const sameRef = (a: ChordRef | null, b: ChordRef) => !!a && a.root === b.root && a.typeId === b.typeId && a.bass === b.bass;
+
 const ChordBoard = memo(function ChordBoard() {
-  const { state } = useApp();
+  const { state, openSheet, addChord, toast } = useApp();
+  const [sel, setSel] = useState<ChordRef | null>(null);
+  const pickCtx = useMemo(() => ({ sel, setSel }), [sel]);
   const key = state.key;
   const scale = getScale(key.scaleId);
   const hepta = isHeptatonic(scale);
@@ -357,11 +363,22 @@ const ChordBoard = memo(function ChordBoard() {
 
   return (
     <section className="card board">
-      <Seg value={view} options={options} onChange={setView} label="Which chords" />
-      {(view === "triads" || view === "sevenths") && <KeyChords size={view === "triads" ? 3 : 4} />}
-      {view === "more" && <MoreChords />}
-      {view === "outside" && <OutsideChords />}
-      {view === "next" && <NextChords />}
+      <div className="board-head">
+        <Seg value={view} options={options} onChange={setView} label="Which chords" />
+        {sel && view !== "triads" && view !== "sevenths" && (
+          <div className="pick-bar">
+            <b>{chordSymbol(sel)}</b>
+            <button className="shapes-btn" onClick={() => openSheet({ ref: sel })}><ShapesIcon />Shapes</button>
+            <button className="kc-add" aria-label={`Add ${chordSymbol(sel)}`} onClick={() => { addChord(sel); toast(`${chordSymbol(sel)} added`); }}>+</button>
+          </div>
+        )}
+      </div>
+      <PickCtx.Provider value={pickCtx}>
+        {(view === "triads" || view === "sevenths") && <KeyChords size={view === "triads" ? 3 : 4} />}
+        {view === "more" && <MoreChords />}
+        {view === "outside" && <OutsideChords />}
+        {view === "next" && <NextChords />}
+      </PickCtx.Provider>
     </section>
   );
 });
@@ -384,11 +401,11 @@ function ChordCard({ c }: { c: KeyChord }) {
   const { state, openSheet, audition, addChord, shapeOf } = useApp();
   const { capo, labels, leftHanded } = state.settings;
   const v = shapeOf(c.ref);
-  const d = useDraggable({ ref: c.ref }, () => openSheet({ ref: c.ref }));
+  const d = useDraggable({ ref: c.ref }, () => audition(c.ref));
   const name = chordSymbol(c.ref);
   return (
-    <div className={`kc draggable role-${c.role}`} role="button" tabIndex={0} aria-label={`${name}: ways to play`} aria-haspopup="dialog" {...d}
-      onKeyDown={(e) => { if (e.key === "Enter") openSheet({ ref: c.ref }); }}>
+    <div className={`kc draggable role-${c.role}`} role="button" tabIndex={0} aria-label={`Play ${name}`} {...d}
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) audition(c.ref); }}>
       <span className="kc-head">
         <span className="kc-roman">{displayRoman(c.roman)}</span>
         {c.signature && <span className="kc-star">★</span>}
@@ -396,18 +413,19 @@ function ChordCard({ c }: { c: KeyChord }) {
       <span className="kc-name">{name}</span>
       {v && <ChordDiagram voicing={v} root={c.ref.root} labels={labels} width={120} leftHanded={leftHanded} capo={capo} />}
       <div className="kc-actions" data-nodrag>
-        <button className="mini-play" aria-label={`Play ${name}`} onClick={(e) => { e.stopPropagation(); audition(c.ref); }}>▶</button>
+        <button className="shapes-btn" aria-label={`Other ways to play ${name}`} title="Other ways to play it" aria-haspopup="dialog" onClick={(e) => { e.stopPropagation(); openSheet({ ref: c.ref }); }}><ShapesIcon />Shapes</button>
         <button className="kc-add" aria-label={`Add ${name}`} onClick={(e) => { e.stopPropagation(); addChord(c.ref); }}>+</button>
       </div>
     </div>
   );
 }
 
-/** A chord as a small draggable pill: tap for shapes, drag to add. */
+/** A chord as a small draggable pill: tap to hear it (Shapes and + then appear at the top), drag to add. */
 function Pill({ chord, tone, title }: { chord: ChordRef; tone?: string; title?: string }) {
-  const { openSheet } = useApp();
-  const d = useDraggable({ ref: chord }, () => openSheet({ ref: chord }));
-  return <button className={`chip draggable${tone ? ` ${tone}` : ""}`} title={title} {...d}>{chordSymbol(chord)}</button>;
+  const { audition } = useApp();
+  const { sel, setSel } = useContext(PickCtx);
+  const d = useDraggable({ ref: chord }, () => { audition(chord); setSel(chord); });
+  return <button className={`chip draggable${tone ? ` ${tone}` : ""}${sameRef(sel, chord) ? " sel" : ""}`} title={title} aria-pressed={sameRef(sel, chord)} {...d}>{chordSymbol(chord)}</button>;
 }
 
 function MoreChords() {
@@ -573,18 +591,20 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
 
 function Slot({ c, i, v, now, dragged, onStep }: { c: ProgChord; i: number; v?: Voicing; now: boolean; dragged: boolean; onStep: (d: -1 | 1) => void }) {
   const { state, set, openSheet } = useApp();
-  const d = useDraggable({ ref: c.ref, slotId: c.id }, () => openSheet({ ref: c.ref, slotId: c.id }));
+  const play = () => v && strum(v.midi);
+  const d = useDraggable({ ref: c.ref, slotId: c.id }, play);
   const a = analyzeChord(c.ref, state.key);
   const name = chordSymbol(c.ref);
   return (
     <div className={`slot draggable st-${a.status}${now ? " now" : ""}${dragged ? " dragged" : ""}`} data-slot={c.id} role="button" tabIndex={0}
-      aria-label={`Chord ${i + 1}: ${name}. Change shape`} {...d} onKeyDown={(e) => { if (e.key === "Enter") openSheet({ ref: c.ref, slotId: c.id }); }}>
+      aria-label={`Chord ${i + 1}: ${name}. Play`} {...d} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) play(); }}>
       <span className="sym">{name}</span>
       {v && <ChordDiagram voicing={v} root={c.ref.root} bass={c.ref.bass} labels={state.settings.labels} width={116} compact leftHanded={state.settings.leftHanded} capo={state.settings.capo} />}
       <button className="slot-x" data-nodrag aria-label={`Remove ${name}`}
         onClick={(e) => { e.stopPropagation(); set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.filter((x) => x.id !== c.id) } })); }}>✕</button>
       <div className="slot-step" data-nodrag onClick={(e) => e.stopPropagation()}>
         <button aria-label={`Previous shape for ${name}`} title="Previous shape that fits here" onClick={() => onStep(-1)}>‹</button>
+        <button className="slot-shapes" aria-label={`Other ways to play ${name}`} title="All shapes, length, remove" aria-haspopup="dialog" onClick={() => openSheet({ ref: c.ref, slotId: c.id })}><ShapesIcon /></button>
         <button aria-label={`Next shape for ${name}`} title="Next shape that fits here" onClick={() => onStep(1)}>›</button>
       </div>
     </div>

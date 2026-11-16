@@ -9,6 +9,7 @@
 import { ChordRef, ChordType, getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
 import { positionOf } from "./shapeMap";
+import { openChordIds, playable } from "./shapes";
 import type { Tuning } from "./tunings";
 import { Voicing, generateVoicings, voicingCenter } from "./voicings";
 
@@ -52,12 +53,37 @@ export function voicingsFor(ref: ChordRef, tuning: Tuning, capo: number, extra: 
   return v;
 }
 
+const playableCache = new WeakMap<Voicing[], Voicing[]>();
+
+/** The shapes a hand can comfortably hold (see shapes.ts). Falls back to everything for chords with none. */
+export function playableFor(ref: ChordRef, tuning: Tuning, capo: number): Voicing[] {
+  const all = voicingsFor(ref, tuning, capo);
+  let ok = playableCache.get(all);
+  if (!ok) {
+    ok = all.filter(playable);
+    if (!ok.length) ok = all;
+    playableCache.set(all, ok);
+  }
+  return ok;
+}
+
 /**
- * The friendliest single shape for a chord: 4+ strings, root in the bass, no full
- * barre when asked, and low on the neck where most players are at home.
+ * The friendliest single shape for a chord: the textbook open chord when there is
+ * one, otherwise 4+ strings, root in the bass, no full barre when asked, and low
+ * on the neck where most players are at home.
  */
 export function easyVoicing(ref: ChordRef, tuning: Tuning, capo: number, avoidBarre = true): Voicing | undefined {
-  const all = voicingsFor(ref, tuning, capo);
+  if (!ref.bass) {
+    const id = openChordIds(pc(ref.root), ref.typeId, tuning.notes, capo)[0];
+    const textbook = id && voicingsFor(ref, tuning, capo).find((v) => v.id === id);
+    if (textbook) return textbook;
+  }
+  const all = playableFor(ref, tuning, capo);
+  if (getChordType(ref.typeId).intervals.length <= 2) {
+    // power chords: root, fifth and octave on three neighbouring strings, as low as they go
+    const three = all.filter((v) => v.bassToken === "1" && v.frets.filter((f) => f !== null).length === 3 && v.frets.findIndex((f) => f !== null) <= 1 && v.frets.slice(v.frets.findIndex((f) => f !== null), v.frets.findIndex((f) => f !== null) + 3).every((f) => f !== null));
+    if (three.length) return three.reduce((b, v) => (v.minFret < b.minFret ? v : b));
+  }
   const ok = (v: Voicing, barreOk: boolean) =>
     v.frets.filter((f) => f !== null).length >= 4 && (v.bassToken === "1" || v.bassToken === "bass") && (barreOk || v.barreKind !== "full");
   const score = (v: Voicing) => v.rank + 0.2 * Math.max(0, v.minFret - 4);
@@ -103,7 +129,7 @@ export function arrangeProgression(chords: ChordRef[], o: ArrangeOptions): Voici
   const cands = chords.map((ref, i) => {
     const pin = o.pinned?.[i];
     if (pin) return [pin];
-    const all = sized(voicingsFor(ref, o.tuning, o.capo), o.strings);
+    const all = sized(playableFor(ref, o.tuning, o.capo), o.strings);
     return [...all].sort((x, y) => unaryCost(x, o) - unaryCost(y, o)).slice(0, K);
   });
   const n = chords.length;
@@ -146,7 +172,7 @@ export function arrangeProgression(chords: ChordRef[], o: ArrangeOptions): Voici
  * alternatives for one spot in a progression.
  */
 export function fitAlternatives(ref: ChordRef, o: ArrangeOptions, prev?: Voicing, next?: Voicing): Voicing[] {
-  const all = sized(voicingsFor(ref, o.tuning, o.capo), o.strings);
+  const all = sized(playableFor(ref, o.tuning, o.capo), o.strings);
   const cost = (v: Voicing) => unaryCost(v, o) + (prev ? transitionCost(prev, v) : 0) + (next ? transitionCost(v, next) : 0);
   return all.map((v) => [cost(v), v] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
 }
