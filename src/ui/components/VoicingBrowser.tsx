@@ -2,111 +2,87 @@ import { useMemo, useState } from "react";
 import { strum } from "../../audio/synth";
 import { voicingsFor } from "../../guitar/arrange";
 import { voicingText, type Voicing } from "../../guitar/voicings";
-import { chordSymbol, type ChordRef } from "../../theory/chords";
+import type { ChordRef } from "../../theory/chords";
+import { parseInterval } from "../../theory/intervals";
 import { useApp } from "../state";
 import { ChordDiagram } from "./ChordDiagram";
 import { Seg } from "./common";
 
-type Style = "best" | "nobarre" | "open" | "small" | "high" | "all";
-type Bass = "root" | "any" | "inv";
+type Filter = "all" | "open" | "nobarre" | "barre" | "inv" | "small";
 
-const STYLES: { value: Style; label: string; hint: string }[] = [
-  { value: "best", label: "Best", hint: "The most useful shapes first" },
-  { value: "nobarre", label: "No barre", hint: "Nothing that needs a full barre" },
-  { value: "open", label: "Open strings", hint: "Shapes that let open strings ring" },
-  { value: "small", label: "Small (3 strings)", hint: "Compact triads, great for riffs and layering" },
-  { value: "high", label: "Up the neck", hint: "Shapes from fret 5 and higher" },
-  { value: "all", label: "Everything", hint: "Every playable shape, including inversions" },
+const FILTERS: { value: Filter; label: string }[] = [
+  { value: "all", label: "All" },
+  { value: "open", label: "Open" },
+  { value: "nobarre", label: "No barre" },
+  { value: "barre", label: "Barre" },
+  { value: "inv", label: "Inversions" },
+  { value: "small", label: "3-string" },
 ];
 
-function matches(v: Voicing, style: Style, bass: Bass, maxDiff: number, slash: boolean): boolean {
-  if (v.difficulty > maxDiff) return false;
-  const sounding = v.frets.filter((f) => f !== null).length;
-  switch (style) {
-    case "nobarre": if (v.barreKind === "full") return false; break;
-    case "open": if (v.openStrings === 0) return false; break;
-    case "small": if (sounding !== 3) return false; break;
-    case "high": if (v.minFret < 5) return false; break;
+function matches(v: Voicing, f: Filter): boolean {
+  switch (f) {
+    case "open": return v.openStrings > 0;
+    case "nobarre": return v.barreKind !== "full";
+    case "barre": return v.barreKind === "full";
+    case "inv": return v.bassToken !== "1";
+    case "small": return v.frets.filter((x) => x !== null).length === 3;
+    default: return true;
   }
-  if (!slash && style !== "all") {
-    if (bass === "root" && v.bassToken !== "1") return false;
-    if (bass === "inv" && v.bassToken === "1") return false;
-  }
-  return true;
 }
 
-/** Every way to play a chord, with one row of simple filters. */
-export function VoicingBrowser({ chord, onUse, useLabel = "+ Add", pickedId }: {
-  chord: ChordRef;
-  onUse?: (v: Voicing) => void;
-  useLabel?: string;
-  pickedId?: string;
-}) {
+/** Short label for what's in the bass: "" for root position, "1st inv", "2nd inv"… */
+export function inversionTag(v: Voicing): string {
+  if (v.bassToken === "1" || v.bassToken === "bass") return "";
+  const n = parseInterval(v.bassToken).number;
+  return n === 3 ? "1st inv" : n === 5 ? "2nd inv" : n === 7 || n === 6 ? "3rd inv" : `${v.bassToken.replace(/b/g, "♭").replace(/#/g, "♯")} bass`;
+}
+
+/** Every way to play a chord. Tap a shape to hear it and choose it. */
+export function VoicingBrowser({ chord, pickedId, onPick }: { chord: ChordRef; pickedId?: string; onPick: (v: Voicing) => void }) {
   const { state, tuning, set } = useApp();
-  const { capo, labels, leftHanded, avoidBarre } = state.settings;
-  const [style, setStyle] = useState<Style>(avoidBarre ? "nobarre" : "best");
-  const [bass, setBass] = useState<Bass>("root");
-  const [maxDiff, setMaxDiff] = useState(99);
-  const [more, setMore] = useState(false);
+  const { capo, labels, leftHanded } = state.settings;
+  const [filter, setFilter] = useState<Filter>("all");
   const [shown, setShown] = useState(12);
-  const slash = !!chord.bass && chord.bass !== chord.root;
 
   const all = useMemo(() => voicingsFor(chord, tuning, capo), [chord, tuning, capo]);
-  const list = useMemo(() => all.filter((v) => matches(v, style, bass, maxDiff, slash)), [all, style, bass, maxDiff, slash]);
-  const reset = <T,>(fn: (v: T) => void) => (v: T) => { fn(v); setShown(12); };
+  const list = useMemo(() => {
+    const l = all.filter((v) => matches(v, filter));
+    // keep the chosen shape first so it's always in view
+    const i = l.findIndex((v) => v.id === pickedId);
+    return i > 0 ? [l[i], ...l.slice(0, i), ...l.slice(i + 1)] : l;
+  }, [all, filter, pickedId]);
 
   return (
     <div className="stack" style={{ gap: 10 }}>
-      <div className="row tight">
-        <Seg value={style} options={STYLES.map((s) => ({ value: s.value, label: s.label }))} onChange={reset(setStyle)} label="Shape style" />
-        <button className="btn sm ghost" onClick={() => setMore((m) => !m)} aria-expanded={more}>{more ? "Fewer options" : "More options"}</button>
+      <div className="row tight" style={{ justifyContent: "space-between" }}>
+        <Seg value={filter} options={FILTERS} onChange={(f) => { setFilter(f); setShown(12); }} label="Filter shapes" />
+        <Seg value={labels} options={[{ value: "fingers", label: "Fingers" }, { value: "notes", label: "Notes" }, { value: "intervals", label: "Intervals" }]}
+          onChange={(v) => set((s) => ({ ...s, settings: { ...s.settings, labels: v } }))} label="Dots show" />
       </div>
-      {more && (
-        <div className="filters-more">
-          {!slash && (
-            <div className="row tight"><span className="filter-label">Lowest note</span>
-              <Seg value={bass} options={[{ value: "root", label: "Root" }, { value: "any", label: "Any" }, { value: "inv", label: "Inversions only" }]} onChange={reset(setBass)} label="Bass note" />
-            </div>
-          )}
-          <div className="row tight"><span className="filter-label">Difficulty</span>
-            <Seg value={maxDiff} options={[{ value: 99, label: "Any" }, { value: 3, label: "Easy" }, { value: 5, label: "Easy + medium" }]} onChange={reset(setMaxDiff)} label="Difficulty" />
-          </div>
-          <div className="row tight"><span className="filter-label">Dots show</span>
-            <Seg value={labels} options={[{ value: "intervals", label: "Intervals" }, { value: "notes", label: "Notes" }, { value: "fingers", label: "Fingers" }]}
-              onChange={(v) => set((s) => ({ ...s, settings: { ...s.settings, labels: v } }))} label="Dot labels" />
-          </div>
-        </div>
-      )}
-      <p className="small muted">
-        {STYLES.find((s) => s.value === style)?.hint}. Showing <b>{Math.min(shown, list.length)}</b> of {list.length} ways to play {chordSymbol(chord)}{capo ? ` (capo ${capo})` : ""}. Tap a shape to hear it.
-      </p>
       {list.length === 0 ? (
-        <div className="empty">No shapes match. Try “Best” or “Everything”.</div>
+        <div className="empty">None</div>
       ) : (
         <div className="voicing-grid">
           {list.slice(0, shown).map((v) => {
-            const level = v.difficulty < 3 ? "Easy" : v.difficulty < 5 ? "Medium" : "Hard";
+            const level = v.difficulty < 3 ? "easy" : v.difficulty < 5 ? "medium" : "hard";
+            const inv = inversionTag(v);
             return (
-              <div key={v.id} className={`voicing-card${pickedId === v.id ? " picked" : ""}`}>
-                <button className="diagram-btn" onClick={() => strum(v.midi)} aria-label={`Play ${voicingText(v)}`}>
-                  <ChordDiagram voicing={v} root={chord.root} bass={chord.bass} labels={labels} leftHanded={leftHanded} capo={capo} />
-                </button>
-                <div className="tags">
-                  <span className={`pill ${level.toLowerCase()}`}>{level}</span>
-                  {v.barreKind === "full" ? <span className="pill">Barre</span> : v.openStrings > 0 ? <span className="pill">Open strings</span> : null}
-                </div>
-                {v.bassToken !== "1" && !slash && <div className="tiny faint">{v.inversion}</div>}
-                {onUse && <button className={`btn sm${pickedId === v.id ? " primary" : ""}`} onClick={() => onUse(v)}>{pickedId === v.id ? "✓ Using" : useLabel}</button>}
-              </div>
+              <button key={v.id} className={`voicing-card${pickedId === v.id ? " picked" : ""}`} aria-pressed={pickedId === v.id}
+                aria-label={`${voicingText(v)}${inv ? `, ${inv}` : ""}`} onClick={() => { strum(v.midi); onPick(v); }}>
+                {pickedId === v.id && <span className="check">✓</span>}
+                <ChordDiagram voicing={v} root={chord.root} bass={chord.bass} labels={labels} leftHanded={leftHanded} capo={capo} />
+                <span className="frets-text mono"><i className={`lvl ${level}`} title={level} />{voicingText(v)}</span>
+                {(inv || v.barreKind === "full") && <span className="tiny faint">{[inv, v.barreKind === "full" ? "barre" : ""].filter(Boolean).join(" · ")}</span>}
+              </button>
             );
           })}
         </div>
       )}
-      {list.length > shown && (
-        <div className="row" style={{ justifyContent: "center" }}>
-          <button className="btn" onClick={() => setShown((n) => n + 12)}>Show more ({list.length - shown} left)</button>
-        </div>
-      )}
+      <div className="row" style={{ justifyContent: "center" }}>
+        {list.length > shown
+          ? <button className="btn" onClick={() => setShown((n) => n + 24)}>More ({list.length - shown})</button>
+          : <span className="tiny faint">{list.length} shape{list.length === 1 ? "" : "s"}</span>}
+      </div>
     </div>
   );
 }

@@ -26,26 +26,22 @@ export function LearnView() {
   const name = `${displayNote(state.key.tonic)} ${getScale(state.key.scaleId).short}`;
   return (
     <div className="stack">
-      <div>
-        <h1 className="page-title">Learn</h1>
-        <p className="muted">Short, hands-on lessons that use your current key ({name}). Open one at a time.</p>
-      </div>
-      <Disclosure className="topic" defaultOpen title="🌗 Modes in plain English" hint="Seven moods from the same notes, brightest to darkest">
+      <Disclosure className="topic" title="🌗 Modes">
         <ModeLadder />
       </Disclosure>
-      <Disclosure className="topic" title="🎯 Your scale on the fretboard" hint={`Where every note of ${name} lives on the neck`}>
+      <Disclosure className="topic" title="🎯 Fretboard" hint={name}>
         <ScaleOnNeck />
       </Disclosure>
-      <Disclosure className="topic" title="🧱 How chords are built" hint="Major, minor, 7ths, sus and add9 in one minute">
+      <Disclosure className="topic" title="🧱 Chord recipes">
         <ChordRecipes />
       </Disclosure>
-      <Disclosure className="topic" title="📊 Which chords each mode gives you" hint="Why Dorian has a major IV and Mixolydian a ♭VII">
+      <Disclosure className="topic" title="📊 Chords in each mode">
         <QualityTable />
       </Disclosure>
-      <Disclosure className="topic" title="👂 Train your ear" hint="What each distance between two notes sounds like">
+      <Disclosure className="topic" title="👂 Intervals">
         <Intervals />
       </Disclosure>
-      <Disclosure className="topic" title="⭕ Circle of fifths" hint="Which keys are neighbours, for smooth key changes">
+      <Disclosure className="topic" title="⭕ Circle of fifths">
         <CircleOfFifths />
       </Disclosure>
     </div>
@@ -75,8 +71,7 @@ function ModeLadder() {
   return (
     <div className="stack" style={{ gap: 12 }}>
       <p className="small muted">
-        A mode is the same set of notes with a different home. Each step down this list lowers one note, so the mood gets darker.
-        To make a mode obvious: <b>stay on its home chord</b>, <b>rock back and forth with the chord that holds its signature note</b>, and <b>land melodies on that note</b>.
+        Same notes, different home. Brightest to darkest; highlighted steps differ from major.
       </p>
       <div className="mode-cards">
         {MODES_BY_BRIGHTNESS.map((sc) => {
@@ -93,7 +88,6 @@ function ModeLadder() {
               <div className="brightness" title={`Brightness ${sc.brightness} of 7`}><i style={{ left: `${(((sc.brightness ?? 1) - 1) / 6) * 100}%` }} /></div>
               <Formula scale={sc} major={major} />
               {sc.compareTo && sc.id !== "ionian" && <p className="small"><b>{sc.compareTo.charAt(0).toUpperCase() + sc.compareTo.slice(1)}.</b></p>}
-              <p className="small">{sc.description}</p>
               <p className="small muted">{scaleNotes(tonic, sc).map(displayNote).join(" ")}</p>
               <div className="row tight">
                 {vamp && <button className="btn sm" onClick={() => play(vamp, sc.id)}>{playingId === sc.id ? "■ Stop" : `▶ ${vamp.map((r) => chordSymbol(r)).join(" → ")}`}</button>}
@@ -141,8 +135,7 @@ function ChordRecipes() {
   return (
     <div className="stack" style={{ gap: 10 }}>
       <p className="small muted">
-        Every chord is a root plus a few notes counted up the scale. The <b>3rd</b> decides happy (major) or sad (minor); 7ths, 9ths and sus notes add colour.
-        Examples use {displayNote(state.key.tonic)}; tap one to see all its shapes.
+        Root + notes counted up the scale. The 3rd decides major or minor.
       </p>
       <div className="recipe">
         {recipes.map((r) => {
@@ -179,8 +172,7 @@ function QualityTable() {
   return (
     <div className="stack" style={{ gap: 10 }}>
       <p className="small muted">
-        Every major key follows the same pattern: <b>Major, minor, minor, Major, Major, minor, diminished</b>.
-        Each mode starts that pattern from a different step, which is why the chord types shift around. Capital numerals are major chords, small ones minor. Tap a row to write in that mode.
+        <b>Major, minor, minor, Major, Major, minor, diminished</b>: each mode starts that pattern from a different step.
       </p>
       <div className="row tight">
         <Seg value={size} options={[{ value: 3, label: "Simple" }, { value: 4, label: "7ths" }]} onChange={setSize} />
@@ -223,7 +215,7 @@ function Intervals() {
   };
   return (
     <div className="stack" style={{ gap: 10 }}>
-      <p className="small muted">An interval is the distance between two notes, counted in frets. Each one has its own feeling; chords are just intervals stacked up. Tap ▶ to hear one note, then the other, then both together.</p>
+      <p className="small muted">The distance between two notes, in frets.</p>
       <div className="interval-list">
         {INTERVAL_SOUNDS.filter((i) => i.semis > 0).map((i) => (
           <div key={i.semis} className="interval-item">
@@ -253,7 +245,7 @@ function CircleOfFifths() {
   const curIdx = isMinorish ? MIN.findIndex((n) => pc(n) === cur) : MAJ.findIndex((n) => pc(n) === cur);
   return (
     <div className="stack" style={{ gap: 10 }}>
-      <p className="small muted">Keys next to each other share 6 of their 7 notes, so moving to a neighbour is the smoothest key change. Major keys are on the outside, their relative minors inside. Tap a key to write in it.</p>
+      <p className="small muted">Neighbours share 6 of 7 notes. Outside: major. Inside: minor.</p>
       <div className="circle-wrap">
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Circle of fifths">
           <circle cx={c} cy={c} r={150} fill="var(--card-2)" stroke="var(--border)" />

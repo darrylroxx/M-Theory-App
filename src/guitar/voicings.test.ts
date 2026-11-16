@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { getChordType } from "../theory/chords";
+import { easyVoicing } from "./arrange";
 import { getTuning } from "./tunings";
 import { assignFingers, generateVoicings, voicingText } from "./voicings";
 
@@ -43,5 +44,16 @@ describe("voicing generator", () => {
     // B major with capo 4 = G shape 320003
     const b = generateVoicings(11, getChordType("maj"), { tuning: std, capo: 4 }).map(voicingText);
     expect(b).toContain("320003");
+  });
+  it("picks easy default shapes low on the neck, without barres", () => {
+    for (const [root, typeId] of [["B", "maj"], ["C#", "min"], ["D#", "min"], ["F#", "maj"], ["G#", "min"], ["E", "maj"]]) {
+      const v = easyVoicing({ root, typeId }, std, 0, true)!;
+      expect(v.barreKind).not.toBe("full");
+      expect(v.bassToken).toBe("1");
+      expect(v.minFret).toBeLessThanOrEqual(6);
+      expect(v.frets.filter((f) => f !== null).length).toBeGreaterThanOrEqual(4);
+    }
+    expect(voicingText(easyVoicing({ root: "E", typeId: "maj" }, std, 0, true)!)).toBe("022100");
+    expect(voicingText(easyVoicing({ root: "C", typeId: "maj" }, std, 0, true)!)).toBe("x32010");
   });
 });

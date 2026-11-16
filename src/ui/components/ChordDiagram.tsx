@@ -30,10 +30,12 @@ interface Props {
   leftHanded?: boolean;
   width?: number;
   capo?: number;
+  /** Shorter frets, for tight spaces */
+  compact?: boolean;
 }
 
 /** Classic vertical chord box: strings top-to-bottom, nut at the top. */
-export function ChordDiagram({ voicing, root, bass, labels, leftHanded, width = 132, capo = 0 }: Props) {
+export function ChordDiagram({ voicing, root, bass, labels, leftHanded, width = 132, capo = 0, compact }: Props) {
   const n = voicing.frets.length;
   const span = Math.max(4, voicing.maxFret - voicing.minFret + 1);
   const showNut = voicing.maxFret <= Math.max(4, span);
@@ -44,7 +46,7 @@ export function ChordDiagram({ voicing, root, bass, labels, leftHanded, width = 
   const padT = 26;
   const gridW = width - padL - padR;
   const sx = gridW / (n - 1);
-  const sy = Math.min(26, sx * 1.25);
+  const sy = compact ? Math.min(20, sx) : Math.min(26, sx * 1.25);
   const height = padT + rows * sy + 14;
   const x = (s: number) => padL + (leftHanded ? n - 1 - s : s) * sx;
   const y = (f: number) => padT + (f - base + 0.5) * sy;
@@ -95,7 +97,7 @@ export function ChordDiagram({ voicing, root, bass, labels, leftHanded, width = 
       {voicing.frets.map((f, s) => {
         if (f === null || f === 0) return null;
         const col = toneColor(voicing.tokens[s]);
-        const t = label(s);
+        const t = r >= 5.2 ? label(s) : "";
         return (
           <g key={`d${s}`}>
             <circle cx={x(s)} cy={y(f)} r={r} fill={col} />

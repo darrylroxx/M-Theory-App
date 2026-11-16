@@ -1,9 +1,11 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { PatternId } from "../audio/patterns";
 import { strum } from "../audio/synth";
-import { voicingsFor } from "../guitar/arrange";
+import { easyVoicing, voicingsFor } from "../guitar/arrange";
 import { getTuning, type Tuning } from "../guitar/tunings";
-import type { Voicing } from "../guitar/voicings";
+import { fretsFromId, voicingFromFrets, type Voicing } from "../guitar/voicings";
+import { getChordType } from "../theory/chords";
+import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import type { Key } from "../theory/keys";
 
@@ -23,9 +25,6 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
-  preferOpen: boolean;
-  allowInversions: boolean;
-  zone: "any" | "low" | "mid" | "high";
 }
 
 export interface SavedProgression {
@@ -44,8 +43,8 @@ export interface Settings {
   theme: "auto" | "dark" | "light";
   /** Prefer shapes without full barres everywhere in the app */
   avoidBarre: boolean;
-  /** The 3-step "how it works" banner was closed */
-  guideDismissed: boolean;
+  /** settings schema version */
+  v?: number;
 }
 
 export interface AppState {
@@ -56,6 +55,8 @@ export interface AppState {
   saved: SavedProgression[];
   /** Chord currently shown in the Chords tab */
   explore: ChordRef;
+  /** Your chosen way to play each chord (by tuning, capo and chord) */
+  shapes: Record<string, string>;
 }
 
 export interface SheetState {
@@ -72,18 +73,16 @@ const HOST_THEME = typeof document !== "undefined" ? document.documentElement.ge
 export const DEFAULT_STATE: AppState = {
   tab: "write",
   key: { tonic: "B", scaleId: "ionian" },
-  settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "intervals", theme: "auto", avoidBarre: true, guideDismissed: false },
+  settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "fingers", theme: "auto", avoidBarre: true, v: 3 },
   progression: {
     chords: [],
     bpm: 84,
     pattern: "ring",
     loop: true,
-    preferOpen: false,
-    allowInversions: false,
-    zone: "any",
   },
   saved: [],
   explore: { root: "B", typeId: "maj" },
+  shapes: {},
 };
 
 function load(): AppState {
@@ -98,7 +97,9 @@ function load(): AppState {
       ...DEFAULT_STATE,
       ...parsed,
       tab,
-      settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings },
+      // v3 shows finger numbers on the dots by default
+      settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
+      shapes: parsed.shapes ?? {},
       progression: { ...DEFAULT_STATE.progression, ...parsed.progression },
     };
   } catch {
@@ -112,11 +113,13 @@ interface Ctx {
   tuning: Tuning;
   sheet: SheetState | null;
   openSheet: (s: SheetState | null) => void;
-  keyPicker: boolean;
-  openKeyPicker: (open: boolean) => void;
   toast: (msg: string) => void;
-  /** Strum the friendliest voicing of a chord */
+  /** Strum a chord the way you've chosen to play it */
   audition: (ref: ChordRef) => void;
+  /** The shape used for a chord: a slot's own shape, else your chosen shape, else the easiest one */
+  shapeOf: (ref: ChordRef, slotVoicingId?: string) => Voicing | undefined;
+  /** Choose how a chord is played everywhere */
+  setShape: (ref: ChordRef, voicingId: string) => void;
   /** Add a chord to the progression (optionally with a pinned voicing, after a slot) */
   addChord: (ref: ChordRef, opts?: { voicingId?: string; afterId?: string }) => void;
 }
@@ -128,7 +131,6 @@ export const newId = () => Math.random().toString(36).slice(2, 10);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(load);
   const [sheet, openSheet] = useState<SheetState | null>(null);
-  const [keyPicker, openKeyPicker] = useState(false);
   const [toastMsg, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -158,12 +160,31 @@ export function AppProvider({ children }: { children: ReactNode }) {
     toastTimer.current = window.setTimeout(() => setToast(null), 1800);
   }, []);
 
+  const { capo, avoidBarre, tuningId } = state.settings;
+  const shapes = state.shapes;
+  const shapeOf = useCallback(
+    (ref: ChordRef, slotVoicingId?: string) => {
+      const id = slotVoicingId ?? shapes[shapeKey(ref, tuningId, capo)];
+      if (id) {
+        const found = voicingsFor(ref, tuning, capo).find((v) => v.id === id);
+        if (found) return found;
+        const frets = fretsFromId(id);
+        if (slotVoicingId && frets.length === tuning.notes.length) return voicingFromFrets(frets, pc(ref.root), getChordType(ref.typeId), tuning, capo);
+      }
+      return easyVoicing(ref, tuning, capo, avoidBarre);
+    },
+    [shapes, tuning, tuningId, capo, avoidBarre],
+  );
+  const setShape = useCallback(
+    (ref: ChordRef, voicingId: string) => setState((s) => ({ ...s, shapes: { ...s.shapes, [shapeKey(ref, s.settings.tuningId, s.settings.capo)]: voicingId } })),
+    [],
+  );
   const audition = useCallback(
     (ref: ChordRef) => {
-      const v = easyVoicing(ref, tuning, state.settings.capo, state.settings.avoidBarre);
+      const v = shapeOf(ref);
       if (v) strum(v.midi);
     },
-    [tuning, state.settings.capo, state.settings.avoidBarre],
+    [shapeOf],
   );
 
   const addChord = useCallback(
@@ -176,12 +197,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
         else chords.push(item);
         return { ...s, progression: { ...s.progression, chords } };
       });
-      toast("Added to your song");
     },
-    [toast],
+    [],
   );
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, keyPicker, openKeyPicker, toast, audition, addChord };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord };
   return (
     <AppCtx.Provider value={value}>
       {children}
@@ -196,14 +216,6 @@ export function useApp(): Ctx {
   return c;
 }
 
-/** The single friendliest shape: 4+ strings, root in the bass, no full barre when asked. */
-export function easyVoicing(ref: ChordRef, tuning: Tuning, capo: number, avoidBarre = true): Voicing | undefined {
-  const all = voicingsFor(ref, tuning, capo);
-  const full = (v: Voicing) => v.frets.filter((f) => f !== null).length >= 4;
-  const rootOk = (v: Voicing) => v.bassToken === "1" || v.inversion === "Slash bass" || !!ref.bass;
-  return (
-    all.find((v) => full(v) && rootOk(v) && (!avoidBarre || v.barreKind !== "full")) ??
-    all.find((v) => full(v) && rootOk(v)) ??
-    all[0]
-  );
+export function shapeKey(ref: ChordRef, tuningId: string, capo: number): string {
+  return `${tuningId}|${capo}|${pc(ref.root)}|${ref.typeId}|${ref.bass ? pc(ref.bass) : ""}`;
 }

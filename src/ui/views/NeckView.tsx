@@ -56,7 +56,6 @@ export function ScaleOnNeck() {
   const tonicMidi = 52 + mod12(pc(key.tonic) - 4);
   return (
     <div className="stack" style={{ gap: 12 }}>
-      <p className="small muted">Every note of {displayNote(key.tonic)} {scale.short} on your guitar. Any note with a dot fits the key, so you can improvise and write melodies anywhere on the neck. Orange dots are home.</p>
       <div className="row tight">
         <button className="btn sm" onClick={() => playSequence([...scale.intervals.map((iv) => tonicMidi + semitonesOf(iv)), tonicMidi + 12])}>▶ Hear the scale</button>
         <Seg value={labels} options={[{ value: "intervals", label: "Intervals" }, { value: "notes", label: "Note names" }]} onChange={setLabels} />
@@ -64,14 +63,13 @@ export function ScaleOnNeck() {
       </div>
       <Fretboard tuning={tuning} capo={capo} frets={frets} dots={dots} leftHanded={state.settings.leftHanded} />
       <ToneLegend />
-      {(scale.signature?.length ?? 0) > 0 && <label className="toggle"><input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} /> Circle the signature note (the one that gives {scale.short} its sound)</label>}
+      {(scale.signature?.length ?? 0) > 0 && <label className="toggle"><input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} /> Signature note</label>}
       {chords.length > 0 && (
         <div className="stack" style={{ gap: 8 }}>
           <div className="row tight">
-            <b>Light up one chord inside the scale</b>
+            <b>Chord</b>
             <Seg value={size} options={[{ value: 3, label: "Simple" }, { value: 4, label: "7ths" }]} onChange={(v) => { setSize(v); setHl(null); }} />
           </div>
-          <p className="small muted">While that chord plays, melody notes on the bright dots always sound “right”; the faded ones add tension.</p>
           <div className="row tight">
             <button className={`chip${active === null ? " on" : ""}`} onClick={() => setHl(null)}>Whole scale</button>
             {chords.map((c) => (

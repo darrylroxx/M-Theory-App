@@ -3,10 +3,10 @@ import { strum } from "../../audio/synth";
 import { CHORD_TYPES, chordSymbol, chordToneMap, displaySuffix, getChordType, identifyChord, type ChordRef } from "../../theory/chords";
 import { spellInKey } from "../../theory/keys";
 import { displayNote, mod12, pc } from "../../theory/notes";
-import { ChordInfo } from "../components/ChordInfo";
+import { ChordNotes, ChordTheory } from "../components/ChordInfo";
 import { toneColor, tokenLabel } from "../components/ChordDiagram";
 import { Fretboard, type FretDot } from "../components/Fretboard";
-import { Disclosure, Seg, ToneLegend } from "../components/common";
+import { Seg, ToneLegend } from "../components/common";
 import { VoicingBrowser } from "../components/VoicingBrowser";
 import { useApp } from "../state";
 
@@ -28,71 +28,72 @@ export function ChordsView() {
   const [mode, setMode] = useState<"find" | "name">("find");
   return (
     <div className="stack">
-      <Seg value={mode} options={[{ value: "find", label: "🔎 Look up a chord" }, { value: "name", label: "✋ What chord is this?" }]} onChange={setMode} label="Chords mode" />
+      <Seg value={mode} options={[{ value: "find", label: "Look up" }, { value: "name", label: "Name a shape" }]} onChange={setMode} label="Chords mode" />
       {mode === "find" ? <Finder /> : <NameThatShape />}
     </div>
   );
 }
 
 function Finder() {
-  const { state, set, tuning, addChord } = useApp();
+  const { state, set, tuning, addChord, audition, shapeOf, setShape, toast } = useApp();
   const chord = state.explore;
-  const type = getChordType(chord.typeId);
   const [family, setFamily] = useState(FAMILIES.find((f) => f.ids.includes(chord.typeId))?.id ?? "basic");
+  const [info, setInfo] = useState(false);
+  const [neck, setNeck] = useState(false);
   const fam = FAMILIES.find((f) => f.id === family)!;
   const setChord = (patch: Partial<ChordRef>) => set((s) => ({ ...s, explore: { ...s.explore, ...patch } }));
   const roots = Array.from({ length: 12 }, (_, i) => spellInKey(pc(state.key.tonic) + i, state.key));
 
   return (
     <>
-      <section className="card stack" style={{ gap: 14 }}>
-        <div>
-          <h3 className="step"><span>1</span> Root note</h3>
-          <div className="row tight">
+      <section className="card keybar">
+        <div className="kb-row">
+          <span className="kb-label">Root</span>
+          <div className="tonics">
             {roots.map((r) => (
-              <button key={r} className={`chip${pc(r) === pc(chord.root) ? " on" : ""}`} onClick={() => setChord({ root: r, bass: undefined })}>{displayNote(r)}</button>
+              <button key={r} className={pc(r) === pc(chord.root) ? "on" : ""} onClick={() => setChord({ root: r, bass: undefined })}>{displayNote(r)}</button>
             ))}
           </div>
         </div>
-        <div>
-          <h3 className="step"><span>2</span> Kind of chord</h3>
-          <Seg value={family} options={FAMILIES.map((f) => ({ value: f.id, label: f.label }))} onChange={setFamily} label="Chord family" />
-          <p className="small muted" style={{ margin: "6px 0 8px" }}>{fam.hint}</p>
-          <div className="row tight">
-            {fam.ids.map((id) => {
-              const t = getChordType(id);
-              return (
-                <button key={id} className={`chip${id === chord.typeId ? " on" : ""}`} title={t.feel} onClick={() => setChord({ typeId: id })}>
-                  {displayNote(chord.root)}{displaySuffix(t.symbol)} <span className="rn">{t.name}</span>
-                </button>
-              );
-            })}
+        <div className="kb-row">
+          <span className="kb-label">Type</span>
+          <div className="stack" style={{ gap: 8, minWidth: 0 }}>
+            <Seg value={family} options={FAMILIES.map((f) => ({ value: f.id, label: f.label }))} onChange={setFamily} label="Chord family" />
+            <div className="row tight">
+              {fam.ids.map((id) => {
+                const t = getChordType(id);
+                return (
+                  <button key={id} className={`chip${id === chord.typeId ? " on" : ""}`} title={`${t.name}: ${t.feel}`} onClick={() => setChord({ typeId: id })}>
+                    {displayNote(chord.root)}{displaySuffix(t.symbol)}
+                  </button>
+                );
+              })}
+            </div>
           </div>
         </div>
-        <Disclosure title="Different bass note (slash chord)" hint={chord.bass ? `Bass: ${displayNote(chord.bass)}` : "e.g. C/G"}>
-          <div className="row tight">
-            <button className={`chip${!chord.bass ? " on" : ""}`} onClick={() => setChord({ bass: undefined })}>Root ({displayNote(chord.root)})</button>
-            {roots.filter((r) => pc(r) !== pc(chord.root)).map((r) => (
-              <button key={r} className={`chip${chord.bass && pc(chord.bass) === pc(r) ? " on" : ""}`} onClick={() => setChord({ bass: r })}>/{displayNote(r)}</button>
-            ))}
-          </div>
-        </Disclosure>
-      </section>
-
-      <section className="card stack">
-        <div>
-          <h2 style={{ fontSize: "1.9rem" }}>{chordSymbol(chord)}</h2>
-          <p className="muted small">{type.name}</p>
+        <div className="kb-row">
+          <span className="kb-label">Bass</span>
+          <select aria-label="Bass note" value={chord.bass ?? ""} onChange={(e) => setChord({ bass: e.target.value || undefined })}>
+            <option value="">Root</option>
+            {roots.filter((r) => pc(r) !== pc(chord.root)).map((r) => <option key={r} value={r}>/{displayNote(r)}</option>)}
+          </select>
         </div>
-        <ChordInfo chord={chord} onOpen={(r) => set((s) => ({ ...s, explore: r }))} />
       </section>
 
-      <section className="card stack">
-        <h2>Ways to play {chordSymbol(chord)}</h2>
-        <VoicingBrowser chord={chord} onUse={(v) => addChord(chord, { voicingId: v.id })} />
-        <Disclosure title="See every note of this chord on the fretboard" hint="Learn to build your own shapes">
-          <ChordOnNeck chord={chord} tuning={tuning} />
-        </Disclosure>
+      <section className="card stack" style={{ gap: 12 }}>
+        <div className="sheet-head" style={{ marginBottom: 0 }}>
+          <h2>{chordSymbol(chord)}</h2>
+          <ChordNotes chord={chord} />
+          <div className="row tight sheet-close">
+            <button className="icon-btn" aria-label="Play" title="Play" onClick={() => audition(chord)}>▶</button>
+            <button className={`icon-btn${info ? " on" : ""}`} aria-label="About this chord" title="About this chord" aria-pressed={info} onClick={() => setInfo((v) => !v)}>i</button>
+            <button className={`icon-btn${neck ? " on" : ""}`} aria-label="Show on the whole neck" title="Show on the whole neck" aria-pressed={neck} onClick={() => setNeck((v) => !v)}>▦</button>
+            <button className="icon-btn accent" aria-label="Add to progression" title="Add to progression" onClick={() => { addChord(chord); toast(`${chordSymbol(chord)} added`); }}>+</button>
+          </div>
+        </div>
+        {info && <ChordTheory chord={chord} onOpen={(r) => set((s) => ({ ...s, explore: r }))} />}
+        {neck && <ChordOnNeck chord={chord} tuning={tuning} />}
+        <VoicingBrowser chord={chord} pickedId={shapeOf(chord)?.id} onPick={(v) => setShape(chord, v.id)} />
       </section>
     </>
   );
@@ -114,7 +115,6 @@ function ChordOnNeck({ chord, tuning }: { chord: ChordRef; tuning: ReturnType<ty
   }, [chord.root, type, tuning, state.settings.capo, state.settings.labels, state.key]);
   return (
     <div className="stack" style={{ gap: 8 }}>
-      <p className="small muted">Every {chordSymbol(chord)} note on the neck. Grab any 3 or 4 of them that sit close together (include the root, 3rd and 7th if it has one) and you've made your own shape.</p>
       <Fretboard tuning={tuning} capo={state.settings.capo} dots={dots} leftHanded={state.settings.leftHanded} />
       <ToneLegend />
     </div>
@@ -147,10 +147,7 @@ function NameThatShape() {
 
   return (
     <section className="card stack">
-      <div>
-        <h2>What chord is this?</h2>
-        <p className="small muted">Tap the fretboard where your fingers are: one note per string. Tap the same spot again to mute that string; the column left of the nut is an open string.</p>
-      </div>
+      <p className="small muted">Tap where your fingers are.</p>
       <Fretboard tuning={tuning} capo={capo} dots={dots} onCell={tap} leftHanded={state.settings.leftHanded} />
       <div className="row">
         <span className="mono">{frets.map((f) => (f === null ? "x" : f)).join(" ")}</span>
@@ -160,22 +157,22 @@ function NameThatShape() {
       {sounding.length < 2 ? (
         <p className="muted">Place at least two notes.</p>
       ) : !best ? (
-        <p className="muted">No standard name for these notes. That doesn't mean it's wrong: if it sounds good, use it.</p>
+        <p className="muted">No standard name.</p>
       ) : (
         <div className="stack" style={{ gap: 8 }}>
-          <h3>You're playing <span style={{ color: "var(--accent)", fontSize: "1.4rem" }}>{chordSymbol(best.ref)}</span></h3>
-          <p className="small muted">{best.type.name}{best.omitted.length ? ` (without the ${best.omitted.map((o) => displaySuffix(o)).join(", ")})` : ""}. {best.type.feel}</p>
+          <h3><span style={{ color: "var(--accent)", fontSize: "1.4rem" }}>{chordSymbol(best.ref)}</span></h3>
+          <p className="small muted">{best.type.name}{best.omitted.length ? ` (no ${best.omitted.map((o) => displaySuffix(o)).join(", ")})` : ""}</p>
           {matches.length > 1 && (
             <div className="row tight">
-              <span className="small muted">It can also be called:</span>
+              <span className="small muted">or</span>
               {matches.slice(1).map((m, i) => (
                 <button key={i} className="chip" onClick={() => openSheet({ ref: m.ref })}>{chordSymbol(m.ref)}</button>
               ))}
             </div>
           )}
           <div className="row tight">
-            <button className="btn sm primary" onClick={() => addChord(best.ref, { voicingId: frets.map((f) => (f === null ? "x" : f)).join(",") })}>+ Add this shape to my song</button>
-            <button className="btn sm" onClick={() => openSheet({ ref: best.ref })}>Other ways to play it</button>
+            <button className="btn sm primary" onClick={() => addChord(best.ref, { voicingId: frets.map((f) => (f === null ? "x" : f)).join(",") })}>+ Add</button>
+            <button className="btn sm" onClick={() => openSheet({ ref: best.ref })}>Other shapes</button>
           </div>
         </div>
       )}

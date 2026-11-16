@@ -13,29 +13,26 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 
 ## What's inside
 
-Three tabs. Everything starts simple; the deeper material is one tap away in fold-out sections.
+One clean screen, three steps, very little text.
 
-### 🎼 Write: pick a key, meet its chords, build your song
-1. **Pick a key and a mood.** Moods come first, scale names second: *Happy & bright* (Major), *Sad & emotional* (Minor), *Cool & soulful* (Dorian), *Bluesy & laid-back* (Mixolydian), *Dreamy & floating* (Lydian), *Dark & Spanish* (Phrygian), *Dramatic & exotic* (Harmonic minor)… plus 28 more scales under "More scales".
-2. **Your chords.** The 7 chords of the key, each with an easy shape already drawn (no barre chords unless you allow them), its job in the key, and ▶ / + buttons:
-   - 🟢 **Home** · 🔵 **Near home** · 🟠 **Away** · 🔴 **Tension** (wants to fall back home)
-   - ★ marks chords holding the mode's **signature note** (Dorian's IV, Mixolydian's ♭VII…)
-   - Fold-outs: **More chords that fit this key** (sus, add9, 6, 9, 11, 13 versions: 73 in B major) and **Twist chords** from outside the key (borrowed chords grouped by mood, plus surprise chords that each "lead into" a chord of your key).
-   - **Capo tip**: when a key is full of barre chords it offers the fix. *B major: capo 4 makes all 7 chords easy open shapes.*
-3. **Your song.** Add chords, press play (plucked-guitar synth, 5 rhythms), tap a chord to **hear it, change its shape, swap it, make it fancier, move or remove it**. ✨ **Write me a starting idea** generates a progression with a mood and a Safe ↔ Wild dial (with undo).
-4. **What sounds good next?** Nine suggestions after your last (or selected) chord, colour-coded **Safe**, **Smooth**, **Colorful**, **Bold**, each with a two-word reason ("Strong pull", "Glides", "Borrowed from minor"). It scores every chord the key can offer, so it isn't limited to stock progressions.
-5. **Save & export**: save ideas, export a **MIDI file** for your DAW (same shapes and rhythm you heard), copy a **chord chart + tab**, transpose the whole song.
+### Write
+1. **Key**: tap one of the 12 notes.
+2. **Mode**: Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor (27 more under "More…").
+3. **Chords appear**, each drawn as an easy shape with finger numbers. Tabs switch between the 7 **Chords** of the key, their **7ths**, **More** (every sus/add/9/11/13 chord that fits: 73 in B major), **Outside** (borrowed and surprise chords) and **Next ✨** (what could follow your last chord: Safe, Smooth, Colorful, Bold).
+   - Card colours show each chord's job: 🟢 Home · 🔵 Near home · 🟠 Away · 🔴 Tension. ★ = holds the mode's signature note.
+4. **Tap a chord** to see every way to play it: open shapes, barre and no-barre shapes, inversions, 3-string triads, all over the neck. Each shows finger numbers, the frets (e.g. `x2444x`) and a difficulty dot. Tap a shape to hear it and make it *your* way of playing that chord.
+5. **Drag chords into the tray** at the bottom (touch: press and hold, then drag; or tap **+**). Drag to reorder, ✕ to remove. The tray shows each chord with your chosen shape and plays it back. Tap a chord in the tray to give that spot its own shape, length or position.
+6. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, smooth shape arranging, transpose, **MIDI export**, copy chords + tab, and saved ideas.
 
-### 🎸 Chords: every way to play any chord
-- **Look up a chord**: root, then a kind (*Basic, 7ths, Sus & add, Lush 9/11/13, Spicy*) covering all 44 chord types, plus slash chords.
-- **Ways to play it**: one row of filters (*Best, No barre, Open strings, Small (3 strings), Up the neck, Everything*) over every playable shape the generator finds (C major has 500+). "More options" adds bass note, difficulty and dot labels.
-- Plain-English "Sounds:", the notes, and what the chord does in your key; formula, other names and parent keys sit in "Theory details".
-- **What chord is this?** Tap a shape on the fretboard and it names it.
+A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
-### 💡 Learn: short lessons in your current key
-Fold-out topics: **Modes in plain English** (brightest to darkest, with a vamp to hear and "Write in this mode"), **Your scale on the fretboard**, **How chords are built**, **Which chords each mode gives you**, **Train your ear** (intervals), **Circle of fifths**.
+### Chords
+Look up any of the 44 chord types on any root (plus slash chords) and browse its shapes the same way, or **name a shape** by tapping it on a fretboard.
 
-Settings (⚙): avoid barre chords (on by default), 11 tunings (Standard, Drop D, DADGAD, Open G/D/E/C…), capo, dot labels, left-handed diagrams, light/dark theme.
+### Learn
+Fold-out topics: modes, your scale on the fretboard, chord recipes, chords in each mode, intervals by ear, circle of fifths.
+
+Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels (fingers / notes / intervals), left-handed diagrams, light/dark theme.
 
 ---
 
@@ -56,7 +53,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 45 tests: theory, voicings, progressions, synth tuning, MIDI
+npm test          # 46 tests: theory, voicings, progressions, synth tuning, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

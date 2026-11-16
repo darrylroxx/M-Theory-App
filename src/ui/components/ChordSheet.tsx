@@ -1,13 +1,13 @@
-import { useEffect } from "react";
-import { chordSymbol, getChordType } from "../../theory/chords";
-import { useApp } from "../state";
-import { ChordInfo } from "./ChordInfo";
+import { useEffect, useState } from "react";
+import { chordSymbol } from "../../theory/chords";
+import { useApp, type ProgChord } from "../state";
+import { ChordNotes, ChordTheory } from "./ChordInfo";
 import { VoicingBrowser } from "./VoicingBrowser";
 
-/** Pop-up with everything about a chord and every way to play it. */
+/** Pop-up for one chord: every way to play it. Tap a shape to choose it. */
 export function ChordSheet() {
-  const { sheet, openSheet, set, addChord, toast } = useApp();
-  const { state } = useApp();
+  const { sheet, openSheet, state, set, addChord, audition, shapeOf, setShape, toast } = useApp();
+  const [info, setInfo] = useState(false);
 
   useEffect(() => {
     if (!sheet) return;
@@ -18,42 +18,55 @@ export function ChordSheet() {
 
   if (!sheet) return null;
   const { ref, slotId } = sheet;
-  const slot = slotId ? state.progression.chords.find((c) => c.id === slotId) : undefined;
+  const chords = state.progression.chords;
+  const idx = slotId ? chords.findIndex((c) => c.id === slotId) : -1;
+  const slot = idx >= 0 ? chords[idx] : undefined;
+  const picked = shapeOf(ref, slot?.voicingId);
+  const setChords = (fn: (c: ProgChord[]) => ProgChord[]) => set((s) => ({ ...s, progression: { ...s.progression, chords: fn(s.progression.chords) } }));
+  const patch = (p: Partial<ProgChord>) => setChords((cs) => cs.map((c) => (c.id === slotId ? { ...c, ...p } : c)));
+  const move = (d: -1 | 1) => setChords((cs) => {
+    const i = cs.findIndex((c) => c.id === slotId);
+    const j = i + d;
+    if (i < 0 || j < 0 || j >= cs.length) return cs;
+    const next = [...cs];
+    [next[i], next[j]] = [next[j], next[i]];
+    return next;
+  });
 
   return (
     <div className="sheet-backdrop" onClick={() => openSheet(null)}>
       <div className="sheet" role="dialog" aria-modal="true" aria-label={chordSymbol(ref)} onClick={(e) => e.stopPropagation()}>
         <div className="sheet-head">
-          <div>
-            <h2>{chordSymbol(ref)}</h2>
-            <p className="muted small">{getChordType(ref.typeId).name}</p>
+          <h2>{chordSymbol(ref)}</h2>
+          <ChordNotes chord={ref} />
+          <div className="row tight sheet-close">
+            <button className="icon-btn" aria-label="Play" title="Play" onClick={() => audition(ref)}>▶</button>
+            <button className={`icon-btn${info ? " on" : ""}`} aria-label="About this chord" title="About this chord" aria-pressed={info} onClick={() => setInfo((v) => !v)}>i</button>
+            {!slot && <button className="icon-btn accent" aria-label="Add to progression" title="Add to progression" onClick={() => { addChord(ref); toast(`${chordSymbol(ref)} added`); }}>+</button>}
+            <button className="icon-btn" aria-label="Close" onClick={() => openSheet(null)}>✕</button>
           </div>
-          <button className="icon-btn sheet-close" aria-label="Close" onClick={() => openSheet(null)}>✕</button>
         </div>
-        <div className="stack">
-          {slot && <div className="callout small"><b>Pick a shape</b> for chord {state.progression.chords.indexOf(slot) + 1} of your song.</div>}
-          <ChordInfo chord={ref} onOpen={(r) => openSheet({ ref: r, slotId })} showAdd={!slot} />
-          <div>
-            <h3 style={{ marginBottom: 8 }}>Ways to play it</h3>
-            <VoicingBrowser
-              chord={ref}
-              pickedId={slot?.voicingId}
-              useLabel={slot ? "Use this shape" : "+ Add this shape"}
-              onUse={(v) => {
-                if (slot) {
-                  set((s) => ({
-                    ...s,
-                    progression: { ...s.progression, chords: s.progression.chords.map((c) => (c.id === slot.id ? { ...c, voicingId: v.id } : c)) },
-                  }));
-                  toast("Shape changed");
-                  openSheet(null);
-                } else addChord(ref, { voicingId: v.id });
-              }}
-            />
-          </div>
-          <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => { set((s) => ({ ...s, tab: "chords", explore: ref })); openSheet(null); }}>
-            Open in the Chords tab →
-          </button>
+        <div className="stack" style={{ gap: 12 }}>
+          {info && <ChordTheory chord={ref} onOpen={(r) => openSheet({ ref: r, slotId })} />}
+          {slot && (
+            <div className="row tight slot-tools">
+              <span className="pill">Chord {idx + 1}</span>
+              <button className="btn sm" aria-label="Move earlier" onClick={() => move(-1)} disabled={idx === 0}>◀</button>
+              <button className="btn sm" aria-label="Move later" onClick={() => move(1)} disabled={idx === chords.length - 1}>▶</button>
+              <span className="beats">
+                <button aria-label="Fewer beats" onClick={() => patch({ beats: Math.max(1, slot.beats - 1) })}>−</button>
+                {slot.beats} beats
+                <button aria-label="More beats" onClick={() => patch({ beats: Math.min(16, slot.beats + 1) })}>+</button>
+              </span>
+              <span className="spacer" />
+              <button className="btn sm danger" onClick={() => { setChords((cs) => cs.filter((c) => c.id !== slotId)); openSheet(null); }}>Remove</button>
+            </div>
+          )}
+          <VoicingBrowser
+            chord={ref}
+            pickedId={picked?.id}
+            onPick={(v) => (slot ? patch({ voicingId: v.id }) : setShape(ref, v.id))}
+          />
         </div>
       </div>
     </div>

@@ -42,6 +42,19 @@ export function voicingsFor(ref: ChordRef, tuning: Tuning, capo: number, extra: 
   return v;
 }
 
+/**
+ * The friendliest single shape for a chord: 4+ strings, root in the bass, no full
+ * barre when asked, and low on the neck where most players are at home.
+ */
+export function easyVoicing(ref: ChordRef, tuning: Tuning, capo: number, avoidBarre = true): Voicing | undefined {
+  const all = voicingsFor(ref, tuning, capo);
+  const ok = (v: Voicing, barreOk: boolean) =>
+    v.frets.filter((f) => f !== null).length >= 4 && (v.bassToken === "1" || v.bassToken === "bass") && (barreOk || v.barreKind !== "full");
+  const score = (v: Voicing) => v.rank + 0.2 * Math.max(0, v.minFret - 4);
+  const best = (list: Voicing[]) => list.reduce<Voicing | undefined>((b, v) => (!b || score(v) < score(b) ? v : b), undefined);
+  return best(all.filter((v) => ok(v, !avoidBarre))) ?? best(all.filter((v) => ok(v, true))) ?? all[0];
+}
+
 function unaryCost(v: Voicing, o: ArrangeOptions): number {
   let c = v.rank;
   if (o.avoidBarre && v.barreKind === "full") c += 6;
