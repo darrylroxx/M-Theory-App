@@ -1,14 +1,15 @@
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
-import { BEAT_GROUPS, BEAT_LIBRARY, ECHO_TIMES, FX_DEFAULTS, STEP_VELOCITY, STYLE_KITS, VIBES, applyKit, applyUserKit, clearBeat, findPattern, fxOf, kitFrom, levelAt, setStep, soundOf, varyBeat, vibeOf, voiceOf, type Beat, type BeatFx, type BeatGroupId, type BeatPattern, type StepLevel, type UserKit } from "../../audio/beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, ECHO_TIMES, FX_DEFAULTS, MAX_BARS, STEP_VELOCITY, STYLE_KITS, VIBES, applyKit, applyUserKit, barsOf, clearBeat, copyBar, findPattern, fxOf, kitFrom, levelAt, removeBar, setBars, setStep, soundOf, varyBeat, vibeOf, voiceOf, type Beat, type BeatFx, type BeatGroupId, type BeatPattern, type StepLevel, type UserKit } from "../../audio/beats";
 import { playDrum, setDrumSolo, syncDrums } from "../../audio/drumbus";
 import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SHAPE_KEYS, TONE_LABEL, defaultParams, getKit, renderDrum, type DrumId, type DrumParams, type KitId } from "../../audio/drums";
 import { newId, useApp } from "../state";
+import { letterClass } from "../letters";
 import { Seg } from "./common";
 
 type GroupId = BeatGroupId | "mine";
 /** What a grid edit can change, and so what Undo and Cancel put back. */
-type Snap = Pick<Beat, "rows" | "edited" | "patternId" | "name" | "on">;
-const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on });
+type Snap = Pick<Beat, "rows" | "edited" | "patternId" | "name" | "on" | "bars">;
+const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
 const pct = (v: number) => String(Math.round(v * 100));
@@ -22,7 +23,7 @@ const toneText = (v: number) => (Math.abs(v) < 0.025 ? "Flat" : `${v < 0 ? "Dark
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }: {
+export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, letters, onLetter }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
@@ -30,6 +31,9 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
   onPlay: () => void;
   /** The player calls this with the step that is sounding (−1 = stopped) */
   stepSink: { current: ((step: number) => void) | null };
+  /** the song's sections, each letter once: every section has its own rhythm */
+  letters: { partId: string; letter: string; blockId: string; current: boolean }[];
+  onLetter: (blockId: string) => void;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.myBeats;
@@ -46,6 +50,12 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
   /** an edit in progress: where it started, and every step since */
   const [edit, setEdit] = useState<{ start: Snap; past: Snap[] } | null>(null);
   const [nudge, setNudge] = useState(false);
+  /** the bar shown in the grid */
+  const [bar, setBar] = useState(0);
+  const bars = barsOf(beat);
+  const shownBar = Math.min(bar, bars - 1);
+  const live = useRef({ bar: shownBar, editing: false, steps: beat.steps });
+  live.current = { bar: shownBar, editing: !!edit, steps: beat.steps };
   const stepsRef = useRef<HTMLDivElement>(null);
   const paint = useRef<{ id: DrumId; level: StepLevel; last: number } | null>(null);
   const heard = useRef({ at: 0, timer: 0 });
@@ -59,8 +69,13 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
     stepSink.current = (n) => {
       const el = stepsRef.current;
       if (!el) return;
-      el.classList.toggle("playing", n >= 0);
-      if (n >= 0) el.style.setProperty("--now", String(n));
+      const { bar: on, editing: busy, steps } = live.current;
+      const at = n >= 0 ? Math.floor(n / steps) : -1;
+      // while listening, the grid follows the bar that is playing; while editing it stays put
+      if (at >= 0 && at !== on && !busy) setBar(at);
+      el.classList.toggle("playing", n >= 0 && (at === on || !busy));
+      if (n >= 0) el.style.setProperty("--now", String(n % steps));
+      el.closest(".drums")?.querySelectorAll<HTMLElement>("[data-bar]").forEach((t) => t.classList.toggle("sounding", Number(t.dataset.bar) === at));
     };
     return () => {
       stepSink.current = null;
@@ -70,8 +85,12 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
   useEffect(() => {
     if (current) setGroup(current.group);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  // another idea was opened: whatever was being edited is gone
-  useEffect(() => setEdit(null), [state.ideaId]);
+  // another idea or another section: the edit so far is kept, and the grid starts at bar 1
+  const section = letters.find((l) => l.current)?.partId;
+  useEffect(() => {
+    setEdit(null);
+    setBar(0);
+  }, [state.ideaId, section]);
   useEffect(() => {
     setDrumSolo(solo);
     return () => setDrumSolo(null);
@@ -116,7 +135,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
   /** Keep the changes and lock the grid. A changed rhythm also goes into "Mine", so it can be used again. */
   const save = () => {
     const hasHits = DRUM_IDS.some((id) => /[123]/.test(beat.rows[id]));
-    const same = BEAT_LIBRARY.concat(mine).find((p) => p.steps === beat.steps && p.div === beat.div && sameRows(p.rows, beat.rows));
+    const same = BEAT_LIBRARY.concat(mine).find((p) => p.steps === beat.steps && p.div === beat.div && (p.bars ?? 1) === bars && sameRows(p.rows, beat.rows));
     setEdit(null);
     if (!hasHits) return;
     if (same) {
@@ -125,7 +144,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
       return;
     }
     if (current?.group === "mine") {
-      set((s) => ({ ...s, myBeats: s.myBeats.map((p) => (p.id === current.id ? { ...p, rows: beat.rows, swing: beat.swing, bpm } : p)) }));
+      set((s) => ({ ...s, myBeats: s.myBeats.map((p) => (p.id === current.id ? { ...p, rows: beat.rows, bars, swing: beat.swing, bpm } : p)) }));
       setBeat((b) => ({ ...b, edited: false }));
       toast(`${current.name} saved`);
       return;
@@ -134,7 +153,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
     let n = mine.length + 1;
     while (mine.some((p) => p.name === `My beat ${n}`)) n++;
     const name = `My beat ${n}`;
-    set((s) => ({ ...s, myBeats: [...s.myBeats, { id, name, group: "mine", steps: beat.steps, div: beat.div, bpm, swing: beat.swing, rows: beat.rows }] }));
+    set((s) => ({ ...s, myBeats: [...s.myBeats, { id, name, group: "mine", steps: beat.steps, div: beat.div, bars, bpm, swing: beat.swing, rows: beat.rows }] }));
     setBeat((b) => ({ ...b, patternId: id, name, edited: false }));
     setGroup("mine");
     toast(`Saved as ${name}`);
@@ -145,6 +164,22 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
     const c = (document.elementFromPoint(x, y) as HTMLElement | null)?.closest<HTMLElement>("[data-i]");
     return c ? { id: c.dataset.d as DrumId, i: Number(c.dataset.i) } : null;
   };
+  // ── bars ──
+  const addBar = () => {
+    if (bars >= MAX_BARS) return;
+    remember();
+    setBeat((b) => {
+      const longer = setBars(b, barsOf(b) + 1);
+      return copyBar(longer, shownBar, barsOf(longer) - 1);
+    });
+    setBar(bars);
+  };
+  const dropBar = () => {
+    remember();
+    setBeat((b) => removeBar(b, shownBar));
+    setBar(Math.max(0, shownBar - 1));
+  };
+
   const press = (id: DrumId, i: number): StepLevel => {
     remember();
     const level: StepLevel = levelAt(beat.rows, id, i) === brush ? 0 : brush;
@@ -258,6 +293,15 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
         <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
       </div>
 
+      {letters.length > 1 && (
+        <div className="dm-secs" role="radiogroup" aria-label="Section">
+          <span className="kb-label">Section</span>
+          {letters.map((l) => (
+            <button key={l.partId} role="radio" aria-checked={l.current} className={`sec-chip ${letterClass(l.letter)}${l.current ? " on" : ""}`} title={`Drums for section ${l.letter}`} onClick={() => !l.current && onLetter(l.blockId)}>{l.letter}</button>
+          ))}
+        </div>
+      )}
+
       {drawer === "kit" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Drum kit">
           <div className="dm-tiles">{kits.slice(0, STYLE_KITS.length).map((k, i) => tile(k, STYLE_KITS[i].like))}</div>
@@ -295,8 +339,8 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
           <>
             <button className="btn sm" onClick={undo} disabled={!edit.past.length} aria-label="Undo">↶ Undo</button>
             <Seg value={brush} options={[{ value: 1 as StepLevel, label: "Soft" }, { value: 2 as StepLevel, label: "Normal" }, { value: 3 as StepLevel, label: "Loud" }]} onChange={setBrush} label="How hard new hits are" />
-            <button className="btn sm" title="A small random change" aria-label="Vary" onClick={() => { remember(); setBeat((b) => ({ ...varyBeat(b), on: true })); }}>✨</button>
-            <button className="btn sm danger" onClick={() => { remember(); setBeat(clearBeat); }}>Clear</button>
+            <button className="btn sm" title="A small random change" aria-label="Vary" onClick={() => { remember(); setBeat((b) => ({ ...varyBeat(b, Math.random, shownBar), on: true })); }}>✨</button>
+            <button className="btn sm danger" title={bars > 1 ? "Empty this bar" : "Empty the grid"} onClick={() => { remember(); setBeat((b) => clearBeat(b, barsOf(b) > 1 ? shownBar : undefined)); }}>Clear</button>
             <span className="spacer" />
             <button className="btn sm" onClick={cancel}>Cancel</button>
             <button className="btn sm primary" onClick={save}>✓ Save</button>
@@ -306,10 +350,21 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
             <button className={`btn sm dm-edit${nudge ? " nudge" : ""}`} onClick={startEdit}>✎ Edit</button>
             {nudge && <span className="tiny muted">Tap Edit to change the beat</span>}
             <span className="spacer" />
-            <span className="pill dm-meter">{meter} · {bpm} bpm</span>
+            <span className="pill dm-meter">{meter}{bars > 1 ? ` · ${bars} bars` : ""} · {bpm} bpm</span>
           </>
         )}
       </div>
+
+      {(bars > 1 || editing) && (
+        <div className="dm-bars" role="tablist" aria-label="Bars">
+          <span className="kb-label">Bar</span>
+          {Array.from({ length: bars }, (_, i) => (
+            <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={i === shownBar ? "on" : ""} onClick={() => setBar(i)}>{i + 1}</button>
+          ))}
+          {editing && bars < MAX_BARS && <button className="dm-bar-add" title="Add a bar: a copy of this one" aria-label="Add a bar" onClick={addBar}>+</button>}
+          {editing && bars > 1 && <button className="dm-bar-del" title={`Remove bar ${shownBar + 1}`} aria-label={`Remove bar ${shownBar + 1}`} onClick={dropBar}>✕</button>}
+        </div>
+      )}
 
       <div className={`beat-grid${editing ? "" : " locked"}`} style={{ "--steps": beat.steps } as CSSProperties}>
         <div className="bg-labels">
@@ -322,11 +377,12 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink }
           <div className="bg-now" />
           {DRUM_IDS.map((id) => (
             <div key={id} className={`bg-row d-${id}${muted(id) ? " muted" : ""}`}>
-              {Array.from({ length: beat.steps }, (_, i) => {
+              {Array.from({ length: beat.steps }, (_, k) => {
+                const i = shownBar * beat.steps + k;
                 const lv = levelAt(beat.rows, id, i);
                 return (
-                  <button key={i} className={`bg-cell l${lv}${i % beat.div === 0 ? " beat" : ""}`} data-d={id} data-i={i} aria-pressed={lv > 0} tabIndex={editing ? 0 : -1} aria-disabled={!editing}
-                    aria-label={`${DRUM_LABEL[id]} step ${i + 1}${lv ? [" ", " soft", "", " loud"][lv] : " off"}`}
+                  <button key={k} className={`bg-cell l${lv}${k % beat.div === 0 ? " beat" : ""}`} data-d={id} data-i={i} aria-pressed={lv > 0} tabIndex={editing ? 0 : -1} aria-disabled={!editing}
+                    aria-label={`${DRUM_LABEL[id]} step ${k + 1}${bars > 1 ? ` of bar ${shownBar + 1}` : ""}${lv ? [" ", " soft", "", " loud"][lv] : " off"}`}
                     onClick={(e) => { if (e.detail === 0 && editing) press(id, i); }} />
                 );
               })}

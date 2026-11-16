@@ -3,7 +3,7 @@
  * Pure functions, so the rules (what counts as "changed", who wins when two
  * devices disagree) can be tested without a browser.
  */
-import { reviveBeat } from "../audio/beats";
+import { GROOVE_KEYS, reviveBeat } from "../audio/beats";
 import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
@@ -26,7 +26,9 @@ export function snapshot(key: Key, progression: Progression, capo: number, tunin
 export function fingerprint(s: Snapshot): string {
   const p = commit(s.progression);
   const song = p.song ? { parts: p.song.parts, blocks: p.song.blocks } : null;
-  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: p.pattern, loop: p.loop, arrange: p.arrange ?? null, beat: p.beat ?? null, song, chords: song ? null : p.chords });
+  // with a song, each section keeps its own rhythm: the one showing in the grid is not counted twice
+  const beat = p.beat && song ? Object.fromEntries(Object.entries(p.beat).filter(([k]) => !(GROOVE_KEYS as readonly string[]).includes(k))) : (p.beat ?? null);
+  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: p.pattern, loop: p.loop, arrange: p.arrange ?? null, beat, song, chords: song ? null : p.chords });
 }
 
 /** Nothing worth saving yet. */
@@ -43,7 +45,7 @@ export function autoName(key: Key, existing: SavedProgression[]): string {
 /** One line about an idea: its sections, or its chords when it has no structure. */
 export function describeIdea(i: SavedProgression): string {
   const secs = sections(i.progression);
-  if (secs.length) return secs.map((s) => s.name).join(" · ");
+  if (secs.length) return secs.map((s) => s.letter).join(" ");
   return i.progression.chords.map((c) => chordSymbol(c.ref)).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
 }
 
@@ -54,7 +56,11 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const p = i.progression;
   const song = reviveSong(p.song);
   const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: p.pattern ?? "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song };
-  if (song) progression.chords = song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId)?.chords ?? [];
+  if (song) {
+    const part = song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId);
+    progression.chords = part?.chords ?? [];
+    if (progression.beat && part?.groove) progression.beat = { ...progression.beat, ...part.groove };
+  }
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
 

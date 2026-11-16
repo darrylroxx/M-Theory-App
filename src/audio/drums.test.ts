@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, FX_DEFAULTS, STYLE_KITS, VIBES, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, STYLE_KITS, VIBES, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
 import { driveCurve, softCeiling } from "./drumbus";
 import { DRUM_IDS, KITS, defaultParams, drumRng, renderDrum, renderSpace } from "./drums";
 import { GM_DRUM, progressionToMidi } from "./midi";
@@ -402,5 +402,73 @@ describe("MIDI with drums", () => {
   it("exports four bars of the beat when there are no chords", () => {
     const beat = applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Backbeat")!);
     expect(count(progressionToMidi([], 100, "ring", "t", beat), 0x99, GM_DRUM.kick)).toBe(8);
+  });
+});
+
+describe("bars", () => {
+  const base = () => applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Backbeat")!);
+  it("extends a pattern with copies of the last bar, and shortens it again", () => {
+    const two = setBars(base(), 2);
+    expect(barsOf(two)).toBe(2);
+    expect(lenOf(two)).toBe(32);
+    expect(two.rows.snare).toBe(base().rows.snare.repeat(2));
+    expect(two.edited).toBe(true);
+    expect(setBars(two, 1).rows.snare).toBe(base().rows.snare);
+    expect(barsOf(setBars(base(), 99))).toBe(MAX_BARS);
+    expect(setBars(base(), 1)).toEqual(base());
+  });
+  it("removes, copies and clears single bars", () => {
+    let b = setStep(setBars(base(), 3), "tom", 16 + 15, 3); // a fill at the end of bar 2
+    expect(b.rows.tom.slice(16, 32)).toBe("0000000000000003");
+    b = copyBar(b, 1, 2);
+    expect(b.rows.tom.slice(32)).toBe("0000000000000003");
+    b = clearBeat(b, 0);
+    expect(b.rows.kick.slice(0, 16)).toBe("0".repeat(16));
+    expect(b.rows.kick.slice(16, 32)).toBe(base().rows.kick);
+    b = removeBar(b, 0);
+    expect(barsOf(b)).toBe(2);
+    expect(b.rows.tom).toBe("0000000000000003".repeat(2));
+    expect(removeBar(setBars(base(), 1), 0).rows).toEqual(base().rows); // the last bar stays
+  });
+  it("hits run across all bars, and a range can start mid-pattern", () => {
+    const b = setStep(setBars(base(), 2), "bell", 20, 2); // bar 2, beat 2
+    const hits = beatHits(b, 16);
+    expect(hits.filter((h) => h.id === "bell").map((h) => h.beat)).toEqual([5, 13]);
+    expect(beatHitsBetween(b, 4, 8).filter((h) => h.id === "bell").map((h) => h.beat)).toEqual([5]);
+    expect(beatHitsBetween(b, 0, 4).some((h) => h.id === "bell")).toBe(false);
+  });
+  it("vary only touches the bar on screen", () => {
+    const b = setBars(base(), 2);
+    for (let seed = 1; seed < 20; seed++) {
+      const v = varyBeat(b, drumRng(seed), 1);
+      for (const id of DRUM_IDS) expect(v.rows[id].slice(0, 16)).toBe(b.rows[id].slice(0, 16));
+    }
+  });
+  it("a section plays its chords again until a longer beat has finished", () => {
+    const four = { ...setBars(base(), 4), on: true };
+    expect(chordRounds(8, four)).toBe(2);
+    expect(chordRounds(16, four)).toBe(1);
+    expect(chordRounds(12, four)).toBe(2);
+    expect(chordRounds(8, { ...four, on: false })).toBe(1);
+    expect(chordRounds(0, four)).toBe(1);
+  });
+  it("sections keep their rhythm through storage", () => {
+    const g = grooveOf(setBars(base(), 3));
+    expect(reviveGroove(JSON.parse(JSON.stringify(g)))).toEqual(g);
+    expect(reviveGroove({ steps: 16, div: 4, bars: 2, rows: { kick: "2" } })!.rows.kick).toHaveLength(32);
+    expect(reviveGroove({ steps: 0 })).toBeUndefined();
+    expect(reviveBeat({ ...base(), bars: 40 })!.bars).toBe(MAX_BARS);
+  });
+});
+
+describe("MIDI with song sections", () => {
+  it("each section exports its own rhythm, starting from its first bar", () => {
+    const a = { ...applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Backbeat")!), on: true };
+    const b = { ...applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Four on the floor")!), on: true };
+    const chordA = { midi: [40, 47, 52, 56, 59, 64], beats: 4 };
+    const bytes = progressionToMidi([{ ...chordA, drums: a, section: true }, { ...chordA, drums: b, section: true }], 100, "ring", "t", a);
+    let kicks = 0;
+    for (let i = 0; i < bytes.length - 2; i++) if (bytes[i] === 0x99 && bytes[i + 1] === GM_DRUM.kick && bytes[i + 2] > 0) kicks++;
+    expect(kicks).toBe(2 + 4); // Backbeat: 2 kicks a bar; four on the floor: 4
   });
 });

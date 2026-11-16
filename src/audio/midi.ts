@@ -3,7 +3,7 @@
  * Ableton, Reaper, FL…) and your progression shows up with the exact voicings
  * and rhythm you heard in the app.
  */
-import { beatHits, type Beat } from "./beats";
+import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import type { DrumId } from "./drums";
 import { PatternId, patternEvents } from "./patterns";
 import type { PlayItem } from "./synth";
@@ -29,7 +29,9 @@ export const GM_DRUM: Record<DrumId, number> = { kick: 36, snare: 38, clap: 39, 
 
 /**
  * The progression as a MIDI file. With a beat switched on, the file has two tracks:
- * guitar, and drums on channel 10. With no chords, the beat is exported as four bars.
+ * guitar, and drums on channel 10. Items can carry their own drum rhythm (song sections); a
+ * section's pattern starts again from its first bar. With no chords, the beat is exported as
+ * four bars, or the whole pattern if it is longer.
  */
 export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null): Uint8Array {
   type Ev = { tick: number; data: number[]; order: number };
@@ -67,13 +69,24 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     last = e.tick;
   }
   const drums = beat?.on ? beat : null;
-  const totalTicks = chordStart || (drums ? Math.round((drums.steps / drums.div) * 4 * TPQ) : 0);
+  const totalTicks = chordStart || (drums ? Math.round(barBeats(drums) * Math.max(4, barsOf(drums)) * TPQ) : 0);
   track.push(...vlq(Math.max(0, totalTicks - last)), 0xff, 0x2f, 0x00);
   const chunk = (t: number[]) => [...str("MTrk"), ...u32(t.length), ...t];
   if (!drums) return new Uint8Array([...str("MThd"), ...u32(6), ...u16(0), ...u16(1), ...u16(TPQ), ...chunk(track)]);
 
+  // which rhythm plays when: each item (or the whole export, with no chords) and where its pattern began
+  const runs: { from: number; to: number; origin: number; b: Beat }[] = [];
+  let at = 0;
+  let origin = 0;
+  items.forEach((item, i) => {
+    if (i === 0 || item.section) origin = at;
+    runs.push({ from: at, to: at + item.beats, origin, b: item.drums ?? drums });
+    at += item.beats;
+  });
+  if (!items.length) runs.push({ from: 0, to: totalTicks / TPQ, origin: 0, b: drums });
   const hits: Ev[] = [];
-  for (const h of beatHits(drums, totalTicks / TPQ)) {
+  const all = runs.flatMap((r) => (r.b.on ? beatHitsBetween(r.b, r.from - r.origin, r.to - r.origin).map((h) => ({ ...h, beat: h.beat + r.origin })) : []));
+  for (const h of all) {
     const on = Math.round(h.beat * TPQ);
     if (on >= totalTicks) continue;
     const vel = Math.max(1, Math.min(127, Math.round(h.velocity * 118)));

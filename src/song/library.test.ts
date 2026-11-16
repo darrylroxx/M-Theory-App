@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { ProgChord, Progression, SavedProgression } from "../ui/state";
 import { autoName, describeIdea, exportIdeas, fingerprint, importIdeas, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "./library";
-import { addSection, sections, selectBlock } from "./structure";
+import { addNewSection, ensureSong, repeatSection, sections, selectBlock } from "./structure";
 
 const chord = (root: string): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats: 4 });
 const prog = (roots: string[] = []): Progression => ({ chords: roots.map(chord), bpm: 90, pattern: "ring", loop: true });
@@ -17,9 +17,9 @@ describe("what counts as a change", () => {
     expect(fp(a)).not.toBe(fp(prog(["C", "F"])));
     expect(fp(a)).not.toBe(fp({ ...a, bpm: 120 }));
     expect(fp(a)).not.toBe(fp(a, 2));
-    let song = addSection(a, "verse");
+    let song = ensureSong(a);
     expect(fp(song)).not.toBe(fp(a));
-    song = addSection(song, "chorus");
+    song = addNewSection(song);
     const first = sections(song)[0].blockId;
     expect(fp(selectBlock(song, first))).toBe(fp(song));
     // edits in the tray count even before they are written back into the song
@@ -28,7 +28,7 @@ describe("what counts as a change", () => {
   it("knows a blank page", () => {
     expect(isBlank(prog())).toBe(true);
     expect(isBlank(prog(["C"]))).toBe(false);
-    expect(isBlank(addSection(prog(), "intro"))).toBe(false);
+    expect(isBlank(ensureSong(prog()))).toBe(false);
   });
 });
 
@@ -40,8 +40,9 @@ describe("names and summaries", () => {
   });
   it("describes an idea by its sections, else its chords", () => {
     expect(describeIdea(idea("a", 1, ["C", "G"]))).toBe("C · G");
-    const song = addSection(addSection(addSection(prog(["C"]), "verse"), "chorus"), "verse");
-    expect(describeIdea({ ...idea("a", 1), progression: song })).toBe("Verse 1 · Chorus · Verse 2");
+    const ab = addNewSection(prog(["C"]));
+    const song = repeatSection(ab, ab.song!.parts[0].id);
+    expect(describeIdea({ ...idea("a", 1), progression: song })).toBe("A B A");
     expect(describeIdea(idea("a", 1, []))).toBe("Empty");
   });
 });
@@ -80,10 +81,10 @@ describe("syncing between devices", () => {
 
 describe("backups", () => {
   it("round-trips ideas, including song structure", () => {
-    const song = addSection(addSection(prog(["C"]), "verse"), "chorus");
+    const song = addNewSection(prog(["C"]));
     const back = importIdeas(exportIdeas([{ ...idea("a", 3), progression: song, capo: 2, tuningId: "standard" }, idea("b", 4)]));
     expect(back.map((i) => i.id)).toEqual(["a", "b"]);
-    expect(describeIdea(back[0])).toBe("Verse · Chorus");
+    expect(describeIdea(back[0])).toBe("A B");
     expect(back[0].capo).toBe(2);
   });
   it("rejects files that are not backups", () => {
@@ -92,8 +93,7 @@ describe("backups", () => {
     expect(reviveIdea(null)).toBeNull();
   });
   it("a revived song shows the selected section's chords", () => {
-    let song = addSection(prog(["C"]), "verse");
-    song = addSection(song, "chorus"); // chorus selected, empty
+    const song = addNewSection(prog(["C"])); // B selected, empty
     const stored = { ...idea("a", 1), progression: { ...song, chords: [chord("X")] } }; // stale tray chords in the file
     expect(reviveIdea(JSON.parse(JSON.stringify(stored)))!.progression.chords).toEqual([]);
   });

@@ -2,9 +2,9 @@
  * Drum beats: the step-grid format, the rhythm library and the helpers shared by
  * playback, the editor and MIDI export.
  *
- * A beat is one bar. `steps` is the number of grid steps in the bar and `div` the
+ * A beat is one or more bars. `steps` is the number of grid steps in one bar and `div` the
  * number of steps per beat, so 4/4 in 16ths is 16 × 4, a 12/8 shuffle is 12 × 3
- * and a 3/4 waltz is 12 × 4.
+ * and a 3/4 waltz is 12 × 4. Each drum's row holds `steps × bars` characters.
  */
 import { DRUM_IDS, KITS, defaultParams, type DrumId, type DrumParams, type KitId } from "./drums";
 
@@ -27,6 +27,8 @@ export interface BeatPattern {
   group: BeatGroupId | "mine";
   steps: number;
   div: number;
+  /** bars in the pattern (missing = 1) */
+  bars?: number;
   /** tempo this rhythm usually sits at */
   bpm: number;
   swing: number;
@@ -78,8 +80,11 @@ export interface Beat extends Partial<Omit<BeatFx, "level" | "space" | "grit">> 
   patternId: string | null;
   name: string;
   edited?: boolean;
+  /** steps in one bar */
   steps: number;
   div: number;
+  /** how many bars the pattern lasts before it repeats (missing = 1) */
+  bars?: number;
   /** 0 = straight … 1 = full triplet swing (16th grids only) */
   swing: number;
   /** drum volume 0…1 */
@@ -367,21 +372,92 @@ export const DEFAULT_BEAT: Beat = {
 
 /** Load a library rhythm into a beat. The kit, sound settings and effects stay as they are. */
 export function applyPattern(beat: Beat, p: BeatPattern): Beat {
-  return { ...beat, on: true, patternId: p.id, name: p.name, edited: false, steps: p.steps, div: p.div, swing: p.swing, rows: p.rows };
+  return { ...beat, on: true, patternId: p.id, name: p.name, edited: false, steps: p.steps, div: p.div, bars: p.bars ?? 1, swing: p.swing, rows: p.rows };
 }
 
 /** Beats (quarter notes) in one bar of this rhythm. */
 export const barBeats = (b: { steps: number; div: number }) => b.steps / b.div;
+/**
+ * How many times a section's chords play so the drum pattern can finish: a 4-bar beat under
+ * 2 bars of chords plays the chords twice. With the drums off, or a pattern no longer than the
+ * chords, once.
+ */
+export function chordRounds(chordBeats: number, b: Beat | undefined | null): number {
+  if (!b?.on || chordBeats <= 0) return 1;
+  return Math.max(1, Math.ceil((barBeats(b) * barsOf(b)) / chordBeats - 1e-6));
+}
+
+/** Bars in the pattern. */
+export const barsOf = (b: { bars?: number }) => Math.max(1, Math.min(MAX_BARS, Math.round(b.bars ?? 1)));
+/** Grid steps in the whole pattern, all bars. */
+export const lenOf = (b: { steps: number; bars?: number }) => b.steps * barsOf(b);
+export const MAX_BARS = 8;
+
+/** The rhythm on its own: what each song section keeps for itself. Kit, sounds and effects are shared by the whole song. */
+export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
+export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]>;
+export const grooveOf = (b: Beat): Groove => ({ patternId: b.patternId, name: b.name, edited: !!b.edited, steps: b.steps, div: b.div, bars: barsOf(b), swing: b.swing, rows: b.rows });
+
+/**
+ * Make the pattern longer or shorter. New bars start as a copy of the last bar, so the beat carries
+ * on and you only change what should be different.
+ */
+export function setBars(beat: Beat, n: number): Beat {
+  const to = Math.max(1, Math.min(MAX_BARS, Math.round(n)));
+  const from = barsOf(beat);
+  if (to === from) return beat;
+  const rows = {} as Record<DrumId, string>;
+  for (const id of DRUM_IDS) {
+    const r = (beat.rows[id] ?? "").padEnd(beat.steps * from, "0").slice(0, beat.steps * from);
+    const last = r.slice((from - 1) * beat.steps);
+    rows[id] = to < from ? r.slice(0, to * beat.steps) : r + last.repeat(to - from);
+  }
+  return { ...beat, bars: to, rows, edited: true };
+}
+
+/** Take out one bar of the pattern (never the last one left). */
+export function removeBar(beat: Beat, bar: number): Beat {
+  const n = barsOf(beat);
+  if (n <= 1 || bar < 0 || bar >= n) return beat;
+  const rows = {} as Record<DrumId, string>;
+  for (const id of DRUM_IDS) {
+    const r = (beat.rows[id] ?? "").padEnd(beat.steps * n, "0");
+    rows[id] = r.slice(0, bar * beat.steps) + r.slice((bar + 1) * beat.steps, n * beat.steps);
+  }
+  return { ...beat, bars: n - 1, rows, edited: true };
+}
+
+/** Copy one bar over another. */
+export function copyBar(beat: Beat, from: number, to: number): Beat {
+  const n = barsOf(beat);
+  if (from === to || from < 0 || to < 0 || from >= n || to >= n) return beat;
+  const rows = {} as Record<DrumId, string>;
+  for (const id of DRUM_IDS) {
+    const r = (beat.rows[id] ?? "").padEnd(beat.steps * n, "0");
+    rows[id] = r.slice(0, to * beat.steps) + r.slice(from * beat.steps, (from + 1) * beat.steps) + r.slice((to + 1) * beat.steps);
+  }
+  return { ...beat, rows, edited: true };
+}
 
 export const levelAt = (rows: Record<DrumId, string>, id: DrumId, step: number): StepLevel => (Number(rows[id]?.[step] ?? 0) || 0) as StepLevel;
 
 export function setStep(beat: Beat, id: DrumId, step: number, level: StepLevel): Beat {
-  const cur = (beat.rows[id] ?? emptyRow(beat.steps)).padEnd(beat.steps, "0");
-  if (step < 0 || step >= beat.steps || Number(cur[step]) === level) return beat;
+  const len = lenOf(beat);
+  const cur = (beat.rows[id] ?? emptyRow(len)).padEnd(len, "0");
+  if (step < 0 || step >= len || Number(cur[step]) === level) return beat;
   return { ...beat, edited: true, rows: { ...beat.rows, [id]: cur.slice(0, step) + level + cur.slice(step + 1) } };
 }
 
-export const clearBeat = (beat: Beat): Beat => ({ ...beat, edited: true, rows: emptyRows(beat.steps) });
+/** Empty the whole pattern, or just one bar of it. */
+export function clearBeat(beat: Beat, bar?: number): Beat {
+  if (bar === undefined) return { ...beat, edited: true, rows: emptyRows(lenOf(beat)) };
+  const rows = {} as Record<DrumId, string>;
+  for (const id of DRUM_IDS) {
+    const r = (beat.rows[id] ?? "").padEnd(lenOf(beat), "0");
+    rows[id] = r.slice(0, bar * beat.steps) + "0".repeat(beat.steps) + r.slice((bar + 1) * beat.steps);
+  }
+  return { ...beat, edited: true, rows };
+}
 
 /** Time of a step inside the bar, in beats, including swing (which delays every second 16th). */
 export function stepBeat(step: number, div: number, swing: number): number {
@@ -389,14 +465,15 @@ export function stepBeat(step: number, div: number, swing: number): number {
   return step / div + late;
 }
 
-/** A small random variation: nudges kicks, adds ghost notes, opens a hat. Keeps the feel. */
-export function varyBeat(beat: Beat, rand: () => number = Math.random): Beat {
+/** A small random variation (in one bar, or the first): nudges kicks, adds ghost notes, opens a hat. Keeps the feel. */
+export function varyBeat(beat: Beat, rand: () => number = Math.random, bar = 0): Beat {
   const pick = (n: number) => Math.floor(rand() * n);
   let b = beat;
   const onBeat = (s: number) => s % beat.div === 0;
   const moves = 2 + pick(2);
+  const at = Math.min(bar, barsOf(beat) - 1) * beat.steps;
   for (let m = 0; m < moves; m++) {
-    const s = pick(beat.steps);
+    const s = at + pick(beat.steps);
     const kind = pick(4);
     if (kind === 0 && !onBeat(s)) b = setStep(b, "kick", s, levelAt(b.rows, "kick", s) ? 0 : 2);
     else if (kind === 1 && !levelAt(b.rows, "snare", s)) b = setStep(b, "snare", s, 1);
@@ -409,7 +486,8 @@ export function varyBeat(beat: Beat, rand: () => number = Math.random): Beat {
       if (levelAt(b.rows, "open", s)) b = setStep(b, "hat", s, 0);
     }
   }
-  return b === beat ? setStep(beat, "snare", beat.steps - 1, levelAt(beat.rows, "snare", beat.steps - 1) ? 0 : 1) : b;
+  const end = at + beat.steps - 1;
+  return b === beat ? setStep(beat, "snare", end, levelAt(beat.rows, "snare", end) ? 0 : 1) : b;
 }
 
 export interface DrumHit {
@@ -419,34 +497,58 @@ export interface DrumHit {
   velocity: number;
 }
 
-/** Every drum hit in `totalBeats` of this rhythm (the bar repeats). Shared by playback tests and MIDI export. */
+/** Every drum hit in `totalBeats` of this rhythm (the pattern repeats). Shared by playback tests and MIDI export. */
 export function beatHits(b: Beat, totalBeats: number): DrumHit[] {
+  return beatHitsBetween(b, 0, totalBeats);
+}
+
+/** Drum hits from `from` up to (not including) `to`, in beats from the start of the pattern. */
+export function beatHitsBetween(b: Beat, from: number, to: number): DrumHit[] {
   const out: DrumHit[] = [];
-  const total = Math.ceil(totalBeats * b.div - 1e-6);
-  for (let n = 0; n < total; n++) {
-    const step = n % b.steps;
-    const bar = Math.floor(n / b.steps);
+  const len = lenOf(b);
+  const first = Math.ceil(from * b.div - 1e-6);
+  const end = Math.ceil(to * b.div - 1e-6);
+  for (let n = first; n < end; n++) {
+    const step = n % len;
     for (const id of DRUM_IDS) {
       if (b.mutes?.includes(id)) continue;
       const lv = levelAt(b.rows, id, step);
-      if (lv) out.push({ beat: bar * barBeats(b) + stepBeat(step, b.div, b.swing), id, velocity: STEP_VELOCITY[lv] });
+      if (lv) out.push({ beat: stepBeat(n, b.div, b.swing), id, velocity: STEP_VELOCITY[lv] });
     }
   }
   return out;
+}
+
+/** Check the rhythm fields of a stored beat or groove. Returns null when they make no sense. */
+function cleanRhythm(b: Partial<Beat>): Pick<Beat, "steps" | "div" | "bars" | "rows"> | null {
+  const steps = Number(b.steps);
+  const div = Number(b.div);
+  if (!Number.isInteger(steps) || steps < 1 || steps > 32 || !Number.isInteger(div) || div < 1 || !b.rows || typeof b.rows !== "object") return null;
+  const bars = barsOf({ bars: Number(b.bars) || 1 });
+  const len = steps * bars;
+  const rows = emptyRows(len);
+  for (const id of DRUM_IDS) {
+    const r = (b.rows as Record<string, unknown>)[id];
+    if (typeof r === "string") rows[id] = r.replace(/[^0-3]/g, "0").slice(0, len).padEnd(len, "0");
+  }
+  return { steps, div, bars, rows };
 }
 
 /** Tidy up a beat loaded from storage (older or partial data). */
 export function reviveBeat(raw: unknown): Beat | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const b = raw as Partial<Beat>;
-  const steps = Number(b.steps);
-  const div = Number(b.div);
-  if (!Number.isInteger(steps) || steps < 1 || steps > 32 || !Number.isInteger(div) || div < 1 || !b.rows) return undefined;
-  const rows = emptyRows(steps);
-  for (const id of DRUM_IDS) {
-    const r = (b.rows as Record<string, unknown>)[id];
-    if (typeof r === "string") rows[id] = r.replace(/[^0-3]/g, "0").slice(0, steps).padEnd(steps, "0");
-  }
+  const rhythm = cleanRhythm(b);
+  if (!rhythm) return undefined;
   const kit: KitId = KITS.some((k) => k.id === b.kit) ? (b.kit as KitId) : DEFAULT_BEAT.kit;
-  return { ...DEFAULT_BEAT, ...b, kit, steps, div, rows, sounds: b.sounds ?? {}, voices: b.voices ?? {} };
+  return { ...DEFAULT_BEAT, ...b, kit, ...rhythm, sounds: b.sounds ?? {}, voices: b.voices ?? {} };
+}
+
+/** Tidy up a section's stored rhythm. */
+export function reviveGroove(raw: unknown): Groove | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const g = raw as Partial<Groove>;
+  const rhythm = cleanRhythm(g);
+  if (!rhythm) return undefined;
+  return { patternId: typeof g.patternId === "string" ? g.patternId : null, name: typeof g.name === "string" ? g.name : "Beat", edited: !!g.edited, swing: Number(g.swing) || 0, ...rhythm };
 }

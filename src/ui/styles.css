@@ -305,23 +305,29 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .slot-step .slot-shapes { display: inline-grid; place-items: center; }
 @media (max-width: 620px) { .finder { padding: 10px; } .finder-head h2 { font-size: 1.35rem; } .shape-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 6px; } .shapes-btn { height: 28px; padding: 0 7px 0 5px; font-size: 0.7rem; gap: 3px; } }
 /* ── Song structure ── */
-.k-intro { --kc: var(--stable); } .k-verse { --kc: var(--third); } .k-pre { --kc: var(--fifth); } .k-chorus { --kc: var(--accent); } .k-bridge { --kc: var(--seventh); } .k-solo { --kc: var(--chromatic); } .k-outro { --kc: var(--other); }
+.L0 { --kc: var(--third); } .L1 { --kc: var(--accent); } .L2 { --kc: var(--seventh); } .L3 { --kc: var(--fifth); }
+.L4 { --kc: var(--chromatic); } .L5 { --kc: var(--stable); } .L6 { --kc: var(--motion); } .L7 { --kc: var(--other); }
 .songbar { gap: 6px; position: relative; }
 .songbar.open { flex-wrap: wrap; overflow: visible; }
-.song-play { height: 32px; padding: 0 12px; border-radius: 999px; border: none; background: var(--text); color: var(--bg); font-weight: 800; font-size: 0.85rem; white-space: nowrap; }
+.song-play { height: 34px; padding: 0 12px; border-radius: 999px; border: none; background: var(--text); color: var(--bg); font-weight: 800; font-size: 0.85rem; white-space: nowrap; }
 .song-play.stop { background: var(--tension); color: #fff; }
-.sec { display: inline-flex; align-items: stretch; height: 32px; border-radius: 10px; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--kc) 65%, var(--border)); background: color-mix(in srgb, var(--kc) 16%, var(--card-2)); }
+.sec { display: inline-flex; align-items: stretch; height: 34px; border-radius: 10px; overflow: hidden; border: 1.5px solid color-mix(in srgb, var(--kc) 65%, var(--border)); background: color-mix(in srgb, var(--kc) 16%, var(--card-2)); touch-action: pan-x; user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .sec button { border: none; background: none; padding: 0 7px; font-weight: 700; font-size: 0.8rem; white-space: nowrap; color: inherit; }
 .sec button:disabled { opacity: 0.35; }
-.sec .sec-name { padding: 0 12px; font-size: 0.88rem; font-weight: 750; }
+.sec .sec-name { min-width: 36px; padding: 0 10px; font-size: 1.05rem; font-weight: 850; cursor: grab; }
+.sec-tools { display: inline-flex; align-items: stretch; }
 .sec.on { background: var(--kc); border-color: var(--kc); color: #14161a; }
-.sec.on button:not(.sec-name) { border-left: 1px solid rgba(0, 0, 0, 0.18); }
+.sec.on .sec-tools button { border-left: 1px solid rgba(0, 0, 0, 0.18); min-width: 30px; }
 .sec.on button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.25); }
-.sec-add { height: 32px; padding: 0 11px; border-radius: 10px; border: 1.5px dashed color-mix(in srgb, var(--kc) 70%, var(--border)); background: none; font-weight: 750; font-size: 0.85rem; white-space: nowrap; }
-.sec-add:hover { background: color-mix(in srgb, var(--kc) 22%, transparent); }
-.sec-plus { width: 34px; height: 32px; border-radius: 10px; border: 1.5px dashed var(--border-2); background: none; font-size: 1.15rem; font-weight: 800; line-height: 1; padding: 0; }
+.sec.lifted { opacity: 0.35; }
+.songbar.dragging .sec { cursor: grabbing; }
+.sec-marker { flex: 0 0 4px; align-self: stretch; border-radius: 2px; background: var(--accent); }
+.sec-add { height: 34px; padding: 0 11px; border-radius: 10px; border: 1.5px dashed color-mix(in srgb, var(--kc) 70%, var(--border)); background: none; font-weight: 750; font-size: 0.85rem; white-space: nowrap; }
+.sec-add.again { border-style: solid; background: color-mix(in srgb, var(--kc) 16%, var(--card-2)); }
+.sec-add:hover { background: color-mix(in srgb, var(--kc) 26%, transparent); }
+.sec-paste { height: 34px; padding: 0 11px; border-radius: 10px; border: 1.5px dashed var(--kc); background: color-mix(in srgb, var(--kc) 10%, transparent); font-weight: 750; font-size: 0.82rem; white-space: nowrap; }
+.sec-plus { width: 36px; height: 34px; border-radius: 10px; border: 1.5px dashed var(--border-2); background: none; font-size: 1.15rem; font-weight: 800; line-height: 1; padding: 0; }
 .sec-plus:hover { border-color: var(--accent); color: var(--accent); }
-.sec-plus.first { width: auto; padding: 0 12px; font-size: 0.85rem; font-weight: 750; }
 
 /* ── Ideas ── */
 .ideas-list { display: flex; flex-direction: column; gap: 8px; }
@@ -371,6 +377,16 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .beat-grid.locked .bg-cell { cursor: default; }
 .drums.editing .bg-steps { outline: 2px solid var(--accent); outline-offset: 4px; border-radius: 6px; }
 .dm-tabs { display: flex; gap: 6px; }
+.dm-secs, .dm-bars { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; }
+.dm-secs .kb-label, .dm-bars .kb-label { margin-right: 2px; }
+.sec-chip { min-width: 38px; height: 32px; border-radius: 9px; border: 1.5px solid color-mix(in srgb, var(--kc) 65%, var(--border)); background: color-mix(in srgb, var(--kc) 14%, var(--card-2)); font-weight: 850; font-size: 0.95rem; }
+.sec-chip.on { background: var(--kc); border-color: var(--kc); color: #14161a; }
+.dm-bars button { position: relative; min-width: 34px; height: 30px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card-2); font-weight: 750; font-size: 0.85rem; }
+.dm-bars button.on { background: var(--text); border-color: var(--text); color: var(--bg); }
+.dm-bars button.sounding::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.dm-bars .dm-bar-add { border-style: dashed; font-size: 1.05rem; }
+.dm-bars .dm-bar-del { border-color: transparent; background: none; color: var(--muted); }
+.dm-bars .dm-bar-del:hover { color: var(--tension); }
 .beat-item { display: inline-flex; align-items: stretch; border: 1px solid var(--border-2); border-radius: 9px; background: var(--card-2); overflow: hidden; }
 .beat-item button { border: none; background: none; padding: 6px 11px; font-weight: 650; font-size: 0.86rem; }
 .beat-item:hover { border-color: var(--accent); }

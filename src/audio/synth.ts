@@ -5,7 +5,7 @@
  * No samples, no downloads, works offline.
  */
 import { midiToFreq } from "../theory/notes";
-import { barBeats, levelAt, stepBeat, type Beat } from "./beats";
+import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
 import { playStep, prepareBeat, stopDrums, syncDrums } from "./drumbus";
 import { DRUM_IDS } from "./drums";
@@ -167,6 +167,10 @@ export function playSequence(midis: number[], noteSec = 0.28) {
 export interface PlayItem {
   midi: (number | null)[];
   beats: number;
+  /** the drum rhythm under this chord (missing = the player's own beat) */
+  drums?: Beat;
+  /** a song section starts here: its drum pattern starts again from bar 1 */
+  section?: boolean;
 }
 
 /** Where a chord starts: the drum grid re-locks to each of these, so tempo changes and loops stay tight. */
@@ -176,6 +180,10 @@ interface Anchor {
   beat: number;
   /** seconds per beat */
   spb: number;
+  /** which item this chord is, to look up its drums live (so edits are heard straight away) */
+  index: number;
+  /** where the drum pattern started (the start of the pass, or of the song section) */
+  origin: number;
 }
 
 export class ProgressionPlayer {
@@ -189,6 +197,7 @@ export class ProgressionPlayer {
   private nextIndex = 0;
   private nextTime = 0;
   private passBeat = 0;
+  private origin = 0;
   private endAt: number | null = null;
   private marks: { time: number; index: number }[] = [];
   // drums
@@ -204,9 +213,13 @@ export class ProgressionPlayer {
   onEnd: () => void = () => {};
   playing = false;
 
-  /** With no chords, the beat plays on its own, one bar at a time. */
+  /** With no chords, the beat plays on its own, the whole pattern each time round. */
   private fill(items: PlayItem[]): PlayItem[] {
-    return items.length ? items : this.beat?.on ? [{ midi: [], beats: barBeats(this.beat) }] : [];
+    return items.length ? items : this.beat?.on ? [{ midi: [], beats: barBeats(this.beat) * barsOf(this.beat) }] : [];
+  }
+
+  private drumsAt(a: Anchor): Beat | null {
+    return this.items[a.index]?.drums ?? this.beat;
   }
 
   start(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, fromIndex = 0) {
@@ -221,13 +234,14 @@ export class ProgressionPlayer {
     this.loop = loop || !items.length;
     this.nextIndex = fromIndex;
     this.passBeat = list.slice(0, fromIndex).reduce((a, x) => a + x.beats, 0);
+    this.origin = 0;
     this.startTime = c.currentTime + 0.08;
     this.nextTime = this.startTime;
     this.endAt = null;
     this.dDiv = beat?.div ?? 4;
     if (beat) {
       syncDrums(beat, bpm);
-      prepareBeat(beat);
+      for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
     }
     this.playing = true;
     this.timer = window.setInterval(() => this.schedule(), 25);
@@ -264,8 +278,9 @@ export class ProgressionPlayer {
       }
       const item = this.items[this.nextIndex];
       const t = this.nextTime;
+      if (this.nextIndex === 0 || item.section) this.origin = this.passBeat;
       this.marks.push({ time: t, index: this.nextIndex });
-      this.anchors.push({ time: t, beat: this.passBeat, spb });
+      this.anchors.push({ time: t, beat: this.passBeat, spb, index: this.nextIndex, origin: this.origin });
       for (const e of patternEvents(item.midi, item.beats, this.pattern)) {
         const when = t + e.beat * spb;
         const lenSec = Number.isFinite(e.length) ? e.length * spb : Infinity;
@@ -286,36 +301,38 @@ export class ProgressionPlayer {
 
   /** Drums run on their own short look-ahead, so edits to the grid are heard on the very next step. */
   private scheduleDrums(horizon: number) {
+    // first grid step at or after a chord's start, counted from where the pattern started
+    const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
     for (let guard = 0; guard < 400; guard++) {
-      const b = this.beat;
-      const div = b?.div ?? 4;
       if (!this.cur) {
         const first = this.anchors.shift();
         if (!first) return;
         this.cur = first;
-        this.dStep = Math.ceil(first.beat * div - 1e-6);
-        this.dDiv = div;
+        this.dDiv = this.drumsAt(first)?.div ?? 4;
+        this.dStep = firstStep(first, this.dDiv);
       }
+      const cur = this.cur;
+      const b = this.drumsAt(cur);
+      const div = b?.div ?? 4;
       if (div !== this.dDiv) {
         // the rhythm changed to a different grid: carry on from the same place in the bar
         this.dStep = Math.ceil((this.dStep / this.dDiv) * div - 1e-6);
         this.dDiv = div;
       }
-      const cur = this.cur;
       const swing = b?.swing ?? 0;
-      const base = cur.time + (this.dStep / div - cur.beat) * cur.spb;
+      const base = cur.time + (cur.origin + this.dStep / div - cur.beat) * cur.spb;
       const next = this.anchors[0];
       if (next && base >= next.time - 1e-4) {
         this.cur = this.anchors.shift()!;
-        this.dStep = Math.ceil(this.cur.beat * div - 1e-6);
+        this.dDiv = this.drumsAt(this.cur)?.div ?? 4;
+        this.dStep = firstStep(this.cur, this.dDiv);
         continue;
       }
       if (this.endAt !== null && base >= this.endAt - 1e-4) return;
       if (!next && base >= this.nextTime - 1e-4) return; // wait until the next chord is scheduled
       if (base >= horizon) return;
-      const steps = b?.steps ?? 16;
-      const step = this.dStep % steps;
-      const t = cur.time + (Math.floor(this.dStep / div) + stepBeat(this.dStep % div, div, swing) - cur.beat) * cur.spb;
+      const step = b ? this.dStep % lenOf(b) : 0;
+      const t = cur.time + (cur.origin + Math.floor(this.dStep / div) + stepBeat(this.dStep % div, div, swing) - cur.beat) * cur.spb;
       if (b?.on) {
         for (const id of DRUM_IDS) {
           const lv = levelAt(b.rows, id, step);
