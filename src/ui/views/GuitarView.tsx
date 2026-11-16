@@ -1,6 +1,5 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barBeats, findPattern, type Beat, type BeatPattern } from "../../audio/beats";
-import { getKit } from "../../audio/drums";
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio, playSequence, strum } from "../../audio/synth";
@@ -16,7 +15,7 @@ import { MOODS, sparkProgression, suggestNext, type Mood, type SuggestionGroup }
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
-import { BeatPanel } from "../components/BeatPanel";
+import { DrumMachine } from "../components/DrumMachine";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { chordBeats, newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
@@ -26,7 +25,6 @@ export function GuitarView() {
   const { state, set, shapeOf, sheet, openSheet, tuning, toast } = useApp();
   const prog = state.progression;
   const beat = prog.beat ?? DEFAULT_BEAT;
-  const [beatOpen, setBeatOpen] = useState(false);
   const stepSink = useRef<((step: number) => void) | null>(null);
   const [nowIdx, setNowIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
@@ -38,6 +36,11 @@ export function GuitarView() {
   const dockRef = useRef<HTMLDivElement>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const lastDrag = useRef(0);
+  /** the tray's height, so the page keeps its shape while the tray is lifted up next to the shape finder */
+  const dockH = useRef(0);
+  useLayoutEffect(() => {
+    if (!sheet && dockRef.current) dockH.current = dockRef.current.getBoundingClientRect().height;
+  });
 
   // Shapes in the tray: either each chord's own shape, or (when Arrange is on) a set
   // chosen together so they sit in one area of the neck. Shapes you set by hand stay put.
@@ -110,10 +113,6 @@ export function GuitarView() {
     if (player.current?.playing) player.current.update(songMode ? plan.items : items, prog.bpm, prog.pattern, songMode ? false : prog.loop, beat);
   });
   useEffect(() => () => player.current?.stop(), []);
-  // one of the two panels above the tray at a time
-  useEffect(() => {
-    if (sheet) setBeatOpen(false);
-  }, [sheet]);
 
   const startPlay = (list: typeof items, b: Beat) => {
     if (!list.length && !b.on) return;
@@ -174,10 +173,6 @@ export function GuitarView() {
     const at = list.findIndex((x) => x.id === beat.patternId);
     pickBeat(list[(Math.max(at, 0) + dir + list.length) % list.length]);
   };
-  const openBeat = () => {
-    openSheet(null);
-    setBeatOpen((v) => !v);
-  };
 
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
@@ -199,7 +194,7 @@ export function GuitarView() {
       const dock = dockRef.current;
       if (!dock) return null;
       const r = dock.getBoundingClientRect();
-      if (y < r.top - 28 || x < r.left - 28 || x > r.right + 28) return null;
+      if (y < r.top - 28 || y > r.bottom + 28 || x < r.left - 28 || x > r.right + 28) return null;
       const scroller = dock.querySelector<HTMLElement>(".dock-slots");
       if (scroller) {
         const sr = scroller.getBoundingClientRect();
@@ -290,17 +285,18 @@ export function GuitarView() {
 
   return (
     <DragCtx.Provider value={api}>
-      <div className={`stack write${drag ? " dragging" : ""}`}>
+      <div className={`page write${drag ? " dragging" : ""}`}>
         <KeyBar />
         <ChordBoard />
-      </div>
-      {/* the finder sits directly on top of the tray, so shapes can be dragged straight in */}
-      <div className={`bottom-layer${sheet || beatOpen ? " open" : ""}${drag ? " dragging" : ""}`}>
-        {(sheet || beatOpen) && <div className="finder-backdrop" onClick={() => { openSheet(null); setBeatOpen(false); }} />}
-        <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-        {beatOpen && !sheet && <BeatPanel beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onPlay={togglePlay} onClose={() => setBeatOpen(false)} stepSink={stepSink} />}
-        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange}
-          beat={beat} beatOpen={beatOpen} onBeat={openBeat} onBeatToggle={() => setBeat((b) => ({ ...b, on: !b.on }))} onBeatStep={stepBeat} />
+        {/* The tray is part of the page, and sticks to the bottom of the screen while the chords above it are in view.
+            With the shape finder open it is lifted to the bottom of the screen, so shapes can be dragged straight in. */}
+        {sheet && <div style={{ height: dockH.current }} />}
+        <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
+          {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
+          <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
+          <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} />
+        </div>
+        <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} onStepRhythm={stepBeat} playing={playing} onPlay={togglePlay} stepSink={stepSink} />
       </div>
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
       {menu && <SongMenu voicings={voicings} items={items} beat={beat} plan={secs.length ? plan : null} onClose={() => setMenu(false)} />}
@@ -555,9 +551,15 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
   const row = useRef<HTMLDivElement>(null);
   const change = (fn: (p: Progression) => Progression) => set((s) => ({ ...s, progression: fn(s.progression) }));
   const cur = secs.find((x) => x.current);
-  // keep the selected block in view
+  // keep the selected block in view (sideways only: the page itself must not jump)
   useEffect(() => {
-    row.current?.querySelector<HTMLElement>(".sec.on")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    const r = row.current;
+    const el = r?.querySelector<HTMLElement>(".sec.on");
+    if (!r || !el) return;
+    const a = el.offsetLeft;
+    const b = a + el.offsetWidth;
+    if (a < r.scrollLeft) r.scrollLeft = a - 8;
+    else if (b > r.scrollLeft + r.clientWidth) r.scrollLeft = b - r.clientWidth + 8;
   }, [cur?.blockId, secs.length]);
   const add = (kind: SectionKind) => {
     const again = secs.find((x) => x.kind === kind);
@@ -567,7 +569,7 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
   };
   const open = adding || !secs.length;
   return (
-    <div className={`arrange songbar${open ? " open" : ""}`} ref={row}>
+    <div className={`arrange songbar${adding ? " open" : ""}`} ref={row}>
       {secs.length > 0
         ? <button className={`song-play${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop the song" : "Play the whole song"}>{playing ? "■" : "▶"} Song</button>
         : <span className="kb-label">Song</span>}
@@ -595,7 +597,7 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
   );
 }
 
-function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beat, beatOpen, onBeat, onBeatToggle, onBeatStep, secs, songPlaying, onSong }: {
+function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beatOn, secs, songPlaying, onSong }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -605,11 +607,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   onMenu: () => void;
   onStep: (i: number, dir: -1 | 1) => void;
   onArrange: (a: ArrangeSettings | null) => void;
-  beat: Beat;
-  beatOpen: boolean;
-  onBeat: () => void;
-  onBeatToggle: () => void;
-  onBeatStep: (dir: -1 | 1) => void;
+  beatOn: boolean;
   secs: Section[];
   songPlaying: boolean;
   onSong: () => void;
@@ -641,18 +639,6 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
     <div className={`dock${chords.length ? "" : " empty"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
       <div className="dock-inner">
         <SongBar secs={secs} playing={songPlaying} onPlay={onSong} />
-        <div className="arrange beatbar">
-          <button className={`chip${beat.on ? " on" : ""}`} aria-pressed={beat.on} title="Play a drum beat under the chords" onClick={onBeatToggle}>{beat.on ? "Beat on" : "Beat off"}</button>
-          <div className="beat-pick">
-            <button aria-label="Previous rhythm" title="Previous rhythm" onClick={() => onBeatStep(-1)}>‹</button>
-            <button className={`beat-name${beatOpen ? " on" : ""}`} aria-expanded={beatOpen} title="Rhythms, sounds and the step editor" onClick={onBeat}>
-              <b>{beat.name}{beat.edited ? "*" : ""}</b>
-              <span>{getKit(beat.kit).name}</span>
-            </button>
-            <button aria-label="Next rhythm" title="Next rhythm" onClick={() => onBeatStep(1)}>›</button>
-          </div>
-          <button className={`btn sm${beatOpen ? " primary" : ""}`} onClick={onBeat}>{beatOpen ? "Done" : "Edit"}</button>
-        </div>
         {chords.length >= 2 && (
           <div className="arrange">
             <span className="kb-label">Arrange</span>
@@ -674,7 +660,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
           </div>
         )}
         <div className="dock-main">
-        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : secs.length ? "Play this section" : "Play"} disabled={!chords.length && !beat.on}>{playing ? "■" : "▶"}</button>
+        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : secs.length ? "Play this section" : "Play"} disabled={!chords.length && !beatOn}>{playing ? "■" : "▶"}</button>
         <div className="dock-slots">
           {chords.length === 0 && !drag ? <span className="dock-empty">Drag chords here</span> : els}
           {chords.length === 0 && drag && drag.index === null && <span className="dock-empty">Drop here</span>}

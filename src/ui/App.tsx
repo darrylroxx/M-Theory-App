@@ -58,7 +58,7 @@ function Shell() {
           <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Guitar setup" title="Tuning, capo & display">⚙</button>
         </div>
       </header>
-      <main className={state.tab === "guitar" ? "has-dock" : ""}>
+      <main>
         <ViewBoundary key={state.tab} onReset={() => go("guitar")}>
           {state.tab === "guitar" ? <GuitarView /> : <PianoSoon />}
         </ViewBoundary>

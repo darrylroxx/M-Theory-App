@@ -5,18 +5,18 @@
  * No samples, no downloads, works offline.
  */
 import { midiToFreq } from "../theory/notes";
-import { STEP_VELOCITY, barBeats, levelAt, stepBeat, type Beat } from "./beats";
-import { DEFAULT_PARAMS, DRUM_IDS, DRUM_MIX, renderDrum, type DrumId, type DrumParams, type KitId } from "./drums";
+import { barBeats, levelAt, stepBeat, type Beat } from "./beats";
+import { audioContext, audioIfStarted } from "./context";
+import { playStep, prepareBeat, stopDrums, syncDrums } from "./drumbus";
+import { DRUM_IDS } from "./drums";
 import { PatternId, patternEvents } from "./patterns";
 
-let ctx: AudioContext | null = null;
 let master: GainNode | null = null;
 const buffers = new Map<number, { buf: AudioBuffer; rate: number }>();
 
 export function getAudio(): AudioContext {
-  if (!ctx) {
-    const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    ctx = new AC();
+  const ctx = audioContext();
+  if (!master) {
     master = ctx.createGain();
     master.gain.value = 1.1;
     const body = ctx.createBiquadFilter(); // a little wooden body resonance
@@ -37,7 +37,6 @@ export function getAudio(): AudioContext {
     comp.ratio.value = 3;
     master.connect(body).connect(presence).connect(air).connect(comp).connect(ctx.destination);
   }
-  if (ctx.state === "suspended") void ctx.resume();
   return ctx;
 }
 
@@ -149,6 +148,7 @@ export function strum(midi: (number | null)[], opts: { when?: number; dir?: "dow
 }
 
 export function stopAll() {
+  const ctx = audioIfStarted();
   if (!ctx) return;
   const t = ctx.currentTime;
   for (const r of ringing.values()) damp(r, t);
@@ -160,134 +160,6 @@ export function playSequence(midis: number[], noteSec = 0.28) {
   const c = getAudio();
   const t0 = c.currentTime + 0.05;
   midis.forEach((m, i) => playNote(m, t0 + i * noteSec, 0.75, 0, noteSec * 1.6));
-}
-
-// ── Drum machine ─────────────────────────────────────────────
-
-interface DrumBus {
-  input: GainNode;
-  shaper: WaveShaperNode;
-  tone: BiquadFilterNode;
-  wet: GainNode;
-}
-let drumBus: DrumBus | null = null;
-let drumFx = { level: -1, space: -1, grit: -1 };
-const drumBuffers = new Map<string, AudioBuffer>();
-const drumLive = new Set<Ringing>();
-let openHat: Ringing | null = null;
-
-/** A plate-style reverb tail made from decaying noise (for the "Space" control). */
-function reverbImpulse(c: AudioContext): AudioBuffer {
-  const len = Math.floor(c.sampleRate * 2.6);
-  const buf = c.createBuffer(2, len, c.sampleRate);
-  for (let ch = 0; ch < 2; ch++) {
-    const d = buf.getChannelData(ch);
-    let lp = 0;
-    for (let i = 0; i < len; i++) {
-      const t = i / c.sampleRate;
-      lp += 0.35 * (Math.random() * 2 - 1 - lp); // darker tail
-      d[i] = lp * Math.exp(-t / 0.55) * Math.min(1, t / 0.012);
-    }
-  }
-  return buf;
-}
-
-function driveCurve(grit: number): Float32Array<ArrayBuffer> {
-  const k = 1 + grit * 11;
-  const curve = new Float32Array(1024);
-  for (let i = 0; i < curve.length; i++) {
-    const x = (i / (curve.length - 1)) * 2 - 1;
-    curve[i] = Math.tanh(k * x) / Math.tanh(k) / (1 + 1.6 * grit); // more drive, same loudness
-  }
-  return curve;
-}
-
-function getDrumBus(): DrumBus {
-  const c = getAudio();
-  if (!drumBus) {
-    const input = c.createGain();
-    const shaper = c.createWaveShaper();
-    shaper.oversample = "2x";
-    const tone = c.createBiquadFilter();
-    tone.type = "lowpass";
-    const verb = c.createConvolver();
-    verb.buffer = reverbImpulse(c);
-    const wet = c.createGain();
-    const comp = c.createDynamicsCompressor();
-    comp.threshold.value = -12;
-    comp.ratio.value = 4;
-    input.connect(shaper).connect(tone).connect(comp).connect(c.destination);
-    tone.connect(verb).connect(wet).connect(comp);
-    drumBus = { input, shaper, tone, wet };
-    drumFx = { level: -1, space: -1, grit: -1 };
-    setDrumFx({ level: 0.8, space: 0.25, grit: 0.1 });
-  }
-  return drumBus;
-}
-
-/** Drum volume, reverb ("space") and saturation ("grit"), each 0…1. */
-export function setDrumFx(fx: { level: number; space: number; grit: number }) {
-  const bus = getDrumBus();
-  const t = getAudio().currentTime;
-  if (fx.level !== drumFx.level) bus.input.gain.setTargetAtTime(fx.level * 0.55, t, 0.02);
-  if (fx.space !== drumFx.space) bus.wet.gain.setTargetAtTime(Math.pow(fx.space, 1.3) * 0.9, t, 0.03);
-  if (fx.grit !== drumFx.grit) {
-    bus.shaper.curve = driveCurve(fx.grit);
-    bus.tone.frequency.setTargetAtTime(17000 - fx.grit * 11500, t, 0.03);
-  }
-  drumFx = { ...fx };
-}
-
-function drumBuffer(c: AudioContext, kit: KitId, id: DrumId, p: DrumParams): AudioBuffer {
-  const key = `${kit}|${id}|${p.tune}|${p.decay.toFixed(2)}|${p.tone.toFixed(2)}`;
-  let buf = drumBuffers.get(key);
-  if (!buf) {
-    const data = renderDrum(c.sampleRate, kit, id, p);
-    buf = c.createBuffer(1, data.length, c.sampleRate);
-    buf.getChannelData(0).set(data);
-    if (drumBuffers.size > 160) drumBuffers.clear();
-    drumBuffers.set(key, buf);
-  }
-  return buf;
-}
-
-const DRUM_PAN: Record<DrumId, number> = { kick: 0, snare: 0, clap: 0.1, hat: 0.25, open: 0.25, tom: -0.25, rim: -0.15, shaker: -0.3, bell: 0.3 };
-
-/** Play one drum hit. A closed or open hat cuts off a ringing open hat, like the real thing. */
-export function playDrum(kit: KitId, id: DrumId, params: Partial<DrumParams> = {}, when?: number, velocity = 0.8) {
-  const c = getAudio();
-  const bus = getDrumBus();
-  const p = { ...DEFAULT_PARAMS, ...params };
-  const t = when ?? c.currentTime + 0.01;
-  const src = c.createBufferSource();
-  src.buffer = drumBuffer(c, kit, id, p);
-  const g = c.createGain();
-  g.gain.value = velocity * velocity * p.level * DRUM_MIX[id] * 1.1;
-  const pan = c.createStereoPanner();
-  pan.pan.value = DRUM_PAN[id];
-  src.connect(g).connect(pan).connect(bus.input);
-  const r: Ringing = { src, gain: g };
-  if (id === "hat" || id === "open") {
-    if (openHat) damp(openHat, t);
-    openHat = id === "open" ? r : null;
-  }
-  drumLive.add(r);
-  src.onended = () => drumLive.delete(r);
-  src.start(t);
-}
-
-/** Render a kit's sounds ahead of time so the first bar plays without a hiccup. */
-export function prepareBeat(beat: Beat) {
-  const c = getAudio();
-  for (const id of DRUM_IDS) if (/[123]/.test(beat.rows[id] ?? "")) drumBuffer(c, beat.kit, id, { ...DEFAULT_PARAMS, ...beat.sounds[id] });
-}
-
-function stopDrums() {
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  for (const r of drumLive) damp(r, t);
-  drumLive.clear();
-  openHat = null;
 }
 
 // ── Progression player (look-ahead scheduler) ─────────────────
@@ -354,7 +226,7 @@ export class ProgressionPlayer {
     this.endAt = null;
     this.dDiv = beat?.div ?? 4;
     if (beat) {
-      setDrumFx(beat);
+      syncDrums(beat, bpm);
       prepareBeat(beat);
     }
     this.playing = true;
@@ -370,7 +242,7 @@ export class ProgressionPlayer {
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
-    if (beat) setDrumFx(beat);
+    if (beat) syncDrums(beat, bpm);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
@@ -447,7 +319,7 @@ export class ProgressionPlayer {
       if (b?.on) {
         for (const id of DRUM_IDS) {
           const lv = levelAt(b.rows, id, step);
-          if (lv && !b.mutes?.includes(id)) playDrum(b.kit, id, b.sounds[id], t, STEP_VELOCITY[lv]);
+          if (lv) playStep(b, id, lv, t);
         }
         this.drumMarks.push({ time: t, step });
       }

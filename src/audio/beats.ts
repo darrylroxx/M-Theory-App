@@ -6,7 +6,7 @@
  * number of steps per beat, so 4/4 in 16ths is 16 × 4, a 12/8 shuffle is 12 × 3
  * and a 3/4 waltz is 12 × 4.
  */
-import { DRUM_IDS, type DrumId, type DrumParams, type KitId } from "./drums";
+import { DRUM_IDS, defaultParams, type DrumId, type DrumParams, type KitId } from "./drums";
 
 export type BeatGroupId = "dream" | "indie" | "box" | "808" | "rock" | "slow" | "world";
 
@@ -33,9 +33,46 @@ export interface BeatPattern {
   rows: Record<DrumId, string>;
 }
 
-export interface Beat {
+export type EchoTime = "1/16" | "1/8" | "1/8." | "1/4";
+/** Echo repeat lengths, in beats. */
+export const ECHO_TIMES: { id: EchoTime; beats: number; label: string }[] = [
+  { id: "1/16", beats: 0.25, label: "Fast" },
+  { id: "1/8", beats: 0.5, label: "8th" },
+  { id: "1/8.", beats: 0.75, label: "Dotted" },
+  { id: "1/4", beats: 1, label: "Beat" },
+];
+
+/** The effects every drum passes through. */
+export interface BeatFx {
+  /** drum volume 0…1 */
+  level: number;
+  /** reverb amount 0…1 */
+  space: number;
+  /** reverb length: 0 small room … 1 long hall */
+  size: number;
+  /** echo amount 0…1 */
+  echo: number;
+  echoTime: EchoTime;
+  /** saturation 0…1 */
+  grit: number;
+  /** tape wobble and dullness 0…1 */
+  tape: number;
+  /** −1 dark … 1 bright */
+  tone: number;
+  /** compression 0…1 */
+  glue: number;
+  /** loose, human timing and touch 0…1 */
+  human: number;
+}
+
+export interface Beat extends Partial<Omit<BeatFx, "level" | "space" | "grit">> {
   on: boolean;
+  /** the machine every drum uses… */
   kit: KitId;
+  /** …unless a drum has been given another machine's voice */
+  voices?: Partial<Record<DrumId, KitId>>;
+  /** the saved kit this came from, if any */
+  userKit?: string | null;
   /** library (or saved) pattern this started from */
   patternId: string | null;
   name: string;
@@ -197,6 +234,58 @@ export const BEAT_LIBRARY: BeatPattern[] = [
 export const findPattern = (id: string | null | undefined, mine: BeatPattern[] = []): BeatPattern | undefined =>
   id ? (BEAT_LIBRARY.find((p) => p.id === id) ?? mine.find((p) => p.id === id)) : undefined;
 
+export const FX_DEFAULTS: BeatFx = { level: 0.8, space: 0.25, size: 0.45, echo: 0, echoTime: "1/8.", grit: 0.1, tape: 0, tone: 0, glue: 0.3, human: 0 };
+const FX_KEYS = Object.keys(FX_DEFAULTS) as (keyof BeatFx)[];
+
+/** The beat's effect settings, with defaults for anything an older beat does not have. */
+export function fxOf(b: Partial<BeatFx>): BeatFx {
+  const out = { ...FX_DEFAULTS } as Record<keyof BeatFx, number | string>;
+  for (const k of FX_KEYS) if (b[k] !== undefined) out[k] = b[k] as number | string;
+  return out as unknown as BeatFx;
+}
+
+/** Which machine a drum's voice comes from. */
+export const voiceOf = (b: Pick<Beat, "kit" | "voices">, id: DrumId): KitId => b.voices?.[id] ?? b.kit;
+/** A drum's full sound settings. */
+export const soundOf = (b: Pick<Beat, "sounds">, id: DrumId): DrumParams => ({ ...defaultParams(id), ...b.sounds[id] });
+
+/** One-tap effect settings for the whole kit. Volume, swing and feel are left alone. */
+export const VIBES: { id: string; name: string; hint: string; fx: Omit<BeatFx, "level" | "human"> }[] = [
+  { id: "clean", name: "Clean", hint: "Dry and clear", fx: { space: 0.12, size: 0.3, echo: 0, echoTime: "1/8.", grit: 0.05, tape: 0, tone: 0, glue: 0.25 } },
+  { id: "dreamy", name: "Dreamy", hint: "Long reverb, soft echo, slightly dark and wobbly", fx: { space: 0.55, size: 0.8, echo: 0.25, echoTime: "1/8.", grit: 0.1, tape: 0.35, tone: -0.25, glue: 0.35 } },
+  { id: "tape", name: "Bedroom tape", hint: "Warm, dull and wobbly, like a four-track cassette", fx: { space: 0.2, size: 0.4, echo: 0, echoTime: "1/8.", grit: 0.45, tape: 0.7, tone: -0.4, glue: 0.5 } },
+  { id: "big", name: "Big room", hint: "Loud, wide and punchy", fx: { space: 0.45, size: 0.6, echo: 0, echoTime: "1/8.", grit: 0.2, tape: 0, tone: 0.15, glue: 0.7 } },
+  { id: "crunch", name: "Crunchy", hint: "Driven hard and squashed", fx: { space: 0.1, size: 0.25, echo: 0, echoTime: "1/8.", grit: 0.8, tape: 0.15, tone: 0.1, glue: 0.8 } },
+  { id: "dub", name: "Echoes", hint: "Repeats trailing off into a room", fx: { space: 0.3, size: 0.5, echo: 0.5, echoTime: "1/8.", grit: 0.15, tape: 0.25, tone: -0.1, glue: 0.3 } },
+];
+
+/** The vibe whose settings the beat has right now, if any. */
+export function vibeOf(b: Beat): string | null {
+  const fx = fxOf(b);
+  return VIBES.find((v) => (Object.keys(v.fx) as (keyof typeof v.fx)[]).every((k) => v.fx[k] === fx[k]))?.id ?? null;
+}
+
+/** A whole drum setup you saved: machine, per-drum voices and sounds, and the effects. */
+export interface UserKit {
+  id: string;
+  name: string;
+  kit: KitId;
+  voices: Partial<Record<DrumId, KitId>>;
+  sounds: Partial<Record<DrumId, Partial<DrumParams>>>;
+  fx: BeatFx;
+}
+
+export const kitFrom = (b: Beat, id: string, name: string): UserKit => ({ id, name, kit: b.kit, voices: { ...b.voices }, sounds: JSON.parse(JSON.stringify(b.sounds)), fx: fxOf(b) });
+/** Switch machine. Your knob settings stay; drums that borrowed another machine's voice go back to the kit's own. */
+export const applyKit = (b: Beat, kit: KitId): Beat => ({ ...b, kit, voices: {}, userKit: null });
+export const applyUserKit = (b: Beat, k: UserKit): Beat => ({ ...b, ...k.fx, kit: k.kit, voices: { ...k.voices }, sounds: JSON.parse(JSON.stringify(k.sounds)), userKit: k.id });
+
+export function reviveUserKits(raw: unknown): UserKit[] {
+  if (!Array.isArray(raw)) return [];
+  return raw.filter((k): k is UserKit => !!k && typeof k === "object" && typeof (k as UserKit).id === "string" && typeof (k as UserKit).name === "string" && !!(k as UserKit).sounds)
+    .map((k) => ({ ...k, voices: k.voices ?? {}, fx: fxOf(k.fx ?? {}) }));
+}
+
 export const DEFAULT_BEAT: Beat = {
   on: false,
   kit: "box",
@@ -212,7 +301,7 @@ export const DEFAULT_BEAT: Beat = {
   sounds: {},
 };
 
-/** Load a library rhythm into a beat. The kit, sound tweaks and effects stay as they are. */
+/** Load a library rhythm into a beat. The kit, sound settings and effects stay as they are. */
 export function applyPattern(beat: Beat, p: BeatPattern): Beat {
   return { ...beat, on: true, patternId: p.id, name: p.name, edited: false, steps: p.steps, div: p.div, swing: p.swing, rows: p.rows };
 }
@@ -294,5 +383,6 @@ export function reviveBeat(raw: unknown): Beat | undefined {
     const r = (b.rows as Record<string, unknown>)[id];
     if (typeof r === "string") rows[id] = r.replace(/[^0-3]/g, "0").slice(0, steps).padEnd(steps, "0");
   }
-  return { ...DEFAULT_BEAT, ...b, steps, div, rows, sounds: b.sounds ?? {} };
+  const kit: KitId = (["box", "808", "909", "linn", "volca", "lofi"] as KitId[]).includes(b.kit as KitId) ? (b.kit as KitId) : DEFAULT_BEAT.kit;
+  return { ...DEFAULT_BEAT, ...b, kit, steps, div, rows, sounds: b.sounds ?? {}, voices: b.voices ?? {} };
 }

@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { reviveBeat, type Beat, type BeatPattern } from "../audio/beats";
+import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
 import type { PatternId } from "../audio/patterns";
 import { strum } from "../audio/synth";
 import { easyVoicing, voicingsFor } from "../guitar/arrange";
@@ -79,6 +79,8 @@ export interface AppState {
   shapes: Record<string, string>;
   /** Rhythms you saved from the beat editor */
   myBeats: BeatPattern[];
+  /** Drum setups (machine, sounds and effects) you saved */
+  myKits: UserKit[];
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
@@ -109,6 +111,7 @@ export const DEFAULT_STATE: AppState = {
   saved: [],
   shapes: {},
   myBeats: [],
+  myKits: [],
 };
 
 function load(): AppState {
@@ -125,6 +128,7 @@ function load(): AppState {
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},
       myBeats: Array.isArray(parsed.myBeats) ? parsed.myBeats : [],
+      myKits: reviveUserKits(parsed.myKits),
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
       progression: { ...DEFAULT_STATE.progression, ...parsed.progression, beat: reviveBeat(parsed.progression?.beat), song: reviveSong(parsed.progression?.song) },
