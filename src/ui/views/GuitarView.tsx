@@ -1,8 +1,9 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
-import { ProgressionPlayer, getAudio, playSequence } from "../../audio/synth";
-import { arrangeProgression, capoSuggestions } from "../../guitar/arrange";
+import { ProgressionPlayer, getAudio, playSequence, strum } from "../../audio/synth";
+import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
+import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
@@ -14,11 +15,11 @@ import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
 import { ShapeFinder } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
-import { newId, useApp, type ProgChord, type Progression } from "../state";
+import { newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
-  const { state, set, shapeOf, sheet, openSheet } = useApp();
+  const { state, set, shapeOf, sheet, openSheet, tuning } = useApp();
   const prog = state.progression;
   const [nowIdx, setNowIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
@@ -29,7 +30,44 @@ export function GuitarView() {
   const ghostRef = useRef<HTMLDivElement>(null);
   const lastDrag = useRef(0);
 
-  const voicings: (Voicing | undefined)[] = prog.chords.map((c) => shapeOf(c.ref, c.voicingId));
+  // Shapes in the tray: either each chord's own shape, or (when Arrange is on) a set
+  // chosen together so they sit in one area of the neck. Shapes you set by hand stay put.
+  const arr = prog.arrange ?? null;
+  const { capo, avoidBarre } = state.settings;
+  const arrOpts: ArrangeOptions = useMemo(
+    () => ({ tuning, capo, avoidBarre, preferOpen: arr?.zone === 0, targetFret: null, allowInversions: arr?.inversions ?? false, zone: arr?.zone ?? null, strings: arr?.strings ?? "any" }),
+    [tuning, capo, avoidBarre, arr],
+  );
+  const chordsKey = JSON.stringify(prog.chords.map((c) => [c.ref, c.voicingId]));
+  const voicings: (Voicing | undefined)[] = useMemo(() => {
+    const own = prog.chords.map((c) => shapeOf(c.ref, c.voicingId));
+    if (!arr) return own;
+    return arrangeProgression(prog.chords.map((c) => c.ref), { ...arrOpts, pinned: prog.chords.map((c, i) => (c.voicingId ? own[i] : undefined)) });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [chordsKey, arr, arrOpts, shapeOf]);
+
+  /** Set one spot's shape by hand. Everything else keeps the shape it has now. */
+  const pinSlot = (slotId: string, voicingId: string) =>
+    set((s) => ({
+      ...s,
+      progression: {
+        ...s.progression,
+        chords: s.progression.chords.map((c, i) => (c.id === slotId ? { ...c, voicingId } : s.progression.arrange && !c.voicingId ? { ...c, voicingId: voicings[i]?.id } : c)),
+      },
+    }));
+  /** Step one spot to the next shape that fits best between its neighbours. */
+  const stepSlot = (i: number, dir: -1 | 1) => {
+    const c = prog.chords[i];
+    const list = fitAlternatives(c.ref, arrOpts, voicings[i - 1], voicings[i + 1]);
+    if (!list.length) return;
+    const at = list.findIndex((v) => v.id === voicings[i]?.id);
+    const next = list[(Math.max(at, 0) + dir + list.length) % list.length];
+    pinSlot(c.id, next.id);
+    if (!playing) strum(next.midi);
+  };
+  /** Turn Arrange on/off or change its settings: deals a fresh set of shapes. */
+  const setArrange = (a: ArrangeSettings | null) =>
+    set((s) => ({ ...s, progression: { ...s.progression, arrange: a, chords: s.progression.chords.map((c) => ({ ...c, voicingId: undefined })) } }));
   const items = prog.chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
 
   useEffect(() => {
@@ -171,8 +209,8 @@ export function GuitarView() {
       {/* the finder sits directly on top of the tray, so shapes can be dragged straight in */}
       <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
         {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
-        <ShapeFinder />
-        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} />
+        <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
+        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} />
       </div>
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
       {menu && <SongMenu voicings={voicings} items={items} onClose={() => setMenu(false)} />}
@@ -400,7 +438,7 @@ function NextChords() {
 
 // ── Progression dock ─────────────────────────────────────────
 
-function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu }: {
+function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -408,9 +446,13 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu }: {
   onPlay: () => void;
   drag: (Payload & { index: number | null }) | null;
   onMenu: () => void;
+  onStep: (i: number, dir: -1 | 1) => void;
+  onArrange: (a: ArrangeSettings | null) => void;
 }) {
   const { state, set, toast } = useApp();
   const chords = state.progression.chords;
+  const arr = state.progression.arrange ?? null;
+  const span = fretSpan(voicings);
   const [undo, setUndo] = useState<ProgChord[] | null>(null);
   const idea = () => {
     if (chords.length) setUndo(chords);
@@ -426,13 +468,34 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu }: {
       if (drag && drag.index === k) els.push(marker);
       k++;
     }
-    els.push(<Slot key={c.id} c={c} i={i} v={voicings[i]} now={nowIdx === i} dragged={isDragged} />);
+    els.push(<Slot key={c.id} c={c} i={i} v={voicings[i]} now={nowIdx === i} dragged={isDragged} onStep={(d) => onStep(i, d)} />);
   });
   if (drag && drag.index !== null && drag.index >= k) els.push(marker);
 
   return (
     <div className={`dock${chords.length ? "" : " empty"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
       <div className="dock-inner">
+        {chords.length >= 2 && (
+          <div className="arrange">
+            <span className="kb-label">Arrange</span>
+            <div className="seg" role="radiogroup" aria-label="Arrange all chords in one area of the neck">
+              <button role="radio" aria-checked={!arr} className={arr ? "" : "on"} onClick={() => onArrange(null)}>My shapes</button>
+              {POSITIONS.slice(0, 5).map((p, z) => (
+                <button key={p} role="radio" aria-checked={arr?.zone === z} className={arr?.zone === z ? "on" : ""} title={z === 0 ? "Open position" : `Around frets ${p}`}
+                  onClick={() => onArrange({ strings: arr?.strings ?? "any", inversions: arr?.inversions ?? false, zone: z })}>{p}</button>
+              ))}
+            </div>
+            {arr && (
+              <>
+                <span className="kb-label">Strings</span>
+                <Seg value={arr.strings} options={[{ value: "any", label: "Any" }, { value: 3, label: "3" }, { value: 4, label: "4" }, { value: 5, label: "5–6" }]} onChange={(v) => onArrange({ ...arr, strings: v })} label="Strings per chord" />
+                <button className={`chip${arr.inversions ? " on" : ""}`} aria-pressed={arr.inversions} title="Allow a different bass note for smoother changes" onClick={() => onArrange({ ...arr, inversions: !arr.inversions })}>Inversions</button>
+              </>
+            )}
+            {span && <span className="span">frets {span[0]}–{span[1]}</span>}
+          </div>
+        )}
+        <div className="dock-main">
         <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!chords.length}>{playing ? "■" : "▶"}</button>
         <div className="dock-slots">
           {chords.length === 0 && !drag ? <span className="dock-empty">Drag chords here</span> : els}
@@ -443,12 +506,13 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu }: {
           {undo && <button className="icon-btn" aria-label="Undo" title="Undo" onClick={() => { set((s) => ({ ...s, progression: { ...s.progression, chords: undo } })); setUndo(null); toast("Restored"); }}>↶</button>}
           <button className="icon-btn" aria-label="Song options" title="Tempo, save, export" onClick={onMenu}>⋯</button>
         </div>
+        </div>
       </div>
     </div>
   );
 }
 
-function Slot({ c, i, v, now, dragged }: { c: ProgChord; i: number; v?: Voicing; now: boolean; dragged: boolean }) {
+function Slot({ c, i, v, now, dragged, onStep }: { c: ProgChord; i: number; v?: Voicing; now: boolean; dragged: boolean; onStep: (d: -1 | 1) => void }) {
   const { state, set, openSheet } = useApp();
   const d = useDraggable({ ref: c.ref, slotId: c.id }, () => openSheet({ ref: c.ref, slotId: c.id }));
   const a = analyzeChord(c.ref, state.key);
@@ -460,6 +524,10 @@ function Slot({ c, i, v, now, dragged }: { c: ProgChord; i: number; v?: Voicing;
       {v && <ChordDiagram voicing={v} root={c.ref.root} bass={c.ref.bass} labels={state.settings.labels} width={116} compact leftHanded={state.settings.leftHanded} capo={state.settings.capo} />}
       <button className="slot-x" data-nodrag aria-label={`Remove ${name}`}
         onClick={(e) => { e.stopPropagation(); set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.filter((x) => x.id !== c.id) } })); }}>✕</button>
+      <div className="slot-step" data-nodrag onClick={(e) => e.stopPropagation()}>
+        <button aria-label={`Previous shape for ${name}`} title="Previous shape that fits here" onClick={() => onStep(-1)}>‹</button>
+        <button aria-label={`Next shape for ${name}`} title="Next shape that fits here" onClick={() => onStep(1)}>›</button>
+      </div>
     </div>
   );
 }
@@ -535,11 +603,6 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
       const newKey = { ...s.key, tonic };
       return { ...s, key: newKey, progression: { ...s.progression, chords: s.progression.chords.map((c) => ({ ...c, ref: transposeRef(c.ref, n, newKey), voicingId: undefined })) } };
     });
-  const smooth = () => {
-    const vs = arrangeProgression(prog.chords.map((c) => c.ref), { tuning, capo: state.settings.capo, avoidBarre: state.settings.avoidBarre, preferOpen: false, targetFret: null, allowInversions: false });
-    setProg((p) => ({ ...p, chords: p.chords.map((c, i) => ({ ...c, voicingId: vs[i]?.id })) }));
-    toast("Shapes arranged");
-  };
   const generate = () => {
     const refs = sparkProgression(state.key, { length, mood, adventure, startHome: true });
     setProg((p) => ({ ...p, chords: refs.map((r) => ({ id: newId(), ref: r, beats: 4 })) }));
@@ -571,11 +634,6 @@ function SongMenu({ voicings, items, onClose }: { voicings: (Voicing | undefined
             <select value={mood} aria-label="Mood" onChange={(e) => setMood(e.target.value as Mood)}>{MOODS.map((m) => <option key={m.id} value={m.id}>{m.id === "any" ? "Any mood" : m.label}</option>)}</select>
             <label className="adventure"><span>Safe</span><input type="range" min={0} max={1} step={0.05} value={adventure} aria-label="Adventure" onChange={(e) => setAdventure(Number(e.target.value))} /><span>Wild</span></label>
             <button className="btn sm primary" onClick={generate}>✨</button>
-          </div>
-          <div className="menu-row">
-            <span className="kb-label">Shapes</span>
-            <button className="btn sm" disabled={!has} onClick={smooth} title="Pick shapes that sit close together on the neck">Arrange smoothly</button>
-            <button className="btn sm" disabled={!has} onClick={() => setProg((p) => ({ ...p, chords: p.chords.map((c) => ({ ...c, voicingId: undefined })) }))}>Reset</button>
           </div>
           <div className="menu-row">
             <span className="kb-label">Move</span>

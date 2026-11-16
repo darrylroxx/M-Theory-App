@@ -25,7 +25,11 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - **Flavours** along the top swap the chord itself (C → Cmaj7, Cadd9, Csus2, C6…; "All…" has all 44 types).
    - Filters: strings (Any / 3 / 4 / 5–6), **No barre**, **Open strings**; dots can show fingers, notes or intervals.
 5. **Build the progression in the tray** at the bottom. Drag chords in (touch: press and hold, then drag; or tap **+**), drag to reorder, ✕ to remove. The finder stays open above the tray, so you can **drag one exact shape straight into the tray**. Tap a chord in the tray to change that spot's shape, flavour, length or position.
-6. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, smooth shape arranging, transpose, **MIDI export**, copy chords + tab, and saved ideas.
+6. **Arrange** (the bar on top of the tray, once you have two chords): tap a neck area (**Open · 1–3 · 4–6 · 7–9 · 10–12**) and every chord in the progression is re-voiced there together, picking the set of shapes that needs the least hand movement. The bar shows the frets the whole progression now spans.
+   - **Strings** (Any / 3 / 4 / 5–6) and **Inversions** (let the bass note change for smoother moves) re-deal the set.
+   - **‹ ›** under each chord in the tray sifts that one chord through its other shapes, best fit with its neighbours first, while everything else stays put. Do it while the loop is playing to hear each option in context.
+   - Chords you add later land in the same area. **My shapes** switches back to each chord's own shape.
+7. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export**, copy chords + tab, and saved ideas.
 
 A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
@@ -50,7 +54,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 50 tests: theory, voicings, progressions, synth tuning, MIDI
+npm test          # 52 tests: theory, voicings, progressions, synth tuning, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

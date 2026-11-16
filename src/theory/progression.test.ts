@@ -82,3 +82,37 @@ describe("arranging on guitar", () => {
     console.log(s.slice(0, 4).map((x) => `capo ${x.capo}: ${x.easy}/7 ${x.shapes.map((v) => (v ? voicingText(v) : "-")).join(" ")}`).join("\n"));
   });
 });
+
+describe("arranging in a neck area", () => {
+  const std = getTuning("standard");
+  const prog = [{ root: "B", typeId: "maj" }, { root: "G#", typeId: "min" }, { root: "E", typeId: "maj" }, { root: "F#", typeId: "maj" }];
+  const base = { tuning: std, capo: 0, avoidBarre: false, preferOpen: false, targetFret: null, allowInversions: false };
+  it("gathers every chord in the chosen area", async () => {
+    const { fretSpan } = await import("../guitar/arrange");
+    const { positionOf } = await import("../guitar/shapeMap");
+    for (const zone of [1, 2, 3, 4]) {
+      const v = arrangeProgression(prog, { ...base, zone });
+      const inZone = v.filter((x) => Math.abs(positionOf(x) - zone) <= 1).length;
+      expect(inZone).toBe(4);
+      const span = fretSpan(v)!;
+      expect(span[1] - span[0]).toBeLessThanOrEqual(7);
+    }
+    const low = fretSpan(arrangeProgression(prog, { ...base, zone: 1 }))!;
+    const high = fretSpan(arrangeProgression(prog, { ...base, zone: 4 }))!;
+    expect(high[0]).toBeGreaterThan(low[0] + 4);
+  });
+  it("respects string count and pinned shapes", async () => {
+    const { fitAlternatives } = await import("../guitar/arrange");
+    const three = arrangeProgression(prog, { ...base, zone: 3, strings: 3 });
+    expect(three.every((v) => v.frets.filter((f) => f !== null).length === 3)).toBe(true);
+    const free = arrangeProgression(prog, { ...base, zone: 2 });
+    const pin = arrangeProgression(prog, { ...base, zone: 4 })[1];
+    const withPin = arrangeProgression(prog, { ...base, zone: 2, pinned: [undefined, pin, undefined, undefined] });
+    expect(withPin[1].id).toBe(pin.id);
+    expect(withPin[0].id).toBeTruthy();
+    // alternatives for a spot: the arranged shape should be among the best fits between its neighbours
+    const alts = fitAlternatives(prog[1], { ...base, zone: 2 }, free[0], free[2]);
+    expect(alts.slice(0, 5).map((v) => v.id)).toContain(free[1].id);
+    expect(alts.length).toBeGreaterThan(50);
+  });
+});

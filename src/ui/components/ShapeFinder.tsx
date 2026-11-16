@@ -20,7 +20,7 @@ const INVERSION: Record<string, string> = { "1": "root position", "3": "1st inve
  * Across = up the neck. Down = which note is in the bass. Tap a shape to use it,
  * drag it into the tray to add it.
  */
-export function ShapeFinder() {
+export function ShapeFinder({ slotShape, onPinSlot }: { slotShape: (slotId: string) => Voicing | undefined; onPinSlot: (slotId: string, voicingId: string) => void }) {
   const { sheet, openSheet, state, set, tuning, shapeOf, setShape, addChord, toast } = useApp();
   const { capo, labels, leftHanded, avoidBarre } = state.settings;
   const [strings, setStrings] = useState<ShapeFilters["strings"]>("any");
@@ -34,7 +34,7 @@ export function ShapeFinder() {
   const chords = state.progression.chords;
   const slotIdx = sheet?.slotId ? chords.findIndex((c) => c.id === sheet.slotId) : -1;
   const slot = slotIdx >= 0 ? chords[slotIdx] : undefined;
-  const picked = ref ? shapeOf(ref, slot?.voicingId) : undefined;
+  const picked = ref ? (slot ? slotShape(slot.id) ?? shapeOf(ref, slot.voicingId) : shapeOf(ref)) : undefined;
 
   const all = useMemo(() => (ref ? voicingsFor(ref, tuning, capo) : []), [ref, tuning, capo]);
   const rows = useMemo(
@@ -69,7 +69,7 @@ export function ShapeFinder() {
   });
   const pick = (v: Voicing) => {
     strum(v.midi);
-    if (slot) patch({ voicingId: v.id });
+    if (slot) onPinSlot(slot.id, v.id);
     else setShape(ref, v.id);
   };
   // switch to another flavour of the same root (Cmaj7, Cadd9, Csus2 …)

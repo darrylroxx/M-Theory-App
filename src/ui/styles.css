@@ -116,7 +116,7 @@ main {
   flex: 1; width: 100%; max-width: 1100px; margin: 0 auto; padding-block: 16px 40px;
   padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px));
 }
-main.has-dock { padding-bottom: 210px; }
+main.has-dock { padding-bottom: 270px; }
 @media (max-width: 520px) { .brand span { display: none; } .tab { padding: 6px 12px; } }
 
 .stack { display: flex; flex-direction: column; gap: 14px; }
@@ -151,7 +151,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .mini-play { border: 1px solid var(--border-2); background: var(--card); border-radius: 50%; width: 30px; height: 30px; display: inline-grid; place-items: center; font-size: 0.7rem; padding: 0; flex-shrink: 0; }
 .mini-play:hover { border-color: var(--accent); color: var(--accent); }
 .empty { text-align: center; padding: 24px 10px; color: var(--muted); }
-.toast { position: fixed; left: 50%; bottom: calc(190px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 80; background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; box-shadow: var(--shadow); pointer-events: none; }
+.toast { position: fixed; left: 50%; bottom: calc(250px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 80; background: var(--text); color: var(--bg); padding: 8px 16px; border-radius: 999px; font-weight: 700; font-size: 0.9rem; box-shadow: var(--shadow); pointer-events: none; }
 
 /* ── Tone & role colours ── */
 .t-root { --tone: var(--root); } .t-third { --tone: var(--third); } .t-fifth { --tone: var(--fifth); } .t-seventh { --tone: var(--seventh); } .t-ext { --tone: var(--ext); } .t-other { --tone: var(--other); }
@@ -215,10 +215,20 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
   padding: calc(8px + env(safe-area-inset-top, 0px)) max(10px, env(safe-area-inset-right, 0px)) calc(10px + env(safe-area-inset-bottom, 0px)) max(10px, env(safe-area-inset-left, 0px)); }
 .finder-backdrop { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.5); pointer-events: auto; }
 .dock { position: relative; flex-shrink: 0; }
-.dock-inner { pointer-events: auto; max-width: 1100px; margin: 0 auto; display: flex; align-items: center; gap: 10px; padding: 8px 10px; border-radius: 18px; background: color-mix(in srgb, var(--card) 94%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--border-2); box-shadow: var(--shadow); min-height: 168px; }
+.dock-inner { pointer-events: auto; max-width: 1100px; margin: 0 auto; display: flex; flex-direction: column; justify-content: center; gap: 6px; padding: 8px 10px; border-radius: 18px; background: color-mix(in srgb, var(--card) 94%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--border-2); box-shadow: var(--shadow); min-height: 190px; }
 .dock.empty .dock-inner { min-height: 66px; }
 .dock.armed .dock-inner { border-style: dashed; border-color: var(--accent); }
 .dock.over .dock-inner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
+.dock-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.arrange { display: flex; align-items: center; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.arrange::-webkit-scrollbar { display: none; }
+.arrange > * { flex-shrink: 0; }
+.arrange .seg { flex-wrap: nowrap; }
+.arrange .seg button, .arrange .chip { white-space: nowrap; }
+.arrange .span { font-size: 0.78rem; font-weight: 700; color: var(--accent-2); margin-left: auto; padding-left: 8px; }
+.slot-step { display: flex; gap: 4px; padding: 0 0 4px; }
+.slot-step button { width: 44px; height: 22px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--card); padding: 0; line-height: 1; font-size: 1rem; }
+.slot-step button:hover { border-color: var(--accent); color: var(--accent); }
 .play-btn { width: 48px; height: 48px; flex-shrink: 0; border-radius: 50%; border: none; background: var(--accent); color: var(--accent-ink); font-size: 1.2rem; display: grid; place-items: center; }
 .play-btn.stop { background: var(--tension); color: #fff; }
 .dock-slots { flex: 1; min-width: 0; display: flex; align-items: stretch; gap: 8px; overflow-x: auto; padding: 4px 2px; scrollbar-width: thin; }
@@ -232,7 +242,7 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .slot-x { position: absolute; top: 2px; right: 2px; width: 22px; height: 22px; border-radius: 50%; border: none; background: none; color: var(--faint); font-size: 0.7rem; padding: 0; }
 .slot-x:hover { color: var(--tension); background: var(--bg-2); }
 .drop-marker { flex: 0 0 4px; border-radius: 2px; background: var(--accent); align-self: stretch; }
-@media (max-width: 520px) { .slot { flex-basis: 104px; } .dock-inner { gap: 6px; padding: 6px; min-height: 148px; } .play-btn { width: 42px; height: 42px; } }
+@media (max-width: 520px) { .slot { flex-basis: 104px; } .dock-inner { padding: 6px; min-height: 170px; } .dock-main { gap: 6px; } .slot-step button { width: 38px; } .play-btn { width: 42px; height: 42px; } }
 
 /* ── Sheets ── */
 .sheet-backdrop { position: fixed; inset: 0; padding-top: env(safe-area-inset-top, 0px); background: rgba(0, 0, 0, 0.55); z-index: 60; display: flex; justify-content: center; align-items: flex-end; }

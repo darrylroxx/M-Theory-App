@@ -25,6 +25,16 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
+  /** When set, shapes are arranged together in one area of the neck. null = each chord uses your own shape. */
+  arrange?: ArrangeSettings | null;
+}
+
+export interface ArrangeSettings {
+  /** neck area index (0 = open, 1 = frets 1–3, 2 = 4–6 …) */
+  zone: number;
+  strings: "any" | 3 | 4 | 5;
+  /** allow a different note in the bass when it makes the changes smoother */
+  inversions: boolean;
 }
 
 export interface SavedProgression {

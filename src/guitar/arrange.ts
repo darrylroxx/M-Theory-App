@@ -8,6 +8,7 @@
  */
 import { ChordRef, ChordType, getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
+import { positionOf } from "./shapeMap";
 import type { Tuning } from "./tunings";
 import { Voicing, generateVoicings, voicingCenter } from "./voicings";
 
@@ -20,7 +21,16 @@ export interface ArrangeOptions {
   targetFret: number | null;
   /** Allow inversions (non-root bass) to make the movement smoother. */
   allowInversions: boolean;
+  /** Neck area to gather the chords in: 0 = open position, 1 = frets 1–3, 2 = 4–6 … (see POSITIONS). */
+  zone?: number | null;
+  /** How many strings each shape uses. */
+  strings?: "any" | 3 | 4 | 5;
+  /** Shapes that are already decided (one per chord, undefined = free). The rest flow around them. */
+  pinned?: (Voicing | undefined)[];
 }
+
+/** Fret each neck area is centred on. */
+const ZONE_CENTER = [1, 2, 5, 8, 11, 14];
 
 const cache = new Map<string, Voicing[]>();
 
@@ -60,11 +70,22 @@ function unaryCost(v: Voicing, o: ArrangeOptions): number {
   if (o.avoidBarre && v.barreKind === "full") c += 6;
   if (o.avoidBarre && v.barreKind === "mini") c += 1;
   if (o.preferOpen && v.openStrings === 0) c += 1.2;
-  if (o.targetFret !== null) c += Math.abs(voicingCenter(v) - o.targetFret) * 0.35;
+  const target = o.zone != null ? ZONE_CENTER[o.zone] : o.targetFret;
+  if (target !== null && target !== undefined) c += Math.abs(voicingCenter(v) - target) * 0.35;
+  if (o.zone != null) c += Math.abs(positionOf(v) - o.zone) * 2.5; // stay in the chosen area
   if (!o.allowInversions && v.bassToken !== "1" && v.inversion !== "Slash bass") c += 4;
   const sounding = v.frets.filter((f) => f !== null).length;
-  if (sounding < 4) c += 0.6; // progressions sound fuller with 4+ strings
+  if ((o.strings ?? "any") === "any" && sounding < 4) c += 0.6; // progressions sound fuller with 4+ strings
   return c;
+}
+
+function sized(all: Voicing[], strings: ArrangeOptions["strings"]): Voicing[] {
+  if (!strings || strings === "any") return all;
+  const hit = all.filter((v) => {
+    const n = v.frets.filter((f) => f !== null).length;
+    return strings === 5 ? n >= 5 : n === strings;
+  });
+  return hit.length ? hit : all;
 }
 
 function transitionCost(a: Voicing, b: Voicing): number {
@@ -79,8 +100,10 @@ function transitionCost(a: Voicing, b: Voicing): number {
 export function arrangeProgression(chords: ChordRef[], o: ArrangeOptions): Voicing[] {
   if (!chords.length) return [];
   const K = 40;
-  const cands = chords.map((ref) => {
-    const all = voicingsFor(ref, o.tuning, o.capo);
+  const cands = chords.map((ref, i) => {
+    const pin = o.pinned?.[i];
+    if (pin) return [pin];
+    const all = sized(voicingsFor(ref, o.tuning, o.capo), o.strings);
     return [...all].sort((x, y) => unaryCost(x, o) - unaryCost(y, o)).slice(0, K);
   });
   const n = chords.length;
@@ -115,6 +138,24 @@ export function arrangeProgression(chords: ChordRef[], o: ArrangeOptions): Voici
     j = back[i][j];
   }
   return result;
+}
+
+/**
+ * Every shape for one chord, ordered by how well it fits between its neighbours
+ * (closest hand position and smoothest top note first). Used to sift through
+ * alternatives for one spot in a progression.
+ */
+export function fitAlternatives(ref: ChordRef, o: ArrangeOptions, prev?: Voicing, next?: Voicing): Voicing[] {
+  const all = sized(voicingsFor(ref, o.tuning, o.capo), o.strings);
+  const cost = (v: Voicing) => unaryCost(v, o) + (prev ? transitionCost(prev, v) : 0) + (next ? transitionCost(v, next) : 0);
+  return all.map((v) => [cost(v), v] as const).sort((a, b) => a[0] - b[0]).map((x) => x[1]);
+}
+
+/** Lowest and highest fretted fret used across a set of shapes (null when everything is open). */
+export function fretSpan(vs: (Voicing | undefined)[]): [number, number] | null {
+  const lows = vs.filter((v): v is Voicing => !!v && v.minFret > 0).map((v) => v.minFret);
+  const highs = vs.filter((v): v is Voicing => !!v).map((v) => v.maxFret);
+  return lows.length ? [Math.min(...lows), Math.max(...highs)] : null;
 }
 
 export interface CapoSuggestion {
