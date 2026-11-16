@@ -63,6 +63,9 @@ export interface SheetState {
 
 const STORAGE_KEY = "m-theory-state-v1";
 
+/** Theme attribute set by an embedding host (e.g. the claude.ai artifact viewer), captured before we touch it. */
+const HOST_THEME = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
+
 export const DEFAULT_STATE: AppState = {
   tab: "key",
   key: { tonic: "B", scaleId: "ionian" },
@@ -130,8 +133,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     const t = state.settings.theme;
-    if (t === "auto") document.documentElement.removeAttribute("data-theme");
-    else document.documentElement.setAttribute("data-theme", t);
+    // "auto" hands control back to whatever the host page set (or the OS setting)
+    if (t === "auto") {
+      if (HOST_THEME) document.documentElement.setAttribute("data-theme", HOST_THEME);
+      else document.documentElement.removeAttribute("data-theme");
+    } else document.documentElement.setAttribute("data-theme", t);
   }, [state.settings.theme]);
 
   const set = useCallback((fn: (s: AppState) => AppState) => setState(fn), []);

@@ -63,7 +63,72 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
   return new Uint8Array(bytes);
 }
 
-export function downloadBytes(bytes: Uint8Array, filename: string, mime = "audio/midi") {
+// ── Saving files ─────────────────────────────────────────────
+
+const CRC_TABLE = (() => {
+  const t = new Uint32Array(256);
+  for (let n = 0; n < 256; n++) {
+    let c = n;
+    for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+    t[n] = c >>> 0;
+  }
+  return t;
+})();
+
+export function crc32(data: Uint8Array): number {
+  let c = 0xffffffff;
+  for (let i = 0; i < data.length; i++) c = CRC_TABLE[(c ^ data[i]) & 0xff] ^ (c >>> 8);
+  return (c ^ 0xffffffff) >>> 0;
+}
+
+/** Minimal uncompressed ("stored") ZIP archive. */
+export function zipStore(files: { name: string; data: Uint8Array }[]): Uint8Array {
+  const enc = new TextEncoder();
+  const chunks: number[] = [];
+  const central: number[] = [];
+  const le16 = (n: number) => [n & 255, (n >>> 8) & 255];
+  const le32 = (n: number) => [n & 255, (n >>> 8) & 255, (n >>> 16) & 255, (n >>> 24) & 255];
+  for (const f of files) {
+    const name = enc.encode(f.name);
+    const crc = crc32(f.data);
+    const offset = chunks.length;
+    const common = [...le16(20), ...le16(0), ...le16(0), ...le16(0), ...le16(0x21), ...le32(crc), ...le32(f.data.length), ...le32(f.data.length), ...le16(name.length), ...le16(0)];
+    chunks.push(...le32(0x04034b50), ...common, ...name, ...f.data);
+    central.push(...le32(0x02014b50), ...le16(20), ...common, ...le16(0), ...le16(0), ...le16(0), ...le32(0), ...le32(offset), ...name);
+  }
+  const cdOffset = chunks.length;
+  const end = [...le32(0x06054b50), ...le16(0), ...le16(0), ...le16(files.length), ...le16(files.length), ...le32(central.length), ...le32(cdOffset), ...le16(0)];
+  return new Uint8Array([...chunks, ...central, ...end]);
+}
+
+type DownloadsCap = { save(req: { filename: string; data: Uint8Array | string }): Promise<{ status: string }> };
+type ClaudeHost = { use(name: string): Promise<unknown> };
+
+/**
+ * Save a file to the user's device. Normally a plain browser download; when the
+ * app runs inside a claude.ai artifact (sandboxed, no direct downloads) it asks the
+ * viewer through the artifact `downloads` capability. That allowlist has no .mid,
+ * so MIDI files travel inside a .zip there.
+ * Resolves "saved", "declined" or "failed".
+ */
+export async function saveFile(bytes: Uint8Array, filename: string, mime = "application/octet-stream"): Promise<"saved" | "declined" | "failed"> {
+  const host = (window as unknown as { claude?: ClaudeHost }).claude;
+  if (host?.use) {
+    const downloads = (await host.use("downloads").catch(() => null)) as DownloadsCap | null;
+    if (!downloads) return "failed";
+    let name = filename;
+    let data = bytes;
+    if (/\.mid$/i.test(filename)) {
+      data = zipStore([{ name: filename, data: bytes }]);
+      name = filename.replace(/\.mid$/i, ".zip");
+    }
+    try {
+      await downloads.save({ filename: name, data });
+      return "saved";
+    } catch (e) {
+      return (e as { code?: string })?.code === "declined" ? "declined" : "failed";
+    }
+  }
   const blob = new Blob([bytes as BlobPart], { type: mime });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
@@ -73,4 +138,5 @@ export function downloadBytes(bytes: Uint8Array, filename: string, mime = "audio
   a.click();
   a.remove();
   setTimeout(() => URL.revokeObjectURL(url), 2000);
+  return "saved";
 }

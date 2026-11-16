@@ -33,3 +33,10 @@ describe("midi export", () => {
     }
   });
 });
+
+describe("zip packaging (for sandboxed saves)", () => {
+  it("crc32 matches the standard check value", async () => {
+    const { crc32 } = await import("./midi");
+    expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
+  });
+});

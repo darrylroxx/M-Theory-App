@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { downloadBytes, progressionToMidi } from "../../audio/midi";
+import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio } from "../../audio/synth";
 import { arrangeProgression, voicingsFor } from "../../guitar/arrange";
@@ -300,7 +300,8 @@ function Library({ voicings, items, onClear, toast }: { voicings: (Voicing | und
       await navigator.clipboard.writeText(text);
       toast("Chord chart copied");
     } catch {
-      downloadBytes(new TextEncoder().encode(text), "progression.txt", "text/plain");
+      const r = await saveFile(new TextEncoder().encode(text), "progression.txt", "text/plain");
+      if (r === "failed") toast("Couldn't copy here. Open “Preview chart” and select the text.");
     }
   };
 
@@ -326,7 +327,11 @@ function Library({ voicings, items, onClear, toast }: { voicings: (Voicing | und
         <button className="btn primary" onClick={save} disabled={!prog.chords.length}>Save</button>
       </div>
       <div className="row">
-        <button className="btn" disabled={!items.length} onClick={() => downloadBytes(progressionToMidi(items, prog.bpm, prog.pattern, name || "M-Theory idea"), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`)}>⬇ MIDI for your DAW</button>
+        <button className="btn" disabled={!items.length} onClick={async () => {
+          const r = await saveFile(progressionToMidi(items, prog.bpm, prog.pattern, name || "M-Theory idea"), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
+          if (r === "saved") toast("MIDI saved");
+          else if (r === "failed") toast("Saving files isn't available here");
+        }}>⬇ MIDI for your DAW</button>
         <button className="btn" disabled={!items.length} onClick={copy}>📋 Copy chart + tab</button>
       </div>
       <div className="row">

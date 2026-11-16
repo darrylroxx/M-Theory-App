@@ -39,7 +39,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 - **✨ Spark** generates new progressions with a **mood** (dreamy, melancholic, dark, uplifting, floating, tense) and an **adventure** dial from safe to wild.
 - **Substitute** any chord, **add colour** (C → Cmaj7/Cadd9/C6/9…), transpose, set beats per chord.
 - **Smart voicings**: picks a voicing for every chord so your hand stays in one zone and the top note moves smoothly. Barre chords are avoided by default; pin your own voicing any time.
-- **Save** ideas, export **MIDI** for your DAW (same voicings and rhythm you heard), or copy a **chord chart + tab**.
+- **Save** ideas, export **MIDI** for your DAW (same voicings and rhythm you heard), or copy a **chord chart + tab**. (Inside sandboxed viewers that don't allow `.mid` downloads, the MIDI file comes wrapped in a `.zip`.)
 
 ### 🎯 Neck
 The current scale across the whole fretboard (intervals or note names), with the signature note ringed, and any chord of the key lit up inside it.
@@ -70,7 +70,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 44 tests: theory, voicings, progressions, synth tuning, MIDI
+npm test          # 45 tests: theory, voicings, progressions, synth tuning, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
