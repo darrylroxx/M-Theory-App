@@ -61,7 +61,7 @@ export const SCALES: ScaleType[] = [
     intervals: ["1", "2", "b3", "4", "5", "6", "b7"], family: "Major modes", brightness: 4,
     signature: ["6"], compareTo: "natural minor, but with a raised (natural) 6th",
     mood: "Minor but hopeful. Cool, soulful, funky, groovy",
-    description: "A minor scale with a bright major 6th. That one note turns the IV chord major, the classic Dorian sound.",
+    description: "That one bright note turns the IV chord major: the classic Dorian sound.",
     vamps: [["i", "IV"], ["i", "ii", "bIII", "IV"], ["i7", "IV7"]],
   }),
   S({
@@ -69,7 +69,7 @@ export const SCALES: ScaleType[] = [
     intervals: ["1", "b2", "b3", "4", "5", "b6", "b7"], family: "Major modes", brightness: 2,
     signature: ["b2"], compareTo: "natural minor, but with a flat 2nd",
     mood: "Dark, Spanish / Middle-Eastern, heavy, menacing",
-    description: "Minor with a flat 2nd right above the root. The half-step bII → i move is pure drama (flamenco, metal).",
+    description: "The half-step ♭II → i move is pure drama (flamenco, metal).",
     vamps: [["i", "bII"], ["i", "bII", "bIII", "bII"], ["i", "bvii", "bII", "i"]],
   }),
   S({
@@ -85,7 +85,7 @@ export const SCALES: ScaleType[] = [
     intervals: ["1", "2", "3", "4", "5", "6", "b7"], family: "Major modes", brightness: 5,
     signature: ["b7"], compareTo: "major, but with a flat 7th",
     mood: "Bright but laid-back. Bluesy rock, celebratory, anthemic",
-    description: "Major with a flat 7th. The bVII major chord is its calling card (I → bVII → IV).",
+    description: "The ♭VII major chord is its calling card (I → ♭VII → IV).",
     vamps: [["I", "bVII"], ["I", "bVII", "IV", "I"], ["I", "v", "IV"]],
   }),
   S({
@@ -110,7 +110,7 @@ export const SCALES: ScaleType[] = [
     intervals: ["1", "2", "b3", "4", "5", "b6", "7"], family: "Harmonic minor modes",
     signature: ["7"], compareTo: "natural minor, but with a raised 7th",
     mood: "Dramatic, classical, exotic, neo-classical",
-    description: "Minor with a raised 7th. Gives minor keys a powerful major V chord and an exotic gap between ♭6 and 7.",
+    description: "Gives minor keys a powerful major V chord and an exotic gap between ♭6 and 7.",
     vamps: [["i", "V"], ["i", "bVI", "V"], ["i", "iv", "V"]],
   }),
   S({
@@ -157,7 +157,7 @@ export const SCALES: ScaleType[] = [
     id: "melodicMinor", name: "Melodic Minor (Jazz Minor)", short: "Mel. minor",
     intervals: ["1", "2", "b3", "4", "5", "6", "7"], family: "Melodic minor modes",
     signature: ["6", "7"], compareTo: "major, but with a flat 3rd",
-    mood: "Smooth, sophisticated, bittersweet", description: "Major with a minor 3rd. Elegant minor with no ♭6 heaviness.",
+    mood: "Smooth, sophisticated, bittersweet", description: "Elegant minor with none of the ♭6 heaviness.",
     vamps: [["i(maj7)", "IV7"], ["i", "ii", "IV"]],
   }),
   S({

@@ -27,10 +27,10 @@ export const keyName = (k: Key) => `${k.tonic} ${keyScale(k).name}`;
 export type Role = "home" | "stable" | "motion" | "tension";
 
 export const ROLE_INFO: Record<Role, { label: string; blurb: string }> = {
-  home: { label: "Home", blurb: "The tonic. Total rest. Songs feel finished here." },
-  stable: { label: "Soft home", blurb: "Shares most of its notes with home, so it feels calm. A great substitute for the tonic." },
-  motion: { label: "Departure", blurb: "Moves you away from home and creates a sense of journey." },
-  tension: { label: "Tension", blurb: "Contains a note a half-step from home, so it pulls hard back to the tonic." },
+  home: { label: "Home", blurb: "Total rest. Songs feel finished here." },
+  stable: { label: "Near home", blurb: "Calm, shares notes with home. A softer home." },
+  motion: { label: "Away", blurb: "Takes the song on a journey away from home." },
+  tension: { label: "Tension", blurb: "Restless, wants to fall back home." },
 };
 
 export interface KeyChord {
@@ -46,6 +46,8 @@ export interface KeyChord {
   /** Where it comes from + why it's interesting */
   source?: string;
   explain?: string;
+  /** A few words on what it does ("Leads into C#m") */
+  short?: string;
 }
 
 const NUMERALS = ["I", "II", "III", "IV", "V", "VI", "VII"];
@@ -261,7 +263,7 @@ export function spiceChords(key: Key): { group: string; blurb: string; chords: K
   const own = new Set<string>();
   for (const size of [3, 4] as const) for (const c of diatonicChords(key, size)) own.add(chordKey(pc(c.ref.root), c.type.id));
 
-  const make = (root0: string, typeId: string, roman: string, explain: string, source: string): KeyChord => {
+  const make = (root0: string, typeId: string, roman: string, explain: string, source: string, short?: string): KeyChord => {
     const type = getChordType(typeId);
     const root = friendlySpelling(root0, key);
     return {
@@ -270,6 +272,7 @@ export function spiceChords(key: Key): { group: string; blurb: string; chords: K
       roman,
       notes: type.intervals.map((iv) => intervalNote(root, iv)),
       source,
+      short,
       explain,
     };
   };
@@ -281,10 +284,10 @@ export function spiceChords(key: Key): { group: string; blurb: string; chords: K
   for (const t of targets) {
     const label = t.roman;
     const isTonic = t.degree === 1;
-    const v = make(intervalNote(t.ref.root, "5"), "7", isTonic ? "V7" : `V7/${label}`, `Pulls strongly into ${t.ref.root}${t.type.symbol} (${label}).`, "Secondary dominant");
+    const v = make(intervalNote(t.ref.root, "5"), "7", isTonic ? "V7" : `V7/${label}`, `Pulls strongly into ${t.ref.root}${t.type.symbol} (${label}).`, "Secondary dominant", `Leads into ${t.ref.root}${t.type.symbol}`);
     secondary.push(v);
-    tritone.push(make(intervalNote(t.ref.root, "b2"), "7", isTonic ? "subV7" : `subV7/${label}`, `Slides down a half step into ${t.ref.root}${t.type.symbol}. A jazzy swap for V7/${label}.`, "Tritone substitution"));
-    leading.push(make(intervalNote(t.ref.root, "7"), "dim7", isTonic ? "vii°7" : `vii°7/${label}`, `Creeps up a half step into ${t.ref.root}${t.type.symbol}. Suspenseful.`, "Leading-tone diminished"));
+    tritone.push(make(intervalNote(t.ref.root, "b2"), "7", isTonic ? "subV7" : `subV7/${label}`, `Slides down a half step into ${t.ref.root}${t.type.symbol}. A jazzy swap for V7/${label}.`, "Tritone substitution", `Slides into ${t.ref.root}${t.type.symbol}`));
+    leading.push(make(intervalNote(t.ref.root, "7"), "dim7", isTonic ? "vii°7" : `vii°7/${label}`, `Creeps up a half step into ${t.ref.root}${t.type.symbol}. Suspenseful.`, "Leading-tone diminished", `Creeps into ${t.ref.root}${t.type.symbol}`));
   }
 
   // chromatic mediants: same quality as the tonic chord, root a 3rd away, not already in the key
@@ -300,14 +303,14 @@ export function spiceChords(key: Key): { group: string; blurb: string; chords: K
       const roman = romanNumeral(degreeToken(key.tonic, root), type);
       const common = chordPcs(rp, type).filter((p) => (tonicChord ? chordPcs(pc(tonicChord.ref.root), tonicChord.type) : []).includes(p)).length;
       mediants.push(
-        make(root, q, roman, common === 1 ? "Shares one note with home: a cinematic, goosebump shift." : "A sudden, colourful jump that still feels connected.", "Chromatic mediant"),
+        make(root, q, roman, common === 1 ? "Shares one note with home: a cinematic, goosebump shift." : "A sudden, colourful jump that still feels connected.", "Chromatic mediant", "Cinematic shift"),
       );
     }
   }
 
   const neapolitan: KeyChord[] = [];
   if (!own.has(chordKey(mod12(tonicPc + 1), "maj"))) {
-    neapolitan.push(make(intervalNote(key.tonic, "b2"), "maj", "bII", "The Neapolitan: a dramatic, dark-gold chord a half step above home. Great before V or straight back to i.", "Neapolitan"));
+    neapolitan.push(make(intervalNote(key.tonic, "b2"), "maj", "bII", "The Neapolitan: a dramatic, dark-gold chord a half step above home. Great before V or straight back to i.", "Neapolitan", "Dark & dramatic"));
   }
 
   const dedupe = (arr: KeyChord[]) => {

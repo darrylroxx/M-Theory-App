@@ -10,7 +10,8 @@ import { Fretboard, type FretDot } from "../components/Fretboard";
 import { Seg, ToneLegend, displayRoman } from "../components/common";
 import { useApp } from "../state";
 
-export function NeckView() {
+/** The current key's scale across the whole fretboard (a Learn topic). */
+export function ScaleOnNeck() {
   const { state, tuning, openSheet } = useApp();
   const key = state.key;
   const scale = getScale(key.scaleId);
@@ -54,28 +55,23 @@ export function NeckView() {
 
   const tonicMidi = 52 + mod12(pc(key.tonic) - 4);
   return (
-    <div className="stack">
-      <section className="card stack">
-        <div className="section-title">
-          <h2>{displayNote(key.tonic)} {scale.name} on the neck</h2>
-          <button className="btn sm" onClick={() => playSequence([...scale.intervals.map((iv) => tonicMidi + semitonesOf(iv)), tonicMidi + 12])}>▶ Play scale</button>
-        </div>
-        <div className="row">
-          <Seg value={labels} options={[{ value: "intervals", label: "Intervals" }, { value: "notes", label: "Note names" }]} onChange={setLabels} />
-          <Seg value={frets} options={[{ value: 12, label: "12 frets" }, { value: 15, label: "15" }, { value: 22, label: "22" }]} onChange={setFrets} />
-          {(scale.signature?.length ?? 0) > 0 && <label className="toggle"><input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} /> Ring the signature note</label>}
-        </div>
-        <Fretboard tuning={tuning} capo={capo} frets={frets} dots={dots} leftHanded={state.settings.leftHanded} />
-        <ToneLegend />
-      </section>
-
+    <div className="stack" style={{ gap: 12 }}>
+      <p className="small muted">Every note of {displayNote(key.tonic)} {scale.short} on your guitar. Any note with a dot fits the key, so you can improvise and write melodies anywhere on the neck. Orange dots are home.</p>
+      <div className="row tight">
+        <button className="btn sm" onClick={() => playSequence([...scale.intervals.map((iv) => tonicMidi + semitonesOf(iv)), tonicMidi + 12])}>▶ Hear the scale</button>
+        <Seg value={labels} options={[{ value: "intervals", label: "Intervals" }, { value: "notes", label: "Note names" }]} onChange={setLabels} />
+        <Seg value={frets} options={[{ value: 12, label: "12 frets" }, { value: 15, label: "15" }, { value: 22, label: "22" }]} onChange={setFrets} />
+      </div>
+      <Fretboard tuning={tuning} capo={capo} frets={frets} dots={dots} leftHanded={state.settings.leftHanded} />
+      <ToneLegend />
+      {(scale.signature?.length ?? 0) > 0 && <label className="toggle"><input type="checkbox" checked={showSig} onChange={(e) => setShowSig(e.target.checked)} /> Circle the signature note (the one that gives {scale.short} its sound)</label>}
       {chords.length > 0 && (
-        <section className="card stack" style={{ gap: 10 }}>
-          <div className="section-title">
-            <h3>Light up a chord inside the scale</h3>
-            <Seg value={size} options={[{ value: 3, label: "Triads" }, { value: 4, label: "7ths" }]} onChange={(v) => { setSize(v); setHl(null); }} />
+        <div className="stack" style={{ gap: 8 }}>
+          <div className="row tight">
+            <b>Light up one chord inside the scale</b>
+            <Seg value={size} options={[{ value: 3, label: "Simple" }, { value: 4, label: "7ths" }]} onChange={(v) => { setSize(v); setHl(null); }} />
           </div>
-          <p className="small muted">See where each chord's notes sit inside the scale. Melodies that land on the bright dots while that chord plays will always sound “right”; the faded notes are passing tones and tension.</p>
+          <p className="small muted">While that chord plays, melody notes on the bright dots always sound “right”; the faded ones add tension.</p>
           <div className="row tight">
             <button className={`chip${active === null ? " on" : ""}`} onClick={() => setHl(null)}>Whole scale</button>
             {chords.map((c) => (
@@ -84,8 +80,8 @@ export function NeckView() {
               </button>
             ))}
           </div>
-          {active && <button className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => openSheet({ ref: active })}>See voicings for {chordSymbol(active)}</button>}
-        </section>
+          {active && <button className="btn sm" style={{ alignSelf: "flex-start" }} onClick={() => openSheet({ ref: active })}>Ways to play {chordSymbol(active)}</button>}
+        </div>
       )}
     </div>
   );

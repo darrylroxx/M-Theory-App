@@ -13,43 +13,29 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 
 ## What's inside
 
-### 🔑 Key: everything about the key you're writing in
-- Pick any of **12 tonics × 36 scales/modes**: the 7 major modes, harmonic & melodic minor modes, pentatonics, blues, exotic (double harmonic, Hungarian minor…) and symmetric scales.
-- The scale with correct spelling (B major shows A♯, not B♭), intervals, the mode's **signature note**, key signature and relative modes.
-- **The chords of the key** as triads, 7ths or 9ths, with Roman numerals and the quality pattern (*Major · minor · minor · Major · Major · minor · diminished*). Each chord is tagged with its job:
-  - 🟢 **Home** (tonic) · 🔵 **Soft home** (tonic substitutes) · 🟠 **Departure** · 🔴 **Tension** (pulls back home)
-  - ★ **Signature** chords contain the mode's unique note (Dorian's IV, Mixolydian's ♭VII, Lydian's II…)
-- **Every chord in the key**: every chord type in the library whose notes fit the scale (sus2, sus4, add9, 6/9, m11, 13…), grouped by scale degree. B major alone has 70+.
-- **Borrowed chords** (modal interchange), grouped by the parallel mode they come from (B minor, B Dorian, B Mixolydian…).
-- **Chromatic spice**: secondary dominants, chromatic mediants, tritone subs, passing diminished chords, the Neapolitan.
-- **Escape the barre chords**: finds the capo position that turns your key into open shapes. For B major: *capo 4 + G-shapes = all 7 chords open.*
+Three tabs. Everything starts simple; the deeper material is one tap away in fold-out sections.
 
-### 🎸 Chords: every variation of every chord
-- **44 chord types** (triads, power/sus, 6ths, 7ths, add chords, 9/11/13ths, altered dominants) on any root, plus slash chords.
-- The **voicing generator** scans the whole neck and keeps every shape a real hand can play (≤ 4 fingers, barres where needed, sensible stretches). C major has 500+ voicings.
-- Filter by **No barre**, **Open strings**, **3-string triads**, **Top strings**, **Barre**, bass note / inversions, neck zone and difficulty.
-- Dots are coloured by role (**root**, **3rd**, **5th**, **7th**, **colour tones**) and can show intervals, note names or finger numbers.
-- "Show chord tones on the whole neck" maps every note of the chord on the fretboard, so you stop thinking in fixed shapes.
-- Plain-English feel, formula, other names for the same notes (Am7 = C6/A), and which keys the chord lives in.
-- **Name that shape**: tap any shape on the fretboard and it tells you what chord you're holding.
+### 🎼 Write: pick a key, meet its chords, build your song
+1. **Pick a key and a mood.** Moods come first, scale names second: *Happy & bright* (Major), *Sad & emotional* (Minor), *Cool & soulful* (Dorian), *Bluesy & laid-back* (Mixolydian), *Dreamy & floating* (Lydian), *Dark & Spanish* (Phrygian), *Dramatic & exotic* (Harmonic minor)… plus 28 more scales under "More scales".
+2. **Your chords.** The 7 chords of the key, each with an easy shape already drawn (no barre chords unless you allow them), its job in the key, and ▶ / + buttons:
+   - 🟢 **Home** · 🔵 **Near home** · 🟠 **Away** · 🔴 **Tension** (wants to fall back home)
+   - ★ marks chords holding the mode's **signature note** (Dorian's IV, Mixolydian's ♭VII…)
+   - Fold-outs: **More chords that fit this key** (sus, add9, 6, 9, 11, 13 versions: 73 in B major) and **Twist chords** from outside the key (borrowed chords grouped by mood, plus surprise chords that each "lead into" a chord of your key).
+   - **Capo tip**: when a key is full of barre chords it offers the fix. *B major: capo 4 makes all 7 chords easy open shapes.*
+3. **Your song.** Add chords, press play (plucked-guitar synth, 5 rhythms), tap a chord to **hear it, change its shape, swap it, make it fancier, move or remove it**. ✨ **Write me a starting idea** generates a progression with a mood and a Safe ↔ Wild dial (with undo).
+4. **What sounds good next?** Nine suggestions after your last (or selected) chord, colour-coded **Safe**, **Smooth**, **Colorful**, **Bold**, each with a two-word reason ("Strong pull", "Glides", "Borrowed from minor"). It scores every chord the key can offer, so it isn't limited to stock progressions.
+5. **Save & export**: save ideas, export a **MIDI file** for your DAW (same shapes and rhythm you heard), copy a **chord chart + tab**, transpose the whole song.
 
-### 🎼 Compose: build progressions for your EP
-- Build a progression and hear it played by a built-in plucked-string guitar synth (Karplus-Strong, tuned to within 3 cents), with 5 rhythms: let ring, strum, 8th pulse, arpeggio, fingerpick.
-- **What could follow?** Suggestions in four groups (*Natural next steps*, *Smooth & dreamy*, *Borrowed colour*, *Bold & cinematic*), each with a reason ("Root falls a 5th: the strongest pull in music", "Shares 2 notes, so it glides"…). It scores every chord your key can offer by how it moves from the last one, so it isn't limited to stock progressions.
-- **✨ Spark** generates new progressions with a **mood** (dreamy, melancholic, dark, uplifting, floating, tense) and an **adventure** dial from safe to wild.
-- **Substitute** any chord, **add colour** (C → Cmaj7/Cadd9/C6/9…), transpose, set beats per chord.
-- **Smart voicings**: picks a voicing for every chord so your hand stays in one zone and the top note moves smoothly. Barre chords are avoided by default; pin your own voicing any time.
-- **Save** ideas, export **MIDI** for your DAW (same voicings and rhythm you heard), or copy a **chord chart + tab**. (Inside sandboxed viewers that don't allow `.mid` downloads, the MIDI file comes wrapped in a `.zip`.)
+### 🎸 Chords: every way to play any chord
+- **Look up a chord**: root, then a kind (*Basic, 7ths, Sus & add, Lush 9/11/13, Spicy*) covering all 44 chord types, plus slash chords.
+- **Ways to play it**: one row of filters (*Best, No barre, Open strings, Small (3 strings), Up the neck, Everything*) over every playable shape the generator finds (C major has 500+). "More options" adds bass note, difficulty and dot labels.
+- Plain-English "Sounds:", the notes, and what the chord does in your key; formula, other names and parent keys sit in "Theory details".
+- **What chord is this?** Tap a shape on the fretboard and it names it.
 
-### 🎯 Neck
-The current scale across the whole fretboard (intervals or note names), with the signature note ringed, and any chord of the key lit up inside it.
+### 💡 Learn: short lessons in your current key
+Fold-out topics: **Modes in plain English** (brightest to darkest, with a vamp to hear and "Write in this mode"), **Your scale on the fretboard**, **How chords are built**, **Which chords each mode gives you**, **Train your ear** (intervals), **Circle of fifths**.
 
-### 💡 Learn
-- **How chords relate in every mode**: a table of chord qualities for all modes on your tonic, so you can see why Dorian has a major IV.
-- **The mode ladder**, brightest (Lydian) → darkest (Locrian): formulas compared with major, moods, and playable vamps you can send straight to Compose.
-- **Chord recipes** (how each chord is stacked from intervals), **intervals by ear**, and an interactive **circle of fifths**.
-
-Settings (⚙): 11 tunings (Standard, Drop D, DADGAD, Open G/D/E/C, D standard…), capo, left-handed diagrams, light/dark theme.
+Settings (⚙): avoid barre chords (on by default), 11 tunings (Standard, Drop D, DADGAD, Open G/D/E/C…), capo, dot labels, left-handed diagrams, light/dark theme.
 
 ---
 

@@ -7,7 +7,7 @@ import type { Voicing } from "../guitar/voicings";
 import type { ChordRef } from "../theory/chords";
 import type { Key } from "../theory/keys";
 
-export type Tab = "key" | "chords" | "compose" | "neck" | "learn";
+export type Tab = "write" | "chords" | "learn";
 export type LabelMode = "intervals" | "notes" | "fingers";
 
 export interface ProgChord {
@@ -23,7 +23,6 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
-  avoidBarre: boolean;
   preferOpen: boolean;
   allowInversions: boolean;
   zone: "any" | "low" | "mid" | "high";
@@ -43,6 +42,10 @@ export interface Settings {
   leftHanded: boolean;
   labels: LabelMode;
   theme: "auto" | "dark" | "light";
+  /** Prefer shapes without full barres everywhere in the app */
+  avoidBarre: boolean;
+  /** The 3-step "how it works" banner was closed */
+  guideDismissed: boolean;
 }
 
 export interface AppState {
@@ -67,15 +70,14 @@ const STORAGE_KEY = "m-theory-state-v1";
 const HOST_THEME = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
 
 export const DEFAULT_STATE: AppState = {
-  tab: "key",
+  tab: "write",
   key: { tonic: "B", scaleId: "ionian" },
-  settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "intervals", theme: "auto" },
+  settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "intervals", theme: "auto", avoidBarre: true, guideDismissed: false },
   progression: {
     chords: [],
     bpm: 84,
     pattern: "ring",
     loop: true,
-    avoidBarre: true,
     preferOpen: false,
     allowInversions: false,
     zone: "any",
@@ -88,11 +90,15 @@ function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
-    const parsed = JSON.parse(raw) as Partial<AppState>;
+    const parsed = JSON.parse(raw) as Partial<AppState> & { progression?: { avoidBarre?: boolean } };
+    // older versions had 5 tabs and a per-progression barre setting
+    const oldTab = parsed.tab as string | undefined;
+    const tab: Tab = oldTab === "chords" ? "chords" : oldTab === "learn" || oldTab === "neck" ? "learn" : "write";
     return {
       ...DEFAULT_STATE,
       ...parsed,
-      settings: { ...DEFAULT_STATE.settings, ...parsed.settings },
+      tab,
+      settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings },
       progression: { ...DEFAULT_STATE.progression, ...parsed.progression },
     };
   } catch {
@@ -106,6 +112,8 @@ interface Ctx {
   tuning: Tuning;
   sheet: SheetState | null;
   openSheet: (s: SheetState | null) => void;
+  keyPicker: boolean;
+  openKeyPicker: (open: boolean) => void;
   toast: (msg: string) => void;
   /** Strum the friendliest voicing of a chord */
   audition: (ref: ChordRef) => void;
@@ -120,6 +128,7 @@ export const newId = () => Math.random().toString(36).slice(2, 10);
 export function AppProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<AppState>(load);
   const [sheet, openSheet] = useState<SheetState | null>(null);
+  const [keyPicker, openKeyPicker] = useState(false);
   const [toastMsg, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);
 
@@ -151,10 +160,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   const audition = useCallback(
     (ref: ChordRef) => {
-      const v = bestVoicing(ref, tuning, state.settings.capo);
+      const v = easyVoicing(ref, tuning, state.settings.capo, state.settings.avoidBarre);
       if (v) strum(v.midi);
     },
-    [tuning, state.settings.capo],
+    [tuning, state.settings.capo, state.settings.avoidBarre],
   );
 
   const addChord = useCallback(
@@ -167,12 +176,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
         else chords.push(item);
         return { ...s, progression: { ...s.progression, chords } };
       });
-      toast("Added to progression");
+      toast("Added to your song");
     },
     [toast],
   );
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, addChord };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, keyPicker, openKeyPicker, toast, audition, addChord };
   return (
     <AppCtx.Provider value={value}>
       {children}
@@ -187,8 +196,14 @@ export function useApp(): Ctx {
   return c;
 }
 
-/** The most useful single voicing for quick auditioning. */
-export function bestVoicing(ref: ChordRef, tuning: Tuning, capo: number): Voicing | undefined {
+/** The single friendliest shape: 4+ strings, root in the bass, no full barre when asked. */
+export function easyVoicing(ref: ChordRef, tuning: Tuning, capo: number, avoidBarre = true): Voicing | undefined {
   const all = voicingsFor(ref, tuning, capo);
-  return all.find((v) => v.frets.filter((f) => f !== null).length >= 4) ?? all[0];
+  const full = (v: Voicing) => v.frets.filter((f) => f !== null).length >= 4;
+  const rootOk = (v: Voicing) => v.bassToken === "1" || v.inversion === "Slash bass" || !!ref.bass;
+  return (
+    all.find((v) => full(v) && rootOk(v) && (!avoidBarre || v.barreKind !== "full")) ??
+    all.find((v) => full(v) && rootOk(v)) ??
+    all[0]
+  );
 }

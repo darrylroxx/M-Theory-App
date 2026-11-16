@@ -61,6 +61,8 @@ export const isDominantType = (t: ChordType) =>
 export interface Suggestion {
   chord: Candidate;
   why: string;
+  /** Two or three words: "Strong pull", "Glides", "Back home" */
+  short: string;
   score: number;
 }
 
@@ -72,41 +74,42 @@ export interface SuggestionGroup {
 }
 
 const GROUP_INFO: Record<SuggestionGroup["id"], { title: string; blurb: string }> = {
-  natural: { title: "Natural next steps", blurb: "Strong, satisfying moves inside the key." },
-  smooth: { title: "Smooth & dreamy", blurb: "Share notes with your last chord, so the change glides." },
-  color: { title: "Borrowed colour", blurb: "Notes from outside your key that change the mood without breaking it." },
-  bold: { title: "Bold & cinematic", blurb: "Chromatic surprises. Use one to make a moment unforgettable." },
+  natural: { title: "Safe", blurb: "Strong, satisfying moves inside the key." },
+  smooth: { title: "Smooth", blurb: "Shares notes with your last chord, so the change glides." },
+  color: { title: "Colorful", blurb: "Borrows a note from outside the key to shift the mood." },
+  bold: { title: "Bold", blurb: "A surprise that makes a moment stand out." },
 };
 
-function describeMove(prev: ChordRef, prevType: ChordType, c: Candidate, common: number): { text: string; strength: number } {
+function describeMove(prev: ChordRef, prevType: ChordType, c: Candidate, common: number): { text: string; short: string; strength: number } {
   const move = mod12(pc(c.ref.root) - pc(prev.root));
   const shares = common === 1 ? "shares 1 note" : `shares ${common} notes`;
   if (isDominantType(prevType) && move === 5)
-    return { text: "Resolves the 7th chord's tension: the textbook release.", strength: 1.4 };
+    return { text: "Resolves the 7th chord's tension: the textbook release.", short: "Releases tension", strength: 1.4 };
   switch (move) {
     case 0:
-      return { text: `Same root, new colour (${shares}). Great for movement without changing chord.`, strength: 0.5 };
+      return { text: `Same root, new colour (${shares}). Great for movement without changing chord.`, short: "New colour", strength: 0.5 };
     case 5:
-      return { text: "Root falls a 5th: the strongest, most natural pull in music.", strength: 1.1 };
+      return { text: "Root falls a 5th: the strongest, most natural pull in music.", short: "Strong pull", strength: 1.1 };
     case 7:
-      return { text: "Root rises a 5th: bright, opening-up feeling.", strength: 0.75 };
+      return { text: "Root rises a 5th: bright, opening-up feeling.", short: "Opens up", strength: 0.75 };
     case 2:
-      return { text: "Steps up a whole tone: forward, rising energy.", strength: 0.8 };
+      return { text: "Steps up a whole tone: forward, rising energy.", short: "Steps up", strength: 0.8 };
     case 10:
-      return { text: "Steps down a whole tone: relaxed, rock-friendly motion.", strength: 0.75 };
+      return { text: "Steps down a whole tone: relaxed, rock-friendly motion.", short: "Steps down", strength: 0.75 };
     case 3:
     case 4:
     case 8:
     case 9:
       return {
         text: `Root moves a 3rd and ${shares}${common >= 2 ? ", so it glides" : ": a cinematic shift"}.`,
+        short: common >= 2 ? "Glides" : "Cinematic shift",
         strength: common >= 2 ? 0.85 : 0.6,
       };
     case 1:
     case 11:
-      return { text: `Slides a half step ${move === 1 ? "up" : "down"}: slinky, chromatic drama.`, strength: 0.5 };
+      return { text: `Slides a half step ${move === 1 ? "up" : "down"}: slinky, chromatic drama.`, short: "Slinky slide", strength: 0.5 };
     default:
-      return { text: "Tritone leap: as far away as you can get. Unstable and dramatic.", strength: 0.3 };
+      return { text: "Tritone leap: as far away as you can get. Unstable and dramatic.", short: "Dramatic leap", strength: 0.3 };
   }
 }
 
@@ -123,29 +126,35 @@ export function suggestNext(prev: ChordRef | null, key: Key, used: ChordRef[] = 
     for (const c of pool) {
       let group: SuggestionGroup["id"] | null = null;
       let why = "";
+      let short = "";
       let score = 0;
       if (c.pool === "diatonic" && c.role === "home") {
         group = "natural";
         why = "Start at home: the clearest way to establish the key.";
+        short = "Start at home";
         score = c.type.intervals.length === 3 ? 2 : 1.6;
       } else if (c.pool === "diatonic" && c.role === "stable") {
         group = "smooth";
-        why = "Start on a 'soft home' chord: it sets the key but with more mystery.";
+        why = "Start near home: it sets the key but with more mystery.";
+        short = "Mysterious start";
         score = 1.2;
       } else if (c.pool === "diatonic" && c.role === "motion") {
         group = "natural";
         why = "Start away from home: the song feels like it's already in motion.";
+        short = "Start mid-journey";
         score = 1;
       } else if (c.pool === "color" && c.role === "home") {
         group = "smooth";
         why = `A richer home chord: ${c.type.feel.split(".")[0].toLowerCase()}.`;
+        short = "Richer home";
         score = 1.1;
       } else if (c.pool === "borrowed") {
         group = "color";
         why = "Open on borrowed colour: instantly unexpected.";
+        short = "Unexpected start";
         score = 0.6;
       }
-      if (group) groups[group].push({ chord: c, why, score });
+      if (group) groups[group].push({ chord: c, why, short, score });
     }
   } else {
     const prevType = getChordType(prev.typeId);
@@ -159,12 +168,20 @@ export function suggestNext(prev: ChordRef | null, key: Key, used: ChordRef[] = 
       let score = move.strength + common * 0.2 - vl * 0.05 - usedCount(c) * 0.5;
       if (c.type.synthetic) score -= 1;
       let why = move.text;
+      let short = move.short;
       if (c.role === "home" && c.pool === "diatonic" && c.type.intervals.length === 3) {
         score += 0.4;
         why = "Back home. " + why;
+        short = "Back home";
       }
-      if (c.explain && c.pool === "spice") why = `${c.explain} ${why}`;
-      if (c.pool === "borrowed") why = `${c.source}. ${why}`;
+      if (c.explain && c.pool === "spice") {
+        why = `${c.explain} ${why}`;
+        short = c.short ?? short;
+      }
+      if (c.pool === "borrowed") {
+        why = `${c.source}. ${why}`;
+        short = `Borrowed from ${(c.source ?? "").replace("Borrowed from ", "").split(",")[0].toLowerCase()}`;
+      }
 
       let group: SuggestionGroup["id"];
       const m = mod12(pc(c.ref.root) - pc(prev.root));
@@ -174,7 +191,7 @@ export function suggestNext(prev: ChordRef | null, key: Key, used: ChordRef[] = 
       else if ([0, 3, 4, 8, 9].includes(m) && common >= 2) group = "smooth";
       else group = "natural";
       if (c.pool === "color") score -= 0.15;
-      groups[group].push({ chord: c, why, score });
+      groups[group].push({ chord: c, why, short, score });
     }
   }
 
@@ -342,13 +359,16 @@ export function substitutesFor(ref: ChordRef, key: Key, limit = 12): Suggestion[
     const tritone = isDominantType(type) && isDominantType(c.type) && mod12(pc(c.ref.root) - pc(ref.root)) === 6;
     if (!tritone && common < Math.min(2, pcs.length)) continue;
     let why = `Shares ${common} of ${pcs.length} notes, so it can do a similar job with a different colour.`;
+    let short = `Shares ${common} notes`;
     let score = common / Math.max(pcs.length, cp.length);
     if (pc(c.ref.root) === pc(ref.root)) {
       why = "Same root, different colour.";
+      short = "Same root, new colour";
       score += 0.2;
     }
     if (tritone) {
       why = "Tritone substitution: shares the same tension notes (3rd & 7th), resolves by half step.";
+      short = "Jazzy swap";
       score += 0.6;
     }
     if (c.pool === "borrowed") why += ` (${c.source})`;
@@ -356,7 +376,7 @@ export function substitutesFor(ref: ChordRef, key: Key, limit = 12): Suggestion[
     if (c.pool === "borrowed") score -= 0.05;
     // a different root doing the same job is the classic substitution
     if (pc(c.ref.root) !== pc(ref.root) && c.pool === "diatonic") score += 0.3;
-    out.push({ chord: c, why, score });
+    out.push({ chord: c, why, short, score });
   }
   out.sort((a, b) => b.score - a.score);
   const sameRoot = out.filter((s) => pc(s.chord.ref.root) === pc(ref.root)).slice(0, 3);

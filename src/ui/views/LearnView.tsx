@@ -6,8 +6,10 @@ import { INTERVAL_SOUNDS, intervalName } from "../../theory/intervals";
 import { diatonicChords, type Key } from "../../theory/keys";
 import { displayNote, pc } from "../../theory/notes";
 import { MAJOR_MODE_IDS, MODES_BY_BRIGHTNESS, bestTonicSpelling, getScale, scaleNotes, type ScaleType } from "../../theory/scales";
-import { Seg, displayRoman } from "../components/common";
+import { moodOf } from "../components/KeyPicker";
+import { Disclosure, Seg, displayRoman } from "../components/common";
 import { newId, useApp } from "../state";
+import { ScaleOnNeck } from "./NeckView";
 
 const learnPlayer = { current: null as ProgressionPlayer | null };
 
@@ -20,74 +22,37 @@ function romanToChord(roman: string, key: Key): ChordRef | null {
 }
 
 export function LearnView() {
+  const { state } = useApp();
+  const name = `${displayNote(state.key.tonic)} ${getScale(state.key.scaleId).short}`;
   return (
     <div className="stack">
-      <QualityTable />
-      <ModeLadder />
-      <ChordRecipes />
-      <Intervals />
-      <CircleOfFifths />
+      <div>
+        <h1 className="page-title">Learn</h1>
+        <p className="muted">Short, hands-on lessons that use your current key ({name}). Open one at a time.</p>
+      </div>
+      <Disclosure className="topic" defaultOpen title="🌗 Modes in plain English" hint="Seven moods from the same notes, brightest to darkest">
+        <ModeLadder />
+      </Disclosure>
+      <Disclosure className="topic" title="🎯 Your scale on the fretboard" hint={`Where every note of ${name} lives on the neck`}>
+        <ScaleOnNeck />
+      </Disclosure>
+      <Disclosure className="topic" title="🧱 How chords are built" hint="Major, minor, 7ths, sus and add9 in one minute">
+        <ChordRecipes />
+      </Disclosure>
+      <Disclosure className="topic" title="📊 Which chords each mode gives you" hint="Why Dorian has a major IV and Mixolydian a ♭VII">
+        <QualityTable />
+      </Disclosure>
+      <Disclosure className="topic" title="👂 Train your ear" hint="What each distance between two notes sounds like">
+        <Intervals />
+      </Disclosure>
+      <Disclosure className="topic" title="⭕ Circle of fifths" hint="Which keys are neighbours, for smooth key changes">
+        <CircleOfFifths />
+      </Disclosure>
     </div>
   );
 }
 
-function qualityClass(typeId: string): string {
-  const t = getChordType(typeId);
-  if (t.intervals.includes("#5")) return "q-aug";
-  if (t.intervals.includes("b5")) return "q-dim";
-  if (t.intervals.includes("b3")) return "q-min";
-  return "q-maj";
-}
-
-function QualityTable() {
-  const { state, set } = useApp();
-  const [size, setSize] = useState<3 | 4>(3);
-  const pcT = pc(state.key.tonic);
-  const families: { title: string; ids: string[] }[] = [
-    { title: "Modes of the major scale", ids: MAJOR_MODE_IDS },
-    { title: "Minor-key colours", ids: ["harmonicMinor", "melodicMinor", "phrygianDominant", "lydianDominant", "mixolydianb6", "harmonicMajor"] },
-  ];
-  return (
-    <section className="card">
-      <div className="section-title">
-        <h2>How chords relate in every mode</h2>
-        <Seg value={size} options={[{ value: 3, label: "Triads" }, { value: 4, label: "7ths" }]} onChange={setSize} />
-      </div>
-      <p className="small muted" style={{ marginBottom: 10 }}>
-        Every major key follows the pattern <b>Major · minor · minor · Major · Major · minor · diminished</b> (in 7ths: maj7 · m7 · m7 · maj7 · 7 · m7 · m7♭5).
-        Each mode is the same pattern <i>started from a different step</i>, which is why Dorian has a major IV and Mixolydian a major ♭VII.
-        Rows use {displayNote(state.key.tonic)} as home; tap one to switch your key.
-      </p>
-      <div className="legend" style={{ marginBottom: 8 }}>
-        <span className="q-maj">● Major</span><span className="q-min">● Minor</span><span className="q-dim">● Diminished / ø</span><span className="q-aug">● Augmented</span>
-      </div>
-      {families.map((fam) => (
-        <div key={fam.title} className="table-wrap" style={{ marginBottom: 12 }}>
-          <table className="mode-table">
-            <thead><tr><th>{fam.title}</th>{["1", "2", "3", "4", "5", "6", "7"].map((d) => <th key={d}>{d}</th>)}</tr></thead>
-            <tbody>
-              {fam.ids.map((id) => {
-                const sc = getScale(id);
-                const key: Key = { tonic: bestTonicSpelling(pcT, sc), scaleId: id };
-                const ch = diatonicChords(key, size);
-                return (
-                  <tr key={id} className={state.key.scaleId === id ? "cur" : ""} onClick={() => set((s) => ({ ...s, key }))}>
-                    <td><b>{sc.short}</b></td>
-                    {ch.map((c) => (
-                      <td key={c.degree} className={qualityClass(c.type.id)} title={`${chordSymbol(c.ref)} (${c.type.name})`}>
-                        {displayRoman(c.roman)}
-                      </td>
-                    ))}
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      ))}
-    </section>
-  );
-}
+// ── Modes ──────────────────────────────────────────────────
 
 function ModeLadder() {
   const { state, set, tuning, toast } = useApp();
@@ -108,79 +73,77 @@ function ModeLadder() {
   };
 
   return (
-    <section className="card">
-      <div className="section-title"><h2>The mode ladder: brightest → darkest</h2></div>
-      <p className="small muted" style={{ marginBottom: 12 }}>
-        All seven modes on {displayNote(state.key.tonic)}. Each step down the ladder flattens one more note. To make a mode obvious:
-        <b> 1)</b> stay on the home chord a lot, <b>2)</b> rock between it and the chord holding the signature note, <b>3)</b> land melodies on the signature note.
+    <div className="stack" style={{ gap: 12 }}>
+      <p className="small muted">
+        A mode is the same set of notes with a different home. Each step down this list lowers one note, so the mood gets darker.
+        To make a mode obvious: <b>stay on its home chord</b>, <b>rock back and forth with the chord that holds its signature note</b>, and <b>land melodies on that note</b>.
       </p>
       <div className="mode-cards">
         {MODES_BY_BRIGHTNESS.map((sc) => {
           const tonic = bestTonicSpelling(pcT, sc);
           const key: Key = { tonic, scaleId: sc.id };
-          const notes = scaleNotes(tonic, sc);
-          const vamps = (sc.vamps ?? []).map((v) => v.map((r) => romanToChord(r, key))).filter((v): v is ChordRef[] => v.every(Boolean));
+          const vamp = (sc.vamps ?? []).map((v) => v.map((r) => romanToChord(r, key))).find((v): v is ChordRef[] => v.every(Boolean));
+          const current = state.key.scaleId === sc.id && pc(state.key.tonic) === pcT;
           return (
-            <div key={sc.id} className="mode-card">
-              <div className="row" style={{ justifyContent: "space-between" }}>
-                <h3>{displayNote(tonic)} {sc.name}</h3>
-                {state.key.scaleId === sc.id && pc(state.key.tonic) === pcT && <span className="pill home">current</span>}
+            <div key={sc.id} className={`mode-card${current ? " current" : ""}`}>
+              <div>
+                <h3>{moodOf(sc.id)}</h3>
+                <p className="small muted">{displayNote(tonic)} {sc.name}{current ? " · your key" : ""}</p>
               </div>
-              <div className="brightness" title={`Brightness ${sc.brightness}/7`}><i style={{ left: `${(((sc.brightness ?? 1) - 1) / 6) * 100}%` }} /></div>
-              <p className="small" style={{ color: "var(--accent-2)", fontWeight: 650 }}>{sc.mood}</p>
+              <div className="brightness" title={`Brightness ${sc.brightness} of 7`}><i style={{ left: `${(((sc.brightness ?? 1) - 1) / 6) * 100}%` }} /></div>
               <Formula scale={sc} major={major} />
-              <p className="small muted">{notes.map(displayNote).join(" ")}</p>
+              {sc.compareTo && sc.id !== "ionian" && <p className="small"><b>{sc.compareTo.charAt(0).toUpperCase() + sc.compareTo.slice(1)}.</b></p>}
               <p className="small">{sc.description}</p>
-              {vamps.slice(0, 2).map((v, i) => (
-                <div key={i} className="row tight">
-                  <button className="btn sm" onClick={() => play(v, sc.id + i)}>{playingId === sc.id + i ? "■" : "▶"} {v.map((r) => chordSymbol(r)).join(" → ")}</button>
-                  <button className="btn sm ghost" title="Send to Compose" onClick={() => {
-                    set((s) => ({ ...s, key, tab: "compose", progression: { ...s.progression, chords: v.map((ref) => ({ id: newId(), ref, beats: 4 })) } }));
-                    toast("Vamp sent to Compose");
-                  }}>→ Compose</button>
-                </div>
-              ))}
-              <button className="btn sm ghost" style={{ alignSelf: "flex-start" }} onClick={() => set((s) => ({ ...s, key, tab: "key" }))}>Explore {displayNote(tonic)} {sc.short} chords →</button>
+              <p className="small muted">{scaleNotes(tonic, sc).map(displayNote).join(" ")}</p>
+              <div className="row tight">
+                {vamp && <button className="btn sm" onClick={() => play(vamp, sc.id)}>{playingId === sc.id ? "■ Stop" : `▶ ${vamp.map((r) => chordSymbol(r)).join(" → ")}`}</button>}
+                {!current && <button className="btn sm ghost" onClick={() => { set((s) => ({ ...s, key, tab: "write" })); toast(`Now writing in ${displayNote(tonic)} ${sc.short}`); }}>Write in this mode →</button>}
+                {current && vamp && (
+                  <button className="btn sm ghost" onClick={() => { set((s) => ({ ...s, tab: "write", progression: { ...s.progression, chords: vamp.map((ref) => ({ id: newId(), ref, beats: 4 })) } })); toast("Loaded into your song"); }}>Use as my song →</button>
+                )}
+              </div>
             </div>
           );
         })}
       </div>
-    </section>
+    </div>
   );
 }
 
 function Formula({ scale, major }: { scale: ScaleType; major: ScaleType }) {
   return (
-    <div className="formula">
+    <div className="formula" aria-label="Scale steps compared with major">
       {scale.intervals.map((iv, i) => (
-        <span key={i} className={iv !== major.intervals[i] ? "changed" : ""} title={intervalName(iv)}>{iv === "1" ? "1" : iv.replace(/b/g, "♭").replace(/#/g, "♯")}</span>
+        <span key={i} className={iv !== major.intervals[i] ? "changed" : ""} title={intervalName(iv)}>{iv.replace(/b/g, "♭").replace(/#/g, "♯")}</span>
       ))}
     </div>
   );
 }
 
+// ── Chord recipes ──────────────────────────────────────────
+
 function ChordRecipes() {
   const { state, openSheet } = useApp();
-  const recipes: { id: string; stack: string }[] = [
-    { id: "maj", stack: "Major 3rd + minor 3rd" },
-    { id: "min", stack: "minor 3rd + Major 3rd" },
-    { id: "dim", stack: "minor 3rd + minor 3rd" },
-    { id: "aug", stack: "Major 3rd + Major 3rd" },
-    { id: "sus2", stack: "3rd replaced by the 2nd" },
-    { id: "sus4", stack: "3rd replaced by the 4th" },
-    { id: "maj7", stack: "Major triad + Major 7th" },
-    { id: "7", stack: "Major triad + minor 7th" },
-    { id: "m7", stack: "minor triad + minor 7th" },
-    { id: "m7b5", stack: "diminished triad + minor 7th" },
-    { id: "dim7", stack: "diminished triad + diminished 7th" },
-    { id: "add9", stack: "Major triad + 9th (2nd an octave up)" },
-    { id: "6", stack: "Major triad + Major 6th" },
-    { id: "m9", stack: "minor 7th + 9th" },
-    { id: "mMaj7", stack: "minor triad + Major 7th" },
+  const recipes: { id: string; how: string }[] = [
+    { id: "maj", how: "Root + big 3rd + 5th" },
+    { id: "min", how: "Root + small 3rd + 5th" },
+    { id: "sus2", how: "Swap the 3rd for the 2nd" },
+    { id: "sus4", how: "Swap the 3rd for the 4th" },
+    { id: "add9", how: "Major + the 9th (the 2nd, an octave up)" },
+    { id: "maj7", how: "Major + the note just below the root" },
+    { id: "7", how: "Major + the note a whole step below the root" },
+    { id: "m7", how: "Minor + the note a whole step below the root" },
+    { id: "m7b5", how: "Minor with a lowered 5th, plus ♭7" },
+    { id: "dim", how: "Small 3rd + small 3rd" },
+    { id: "aug", how: "Big 3rd + big 3rd" },
+    { id: "6", how: "Major + the 6th" },
   ];
   return (
-    <section className="card">
-      <div className="section-title"><h2>Chord recipes</h2><span className="small muted">on {displayNote(state.key.tonic)}. Tap for every voicing</span></div>
+    <div className="stack" style={{ gap: 10 }}>
+      <p className="small muted">
+        Every chord is a root plus a few notes counted up the scale. The <b>3rd</b> decides happy (major) or sad (minor); 7ths, 9ths and sus notes add colour.
+        Examples use {displayNote(state.key.tonic)}; tap one to see all its shapes.
+      </p>
       <div className="recipe">
         {recipes.map((r) => {
           const t = getChordType(r.id);
@@ -188,22 +151,70 @@ function ChordRecipes() {
           return (
             <button key={r.id} className="recipe-item" onClick={() => openSheet({ ref })}>
               <b style={{ fontSize: "1.05rem" }}>{chordSymbol(ref)} <span className="muted small">{t.name}</span></b>
-              <span className="mono small">{t.intervals.map((i) => (i === "1" ? "1" : i.replace(/b/g, "♭").replace(/#/g, "♯"))).join(" – ")}</span>
-              <span className="small muted">{r.stack}</span>
-              <span className="small">{t.feel}</span>
+              <span className="small">{r.how}</span>
+              <span className="mono tiny muted">{t.intervals.map((i) => i.replace(/b/g, "♭").replace(/#/g, "♯")).join(" · ")}</span>
+              <span className="small muted">{t.feel}</span>
             </button>
           );
         })}
       </div>
-    </section>
+    </div>
   );
 }
+
+// ── Mode chord table ───────────────────────────────────────
+
+function qualityClass(typeId: string): string {
+  const t = getChordType(typeId);
+  if (t.intervals.includes("#5")) return "q-aug";
+  if (t.intervals.includes("b5")) return "q-dim";
+  if (t.intervals.includes("b3")) return "q-min";
+  return "q-maj";
+}
+
+function QualityTable() {
+  const { state, set } = useApp();
+  const [size, setSize] = useState<3 | 4>(3);
+  const pcT = pc(state.key.tonic);
+  return (
+    <div className="stack" style={{ gap: 10 }}>
+      <p className="small muted">
+        Every major key follows the same pattern: <b>Major, minor, minor, Major, Major, minor, diminished</b>.
+        Each mode starts that pattern from a different step, which is why the chord types shift around. Capital numerals are major chords, small ones minor. Tap a row to write in that mode.
+      </p>
+      <div className="row tight">
+        <Seg value={size} options={[{ value: 3, label: "Simple" }, { value: 4, label: "7ths" }]} onChange={setSize} />
+        <div className="legend"><span className="q-maj">● Major</span><span className="q-min">● Minor</span><span className="q-dim">● Diminished</span><span className="q-aug">● Augmented</span></div>
+      </div>
+      <div className="table-wrap">
+        <table className="mode-table">
+          <thead><tr><th>Mood</th>{[1, 2, 3, 4, 5, 6, 7].map((d) => <th key={d}>{d}</th>)}</tr></thead>
+          <tbody>
+            {[...MAJOR_MODE_IDS, "harmonicMinor"].map((id) => {
+              const sc = getScale(id);
+              const key: Key = { tonic: bestTonicSpelling(pcT, sc), scaleId: id };
+              return (
+                <tr key={id} className={state.key.scaleId === id ? "cur" : ""} onClick={() => set((s) => ({ ...s, key, tab: "write" }))}>
+                  <td><b>{moodOf(id)}</b><div className="tiny muted">{sc.short}</div></td>
+                  {diatonicChords(key, size).map((c) => (
+                    <td key={c.degree} className={qualityClass(c.type.id)} title={`${chordSymbol(c.ref)} (${c.type.name})`}>{displayRoman(c.roman)}</td>
+                  ))}
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
+// ── Intervals ──────────────────────────────────────────────
 
 function Intervals() {
   const { state } = useApp();
   const root = 48 + pc(state.key.tonic);
   const play = (semis: number) => {
-    getAudio();
     const t = getAudio().currentTime + 0.05;
     playNote(root, t, 0.8, 0, 1.4);
     playNote(root + semis, t + 0.5, 0.8, 1, 1.6);
@@ -211,8 +222,8 @@ function Intervals() {
     playNote(root + semis, t + 1.2, 0.6, 3, 1.6);
   };
   return (
-    <section className="card">
-      <div className="section-title"><h2>Intervals by ear</h2><span className="small muted">from {displayNote(state.key.tonic)}: melodic, then together</span></div>
+    <div className="stack" style={{ gap: 10 }}>
+      <p className="small muted">An interval is the distance between two notes, counted in frets. Each one has its own feeling; chords are just intervals stacked up. Tap ▶ to hear one note, then the other, then both together.</p>
       <div className="interval-list">
         {INTERVAL_SOUNDS.filter((i) => i.semis > 0).map((i) => (
           <div key={i.semis} className="interval-item">
@@ -224,9 +235,11 @@ function Intervals() {
           </div>
         ))}
       </div>
-    </section>
+    </div>
   );
 }
+
+// ── Circle of fifths ───────────────────────────────────────
 
 function CircleOfFifths() {
   const { state, set } = useApp();
@@ -238,10 +251,9 @@ function CircleOfFifths() {
   const c = size / 2;
   const pos = (i: number, r: number) => [c + r * Math.sin((i * Math.PI) / 6), c - r * Math.cos((i * Math.PI) / 6)];
   const curIdx = isMinorish ? MIN.findIndex((n) => pc(n) === cur) : MAJ.findIndex((n) => pc(n) === cur);
-
   return (
-    <section className="card">
-      <div className="section-title"><h2>Circle of fifths</h2><span className="small muted">neighbours share 6 of 7 notes: perfect for key changes</span></div>
+    <div className="stack" style={{ gap: 10 }}>
+      <p className="small muted">Keys next to each other share 6 of their 7 notes, so moving to a neighbour is the smoothest key change. Major keys are on the outside, their relative minors inside. Tap a key to write in it.</p>
       <div className="circle-wrap">
         <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} role="img" aria-label="Circle of fifths">
           <circle cx={c} cy={c} r={150} fill="var(--card-2)" stroke="var(--border)" />
@@ -254,24 +266,17 @@ function CircleOfFifths() {
           {MAJ.map((n, i) => {
             const [x, y] = pos(i, 121);
             const [x2, y2] = pos(i, 68);
-            const on = !isMinorish && i === curIdx;
-            const onMin = isMinorish && i === curIdx;
             return (
               <g key={n}>
-                <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={800} fill={on ? "var(--accent-ink)" : "var(--text)"} style={{ cursor: "pointer" }}
-                  onClick={() => set((s) => ({ ...s, key: { tonic: n, scaleId: "ionian" } }))}>{displayNote(n)}</text>
-                <text x={x2} y={y2 + 4} textAnchor="middle" fontSize={12} fontWeight={700} fill={onMin ? "var(--accent)" : "var(--muted)"} style={{ cursor: "pointer" }}
-                  onClick={() => set((s) => ({ ...s, key: { tonic: MIN[i], scaleId: "aeolian" } }))}>{displayNote(MIN[i])}m</text>
+                <text x={x} y={y + 5} textAnchor="middle" fontSize={15} fontWeight={800} fill={!isMinorish && i === curIdx ? "var(--accent-ink)" : "var(--text)"} style={{ cursor: "pointer" }}
+                  onClick={() => set((s) => ({ ...s, key: { tonic: n, scaleId: "ionian" }, tab: "write" }))}>{displayNote(n)}</text>
+                <text x={x2} y={y2 + 4} textAnchor="middle" fontSize={12} fontWeight={700} fill={isMinorish && i === curIdx ? "var(--accent)" : "var(--muted)"} style={{ cursor: "pointer" }}
+                  onClick={() => set((s) => ({ ...s, key: { tonic: MIN[i], scaleId: "aeolian" }, tab: "write" }))}>{displayNote(MIN[i])}m</text>
               </g>
             );
           })}
-          <text x={c} y={c + 4} textAnchor="middle" fontSize={11} fill="var(--faint)" fontWeight={700}>outer: major</text>
-          <text x={c} y={c + 18} textAnchor="middle" fontSize={11} fill="var(--faint)" fontWeight={700}>inner: minor</text>
         </svg>
       </div>
-      <p className="small muted" style={{ textAlign: "center" }}>
-        Highlighted: your key and its two neighbours. Moving one step clockwise adds a ♯ (or removes a ♭). Each major key shares all its notes with the relative minor printed inside it. Tap any key to switch.
-      </p>
-    </section>
+    </div>
   );
 }

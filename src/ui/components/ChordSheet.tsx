@@ -4,9 +4,10 @@ import { useApp } from "../state";
 import { ChordInfo } from "./ChordInfo";
 import { VoicingBrowser } from "./VoicingBrowser";
 
-/** Pop-up with everything about a chord + all its voicings. */
+/** Pop-up with everything about a chord and every way to play it. */
 export function ChordSheet() {
-  const { sheet, openSheet, state, set, addChord, toast } = useApp();
+  const { sheet, openSheet, set, addChord, toast } = useApp();
+  const { state } = useApp();
 
   useEffect(() => {
     if (!sheet) return;
@@ -25,32 +26,34 @@ export function ChordSheet() {
         <div className="sheet-head">
           <div>
             <h2>{chordSymbol(ref)}</h2>
-            <p className="muted small">{getChordType(ref.typeId).name}{slot ? " · choose a voicing for this slot" : ""}</p>
+            <p className="muted small">{getChordType(ref.typeId).name}</p>
           </div>
           <button className="icon-btn sheet-close" aria-label="Close" onClick={() => openSheet(null)}>✕</button>
         </div>
-        <div className="row tight" style={{ marginBottom: 14 }}>
-          {!slot && <button className="btn primary sm" onClick={() => addChord(ref)}>+ Add to progression</button>}
-          <button className="btn sm" onClick={() => { set((s) => ({ ...s, tab: "chords", explore: ref })); openSheet(null); }}>Open in Chords tab</button>
-        </div>
         <div className="stack">
-          <ChordInfo chord={ref} onOpen={(r) => openSheet({ ref: r, slotId })} />
-          <hr className="sep" />
-          <VoicingBrowser
-            chord={ref}
-            pickedId={slot?.voicingId}
-            useLabel={slot ? "Use this" : "+ Add"}
-            onUse={(v) => {
-              if (slot) {
-                set((s) => ({
-                  ...s,
-                  progression: { ...s.progression, chords: s.progression.chords.map((c) => (c.id === slot.id ? { ...c, voicingId: v.id } : c)) },
-                }));
-                toast("Voicing pinned");
-                openSheet(null);
-              } else addChord(ref, { voicingId: v.id });
-            }}
-          />
+          {slot && <div className="callout small"><b>Pick a shape</b> for chord {state.progression.chords.indexOf(slot) + 1} of your song.</div>}
+          <ChordInfo chord={ref} onOpen={(r) => openSheet({ ref: r, slotId })} showAdd={!slot} />
+          <div>
+            <h3 style={{ marginBottom: 8 }}>Ways to play it</h3>
+            <VoicingBrowser
+              chord={ref}
+              pickedId={slot?.voicingId}
+              useLabel={slot ? "Use this shape" : "+ Add this shape"}
+              onUse={(v) => {
+                if (slot) {
+                  set((s) => ({
+                    ...s,
+                    progression: { ...s.progression, chords: s.progression.chords.map((c) => (c.id === slot.id ? { ...c, voicingId: v.id } : c)) },
+                  }));
+                  toast("Shape changed");
+                  openSheet(null);
+                } else addChord(ref, { voicingId: v.id });
+              }}
+            />
+          </div>
+          <button className="btn ghost sm" style={{ alignSelf: "flex-start" }} onClick={() => { set((s) => ({ ...s, tab: "chords", explore: ref })); openSheet(null); }}>
+            Open in the Chords tab →
+          </button>
         </div>
       </div>
     </div>
