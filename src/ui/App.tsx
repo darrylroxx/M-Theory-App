@@ -1,15 +1,11 @@
 import { Component, useState, type ReactNode } from "react";
-import { ChordSheet } from "./components/ChordSheet";
-import { SettingsPanel } from "./components/KeyPicker";
+import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, useApp, type Tab } from "./state";
-import { ChordsView } from "./views/ChordsView";
-import { LearnView } from "./views/LearnView";
-import { WriteView } from "./views/WriteView";
+import { GuitarView } from "./views/GuitarView";
 
 const TABS: { id: Tab; label: string }[] = [
-  { id: "write", label: "Write" },
-  { id: "chords", label: "Chords" },
-  { id: "learn", label: "Learn" },
+  { id: "guitar", label: "Guitar" },
+  { id: "piano", label: "Piano" },
 ];
 
 class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
@@ -23,7 +19,7 @@ class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void 
       <div className="card empty stack" style={{ alignItems: "center" }}>
         <h2>Something went wrong in this view</h2>
         <p className="small muted mono">{this.state.error.message}</p>
-        <button className="btn primary" onClick={() => { this.setState({ error: null }); this.props.onReset(); }}>Back to Write</button>
+        <button className="btn primary" onClick={() => { this.setState({ error: null }); this.props.onReset(); }}>Reload view</button>
       </div>
     );
   }
@@ -50,16 +46,29 @@ function Shell() {
           <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Guitar setup" title="Tuning, capo & display">⚙</button>
         </div>
       </header>
-      <main className={state.tab === "write" ? "has-dock" : ""}>
-        <ViewBoundary key={state.tab} onReset={() => go("write")}>
-          {state.tab === "write" && <WriteView />}
-          {state.tab === "chords" && <ChordsView />}
-          {state.tab === "learn" && <LearnView />}
+      <main className={state.tab === "guitar" ? "has-dock" : ""}>
+        <ViewBoundary key={state.tab} onReset={() => go("guitar")}>
+          {state.tab === "guitar" ? <GuitarView /> : <PianoSoon />}
         </ViewBoundary>
       </main>
-      <ChordSheet />
       {settings && <SettingsPanel onClose={() => setSettings(false)} />}
     </div>
+  );
+}
+
+/** Placeholder until the piano side is built. */
+function PianoSoon() {
+  const whites = Array.from({ length: 14 }, (_, i) => i);
+  const blacks = [0, 1, 3, 4, 5, 7, 8, 10, 11, 12];
+  return (
+    <section className="card piano-soon">
+      <svg viewBox="0 0 280 90" width="280" role="img" aria-label="Piano keyboard">
+        {whites.map((i) => <rect key={i} x={i * 20} y={0} width={19} height={90} rx={3} fill="var(--card-2)" stroke="var(--border-2)" />)}
+        {blacks.map((i) => <rect key={i} x={i * 20 + 13} y={0} width={13} height={54} rx={2} fill="var(--text)" />)}
+      </svg>
+      <h2>Piano</h2>
+      <p className="muted">Coming soon</p>
+    </section>
   );
 }
 

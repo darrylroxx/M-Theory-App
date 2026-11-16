@@ -9,7 +9,7 @@ import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import type { Key } from "../theory/keys";
 
-export type Tab = "write" | "chords" | "learn";
+export type Tab = "guitar" | "piano";
 export type LabelMode = "intervals" | "notes" | "fingers";
 
 export interface ProgChord {
@@ -53,8 +53,6 @@ export interface AppState {
   settings: Settings;
   progression: Progression;
   saved: SavedProgression[];
-  /** Chord currently shown in the Chords tab */
-  explore: ChordRef;
   /** Your chosen way to play each chord (by tuning, capo and chord) */
   shapes: Record<string, string>;
 }
@@ -71,7 +69,7 @@ const STORAGE_KEY = "m-theory-state-v1";
 const HOST_THEME = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
 
 export const DEFAULT_STATE: AppState = {
-  tab: "write",
+  tab: "guitar",
   key: { tonic: "B", scaleId: "ionian" },
   settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "fingers", theme: "auto", avoidBarre: true, v: 3 },
   progression: {
@@ -81,7 +79,6 @@ export const DEFAULT_STATE: AppState = {
     loop: true,
   },
   saved: [],
-  explore: { root: "B", typeId: "maj" },
   shapes: {},
 };
 
@@ -90,9 +87,7 @@ function load(): AppState {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return DEFAULT_STATE;
     const parsed = JSON.parse(raw) as Partial<AppState> & { progression?: { avoidBarre?: boolean } };
-    // older versions had 5 tabs and a per-progression barre setting
-    const oldTab = parsed.tab as string | undefined;
-    const tab: Tab = oldTab === "chords" ? "chords" : oldTab === "learn" || oldTab === "neck" ? "learn" : "write";
+    const tab: Tab = (parsed.tab as string) === "piano" ? "piano" : "guitar";
     return {
       ...DEFAULT_STATE,
       ...parsed,

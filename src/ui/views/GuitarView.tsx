@@ -1,4 +1,4 @@
-import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio, playSequence } from "../../audio/synth";
@@ -12,30 +12,13 @@ import { MOODS, sparkProgression, suggestNext, type Mood, type SuggestionGroup }
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
+import { ShapeFinder } from "../components/ShapeFinder";
+import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { newId, useApp, type ProgChord, type Progression } from "../state";
 
-// ── Drag & drop (mouse: drag; touch: press and hold, then drag) ──────────
-
-interface Payload { ref: ChordRef; slotId?: string }
-interface DragApi {
-  start: (e: ReactPointerEvent, p: Payload) => void;
-  /** true right after a drag, so the click that follows it is ignored */
-  justDragged: () => boolean;
-}
-const DragCtx = createContext<DragApi | null>(null);
-
-function useDraggable(payload: Payload, onTap: () => void) {
-  const api = useContext(DragCtx)!;
-  return {
-    onPointerDown: (e: ReactPointerEvent) => api.start(e, payload),
-    onClick: () => { if (!api.justDragged()) onTap(); },
-    onContextMenu: (e: { preventDefault: () => void }) => e.preventDefault(),
-  };
-}
-
-/** The whole app in one screen: key → mode → chords → your progression. */
-export function WriteView() {
-  const { state, set, shapeOf } = useApp();
+/** Guitar: key → mode → chords → shapes → your progression. */
+export function GuitarView() {
+  const { state, set, shapeOf, sheet, openSheet } = useApp();
   const prog = state.progression;
   const [nowIdx, setNowIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
@@ -79,7 +62,7 @@ export function WriteView() {
         const from = cs.findIndex((c) => c.id === p.slotId);
         if (from < 0) return s;
         [item] = cs.splice(from, 1);
-      } else item = { id: newId(), ref: p.ref, beats: 4 };
+      } else item = { id: newId(), ref: p.ref, beats: 4, voicingId: p.voicingId };
       cs.splice(Math.min(index, cs.length), 0, item);
       return { ...s, progression: { ...s.progression, chords: cs } };
     });
@@ -185,7 +168,12 @@ export function WriteView() {
         <KeyBar />
         <ChordBoard />
       </div>
-      <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} />
+      {/* the finder sits directly on top of the tray, so shapes can be dragged straight in */}
+      <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
+        {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
+        <ShapeFinder />
+        <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} onMenu={() => setMenu(true)} />
+      </div>
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
       {menu && <SongMenu voicings={voicings} items={items} onClose={() => setMenu(false)} />}
     </DragCtx.Provider>
@@ -282,9 +270,9 @@ const ChordBoard = memo(function ChordBoard() {
   const scale = getScale(key.scaleId);
   const hepta = isHeptatonic(scale);
   const [picked, setView] = useState<View>("triads");
-  const view: View = !hepta && picked !== "next" ? "more" : picked;
+  const view: View = hepta ? (picked === "more" ? "triads" : picked) : picked === "next" ? "next" : "more";
   const options: { value: View; label: string }[] = hepta
-    ? [{ value: "triads", label: "Chords" }, { value: "sevenths", label: "7ths" }, { value: "more", label: "More" }, { value: "outside", label: "Outside" }, { value: "next", label: "Next ✨" }]
+    ? [{ value: "triads", label: "Chords" }, { value: "sevenths", label: "7ths" }, { value: "outside", label: "Outside" }, { value: "next", label: "Next ✨" }]
     : [{ value: "more", label: "Chords" }, { value: "next", label: "Next ✨" }];
 
   return (
@@ -300,7 +288,7 @@ const ChordBoard = memo(function ChordBoard() {
 
 function KeyChords({ size }: { size: 3 | 4 }) {
   const { state } = useApp();
-  const chords = useMemo(() => diatonicChords(state.key, size), [state.key, size]);
+  const chords = useMemo(() => diatonicChords(state.key, size).filter((c) => !c.type.synthetic), [state.key, size]);
   return (
     <>
       <div className="key-chords">{chords.map((c) => <ChordCard key={`${c.degree}-${size}`} c={c} />)}</div>
@@ -319,7 +307,7 @@ function ChordCard({ c }: { c: KeyChord }) {
   const d = useDraggable({ ref: c.ref }, () => openSheet({ ref: c.ref }));
   const name = chordSymbol(c.ref);
   return (
-    <div className={`kc draggable role-${c.role}`} role="button" tabIndex={0} aria-label={`${name}: ways to play`} {...d}
+    <div className={`kc draggable role-${c.role}`} role="button" tabIndex={0} aria-label={`${name}: ways to play`} aria-haspopup="dialog" {...d}
       onKeyDown={(e) => { if (e.key === "Enter") openSheet({ ref: c.ref }); }}>
       <span className="kc-head">
         <span className="kc-roman">{displayRoman(c.roman)}</span>

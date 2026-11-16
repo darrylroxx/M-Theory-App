@@ -1,23 +1,6 @@
 import { TUNINGS } from "../../guitar/tunings";
-import { getScale } from "../../theory/scales";
 import { useApp } from "../state";
 import { Seg } from "./common";
-
-/** The everyday scales, named by how they feel. */
-export const MOOD_SCALES: { id: string; mood: string }[] = [
-  { id: "ionian", mood: "Happy & bright" },
-  { id: "aeolian", mood: "Sad & emotional" },
-  { id: "dorian", mood: "Cool & soulful" },
-  { id: "mixolydian", mood: "Bluesy & laid-back" },
-  { id: "lydian", mood: "Dreamy & floating" },
-  { id: "phrygian", mood: "Dark & Spanish" },
-  { id: "harmonicMinor", mood: "Dramatic & exotic" },
-  { id: "mixolydianb6", mood: "Bittersweet & heroic" },
-];
-
-export function moodOf(scaleId: string): string {
-  return MOOD_SCALES.find((m) => m.id === scaleId)?.mood ?? getScale(scaleId).mood.split(/[,.]/)[0];
-}
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const { state, set } = useApp();

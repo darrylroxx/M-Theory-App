@@ -27,6 +27,7 @@ const keyOf = (c: { ref: ChordRef }) => `${pc(c.ref.root)}:${c.ref.typeId}`;
 export function candidatePool(key: Key): Candidate[] {
   const out = new Map<string, Candidate>();
   const add = (c: KeyChord, pool: Pool) => {
+    if (c.type.synthetic) return; // unnamed stacks from exotic scales can't be looked up later
     const k = keyOf(c);
     if (!out.has(k)) out.set(k, { ...c, pool });
   };
