@@ -6,13 +6,14 @@
  * number of steps per beat, so 4/4 in 16ths is 16 × 4, a 12/8 shuffle is 12 × 3
  * and a 3/4 waltz is 12 × 4.
  */
-import { DRUM_IDS, defaultParams, type DrumId, type DrumParams, type KitId } from "./drums";
+import { DRUM_IDS, KITS, defaultParams, type DrumId, type DrumParams, type KitId } from "./drums";
 
-export type BeatGroupId = "dream" | "indie" | "box" | "808" | "rock" | "slow" | "world";
+export type BeatGroupId = "dream" | "indie" | "dark" | "box" | "808" | "rock" | "slow" | "world";
 
 export const BEAT_GROUPS: { id: BeatGroupId; name: string }[] = [
   { id: "dream", name: "Dream pop" },
   { id: "indie", name: "Lo-fi indie" },
+  { id: "dark", name: "Dark & electronic" },
   { id: "box", name: "Organ presets" },
   { id: "808", name: "808" },
   { id: "rock", name: "Rock & pop" },
@@ -158,6 +159,24 @@ export const BEAT_LIBRARY: BeatPattern[] = [
   P("indie", "Cold wave", 120, { K: "x.....x...x.....", S: BACK, C: "............x...", H: S16 }),
   P("indie", "Floor tom", 112, { K: "x...x...x...x...", S: BACK, T: "o.o.o.o.o.o.o.o." }),
 
+  P("indie", "Seaside", 112, { K: "x..x..x...x.x...", S: BACK, R: "..x......x......", H: E8s }),
+  P("indie", "Skip", 126, { K: "x.....x..x......", S: BACK, Sh: S16, R: "..........x....." }),
+
+  // ── Dark & electronic: cold drum machines, dance floors and broken clocks ──
+  P("dark", "Cold disco", 124, { K: "x...x...x...x...", C: BACK, H: "o.x.o.x.o.x.o.x." }),
+  P("dark", "Pulse", 118, { K: "x...x...x...x...", S: BACK, H: S16, R: "..x..x....x..x.." }),
+  P("dark", "Leather", 110, { K: "x..x..x.x..x..x.", S: BACK, H: E8 }),
+  P("dark", "Basement", 128, { K: "x...x...x...x...", S: "....x.......x.x.", O: "..x...x...x...x.", T: "..............o." }),
+  P("dark", "Tower block", 156, { K: "x.x...x.x.x...x.", S: BACK, H: S16 }),
+  P("dark", "Concrete", 144, { K: "x.....x.x.....x.", S: BACK, C: "............x...", H: E8 }),
+  P("dark", "Night tram", 162, { K: "x...x...x...x...", S: BACK, H: "x.xxx.xxx.xxx.xx" }),
+  P("dark", "Grey sky", 132, { K: "x.....x.x.x.....", S: BACK, H: S16, T: "..............xx" }),
+  P("dark", "Broken clock", 136, { K: "x..x......x..x..", S: "....x..x.o..x...", H: "x.xx.xxx.x.xx.xx", R: "..x......x....x." }),
+  P("dark", "Static", 152, { K: "x.....x..x.x....", S: "....x.......x..x", H: "xxoxxxoxxoxxxoxx", C: ".......x........", B: "..........o....." }),
+  P("dark", "Stutter", 128, { K: "x.x......xx.....", S: "....x.....o.x...", H: "x.x.xxx.x.x.xxxx", T: "...............o" }),
+  P("dark", "Ice", 100, { K: "x......x..x.....", C: BACK, R: "..x..x...x...x..", H: "o.o.o.o.oooooo.o" }),
+  P("dark", "Signal", 140, { K: "x...x...x...x...", H: "..x...x...x...x.", B: "x..x..x..x..x..x", S: "............x..." }),
+
   // ── Organ presets: the rhythm buttons on old organs and rhythm boxes ──
   P("box", "Rock 1", 110, { K: "x.......x.x.....", S: BACK, H: E8 }),
   P("box", "Rock 2", 120, { K: "x..x....x..x....", S: BACK, H: E8 }),
@@ -204,6 +223,8 @@ export const BEAT_LIBRARY: BeatPattern[] = [
   P("rock", "Big ballad", 66, { K: "x.......x.x.....", S: BACK, H: E8, T: "..............oo" }),
   P("rock", "Tom groove", 104, { K: "x.....x.x.......", S: BACK, T: "..x...x...x.x.x." }),
   P("rock", "Shaker pop", 108, { K: "x..x....x.x.....", C: BACK, Sh: S16 }),
+  P("rock", "Anthem", 132, { K: "x..x..x.x..x..x.", S: BACK, C: BACK, T: "..x...x...x...xx" }),
+  P("rock", "Stampede", 150, { K: "x...x...x...x...", S: BACK, T: "x.x.x.x.x.x.x.x.", Sh: S16 }),
   P("rock", "Sixteenths", 92, { K: "x.....x.x.......", S: BACK, H: S16 }),
 
   // ── 6/8, 12/8, waltz and shuffle ──
@@ -265,7 +286,7 @@ export function vibeOf(b: Beat): string | null {
   return VIBES.find((v) => (Object.keys(v.fx) as (keyof typeof v.fx)[]).every((k) => v.fx[k] === fx[k]))?.id ?? null;
 }
 
-/** A whole drum setup you saved: machine, per-drum voices and sounds, and the effects. */
+/** A whole drum setup: machine, per-drum voices and sounds, and the effects. Built in, or saved by you. */
 export interface UserKit {
   id: string;
   name: string;
@@ -274,6 +295,49 @@ export interface UserKit {
   sounds: Partial<Record<DrumId, Partial<DrumParams>>>;
   fx: BeatFx;
 }
+
+/** A built-in kit made in the spirit of a record or a band. */
+export interface StyleKit extends UserKit {
+  /** what it is modelled on */
+  like: string;
+}
+
+const style = (id: string, name: string, like: string, kit: KitId, voices: UserKit["voices"], sounds: UserKit["sounds"], fx: Partial<BeatFx>): StyleKit => ({ id: `style-${id}`, name, like, kit, voices, sounds, fx: { ...FX_DEFAULTS, ...fx } });
+
+export const STYLE_KITS: StyleKit[] = [
+  // drums patched on a modular synth, crushed and dry, with short echoes that stutter
+  style("glitch", "Glitch", "Kid A", "mod", {}, {
+    kick: { decay: 0.45, drive: 0.35 }, snare: { decay: 0.4, space: 0.3, echo: 0.5 }, clap: { echo: 0.6 }, hat: { decay: 0.3, pan: 0.35 },
+    tom: { echo: 0.5 }, rim: { echo: 0.7, pan: -0.4 }, bell: { echo: 0.6, space: 0.5 },
+  }, { space: 0.2, size: 0.3, echo: 0.3, echoTime: "1/16", grit: 0.5, tape: 0.1, tone: -0.05, glue: 0.75 }),
+  // an old organ's rhythm box, slowed, softened and left in a very long reverb
+  style("dream", "Dream", "Beach House", "box", {}, {
+    kick: { tune: -2, decay: 0.65, tone: 0.3 }, snare: { decay: 0.7, tone: 0.4, space: 0.75, filter: -0.15 }, hat: { decay: 0.35, filter: -0.2, space: 0.3 },
+    open: { filter: -0.2, space: 0.4 }, tom: { space: 0.5 }, rim: { space: 0.7, echo: 0.5 }, shaker: { space: 0.4 },
+  }, { space: 0.6, size: 0.85, echo: 0.18, echoTime: "1/8.", grit: 0.15, tape: 0.45, tone: -0.3, glue: 0.35, human: 0.15 }),
+  // a cheap 8-bit drum machine recorded hot to cassette in a bedroom
+  style("bedroom", "Bedroom", "Current Joys", "lofi", {}, {
+    kick: { decay: 0.4, tone: 0.6, drive: 0.3 }, snare: { decay: 0.75, drive: 0.25, space: 0.7 }, clap: { space: 0.7 }, hat: { filter: -0.15 },
+  }, { space: 0.5, size: 0.6, grit: 0.5, tape: 0.65, tone: -0.35, glue: 0.6, human: 0.1 }),
+  // huge, roomy, played-sounding drums pushed hard
+  style("anthem", "Anthem", "Florence · Free", "linn", { clap: "909" }, {
+    kick: { decay: 0.55, tone: 0.7, punch: 0.7, drive: 0.2 }, snare: { decay: 0.75, tone: 0.65, punch: 0.8, drive: 0.15, space: 0.6 }, clap: { space: 0.7 },
+    hat: { decay: 0.4 }, tom: { decay: 0.7, space: 0.5 },
+  }, { space: 0.45, size: 0.6, grit: 0.25, tone: 0.15, glue: 0.8, human: 0.2 }),
+  // a hard dance-floor kick, a snare in a big dark room, tight machine hats
+  style("darkwave", "Darkwave", "Boy Harsher", "909", { snare: "707", hat: "707", open: "707", rim: "707", bell: "808" }, {
+    kick: { tune: -1, decay: 0.35, tone: 0.6, punch: 0.65, drive: 0.3 }, snare: { decay: 0.6, tone: 0.6, filter: -0.1, space: 0.7 }, clap: { decay: 0.6, space: 0.65 },
+    hat: { decay: 0.3, filter: 0.1 }, tom: { tune: -3, space: 0.5 },
+  }, { space: 0.4, size: 0.5, echo: 0.15, echoTime: "1/8", grit: 0.35, tape: 0.1, tone: -0.2, glue: 0.65 }),
+  // a stiff 80s drum machine, cold and bright at the snare, dulled by tape
+  style("postpunk", "Post-punk", "Molchat Doma", "707", { clap: "lofi" }, {
+    kick: { tune: 2, decay: 0.3, tone: 0.7 }, snare: { tune: 1, decay: 0.65, tone: 0.7, space: 0.75 }, hat: { decay: 0.25 }, tom: { space: 0.6 },
+  }, { space: 0.45, size: 0.45, grit: 0.4, tape: 0.5, tone: -0.3, glue: 0.6 }),
+  // light, clean and bouncy: a small kick, a sidestick, a tambourine
+  style("jangle", "Jangle", "Her's", "linn", { kick: "707", hat: "707" }, {
+    kick: { decay: 0.35, tone: 0.55 }, snare: { tune: 2, decay: 0.4, tone: 0.55, space: 0.4 }, hat: { decay: 0.3, level: 0.7 }, rim: { space: 0.4 }, shaker: { level: 0.7 },
+  }, { space: 0.28, size: 0.4, echo: 0.08, echoTime: "1/8", grit: 0.08, tape: 0.15, tone: 0.1, glue: 0.4, human: 0.1 }),
+];
 
 export const kitFrom = (b: Beat, id: string, name: string): UserKit => ({ id, name, kit: b.kit, voices: { ...b.voices }, sounds: JSON.parse(JSON.stringify(b.sounds)), fx: fxOf(b) });
 /** Switch machine. Your knob settings stay; drums that borrowed another machine's voice go back to the kit's own. */
@@ -383,6 +447,6 @@ export function reviveBeat(raw: unknown): Beat | undefined {
     const r = (b.rows as Record<string, unknown>)[id];
     if (typeof r === "string") rows[id] = r.replace(/[^0-3]/g, "0").slice(0, steps).padEnd(steps, "0");
   }
-  const kit: KitId = (["box", "808", "909", "linn", "volca", "lofi"] as KitId[]).includes(b.kit as KitId) ? (b.kit as KitId) : DEFAULT_BEAT.kit;
+  const kit: KitId = KITS.some((k) => k.id === b.kit) ? (b.kit as KitId) : DEFAULT_BEAT.kit;
   return { ...DEFAULT_BEAT, ...b, kit, steps, div, rows, sounds: b.sounds ?? {}, voices: b.voices ?? {} };
 }

@@ -1,24 +1,28 @@
 /**
  * Drum-machine voices, synthesized from scratch (no samples, works offline).
  *
- * Six machines, each modelled on how a family of classic boxes makes its sound:
+ * Eight machines, each modelled on how a family of classic boxes makes its sound:
  *  - "box":   preset rhythm boxes built into 70s organs (CR-78 lineage): a short thud,
  *             a thin noise snare, ticking hats, clave and tambourine.
  *  - "808":   analog voices: a long sine kick with a tiny pitch blip, a two-tone snare with
  *             "snappy" noise, hats and cowbell made from a bank of six square waves.
  *  - "909":   harder analog voices: a kick with a deep pitch sweep and a noise click, a snare
  *             with two bending oscillators, and grainy low-bit cymbals.
+ *  - "707":   mid-80s digital: short, clean, punchy recordings. The sound of post-punk,
+ *             dark wave and a lot of bedroom pop.
  *  - "linn":  80s studio machines that played recordings of real drums: a beater on a kick,
  *             a cracking snare with wires, a room full of hand claps, a sidestick.
  *  - "volca": small modern analog box: clicky punchy kick, snappy snare, grainy hats.
  *  - "lofi":  mid-80s 8-bit sample machines: punchy, gated and crunchy.
+ *  - "mod":   drums patched on a modular synth: thuds, bursts of filtered noise, ticks from a
+ *             resonant high-pass filter, zaps and bleeps. Glitchy and dry.
  *
  * Any drum can use any machine's voice, and every voice has the same six sound controls
  * (tune, decay, tone, punch, drive, filter). Everything here is pure maths on arrays, so it
  * can be tested without a browser.
  */
 
-export type KitId = "box" | "808" | "909" | "linn" | "volca" | "lofi";
+export type KitId = "box" | "808" | "909" | "707" | "linn" | "volca" | "lofi" | "mod";
 export type DrumId = "kick" | "snare" | "clap" | "hat" | "open" | "tom" | "rim" | "shaker" | "bell";
 
 export const DRUM_IDS: DrumId[] = ["kick", "snare", "clap", "hat", "open", "tom", "rim", "shaker", "bell"];
@@ -85,9 +89,11 @@ export const KITS: Kit[] = [
   { id: "box", name: "Vintage", hint: "Organ rhythm box: soft thud, ticking hats, tambourine. Dream pop.", names: { ...BASE_NAMES, tom: "Bongo", rim: "Clave", shaker: "Tambourine" } },
   { id: "808", name: "808", hint: "Analog classic: long boomy kick, snappy snare, metallic hats, cowbell.", names: { ...BASE_NAMES, shaker: "Maracas" } },
   { id: "909", name: "909", hint: "Harder analog: thumping kick, cracking snare, sizzling cymbals.", names: { ...BASE_NAMES, bell: "Ride" } },
+  { id: "707", name: "707", hint: "80s digital: tight, clean and punchy. Post-punk and dark wave.", names: { ...BASE_NAMES, shaker: "Tambourine" } },
   { id: "linn", name: "Linn", hint: "80s studio machine playing real drums: fat kick, big snare, hand claps.", names: { ...BASE_NAMES, rim: "Sidestick", shaker: "Tambourine" } },
   { id: "volca", name: "Volca", hint: "Small analog box: clicky punchy kick, snappy snare, grainy hats.", names: { ...BASE_NAMES, rim: "Clave", bell: "Agogo" } },
   { id: "lofi", name: "Lo-fi", hint: "80s 8-bit sample machine: punchy, gated and crunchy.", names: { ...BASE_NAMES, shaker: "Tambourine" } },
+  { id: "mod", name: "Modular", hint: "Patched on a synth: thuds, noise bursts, ticks, zaps and bleeps.", names: { kick: "Thud", snare: "Burst", clap: "Static", hat: "Tick", open: "Sizzle", tom: "Zap", rim: "Click", shaker: "Hiss", bell: "Bleep" } },
 ];
 
 export const getKit = (id: KitId): Kit => KITS.find((k) => k.id === id) ?? KITS[0];
@@ -210,9 +216,11 @@ const KICK: Record<KitId, { f0: number; sw1: number; t1: number; sw2: number; t2
   box: { f0: 78, sw1: 0.35, t1: 0.008, sw2: 0.06, t2: 0.05, lo: 0.09, hi: 0.5, click: 0.2, clickF: 1400, noise: 0, drive: 1, shape: 0 },
   "808": { f0: 48, sw1: 1.1, t1: 0.006, sw2: 0.14, t2: 0.06, lo: 0.25, hi: 2.8, click: 0.5, clickF: 2600, noise: 0, drive: 1.3, shape: 0 },
   "909": { f0: 51, sw1: 3.6, t1: 0.022, sw2: 0.25, t2: 0.09, lo: 0.16, hi: 1.1, click: 0.9, clickF: 6500, noise: 0.5, drive: 2, shape: 1.5 },
+  "707": { f0: 58, sw1: 1.6, t1: 0.012, sw2: 0.12, t2: 0.06, lo: 0.12, hi: 0.5, click: 0.8, clickF: 4500, noise: 0.3, drive: 1.5, shape: 0 },
   linn: { f0: 62, sw1: 1, t1: 0.018, sw2: 0.1, t2: 0.08, lo: 0.16, hi: 0.6, click: 0.3, clickF: 2500, noise: 0, drive: 1.2, shape: 0 },
   volca: { f0: 56, sw1: 4.5, t1: 0.014, sw2: 0.2, t2: 0.07, lo: 0.14, hi: 1.2, click: 1, clickF: 5000, noise: 0.2, drive: 2.3, shape: 0 },
   lofi: { f0: 64, sw1: 2.2, t1: 0.035, sw2: 0.1, t2: 0.08, lo: 0.14, hi: 0.55, click: 0.7, clickF: 3000, noise: 0.5, drive: 2.6, shape: 0 },
+  mod: { f0: 66, sw1: 0.5, t1: 0.004, sw2: 0.05, t2: 0.03, lo: 0.06, hi: 0.45, click: 1.2, clickF: 9000, noise: 0.1, drive: 3.2, shape: 2.5 },
 };
 
 const kick: Voice = ({ sr, p, rand, r }, kit) => {
@@ -265,9 +273,11 @@ const SNARE: Record<KitId, SnareCfg> = {
   box: { f: [220], a: [1], t: [0.07], drop: 0.1, dropT: 0.01, body: 0.35, nLo: 0.06, nHi: 0.24, chain: (sr) => [biquad("bp", 5200, 0.8, sr), biquad("hp", 1500, 0.7, sr)], crack: 0, drive: 0 },
   "808": { f: [238, 476], a: [1, 0.55], t: [0.18, 0.09], drop: 0.25, dropT: 0.004, body: 0.9, nLo: 0.1, nHi: 0.5, chain: (sr) => [biquad("hp", 2000, 0.7, sr), biquad("lp", 9500, 0.7, sr)], crack: 0, drive: 0 },
   "909": { f: [185, 330], a: [1, 0.6], t: [0.13, 0.07], drop: 0.9, dropT: 0.012, body: 1, nLo: 0.12, nHi: 0.45, chain: (sr) => [biquad("lp", 8000, 0.8, sr), biquad("hp", 1100, 0.7, sr)], crack: 0.3, drive: 1.5 },
+  "707": { f: [200, 340], a: [1, 0.5], t: [0.09, 0.05], drop: 0.35, dropT: 0.01, body: 0.9, nLo: 0.09, nHi: 0.32, chain: (sr) => [biquad("lp", 9500, 0.7, sr), biquad("hp", 1400, 0.7, sr)], crack: 0.6, drive: 1.2 },
   linn: { f: [190, 302, 407, 503], a: [1, 0.5, 0.35, 0.2], t: [0.12, 0.08, 0.06, 0.05], drop: 0.2, dropT: 0.02, body: 0.8, nLo: 0.12, nHi: 0.42, chain: (sr) => [biquad("bp", 4200, 0.5, sr), biquad("hp", 1200, 0.7, sr)], crack: 0.9, drive: 1.1 },
   volca: { f: [185], a: [1], t: [0.11], drop: 0.6, dropT: 0.015, body: 0.8, nLo: 0.07, nHi: 0.32, chain: (sr) => [biquad("bp", 3600, 0.6, sr), biquad("hp", 900, 0.7, sr)], crack: 0, drive: 0 },
   lofi: { f: [200], a: [1], t: [0.15], drop: 0.9, dropT: 0.015, body: 0.9, nLo: 0.12, nHi: 0.36, chain: (sr) => [biquad("lp", 7000, 0.7, sr), biquad("hp", 350, 0.7, sr)], crack: 0.2, drive: 0 },
+  mod: { f: [330], a: [1], t: [0.03], drop: 1.5, dropT: 0.006, body: 0.5, nLo: 0.03, nHi: 0.22, chain: (sr) => [biquad("bp", 2200, 3, sr), biquad("hp", 800, 0.7, sr)], crack: 0.5, drive: 2.5 },
 };
 
 const snare: Voice = ({ sr, p, rand, r }, kit) => {
@@ -307,9 +317,11 @@ const CLAP: Record<KitId, { f: number; q: number; hp: number; hands: number; gap
   box: { f: 1500, q: 1.2, hp: 600, hands: 3, gap: 0.009, jitter: 0, lo: 0.07, hi: 0.32, air: 0 },
   "808": { f: 1050, q: 1.4, hp: 500, hands: 4, gap: 0.0105, jitter: 0, lo: 0.12, hi: 0.7, air: 0 },
   "909": { f: 1300, q: 1, hp: 700, hands: 4, gap: 0.009, jitter: 0, lo: 0.12, hi: 0.65, air: 0.5 },
+  "707": { f: 1400, q: 1.1, hp: 700, hands: 4, gap: 0.008, jitter: 0.001, lo: 0.08, hi: 0.4, air: 0.4 },
   linn: { f: 1900, q: 1.3, hp: 800, hands: 7, gap: 0.006, jitter: 0.005, lo: 0.08, hi: 0.32, air: 0.35 },
   volca: { f: 1250, q: 1.2, hp: 500, hands: 4, gap: 0.011, jitter: 0, lo: 0.1, hi: 0.5, air: 0 },
   lofi: { f: 1150, q: 1.2, hp: 450, hands: 4, gap: 0.012, jitter: 0, lo: 0.1, hi: 0.5, air: 0 },
+  mod: { f: 3200, q: 2.5, hp: 1500, hands: 5, gap: 0.013, jitter: 0.006, lo: 0.03, hi: 0.2, air: 0.8 }, // stuttering static
 };
 
 const clap: Voice = ({ sr, p, rand, r }, kit) => {
@@ -338,17 +350,19 @@ const clap: Voice = ({ sr, p, rand, r }, kit) => {
 // ── Hats ─────────────────────────────────────────────────────
 
 /** How much of the sound is the square-wave "metal" rather than plain noise. */
-const HAT_METAL: Record<KitId, number> = { box: 0, "808": 1, "909": 0.55, linn: 0.2, volca: 0.6, lofi: 0.5 };
+const HAT_METAL: Record<KitId, number> = { box: 0, "808": 1, "909": 0.55, "707": 0.45, linn: 0.2, volca: 0.6, lofi: 0.5, mod: 0.15 };
 
 function hatVoice(open: boolean): Voice {
   return ({ sr, p, rand, r }, kit) => {
-    const t60 = open ? span(kit === "909" ? 0.3 : 0.25, kit === "909" ? 1.7 : 1.3, p.decay) : span(0.035, 0.17, p.decay);
+    const t60 = kit === "mod" ? (open ? span(0.1, 0.7, p.decay) : span(0.012, 0.09, p.decay)) : open ? span(kit === "909" ? 0.3 : 0.25, kit === "909" ? 1.7 : 1.3, p.decay) : span(0.035, 0.17, p.decay);
     const g = 0.72 + 0.56 * p.tone;
     const mix = HAT_METAL[kit];
-    const sampled = kit === "909" || kit === "linn";
+    const sampled = kit === "909" || kit === "linn" || kit === "707";
+    const coarse = kit === "909" || kit === "707";
     const osc = squares(sr, (sampled ? CYMBAL.map((f) => f * 1.6) : METAL).map((f) => f * r));
     const lowBand = biquad("bp", 3440 * g, 1, sr);
-    const highBand = kit === "box" ? biquad("hp", 7500 * g, 0.7, sr) : biquad("bp", (sampled ? 8600 : 7100) * g, sampled ? 0.8 : 1.2, sr);
+    // on a modular the hats are noise through a high-pass filter turned up until it rings
+    const highBand = kit === "box" ? biquad("hp", 7500 * g, 0.7, sr) : kit === "mod" ? biquad("hp", 9000 * g, 4.5, sr) : biquad("bp", (kit === "707" ? 9600 : sampled ? 8600 : 7100) * g, sampled ? 0.8 : 1.2, sr);
     const hp = biquad("hp", (kit === "box" ? 5000 : sampled ? 6800 : 6200) * g, 0.7, sr);
     const ring = biquad("bp", (kit === "linn" ? 11800 : 9500) * g, kit === "linn" ? 4 : 2.5, sr);
     const top = kit === "box" ? biquad("lp", 13000 * g, 0.7, sr) : null; // old noise circuits ran out of treble
@@ -364,7 +378,7 @@ function hatVoice(open: boolean): Voice {
       if (kit === "box" || kit === "linn") y += 0.5 * ring(src);
       if (top) y = top(y);
       // the 909's cymbals were short, coarse recordings: the grain is part of the sound
-      if (kit === "909") y = Math.round(Math.max(-1, Math.min(1, y * 2.5)) * 48) / 48;
+      if (coarse) y = Math.round(Math.max(-1, Math.min(1, y * 2.5)) * 48) / 48;
       let env = fall(t, t60) + tick * Math.exp(-t / 0.004);
       if (swell) env *= 1 - Math.exp(-t / swell);
       // two real cymbals rattling against each other
@@ -381,9 +395,11 @@ const TOM: Record<KitId, { f0: number; bend: number; bendT: number; parts: [numb
   box: { f0: 190, bend: 0.12, bendT: 0.02, parts: [[1, 1, 1], [2.3, 0.25, 0.4]], lo: 0.07, hi: 0.3, noise: 0.5, drive: 0 }, // bongo
   "808": { f0: 110, bend: 0.35, bendT: 0.05, parts: [[1, 1, 1]], lo: 0.16, hi: 0.95, noise: 0.6, drive: 0 },
   "909": { f0: 118, bend: 1, bendT: 0.03, parts: [[1, 1, 1], [1.5, 0.4, 0.6], [2.2, 0.25, 0.4]], lo: 0.14, hi: 0.8, noise: 0.8, drive: 1.6 },
+  "707": { f0: 130, bend: 0.45, bendT: 0.035, parts: [[1, 1, 1], [1.5, 0.3, 0.5]], lo: 0.14, hi: 0.6, noise: 1, drive: 1.2 },
   linn: { f0: 124, bend: 0.28, bendT: 0.04, parts: [[1, 1, 1], [1.5, 0.45, 0.5], [1.98, 0.3, 0.35], [2.44, 0.15, 0.25]], lo: 0.2, hi: 0.75, noise: 1.2, drive: 1.1 },
   volca: { f0: 135, bend: 0.5, bendT: 0.04, parts: [[1, 1, 1]], lo: 0.16, hi: 0.9, noise: 0.8, drive: 1.3 },
   lofi: { f0: 125, bend: 0.6, bendT: 0.04, parts: [[1, 1, 1], [1.5, 0.3, 0.5]], lo: 0.14, hi: 0.6, noise: 0.8, drive: 1.8 },
+  mod: { f0: 220, bend: 5, bendT: 0.012, parts: [[1, 1, 1]], lo: 0.05, hi: 0.4, noise: 0.2, drive: 2 }, // zap
 };
 
 const tom: Voice = ({ sr, p, rand, r }, kit) => {
@@ -413,9 +429,11 @@ const RIM: Record<KitId, { parts: [number, number][]; lo: number; hi: number; cl
   box: { parts: [[2450, 1]], lo: 0.03, hi: 0.16, clip: 0, knock: 0.1, wood: 0 }, // clave
   "808": { parts: [[455, 1], [1667, 0.7]], lo: 0.018, hi: 0.08, clip: 3, knock: 0.5, wood: 0 }, // rimshot: two short pings
   "909": { parts: [[220, 0.7], [500, 1], [1000, 0.8]], lo: 0.02, hi: 0.09, clip: 5, knock: 0.5, wood: 0 },
+  "707": { parts: [[430, 0.5], [1650, 1], [3300, 0.4]], lo: 0.02, hi: 0.07, clip: 2, knock: 0.4, wood: 0.8 },
   linn: { parts: [[520, 0.6], [1380, 1], [2900, 0.35]], lo: 0.025, hi: 0.09, clip: 0, knock: 0.7, wood: 1.6 }, // stick laid across the snare
   volca: { parts: [[2450, 1], [4900, 0.12]], lo: 0.03, hi: 0.14, clip: 0, knock: 0.1, wood: 0 }, // clave
   lofi: { parts: [[820, 1], [2100, 0.4]], lo: 0.03, hi: 0.1, clip: 2, knock: 0.5, wood: 0 },
+  mod: { parts: [[1200, 1], [3100, 0.5]], lo: 0.006, hi: 0.04, clip: 4, knock: 0, wood: 0 }, // click
 };
 
 const rim: Voice = ({ sr, p, rand, r }, kit) => {
@@ -445,9 +463,11 @@ const SHAKER: Record<KitId, { hp: number; jingles: [number, number][]; jAmt: num
   box: { hp: 6500, jingles: [[8200, 9], [11500, 11]], jAmt: 2.2, attack: 0.004, lo: 0.09, hi: 0.45 }, // tambourine
   "808": { hp: 6500, jingles: [], jAmt: 0, attack: 0.012, lo: 0.04, hi: 0.22 }, // maracas
   "909": { hp: 7500, jingles: [[9500, 5]], jAmt: 0.8, attack: 0.008, lo: 0.05, hi: 0.25 },
+  "707": { hp: 6000, jingles: [[7600, 10], [10200, 12]], jAmt: 2.4, attack: 0.003, lo: 0.08, hi: 0.35 }, // tambourine
   linn: { hp: 5200, jingles: [[6100, 10], [8300, 12], [10900, 12], [13200, 10]], jAmt: 2.6, attack: 0.003, lo: 0.1, hi: 0.5 }, // tambourine
   volca: { hp: 5500, jingles: [], jAmt: 0, attack: 0.012, lo: 0.04, hi: 0.22 },
   lofi: { hp: 5500, jingles: [[8200, 9], [11500, 11]], jAmt: 2.2, attack: 0.004, lo: 0.09, hi: 0.45 }, // tambourine
+  mod: { hp: 4000, jingles: [[5200, 6]], jAmt: 1.2, attack: 0.03, lo: 0.03, hi: 0.3 }, // a hiss that swells in
 };
 
 const shaker: Voice = ({ sr, p, rand, r }, kit) => {
@@ -491,6 +511,17 @@ const bell: Voice = ({ sr, p, rand, r }, kit) => {
     }
     return out;
   }
+  if (kit === "mod") {
+    // bleep: one sine bending another (FM), bright at the start and pure as it fades
+    const t60 = span(0.05, 0.6, p.decay);
+    const out = alloc(sr, t60 + 0.02);
+    for (let i = 0; i < out.length; i++) {
+      const t = i / sr;
+      const index = (0.5 + 5 * p.tone) * Math.exp(-t / (0.02 + 0.08 * p.punch));
+      out[i] = Math.sin(TAU * 880 * r * t + index * Math.sin(TAU * 880 * 2.76 * r * t)) * fall(t, t60);
+    }
+    return out;
+  }
   const t60 = span(0.12, 0.9, p.decay);
   const out = alloc(sr, t60 + 0.02);
   if (kit === "volca" || kit === "linn") {
@@ -506,7 +537,7 @@ const bell: Voice = ({ sr, p, rand, r }, kit) => {
     return out;
   }
   // analog cowbell: two square waves (540 + 800 Hz on the 808) through a band-pass
-  const pair = kit === "box" ? [587, 845] : kit === "lofi" ? [560, 845] : [540, 800];
+  const pair = kit === "box" ? [587, 845] : kit === "lofi" || kit === "707" ? [560, 845] : [540, 800];
   const osc = squares(sr, pair.map((f) => f * r));
   const bp = biquad("bp", (kit === "box" ? 1700 : 2500) * bright, kit === "box" ? 0.9 : 1.5, sr);
   for (let i = 0; i < out.length; i++) {
@@ -590,6 +621,8 @@ export function renderDrum(sr: number, kit: KitId, id: DrumId, params: Partial<D
     scale(out, 0.95 / (peakOf(out) || 1));
   }
   if (kit === "lofi") crush(out, Math.max(1, Math.round(sr / 24000)), 8);
+  if (kit === "707") crush(out, 1, 8); // 8-bit, but at full speed: clean with a fine grain
+  if (kit === "mod" && id !== "kick") crush(out, Math.max(1, Math.round(sr / 22000)), 9);
   if (kit === "linn") {
     if (id !== "hat" && id !== "open" && id !== "shaker") {
       const lp = biquad("lp", 11000, 0.7, sr);

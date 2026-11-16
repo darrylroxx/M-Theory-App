@@ -8,7 +8,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 - *"How else can I play this chord?"* The shapes guitarists really use, starting from the common ones and branching out, not just the barre shape.
 - *"What could come next?"* Suggestions from safe to wild, each with a plain-English reason.
 - *"What mode is this, and how do I make it sound like that mode?"*
-- *"What does it sound like over a beat?"* A drum machine with six classic machines, 90 rhythms you edit by tapping, and every sound adjustable.
+- *"What does it sound like over a beat?"* A drum machine with eight classic machines, seven kits in the spirit of records you know, 100+ rhythms, and every sound adjustable.
 
 ---
 
@@ -31,15 +31,18 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - **Strings** (Any / 3 / 4 / 5–6) and **Inversions** (let the bass note change for smoother moves) re-deal the set.
    - **‹ ›** under each chord in the tray sifts that one chord through its other shapes, best fit with its neighbours first, while everything else stays put. Do it while the loop is playing to hear each option in context.
    - Chords you add later land in the same area. **My shapes** switches back to each chord's own shape.
-7. **Drums** (its own section, directly under the tray): a drum machine that plays under your chords. The grid is always there; nothing to open.
-   - **Kit**: six machines, each built from the way the real one makes sound. **Vintage** (70s organ rhythm box), **808**, **909**, **Linn** (80s studio machine that played real drums), **Volca**, **Lo-fi** (8-bit). **Save kit** keeps your whole setup for other songs.
-   - **Rhythm**: 90 rhythms in seven styles (Dream pop, Lo-fi indie, Organ presets, 808, Rock & pop, 6/8 & shuffle, World). **‹ ›** flips through them while it plays.
-   - **The grid**: rows are drums, columns are steps. Tap a square to add or remove a hit, drag along a row to paint. Soft / Normal / Loud sets how hard new hits are. **✨ Vary** makes a small random change, **Save rhythm** keeps yours under "Mine".
-   - **Sound**: tap a drum's name to hear it and shape it. Pick which machine that one drum comes from (an 808 kick under a Linn snare), then **Tune, Decay, Click / Snap / Bright, Punch / Body / Attack, Drive, Filter**, and its place in the mix: **Level, Pan, Reverb, Echo**. The picture shows the sound change as you move a knob. Mute, Solo, and ↺ to put it back. Double-click any knob to reset just that one.
-   - **Effects** for the whole kit: one-tap vibes (**Clean, Dreamy, Bedroom tape, Big room, Crunchy, Echoes**), or set them yourself: Tempo, Volume, Swing, Human (looser timing and touch), Reverb and Room size, Echo and Echo time, Grit, Tape (wobble and dullness), Tone, Glue (compression). The knobs change the character, not the volume.
+7. **Drums** (its own section, directly under the tray; the 🥁 button in the tray jumps to it). At first it shows only what you need: play, the kit, the rhythm and the grid.
+   - **Kit ‹ ›**: the arrows flip through kits, the name opens the list.
+     - Seven kits made in the spirit of a record or a band: **Glitch** (Kid A), **Dream** (Beach House), **Bedroom** (Current Joys), **Anthem** (Florence + the Machine, "Free"), **Darkwave** (Boy Harsher), **Post-punk** (Molchat Doma), **Jangle** (Her's).
+     - Eight machines, each built from the way the real one makes sound: **Vintage** (70s organ rhythm box), **808**, **909**, **707** (clean 80s digital), **Linn** (80s studio machine that played real drums), **Volca**, **Lo-fi** (8-bit), **Modular** (drums patched on a synth: thuds, noise bursts, ticks, zaps).
+     - **+ Save this kit** keeps your own setup for other songs.
+   - **Rhythm ‹ ›**: 100+ rhythms in eight styles (Dream pop, Lo-fi indie, Dark & electronic, Organ presets, 808, Rock & pop, 6/8 & shuffle, World).
+   - **The grid is locked**, so a stray tap changes nothing. Tap **✎ Edit**, then tap squares (or drag along a row to paint). **↶ Undo** steps back one change at a time, **Cancel** throws the changes away, **✓ Save** keeps them and locks the grid again. A rhythm you changed is also stored under "Mine". While editing: Soft / Normal / Loud for new hits, ✨ for a small random change, Clear.
+   - **Sound**: tap a drum's name. Pick which machine that one drum comes from (an 808 kick under a Linn snare), then **Tune, Decay, Click / Snap / Bright, Punch / Body / Attack, Drive, Filter**, and its place in the mix: **Level, Pan, Reverb, Echo**. The picture shows the sound change as you move a knob. **M** mutes, **S** solos, ↺ puts it back. Double-click any knob to reset just that one.
+   - **Effects** for the whole kit: one-tap vibes (**Clean, Dreamy, Bedroom tape, Big room, Crunchy, Echoes**), or set them yourself: Tempo, Volume, Swing, Human (looser timing and touch), Reverb and Room, Echo and Echo time, Grit, Tape (wobble and dullness), Tone, Glue (compression). The knobs change the character, not the volume.
    - Picking a 3/4 or 6/8 rhythm changes whole-bar chords to match (4 beats become 3 in a waltz). With no chords in the tray, ▶ plays the drums alone so you can jam over them.
 8. **Song** (the first row of the tray): turn ideas into a whole song.
-   - Tap **+ Verse**, **+ Chorus**, **+ Intro**, **+ Bridge**… to add sections. The first one names the chords already in the tray. Tap a section to work on it: the tray shows its chords.
+   - Tap **+ Section** and pick Verse, Chorus, Intro, Bridge… to add sections. The first one names the chords already in the tray. Tap a section to work on it: the tray shows its chords.
    - Sections of the same kind share their chords, like the choruses of a real song: add a second Verse and it arrives with the Verse chords, numbered Verse 1 and Verse 2. Change one and they all change. **Make different** gives a section its own chords.
    - ◀ ▶ move a section, ✕ removes it. **▶ Song** plays the whole thing once from the top while the tray follows along; the round ▶ loops just the section you are on.
    - MIDI export and "Copy tab" cover the whole song.
@@ -69,7 +72,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 111 tests: theory, voicings, shapes, song structure, library, synth, drums, MIDI
+npm test          # 113 tests: theory, voicings, shapes, song structure, library, synth, drums, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -106,9 +109,9 @@ src/
     tunings.ts
   audio/
     synth.ts       Karplus-Strong guitar synth + look-ahead player for chords and drums
-    drums.ts       drum machine voices (6 machines × 9 drums) and the reverb, synthesized from oscillators and noise
+    drums.ts       drum machine voices (8 machines × 9 drums) and the reverb, synthesized from oscillators and noise
     drumbus.ts     the live mixing desk: per-drum level, pan and sends, then grit, tape, tone, glue
-    beats.ts       step-grid format, the rhythm library, swing, variation, effect presets, saved kits
+    beats.ts       step-grid format, the rhythm library, swing, variation, effect presets, style kits, saved kits
     patterns.ts    rhythm patterns (shared by playback and MIDI export)
     midi.ts        Standard MIDI File writer
   ui/            React app: the guitar page, shape finder, tray, drag & drop

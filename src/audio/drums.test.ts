@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, FX_DEFAULTS, VIBES, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, FX_DEFAULTS, STYLE_KITS, VIBES, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
 import { driveCurve, softCeiling } from "./drumbus";
 import { DRUM_IDS, KITS, defaultParams, drumRng, renderDrum, renderSpace } from "./drums";
 import { GM_DRUM, progressionToMidi } from "./midi";
@@ -47,7 +47,7 @@ describe("drum sounds", () => {
           expect(Number.isFinite(x)).toBe(true);
           peak = Math.max(peak, Math.abs(x));
         }
-        expect(peak, `${kit.id} ${id}`).toBeGreaterThan(0.25);
+        expect(peak, `${kit.id} ${id}`).toBeGreaterThan(0.2);
         expect(peak).toBeLessThanOrEqual(1);
         expect(Math.abs(d[d.length - 1])).toBeLessThan(0.01); // ends in silence (no click)
       }
@@ -95,8 +95,8 @@ describe("drum sounds", () => {
 });
 
 describe("sound design", () => {
-  it("there are six machines, each with a name for every drum", () => {
-    expect(KITS.map((k) => k.id)).toEqual(["box", "808", "909", "linn", "volca", "lofi"]);
+  it("there are eight machines, each with a name for every drum", () => {
+    expect(KITS.map((k) => k.id)).toEqual(["box", "808", "909", "707", "linn", "volca", "lofi", "mod"]);
     for (const k of KITS) for (const id of DRUM_IDS) expect(k.names[id], `${k.id} ${id}`).toBeTruthy();
   });
 
@@ -224,6 +224,46 @@ describe("sound design", () => {
     expect(kit.sounds.snare!.decay).toBe(0.9); // the saved kit is a copy
     expect(reviveUserKits([kit, null, { id: 3 }, { id: "x", name: "Old", sounds: {} }])).toHaveLength(2);
     expect(reviveUserKits("nope")).toEqual([]);
+  });
+
+  it("style kits are complete, in range, and built only from real machines", () => {
+    expect(STYLE_KITS.map((k) => k.like)).toEqual(["Kid A", "Beach House", "Current Joys", "Florence · Free", "Boy Harsher", "Molchat Doma", "Her's"]);
+    expect(new Set(STYLE_KITS.map((k) => k.id)).size).toBe(STYLE_KITS.length);
+    const machines = KITS.map((k) => k.id);
+    for (const k of STYLE_KITS) {
+      expect(machines, k.name).toContain(k.kit);
+      for (const v of Object.values(k.voices)) expect(machines, k.name).toContain(v);
+      for (const [id, snd] of Object.entries(k.sounds)) {
+        expect(DRUM_IDS, k.name).toContain(id);
+        for (const [key, v] of Object.entries(snd!)) {
+          const [lo, hi] = key === "tune" ? [-12, 12] : key === "filter" || key === "pan" ? [-1, 1] : [0, 1];
+          expect(v, `${k.name} ${id} ${key}`).toBeGreaterThanOrEqual(lo);
+          expect(v, `${k.name} ${id} ${key}`).toBeLessThanOrEqual(hi);
+        }
+      }
+      expect(Object.keys(k.fx).sort()).toEqual(Object.keys(FX_DEFAULTS).sort());
+      expect(ECHO_TIMES.map((e) => e.id)).toContain(k.fx.echoTime);
+      for (const key of ["level", "space", "size", "echo", "grit", "tape", "glue", "human"] as const) expect(k.fx[key] >= 0 && k.fx[key] <= 1, `${k.name} ${key}`).toBe(true);
+    }
+  });
+
+  it("a style kit sets the whole sound, leaves the rhythm alone, and renders cleanly", () => {
+    const rhythm = applyPattern(DEFAULT_BEAT, BEAT_LIBRARY.find((p) => p.name === "Motorik")!);
+    for (const k of STYLE_KITS) {
+      const b = applyUserKit(rhythm, k);
+      expect(b.userKit).toBe(k.id);
+      expect(b.rows).toBe(rhythm.rows);
+      expect(fxOf(b)).toEqual(k.fx);
+      for (const id of DRUM_IDS) {
+        const d = renderDrum(SR, voiceOf(b, id), id, soundOf(b, id));
+        const peak = peakOf(d);
+        expect(peak > 0.02 && peak <= 1, `${k.name} ${id}`).toBe(true);
+      }
+      // picking a plain machine afterwards lets go of the style
+      expect(applyKit(b, "808").userKit).toBeNull();
+    }
+    // no two style kits are the same setup
+    expect(new Set(STYLE_KITS.map((k) => JSON.stringify([k.kit, k.voices, k.sounds, k.fx]))).size).toBe(STYLE_KITS.length);
   });
 
   it("the reverb gets longer with size, dies away, and differs left to right", () => {

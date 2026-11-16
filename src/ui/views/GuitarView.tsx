@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barBeats, findPattern, type Beat, type BeatPattern } from "../../audio/beats";
+import { DEFAULT_BEAT, applyPattern, barBeats, type Beat, type BeatPattern } from "../../audio/beats";
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { PATTERNS, type PatternId } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio, playSequence, strum } from "../../audio/synth";
@@ -165,15 +165,6 @@ export function GuitarView() {
     // hear it straight away
     if (!playing) startPlay(chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats })), next);
   };
-  /** Step to the previous / next rhythm of the same style. */
-  const stepBeat = (dir: -1 | 1) => {
-    const cur = findPattern(beat.patternId, state.myBeats);
-    const list = cur?.group === "mine" ? state.myBeats : BEAT_LIBRARY.filter((x) => x.group === (cur?.group ?? "dream"));
-    if (!list.length) return;
-    const at = list.findIndex((x) => x.id === beat.patternId);
-    pickBeat(list[(Math.max(at, 0) + dir + list.length) % list.length]);
-  };
-
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
     set((s) => {
@@ -296,7 +287,7 @@ export function GuitarView() {
           <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
           <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} />
         </div>
-        <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} onStepRhythm={stepBeat} playing={playing} onPlay={togglePlay} stepSink={stepSink} />
+        <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onPlay={togglePlay} stepSink={stepSink} />
       </div>
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
       {menu && <SongMenu voicings={voicings} items={items} beat={beat} plan={secs.length ? plan : null} onClose={() => setMenu(false)} />}
@@ -567,7 +558,7 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
     setAdding(false);
     if (again) toast(`Same chords as ${again.name.replace(/ \d+$/, "")} 1`);
   };
-  const open = adding || !secs.length;
+  const open = adding;
   return (
     <div className={`arrange songbar${adding ? " open" : ""}`} ref={row}>
       {secs.length > 0
@@ -591,8 +582,8 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
       ))}
       {open
         ? SECTION_KINDS.map((k) => <button key={k.id} className={`sec-add k-${k.id}`} onClick={() => add(k.id)}>+ {k.name}</button>)
-        : <button className="sec-plus" aria-label="Add a section" title="Add a section" onClick={() => setAdding(true)}>+</button>}
-      {adding && secs.length > 0 && <button className="btn sm" onClick={() => setAdding(false)}>Cancel</button>}
+        : <button className={`sec-plus${secs.length ? "" : " first"}`} aria-label="Add a section" title="Verse, chorus, bridge…" onClick={() => setAdding(true)}>{secs.length ? "+" : "+ Section"}</button>}
+      {adding && <button className="btn sm" onClick={() => setAdding(false)}>Cancel</button>}
     </div>
   );
 }
@@ -636,9 +627,12 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   if (drag && drag.index !== null && drag.index >= k) els.push(marker);
 
   return (
-    <div className={`dock${chords.length ? "" : " empty"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
+    <div className={`dock${chords.length ? "" : " bare"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
       <div className="dock-inner">
-        <SongBar secs={secs} playing={songPlaying} onPlay={onSong} />
+        <div className="dock-top">
+          <SongBar secs={secs} playing={songPlaying} onPlay={onSong} />
+          <button className={`chip dock-drums${beatOn ? " on" : ""}`} aria-label="Go to the drums" title="Go to the drums" onClick={() => document.querySelector(".drums")?.scrollIntoView({ behavior: "smooth", block: "start" })}>🥁</button>
+        </div>
         {chords.length >= 2 && (
           <div className="arrange">
             <span className="kb-label">Arrange</span>
@@ -668,7 +662,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
         <div className="dock-tools">
           <button className="icon-btn" aria-label="Generate an idea" title="Generate an idea" onClick={idea}>✨</button>
           {undo && <button className="icon-btn" aria-label="Undo" title="Undo" onClick={() => { set((s) => ({ ...s, progression: { ...s.progression, chords: undo } })); setUndo(null); toast("Restored"); }}>↶</button>}
-          <button className="icon-btn" aria-label="Song options" title="Tempo, save, export" onClick={onMenu}>⋯</button>
+          <button className="icon-btn" aria-label="Song options" title="Tempo, export" onClick={onMenu}>⋯</button>
         </div>
         </div>
       </div>
