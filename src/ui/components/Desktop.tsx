@@ -8,8 +8,15 @@ export function UpdateBar() {
   useEffect(() => {
     if (!isDesktop()) return;
     let live = true;
+    // when the app opens and a new version is waiting, it is installed straight away (nothing is in progress yet)
+    void checkUpdate().then((u) => {
+      if (!live || !u) return;
+      setUpdate(u);
+      setBusy("Updating…");
+      u.install((done, total) => setBusy(total ? `Updating… ${Math.round((done / total) * 100)}%` : "Updating…")).catch(() => setBusy(null));
+    });
+    // while it stays open, a new version is only offered, so nothing restarts in the middle of a take
     const look = () => void checkUpdate().then((u) => live && u && setUpdate(u));
-    look();
     // look again every half hour while the app stays open
     const t = window.setInterval(look, 30 * 60 * 1000);
     return () => { live = false; window.clearInterval(t); };

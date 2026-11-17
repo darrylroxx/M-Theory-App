@@ -60,11 +60,14 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           if [ "$CHANNEL" = draft ]; then
-            # the draft always lives at the same address, replaced each time
-            # (the old name, "draft", clashed with the branch of the same name)
-            gh release delete draft --cleanup-tag --yes || true
-            gh release delete draft-latest --cleanup-tag --yes || true
-            gh release create draft-latest out/* --prerelease --title "Draft $VERSION" --notes "Latest draft, built from ${GITHUB_SHA::7}. Install M-Theory-Draft-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
+            # the draft always lives at the same address, replaced each time; drafts installed before
+            # the address was renamed still look under "draft", so it is published there as well
+            node scripts/desktop-release.mjs draft "$VERSION" draft out-old
+            for T in draft-latest draft; do
+              gh release delete "$T" --cleanup-tag --yes || true
+            done
+            gh release create draft-latest out/* --prerelease --title "Draft $VERSION" --notes "Latest draft, built from ${GITHUB_SHA::7}. Install M-Theory-Draft-setup.exe once; it updates itself after that." --target "$GITHUB_SHA"
+            gh release create draft out-old/* --prerelease --title "Draft $VERSION (for drafts installed before 0.2.3)" --notes "The same draft, at the address the first drafts look at for updates." --target "$GITHUB_SHA"
           else
             gh release create "$TAG" out/* --latest --title "M-Theory $VERSION" --notes "Install M-Theory-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
           fi
