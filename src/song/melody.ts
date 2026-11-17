@@ -11,7 +11,7 @@ import { getScale, scalePcs } from "../theory/scales";
 
 /** Twelfths of a beat. */
 export const TICKS = 12;
-export const MELODY_MAX_BARS = 16;
+export const MELODY_MAX_BARS = 32;
 
 export interface MelodyNote {
   /** when it sounds, in twelfths of a beat from the start of the section */
@@ -69,6 +69,25 @@ export function clearMelody(m: Melody, bar: number, barIndex?: number): Melody {
 export function setMelodyBars(m: Melody, bars: number, bar: number): Melody {
   const n = Math.max(1, Math.min(MELODY_MAX_BARS, Math.round(bars)));
   return { ...m, bars: n, notes: m.notes.filter((x) => x.at < n * bar * TICKS) };
+}
+
+/** The melody as it plays in a section of so many bars: every bar of the section is a bar of the grid. */
+export const inBars = (m: Melody, bars: number): Melody => (melodyBars(m) === bars ? m : { ...m, bars: Math.max(1, Math.min(MELODY_MAX_BARS, Math.round(bars))) });
+
+/** Does a bar have any notes in it? */
+export const barHasNotes = (m: Melody, bar: number, barIndex: number) => m.notes.some((n) => n.at >= barIndex * bar * TICKS && n.at < (barIndex + 1) * bar * TICKS);
+
+/**
+ * Write a melody that came round again out in full, up to a length in bars
+ * (for melodies made before sections had lengths).
+ */
+export function tileMelody(m: Melody, bar: number, bars: number): Melody {
+  const len = Math.round(melodyBeats(m, bar) * TICKS);
+  const end = Math.round(bars * bar * TICKS);
+  if (!m.notes.length || len <= 0 || len >= end) return { ...m, bars };
+  const notes: MelodyNote[] = [];
+  for (let r = 0; r * len < end; r++) for (const n of m.notes) if (n.at < len && n.at + r * len < end) notes.push({ at: n.at + r * len, midi: n.midi });
+  return { ...m, bars, notes: notes.sort((a, b) => a.at - b.at || a.midi - b.midi) };
 }
 
 /** Copy one bar's notes onto another. */

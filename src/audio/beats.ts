@@ -380,7 +380,7 @@ export function chordRounds(chordBeats: number, b: Beat | undefined | null, tune
 export const barsOf = (b: { bars?: number }) => Math.max(1, Math.min(MAX_BARS, Math.round(b.bars ?? 1)));
 /** Grid steps in the whole pattern, all bars. */
 export const lenOf = (b: { steps: number; bars?: number }) => b.steps * barsOf(b);
-export const MAX_BARS = 8;
+export const MAX_BARS = 32;
 
 /** The rhythm on its own: what each song section keeps for itself. Kit, sounds and effects are shared by the whole song. */
 export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
@@ -418,6 +418,34 @@ export function setBars(beat: Beat, n: number): Beat {
     rows[id] = to < from ? r.slice(0, to * beat.steps) : r + last.repeat(to - from);
   }
   return { ...beat, bars: to, rows, edited: true };
+}
+
+/**
+ * One bar of the rhythm as it plays in a section: a pattern shorter than the section comes round
+ * again, so bar 5 of a two-bar pattern is its first bar.
+ */
+export const patternBar = (beat: { bars?: number }, bar: number) => ((bar % barsOf(beat)) + barsOf(beat)) % barsOf(beat);
+
+/**
+ * Write the rhythm out over a whole section, bar for bar, so that each bar can be changed (or
+ * emptied) on its own. Nothing sounds different until a bar is changed.
+ */
+export function spreadBeat(beat: Beat, bars: number): Beat {
+  const to = Math.max(1, Math.min(MAX_BARS, Math.round(bars)));
+  const from = barsOf(beat);
+  if (to <= from) return beat;
+  const rows = {} as Record<DrumId, string>;
+  for (const id of DRUM_IDS) {
+    const r = (beat.rows[id] ?? "").padEnd(beat.steps * from, "0").slice(0, beat.steps * from);
+    rows[id] = r.repeat(Math.ceil(to / from)).slice(0, to * beat.steps);
+  }
+  return { ...beat, bars: to, rows };
+}
+
+/** Does a bar of the rhythm have any hits in it? */
+export function barHasHits(beat: Beat, bar: number): boolean {
+  const b = patternBar(beat, bar);
+  return DRUM_IDS.some((id) => /[1-9]/.test((beat.rows[id] ?? "").slice(b * beat.steps, (b + 1) * beat.steps)));
 }
 
 /** Take out one bar of the pattern (never the last one left). */

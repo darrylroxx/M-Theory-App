@@ -5,8 +5,8 @@
  * one drum rhythm, so changing one changes the other. A block can be given its own letter
  * (and its own copy of the chords and drums) when it needs to differ.
  *
- * Every section has a length in bars (or none: then it is as long as what is in it). Its chords, its
- * melody and its drums all play inside that length.
+ * Every section has a length in bars. Its chords, its melody and its drums are written into those
+ * bars: what is in a bar plays, an empty bar is silent.
  *
  * Settings carry over. The first section sets the playing style, the sounds and the drums for the
  * whole song; every other section follows it until something is changed there, and from then on
@@ -16,11 +16,11 @@
  * `.melody`, `.bars`, `.pattern`, `.feel`, `.sound`, `.tuneSound` and `.beat`; they are written back into
  * the song whenever another block is chosen, the song is played, saved or exported.
  */
-import { DEFAULT_BEAT, grooveOf, kitOfBeat, reviveGroove, reviveKit, sameGroove, sameKit, type DrumKit, type Groove } from "../audio/beats";
+import { DEFAULT_BEAT, barBeats, barsOf, grooveOf, kitOfBeat, reviveGroove, reviveKit, sameGroove, sameKit, type Beat, type DrumKit, type Groove } from "../audio/beats";
 import { reviveSound, type HarpSound } from "../audio/rack";
-import { hasStyle, reviveFeel, sameFeel, type Feel, type PatternId } from "../audio/patterns";
-import { reviveMelody, type Melody } from "./melody";
-import { fitBars } from "./frame";
+import { hasStyle, reviveFeel, sameFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
+import { melodyBeats, reviveMelody, tileMelody, type Melody } from "./melody";
+import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, fitBars, frameItems } from "./frame";
 import type { ProgChord, Progression } from "../ui/state";
 
 /**
@@ -52,7 +52,7 @@ export interface SongPart extends Settings {
   chords: ProgChord[];
   /** this section's melody */
   melody?: Melody;
-  /** how long the section lasts, in bars. Not set = as long as what is in it. */
+  /** how long the section lasts, in bars (only missing in songs made before sections had lengths) */
   bars?: number;
 }
 /** One step of the song, in playing order. */
@@ -336,6 +336,47 @@ export function mapAllChords(p0: Progression, fn: (c: ProgChord) => ProgChord): 
   if (!p.song) return { ...p, chords };
   const cur = partOf(p.song, p.song.current);
   return { ...p, chords, song: { ...p.song, parts: p.song.parts.map((x) => ({ ...x, chords: x.id === cur?.id ? chords : x.chords.map(fn) })) } };
+}
+
+/**
+ * Give one section a length, the way it used to play: as long as its chords, repeated until the
+ * drum rhythm and the melody had both finished. The repeats are written out, so it sounds the same.
+ */
+function settleOne(x: { chords: ProgChord[]; melody?: Melody }, bar: number, drumBeats: number): { chords: ProgChord[]; melody?: Melody; bars: number } {
+  const total = x.chords.reduce((a, c) => a + c.beats, 0);
+  const tune = x.melody?.notes.length && x.melody.on !== false ? melodyBeats(x.melody, bar) : 0;
+  const auto = autoBeats(total, drumBeats, tune);
+  const bars = auto > 0 ? Math.max(1, Math.min(MAX_SECTION_BARS, Math.ceil(auto / bar - 1e-6))) : DEFAULT_BARS;
+  const n = x.chords.length;
+  const chords = total > 0 && auto > total + 1e-6 ? frameItems(x.chords, Math.min(auto, bars * bar)).map((f, k) => (k < n ? f.item : { ...f.item, id: `${f.item.id}~${Math.floor(k / n)}` })) : x.chords;
+  return { chords, bars, ...(x.melody ? { melody: x.melody.notes.length ? tileMelody(x.melody, bar, bars) : x.melody } : {}) };
+}
+const barOfBeat = (beat: Beat, style: PatternId) => {
+  const n = beat.on ? barBeats(beat) : styleBar(style);
+  return n >= 1 && n <= 16 ? n : 4;
+};
+
+/**
+ * Songs made before sections had lengths: every section gets one, and whatever used to come
+ * round again inside it is written out in full. Sections that have a length are left alone.
+ */
+export function settle(p0: Progression): Progression {
+  const live = p0.beat ?? DEFAULT_BEAT;
+  if (!p0.song) {
+    if (fitBars(p0.bars)) return p0;
+    return { ...p0, ...settleOne({ chords: p0.chords, melody: p0.melody }, barOfBeat(live, p0.pattern), live.on ? barBeats(live) * barsOf(live) : 0) };
+  }
+  const p = commit(p0);
+  const song = p.song!;
+  if (song.parts.every((x) => fitBars(x.bars))) return p;
+  const secs = sections(p);
+  const parts = song.parts.map((part) => {
+    if (fitBars(part.bars)) return part;
+    const sec = secs.find((x) => x.partId === part.id);
+    const drums: Beat = { ...live, ...sec?.kit, ...sec?.groove, on: sec?.groove?.on ?? live.on };
+    return { ...part, ...settleOne(part, barOfBeat(drums, sec?.style ?? p.pattern), drums.on ? barBeats(drums) * barsOf(drums) : 0) };
+  });
+  return show(p, { ...song, parts }, song.current);
 }
 
 /**

@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { playNote } from "../../audio/synth";
-import { EMPTY_MELODY, GRIDS, MELODY_MAX_BARS, cellTick, clearMelody, copyMelodyBar, melodyBars, melodyRows, notesInCell, setMelodyBars, toggleNote, type Melody } from "../../song/melody";
+import { EMPTY_MELODY, GRIDS, barHasNotes, cellTick, clearMelody, copyMelodyBar, melodyBars, melodyRows, notesInCell, toggleNote, type Melody } from "../../song/melody";
 import { chordSymbol, refPcs } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
 import { displayNote, mod12 } from "../../theory/notes";
@@ -13,15 +13,15 @@ import { Seg } from "./common";
  * The melody: a grid of notes. Tap a square and that note plays at that moment.
  * Rows that belong to the key are lit; a dot marks the notes of the chord sounding underneath,
  * so a tune that sticks to lit rows and dots cannot sound wrong.
+ * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  */
-export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, limit }: {
+export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link }: {
+  /** the section's melody, as long as the section */
   melody: Melody;
   setMelody: (fn: (m: Melody) => Melody) => void;
   keyOf: Key;
   /** beats in a bar */
   bar: number;
-  /** the section ends after this many bars: bars past it are not played (not given = no end set) */
-  limit?: number;
   /** the chords under the melody, to mark the notes that fit them */
   chords: ProgChord[];
   playing: boolean;
@@ -56,13 +56,11 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
 
   // which chord sounds at each step of the bar on screen
   const fits = useMemo(() => {
-    const total = chords.reduce((a, c) => a + c.beats, 0);
     return Array.from({ length: steps }, (_, k) => {
-      if (!total) return null;
-      let pos = (at * bar + k / melody.div) % total;
+      let pos = at * bar + k / melody.div;
       for (const c of chords) {
-        // the chord's name is written over the step where it comes in
-        if (pos < c.beats - 1e-6) return { pcs: new Set(refPcs(c.ref)), name: pos < 1 / melody.div - 1e-6 ? chordSymbol(c.ref) : "" };
+        // the chord's name is written over the step where it comes in (a rest has no notes to fit)
+        if (pos < c.beats - 1e-6) return c.rest ? null : { pcs: new Set(refPcs(c.ref)), name: pos < 1 / melody.div - 1e-6 ? chordSymbol(c.ref) : "" };
         pos -= c.beats;
       }
       return null;
@@ -108,12 +106,15 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
     setPast((p) => p.slice(0, -1));
     setMelody(() => last);
   };
-  const addBar = () => {
-    if (!canAdd) return;
-    change((m) => setMelodyBars(m, bars + 1, bar));
-    setShown(bars);
-  };
-  const canAdd = bars < MELODY_MAX_BARS && (limit === undefined || bars < limit);
+  const tabsRef = useRef<HTMLDivElement>(null);
+  // keep the bar on screen in view in its row (sideways only)
+  useEffect(() => {
+    const r = tabsRef.current;
+    const el = r?.querySelector<HTMLElement>('[aria-selected="true"]');
+    if (!r || !el) return;
+    if (el.offsetLeft < r.scrollLeft) r.scrollLeft = el.offsetLeft - 8;
+    else if (el.offsetLeft + el.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = el.offsetLeft + el.offsetWidth - r.clientWidth + 8;
+  }, [at]);
   const on = melody.on !== false;
   const count = melody.notes.length;
 
@@ -129,16 +130,14 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
 
       <div className="dm-bar">
         <span className="kb-label">Bar</span>
-        <div className="dm-bars" role="tablist" aria-label="Bar">
-          {Array.from({ length: bars }, (_, b) => <button key={b} role="tab" aria-selected={b === at} className={`${b === at ? "on" : ""}${limit !== undefined && b >= limit ? " out" : ""}`} title={limit !== undefined && b >= limit ? "Past the end of the section: not played" : undefined} onClick={() => setShown(b)}>{b + 1}</button>)}
-          {canAdd && <button className="dm-bar-add" aria-label="Add a bar" title="Add a bar" onClick={addBar}>+</button>}
+        <div className="dm-bars" role="tablist" aria-label="Bar" ref={tabsRef}>
+          {Array.from({ length: bars }, (_, b) => <button key={b} role="tab" aria-selected={b === at} className={`${b === at ? "on" : ""}${barHasNotes(melody, bar, b) ? "" : " hollow"}`} title={barHasNotes(melody, bar, b) ? undefined : "Empty: plays nothing"} onClick={() => setShown(b)}>{b + 1}</button>)}
         </div>
         {bars > 1 && <button className="btn sm" title="Copy the bar before this one into it" disabled={at === 0} onClick={() => change((m) => copyMelodyBar(m, bar, at - 1, at))}>⧉</button>}
-        {bars > 1 && <button className="btn sm" aria-label="Remove the last bar" title="Remove the last bar" onClick={() => { change((m) => setMelodyBars(m, bars - 1, bar)); setShown(Math.min(at, bars - 2)); }}>−</button>}
         <span className="spacer" />
         <button className={`chip${keyOnly ? " on" : ""}`} aria-pressed={keyOnly} title="Show only the notes of the key" onClick={() => setKeyOnly(!keyOnly)}>Key only</button>
         <button className="btn sm" aria-label="Undo" title="Undo" disabled={!past.length} onClick={undo}>↶</button>
-        <button className="btn sm" disabled={!melody.notes.length} onClick={() => change((m) => clearMelody(m, bar, bars > 1 ? at : undefined))}>Clear</button>
+        <button className="btn sm" disabled={!barHasNotes(melody, bar, at)} title="Empty this bar" onClick={() => change((m) => clearMelody(m, bar, at))}>Clear</button>
       </div>
 
       <div className="mg" style={{ "--steps": steps, "--div": melody.div } as CSSProperties}>

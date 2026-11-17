@@ -241,6 +241,8 @@ export interface PlayItem {
   tune?: PlayTune | null;
   /** the harp this chord is played on, when its section has a sound of its own (missing = the harp as it is set) */
   sound?: HarpSound;
+  /** not a chord: the silence between a section's last chord and its end */
+  pad?: boolean;
 }
 
 /** A melody ready to play: its notes, the length of a bar under it, and the drums' swing. */

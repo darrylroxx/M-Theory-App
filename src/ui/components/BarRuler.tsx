@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState } from "react";
 import { chordSymbol } from "../../theory/chords";
-import { frameItems } from "../../song/frame";
 import { MAX_BEATS, MIN_BEATS, fitBeats, type ProgChord } from "../state";
 
 /** "2 beats", "1½ beats", "1 bar", "2 bars". */
@@ -14,8 +13,8 @@ export function lengthText(beats: number, bar: number): string {
 /**
  * The section drawn to scale: every chord as wide as it is long, with a line at each bar.
  * Drag the edge between two chords to move where the change falls; tap a chord to set its length exactly.
- * The ruler is as long as the section: chords that come round again are drawn faintly, and
- * whatever lies past the end of the section is struck out.
+ * The ruler is as long as the section: bars with no chord in them are drawn empty (they are silent),
+ * and whatever lies past the end of the section is struck out.
  */
 export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange }: {
   chords: ProgChord[];
@@ -38,10 +37,9 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
   const total = chords.reduce((a, c) => a + c.beats, 0);
   const bars = Math.max(1, Math.ceil(Math.max(total, length) / bar - 1e-6));
   const span = bars * bar;
-  const rest = Math.max(0, span - Math.max(total, length));
-  // the chords again, as often as the section has room for them
-  const again = total > 0 && length > total + 1e-6 ? frameItems(chords, length).slice(chords.length) : [];
+  const rest = Math.max(0, span - total);
   const over = total > length + 1e-6;
+  const nameOf = (c: ProgChord) => (c.rest ? "Rest" : chordSymbol(c.ref));
   const picked = chords.find((c) => c.id === sel);
   useEffect(() => {
     if (sel && !chords.some((c) => c.id === sel)) setSel(null);
@@ -87,14 +85,13 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
       <div className="ruler-scroll">
         <div className="ruler" ref={row} style={{ "--beats": bars * bar, "--bar": bar } as React.CSSProperties} role="group" aria-label="Chord lengths">
           {chords.map((c, i) => (
-            <span key={c.id} className={`ruler-block${sel === c.id ? " on" : ""}${nowIdx === i ? " now" : ""}`} style={{ flexGrow: c.beats }}>
-              <button className="ruler-name" aria-pressed={sel === c.id} aria-label={`${chordSymbol(c.ref)}, ${lengthText(c.beats, bar)}. Change its length`}
-                onClick={() => Date.now() - moved.current > 250 && setSel(sel === c.id ? null : c.id)}>{chordSymbol(c.ref)}</button>
+            <span key={c.id} className={`ruler-block${c.rest ? " rest" : ""}${sel === c.id ? " on" : ""}${nowIdx === i ? " now" : ""}`} style={{ flexGrow: c.beats }}>
+              <button className="ruler-name" aria-pressed={sel === c.id} aria-label={`${nameOf(c)}, ${lengthText(c.beats, bar)}. Change its length`}
+                onClick={() => Date.now() - moved.current > 250 && setSel(sel === c.id ? null : c.id)}>{nameOf(c)}</button>
               <i className="ruler-grip" title={i < chords.length - 1 ? "Drag to move where the chord changes" : "Drag to make the last chord longer or shorter"} onPointerDown={(e) => drag(e, i)} />
             </span>
           ))}
-          {again.map((g, k) => <span key={`again${k}`} className="ruler-again" style={{ flexGrow: g.item.beats }} title={`${chordSymbol(g.item.ref)} again`}><span>{chordSymbol(g.item.ref)}</span></span>)}
-          {rest > 0 && <span className="ruler-rest" style={{ flexGrow: rest }} title="The bar is not full yet" />}
+          {rest > 0 && <span className="ruler-rest" style={{ flexGrow: rest }} title="Empty: nothing plays here" />}
           {Array.from({ length: bars - 1 }, (_, k) => <i key={k} className="ruler-line" style={{ left: `${((k + 1) / bars) * 100}%` }} />)}
           {over && <i className="ruler-cut" style={{ left: `${(length / span) * 100}%`, right: `${(rest / span) * 100}%` }} title={`${letter} ends here`} />}
         </div>
@@ -105,8 +102,8 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
         </button>
       )}
       {picked && (
-        <div className="ruler-edit" role="group" aria-label={`Length of ${chordSymbol(picked.ref)}`}>
-          <b>{chordSymbol(picked.ref)}</b>
+        <div className="ruler-edit" role="group" aria-label={`Length of ${nameOf(picked)}`}>
+          <b>{nameOf(picked)}</b>
           <span className="beats">
             <button aria-label="Shorter" disabled={picked.beats <= MIN_BEATS} onClick={() => set(picked, picked.beats - 0.5)}>−</button>
             <span>{lengthText(picked.beats, bar)}</span>

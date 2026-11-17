@@ -12,7 +12,7 @@ import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
 import type { Progression, SavedProgression } from "../ui/state";
-import { commit, loadCurrent, reviveSong, sections } from "./structure";
+import { commit, loadCurrent, reviveSong, sections, settle } from "./structure";
 
 /** Everything that makes up an idea, ready to store. */
 export interface Snapshot {
@@ -51,7 +51,7 @@ export function autoName(key: Key, existing: SavedProgression[]): string {
 export function describeIdea(i: SavedProgression): string {
   const secs = sections(i.progression);
   if (secs.length) return secs.map((s) => s.letter).join(" ");
-  return i.progression.chords.map((c) => chordSymbol(c.ref)).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
+  return i.progression.chords.map((c) => (c.rest ? "–" : chordSymbol(c.ref))).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
 }
 
 /** Does any section of a stored song have a melody? */
@@ -64,14 +64,14 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const p = i.progression;
   const song = reviveSong(p.song);
   const melody = reviveMelody(p.melody);
-  const progression: Progression = loadCurrent({
+  const progression: Progression = settle(loadCurrent({
     chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
     // the melody used to share the chords' harp: one written back then keeps the sound it had
     ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : (melody?.notes.length || anyTune(p.song)) && p.sound ? { tuneSound: reviveSound(p.sound) } : {}),
     ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),
     play: p.play === "song" ? "song" : "section",
-  });
+  }));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
 

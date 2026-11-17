@@ -1,12 +1,14 @@
 /**
  * The frame of a section: how long it lasts.
  *
- * A section is as long as it is set to be, in bars. Whatever is shorter than the section comes
- * round again until the section is over; whatever is longer is cut off where the section ends.
- * A section that has not been given a length is as long as what is in it.
+ * A section is a row of bars, as many as it is set to. Its chords, its melody and its drums are
+ * all written into those bars: a bar with something in it plays, an empty bar is silent, and
+ * nothing comes round again on its own. Whatever runs past the last bar is cut off there.
  */
 
 export const MAX_SECTION_BARS = 32;
+/** How long a section is until someone says otherwise. */
+export const DEFAULT_BARS = 4;
 /** The lengths offered at a tap. */
 export const QUICK_BARS = [1, 2, 4, 8, 12, 16, 24, 32];
 
@@ -16,8 +18,11 @@ export function fitBars(n: unknown): number | undefined {
   return Number.isFinite(v) && v >= 1 ? Math.min(MAX_SECTION_BARS, v) : undefined;
 }
 
+/** A section's length in bars: what it is set to, or four. */
+export const barsOr = (n: unknown): number => fitBars(n) ?? DEFAULT_BARS;
+
 /**
- * How long a section with no set length lasts, in beats: its chords, played again until the
+ * How long a section used to last, in beats, before sections had lengths: its chords, played again until the
  * drum rhythm and the melody have both finished. With no chords, the longer of the two
  * (the melody rounded up to whole rounds of the rhythm).
  */
@@ -26,15 +31,27 @@ export function autoBeats(chordBeats: number, drumBeats: number, tuneBeats: numb
   return tuneBeats && drumBeats ? Math.ceil(tuneBeats / drumBeats - 1e-6) * drumBeats : Math.max(drumBeats, tuneBeats);
 }
 
-/** How long a section lasts, in beats: what it is set to, or what is in it. */
-export function frameBeats(bars: number | undefined, bar: number, chordBeats: number, drumBeats: number, tuneBeats: number): number {
-  const set = fitBars(bars);
-  return set ? set * bar : autoBeats(chordBeats, drumBeats, tuneBeats);
+/** How long a section lasts, in beats. */
+export const frameBeats = (bars: number | undefined, bar: number): number => barsOr(bars) * bar;
+
+/**
+ * A section's chords, as they play: once, in order, and the one sounding when the section ends
+ * is cut short (any after it are never reached). `index` is the chord's place in the list given.
+ */
+export function inFrame<T extends { beats: number }>(chords: T[], length: number): { item: T; index: number }[] {
+  const out: { item: T; index: number }[] = [];
+  let at = 0;
+  for (let i = 0; i < chords.length && at < length - 1e-6; i++) {
+    const left = length - at;
+    out.push({ item: left < chords[i].beats - 1e-6 ? { ...chords[i], beats: left } : chords[i], index: i });
+    at += chords[i].beats;
+  }
+  return out;
 }
 
 /**
- * Fill a section with its chords: they come round again until the section is over, and the one
- * sounding when it ends is cut short. `index` is the chord's place in the list given.
+ * Chords coming round again until a length is filled, the last one cut short. This is how
+ * sections played before they had lengths; it is used to write those repeats out in full.
  */
 export function frameItems<T extends { beats: number }>(once: T[], length: number): { item: T; index: number }[] {
   const out: { item: T; index: number }[] = [];

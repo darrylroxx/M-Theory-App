@@ -3,7 +3,7 @@ import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit }
 import { barBeats } from "../audio/beats";
 import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
 import { reviveMelody, type Melody } from "../song/melody";
-import { fitBars } from "../song/frame";
+import { DEFAULT_BARS, fitBars } from "../song/frame";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
@@ -14,7 +14,7 @@ import { getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { commit, reviveSong, type Song } from "../song/structure";
+import { commit, reviveSong, settle, type Song } from "../song/structure";
 import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
@@ -31,6 +31,8 @@ export interface ProgChord {
   beats: number;
   /** Pinned voicing id (frets string). Undefined = auto-arranged. */
   voicingId?: string;
+  /** a silence of this length: nothing is played (its chord is only a placeholder) */
+  rest?: boolean;
 }
 
 export interface Progression {
@@ -46,7 +48,7 @@ export interface Progression {
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
-  /** How long the section on screen lasts, in bars. Not set = as long as what is in it. */
+  /** How long the section on screen lasts, in bars. */
   bars?: number;
   /** The sound and effects of the harp that plays the chords (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
@@ -132,6 +134,7 @@ export const DEFAULT_STATE: AppState = {
     bpm: 84,
     pattern: "ring",
     loop: true,
+    bars: DEFAULT_BARS,
   },
   saved: [],
   shapes: {},
@@ -158,8 +161,9 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
   };
-  // what was on screen is the newest there is: it goes back into its section, never the other way round
-  return commit(p);
+  // what was on screen is the newest there is: it goes back into its section, never the other way round.
+  // Songs from before sections had lengths get them here.
+  return settle(commit(p));
 }
 
 function load(): AppState {
