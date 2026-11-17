@@ -6,7 +6,7 @@
 import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import { hasTune, melodyBeats } from "../song/melody";
 import type { DrumId } from "./drums";
-import { itemNotes, itemTune, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { itemNotes, itemTune, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 
 const TPQ = 480; // ticks per quarter note
 
@@ -100,7 +100,7 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
-    if (i === 0 || item.section) origin = at;
+    origin = sectionStart(item, i, at, origin);
     runs.push({ from: at, to: at + item.beats, origin, b: item.drums ?? drums });
     at += item.beats;
   });

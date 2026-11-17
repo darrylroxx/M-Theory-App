@@ -81,3 +81,80 @@ export function stepBars(beats: number, bar: number, dir: -1 | 1): number {
   const next = dir < 0 ? Math.ceil(n - 1e-6) - 1 : Math.floor(n + 1e-6) + 1;
   return Math.max(1, Math.min(MAX_SECTION_BARS, next));
 }
+
+/**
+ * The part of a section that lies between two moments (in beats from its start): items are cut
+ * where the range cuts them, and each says how far into the section it starts.
+ */
+export function sliceItems<T extends { beats: number }>(items: T[], from: number, to: number): { item: T; index: number; from: number }[] {
+  const out: { item: T; index: number; from: number }[] = [];
+  let at = 0;
+  items.forEach((item, index) => {
+    const a = Math.max(at, from);
+    const b = Math.min(at + item.beats, to);
+    if (b - a > 1e-6) out.push({ item: b - a < item.beats - 1e-6 ? { ...item, beats: b - a } : item, index, from: a });
+    at += item.beats;
+  });
+  return out;
+}
+
+/** One bar of the song: which section it is in, and which of that section's bars it is (0 = the first). */
+export interface BarRef {
+  block: string;
+  bar: number;
+}
+/** The bars that go round and round: from one bar to another, both included. They may be in different sections. */
+export interface LoopSpan {
+  from: BarRef;
+  to: BarRef;
+}
+/** A loop being chosen: the span so far, and the bar a second tap will stretch it from. */
+export interface LoopPick {
+  span: LoopSpan | null;
+  anchor: BarRef | null;
+}
+type Layout = { block: string; bars: number }[];
+
+/** A bar's place in the whole song, counting bars from 0 (−1 = no such bar). */
+export function barIndex(layout: Layout, ref: BarRef): number {
+  let n = 0;
+  for (const s of layout) {
+    if (s.block === ref.block) return n + Math.max(0, Math.min(s.bars - 1, ref.bar));
+    n += s.bars;
+  }
+  return -1;
+}
+
+/** A loop made to fit the song as it is now: bars that no longer exist are let go, and it runs forwards. Null if it has nothing left. */
+export function fitLoop(layout: Layout, span: LoopSpan | null): LoopSpan | null {
+  if (!span) return null;
+  const a = barIndex(layout, span.from);
+  const b = barIndex(layout, span.to);
+  if (a < 0 || b < 0) return null;
+  const clamp = (r: BarRef): BarRef => ({ block: r.block, bar: Math.max(0, Math.min((layout.find((s) => s.block === r.block)?.bars ?? 1) - 1, r.bar)) });
+  return a <= b ? { from: clamp(span.from), to: clamp(span.to) } : { from: clamp(span.to), to: clamp(span.from) };
+}
+
+/**
+ * Tap a bar to loop it. Tap a second bar and the loop stretches from the first to the second
+ * (across sections too). A tap after that starts again with one bar; tapping the one looped bar
+ * again lets the loop go.
+ */
+export function tapLoop(layout: Layout, pick: LoopPick, bar: BarRef): LoopPick {
+  const same = (x: BarRef | null, y: BarRef) => !!x && x.block === y.block && x.bar === y.bar;
+  if (pick.span && pick.anchor) {
+    if (same(pick.anchor, bar)) return { span: null, anchor: null };
+    return { span: fitLoop(layout, { from: pick.anchor, to: bar }), anchor: null };
+  }
+  return { span: { from: bar, to: bar }, anchor: bar };
+}
+
+/** Loop every bar of one section. */
+export const loopSection = (block: string, bars: number): LoopSpan => ({ from: { block, bar: 0 }, to: { block, bar: Math.max(0, bars - 1) } });
+
+/** Is a bar inside the loop? */
+export function inLoop(layout: Layout, span: LoopSpan | null, ref: BarRef): boolean {
+  if (!span) return false;
+  const i = barIndex(layout, ref);
+  return i >= barIndex(layout, span.from) && i <= barIndex(layout, span.to);
+}

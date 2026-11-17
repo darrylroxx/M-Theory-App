@@ -8,7 +8,7 @@ import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums }
 import { DRUM_IDS, drumRng } from "./drums";
 import { STRING_KEYS, renderHarp, stringKey, type HarpString } from "./harp";
 import { melodyBeats, tuneBetween } from "../song/melody";
-import { itemNotes, meterOf, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
@@ -271,7 +271,7 @@ export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
-    if (i === 0 || item.section) origin = at;
+    origin = sectionStart(item, i, at, origin);
     const t = item.tune === undefined ? tune : item.tune;
     if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats)) out.push({ midi: h.midi, tune: true, as: t.sound });
     at += item.beats;
@@ -300,7 +300,7 @@ export async function renderOffline(items: PlayItem[], bpm: number, pattern: Pat
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
-    if (i === 0 || item.section) origin = at;
+    origin = sectionStart(item, i, at, origin);
     playItem(h, item, 0.05 + at * spb, spb, pattern, at - origin, null);
     at += item.beats;
   });
@@ -448,7 +448,7 @@ export class ProgressionPlayer {
       }
       const item = this.items[this.nextIndex];
       const t = this.nextTime;
-      if (this.nextIndex === 0 || item.section) this.origin = this.passBeat;
+      this.origin = sectionStart(item, this.nextIndex, this.passBeat, this.origin);
       this.marks.push({ time: t, index: this.nextIndex });
       const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: this.nextIndex, origin: this.origin };
       this.anchors.push(anchor);

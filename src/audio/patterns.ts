@@ -243,7 +243,15 @@ export interface PlayItem {
   sound?: HarpSound;
   /** not a chord: the silence between a section's last chord and its end */
   pad?: boolean;
+  /** how many beats into its section this item starts (given when playing starts or loops part-way through a section) */
+  from?: number;
 }
+
+/**
+ * Where the section an item belongs to started, in beats from the start of the list. The drums,
+ * the melody and the playing style all count from there.
+ */
+export const sectionStart = (item: PlayItem, i: number, at: number, origin: number): number => (item.from !== undefined ? at - item.from : i === 0 || item.section ? at : origin);
 
 /** A melody ready to play: its notes, the length of a bar under it, and the drums' swing. */
 export interface PlayTune {
@@ -260,7 +268,7 @@ export function itemTune(items: PlayItem[], tune: PlayTune | null = null): TuneH
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
-    if (i === 0 || item.section) origin = at;
+    origin = sectionStart(item, i, at, origin);
     const t = item.tune === undefined ? tune : item.tune;
     if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats, t.swing)) out.push({ beat: h.beat + origin, midi: h.midi });
     at += item.beats;
@@ -274,7 +282,7 @@ export function itemNotes(items: PlayItem[], pattern: PatternId, beat: Beat | nu
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
-    if (i === 0 || item.section) origin = at;
+    origin = sectionStart(item, i, at, origin);
     for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat), item.feel)) out.push({ at, item: i, e, beats: item.beats });
     at += item.beats;
   });

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barHasHits, barsOf, clearBeat, levelAt, patternBar, setStep, spreadBeat } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
-import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, barsText, fitBars, frameBeats, frameItems, inFrame, stepBars } from "./frame";
+import { itemTune, sectionStart, type PlayItem } from "../audio/patterns";
+import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barIndex, barsOr, barsText, fitBars, fitLoop, frameBeats, frameItems, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type LoopPick } from "./frame";
 import { fingerprint, reviveIdea, snapshot } from "./library";
 import { EMPTY_MELODY, TICKS, barHasNotes, inBars, tileMelody, tuneBetween, type Melody } from "./melody";
 import { addNewSection, commit, ensureSong, repeatSection, reviveSong, sections, selectBlock, setSectionBars, settle, unlinkBlock } from "./structure";
@@ -244,5 +245,96 @@ describe("songs from before sections had lengths sound as they did", () => {
     expect(sections(q).map((s) => `${s.letter}${s.bars}:${s.chords.length}`)).toEqual(["A2:2", "B3:3", "C7:0"]);
     expect(q.bars).toBe(7);
     expect(settle(q)).toEqual(q);
+  });
+});
+
+describe("looping bars", () => {
+  // A has 4 bars, B has 8, and A comes again at the end
+  const layout = [{ block: "a1", bars: 4 }, { block: "b", bars: 8 }, { block: "a2", bars: 4 }];
+  const none: LoopPick = { span: null, anchor: null };
+  const bar = (block: string, n: number) => ({ block, bar: n });
+
+  it("every bar has its place in the song", () => {
+    expect(barIndex(layout, bar("a1", 0))).toBe(0);
+    expect(barIndex(layout, bar("b", 0))).toBe(4);
+    expect(barIndex(layout, bar("a2", 3))).toBe(15);
+    expect(barIndex(layout, bar("gone", 0))).toBe(-1);
+  });
+
+  it("one tap loops one bar; a second tap stretches the loop to there", () => {
+    let p = tapLoop(layout, none, bar("b", 2));
+    expect(p.span).toEqual({ from: bar("b", 2), to: bar("b", 2) });
+    p = tapLoop(layout, p, bar("b", 5));
+    expect(p.span).toEqual({ from: bar("b", 2), to: bar("b", 5) });
+    expect([1, 2, 5, 6].map((n) => inLoop(layout, p.span, bar("b", n)))).toEqual([false, true, true, false]);
+    // a tap after that starts again with one bar
+    p = tapLoop(layout, p, bar("a1", 1));
+    expect(p.span).toEqual({ from: bar("a1", 1), to: bar("a1", 1) });
+  });
+
+  it("the second tap can be earlier, or in another section", () => {
+    let p = tapLoop(layout, tapLoop(layout, none, bar("b", 6)), bar("a1", 2));
+    expect(p.span).toEqual({ from: bar("a1", 2), to: bar("b", 6) });
+    expect(inLoop(layout, p.span, bar("a1", 3)) && inLoop(layout, p.span, bar("b", 0)) && !inLoop(layout, p.span, bar("a2", 0))).toBe(true);
+    // whole sections: first bar of one to the last bar of another
+    p = tapLoop(layout, tapLoop(layout, none, bar("a1", 0)), bar("b", 7));
+    expect(barIndex(layout, p.span!.to) - barIndex(layout, p.span!.from) + 1).toBe(12);
+  });
+
+  it("tapping the one looped bar again lets the loop go", () => {
+    const p = tapLoop(layout, tapLoop(layout, none, bar("b", 2)), bar("b", 2));
+    expect(p).toEqual(none);
+  });
+
+  it("a whole section at once", () => {
+    const span = loopSection("b", 8);
+    expect(span).toEqual({ from: bar("b", 0), to: bar("b", 7) });
+    expect(inLoop(layout, span, bar("b", 7)) && !inLoop(layout, span, bar("a2", 0)) && !inLoop(layout, span, bar("a1", 3))).toBe(true);
+    // the two A's are different places in the song
+    expect(inLoop(layout, loopSection("a1", 4), bar("a2", 0))).toBe(false);
+    expect(inLoop(layout, null, bar("b", 0))).toBe(false);
+  });
+
+  it("a loop keeps up with the song: shorter sections, moved sections, removed sections", () => {
+    const span = { from: bar("b", 2), to: bar("b", 7) };
+    // B cut to 4 bars: the loop ends where B now ends
+    expect(fitLoop([{ block: "a1", bars: 4 }, { block: "b", bars: 4 }], span)).toEqual({ from: bar("b", 2), to: bar("b", 3) });
+    // sections swapped: the loop still runs forwards
+    const across = { from: bar("a1", 2), to: bar("b", 1) };
+    expect(fitLoop([{ block: "b", bars: 8 }, { block: "a1", bars: 4 }], across)).toEqual({ from: bar("b", 1), to: bar("a1", 2) });
+    // a section it needs is gone: so is the loop
+    expect(fitLoop([{ block: "a1", bars: 4 }], span)).toBeNull();
+    expect(fitLoop(layout, null)).toBeNull();
+  });
+
+  it("the looped bars are cut out of the section exactly, and know where in it they start", () => {
+    const sec = [chord("C", 8), chord("G", 4), chord("F", 4)]; // four bars of four
+    // bar 2 alone: the second half of C
+    const one = sliceItems(sec, 4, 8);
+    expect(one.map((x) => [x.item.ref.root, x.item.beats, x.from, x.index])).toEqual([["C", 4, 4, 0]]);
+    // bars 2 and 3
+    expect(sliceItems(sec, 4, 12).map((x) => [x.item.ref.root, x.item.beats, x.from])).toEqual([["C", 4, 4], ["G", 4, 8]]);
+    // the whole section is the section itself
+    const all = sliceItems(sec, 0, 16);
+    expect(all.map((x) => x.item)).toEqual(sec);
+    expect(all.map((x) => x.from)).toEqual([0, 8, 12]);
+    expect(sliceItems(sec, 16, 20)).toEqual([]);
+    expect(sec.map((c) => c.beats)).toEqual([8, 4, 4]);
+  });
+
+  it("drums, melody and style count from the start of the section, wherever playing starts", () => {
+    const item = (beats: number, more: Partial<PlayItem> = {}): PlayItem => ({ midi: [], beats, ...more });
+    // a new section starts the count again
+    expect(sectionStart(item(4), 0, 0, 0)).toBe(0);
+    expect(sectionStart(item(4), 1, 4, 0)).toBe(0);
+    expect(sectionStart(item(4, { section: true }), 2, 8, 0)).toBe(8);
+    // starting two bars into a section: the section began two bars before
+    expect(sectionStart(item(4, { from: 8 }), 0, 0, 0)).toBe(-8);
+    // looping bar 3 of a melody plays bar 3's note, not bar 1's
+    const m: Melody = { ...EMPTY_MELODY, bars: 4, notes: [{ at: 0, midi: 60 }, { at: 8 * TICKS, midi: 67 }] };
+    const tune = { m, bar: 4, swing: 0 };
+    expect(itemTune([item(4, { from: 8, tune })]).map((h) => [h.beat, h.midi])).toEqual([[0, 67]]);
+    expect(itemTune([item(4, { from: 4, tune })])).toEqual([]);
+    expect(itemTune([item(16, { tune })]).map((h) => h.midi)).toEqual([60, 67]);
   });
 });
