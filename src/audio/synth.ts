@@ -372,11 +372,16 @@ export class ProgressionPlayer {
 
   /** How many beats into its section the music is right now (null when stopped). */
   sectionBeat(): number | null {
+    return this.position()?.beat ?? null;
+  }
+
+  /** What is sounding right now: which item of the list, and how many beats into its section (null when stopped). */
+  position(): { index: number; beat: number } | null {
     if (!this.playing) return null;
     const now = getAudio().currentTime;
     let at: Anchor | null = null;
     for (const s of this.spans) if (s.time <= now) at = s;
-    return at ? at.beat - at.origin + (now - at.time) / at.spb : null;
+    return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb } : null;
   }
 
   private drumsAt(a: Anchor): Beat | null {

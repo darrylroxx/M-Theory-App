@@ -108,11 +108,6 @@ export interface LoopSpan {
   from: BarRef;
   to: BarRef;
 }
-/** A loop being chosen: the span so far, and the bar a second tap will stretch it from. */
-export interface LoopPick {
-  span: LoopSpan | null;
-  anchor: BarRef | null;
-}
 type Layout = { block: string; bars: number }[];
 
 /** A bar's place in the whole song, counting bars from 0 (−1 = no such bar). */
@@ -136,17 +131,34 @@ export function fitLoop(layout: Layout, span: LoopSpan | null): LoopSpan | null 
 }
 
 /**
- * Tap a bar to loop it. Tap a second bar and the loop stretches from the first to the second
- * (across sections too). A tap after that starts again with one bar; tapping the one looped bar
- * again lets the loop go.
+ * Tap bars to build a loop. A bar outside the loop is added, and so is everything between it and
+ * the loop (a loop is one unbroken run of bars, across sections too): tap 1, 2, 3 and three bars
+ * loop; tap 1 then 8 and all eight do. A bar at either end of the loop is taken off again. A bar
+ * in the middle becomes the whole loop. Taking off the last bar lets the loop go.
  */
-export function tapLoop(layout: Layout, pick: LoopPick, bar: BarRef): LoopPick {
-  const same = (x: BarRef | null, y: BarRef) => !!x && x.block === y.block && x.bar === y.bar;
-  if (pick.span && pick.anchor) {
-    if (same(pick.anchor, bar)) return { span: null, anchor: null };
-    return { span: fitLoop(layout, { from: pick.anchor, to: bar }), anchor: null };
+export function tapLoop(layout: Layout, span: LoopSpan | null, bar: BarRef): LoopSpan | null {
+  const at = barIndex(layout, bar);
+  const now = fitLoop(layout, span);
+  if (at < 0) return now;
+  if (!now) return { from: bar, to: bar };
+  const a = barIndex(layout, now.from);
+  const b = barIndex(layout, now.to);
+  if (at < a) return { from: bar, to: now.to };
+  if (at > b) return { from: now.from, to: bar };
+  if (a === b) return null;
+  if (at === a) return { from: barAt(layout, a + 1)!, to: now.to };
+  if (at === b) return { from: now.from, to: barAt(layout, b - 1)! };
+  return { from: bar, to: bar };
+}
+
+/** The bar at a place in the whole song, counting from 0. */
+export function barAt(layout: Layout, index: number): BarRef | null {
+  let n = index;
+  for (const s of layout) {
+    if (n < s.bars) return n < 0 ? null : { block: s.block, bar: n };
+    n -= s.bars;
   }
-  return { span: { from: bar, to: bar }, anchor: bar };
+  return null;
 }
 
 /** Loop every bar of one section. */

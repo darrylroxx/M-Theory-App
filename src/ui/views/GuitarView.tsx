@@ -8,7 +8,7 @@ import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type Ar
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
-import { QUICK_BARS, MAX_SECTION_BARS, barsOr, barsText, fitLoop, frameBeats, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type BarRef, type LoopPick, type LoopSpan } from "../../song/frame";
+import { QUICK_BARS, MAX_SECTION_BARS, barsOr, barsText, fitLoop, frameBeats, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type BarRef, type LoopSpan } from "../../song/frame";
 import { addNewSection, ensureSong, letters, linkState, nextLetter, mapAllChords, moveBlock, setSectionBars, relink, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
@@ -173,13 +173,13 @@ export function GuitarView() {
   }, [secs, voicings, voicingsOf, beat, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound]);
 
   // ── looping: nothing loops until some bars are chosen; then those bars go round and round ──
-  const [pick, setPick] = useState<LoopPick>({ span: null, anchor: null });
+  const [span, setSpan] = useState<LoopSpan | null>(null);
   const layout = useMemo(() => plan.per.map((x) => ({ block: x.block, bars: x.bars })), [plan.per]);
-  const loop = useMemo(() => fitLoop(layout, pick.span), [layout, pick.span]);
+  const loop = useMemo(() => fitLoop(layout, span), [layout, span]);
   // a loop whose bars are gone (a section removed) is let go
   useEffect(() => {
-    if (pick.span && !loop) setPick({ span: null, anchor: null });
-  }, [pick.span, loop]);
+    if (span && !loop) setSpan(null);
+  }, [span, loop]);
   /** What ▶ plays: the whole song in order, or just the bars of the loop. */
   const playList = useMemo(() => {
     if (!loop) return { items: plan.items, map: plan.map, loop: false };
@@ -299,9 +299,10 @@ export function GuitarView() {
   useEffect(() => {
     if (audition && !playingRef.current) startPlay();
   }, [audition]); // eslint-disable-line react-hooks/exhaustive-deps
-  const onLoopBar = (bar: BarRef) => setPick((p) => tapLoop(layout, { span: fitLoop(layout, p.span), anchor: p.anchor }, bar));
+  /** A bar of the strip was tapped: it joins the loop (or, at an end of the loop, leaves it). */
+  const onLoopBar = (bar: BarRef) => setSpan((sp) => tapLoop(layout, sp, bar));
   /** ↻: loop the section on screen, or let the loop go. */
-  const toggleLoop = () => setPick(loop ? { span: null, anchor: null } : { span: loopSection(curBlock, nBars), anchor: null });
+  const toggleLoop = () => setSpan(loop ? null : loopSection(curBlock, nBars));
 
   const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
   /** Load a rhythm. Chords that lasted whole bars keep lasting whole bars (4 beats become 3 in a waltz). */
@@ -338,9 +339,11 @@ export function GuitarView() {
   const getPos = useCallback(() => (playBlock.current === curRef.current ? player.current?.sectionBeat() ?? null : null), []);
   /** The bar of the song that is sounding: its section and which of its bars. */
   const getBar = useCallback((): BarRef | null => {
-    const pos = player.current?.sectionBeat();
-    const sec = planRef.current.per.find((x) => x.block === playBlock.current);
-    return pos === null || pos === undefined || !sec ? null : { block: sec.block, bar: Math.max(0, Math.min(sec.bars - 1, Math.floor(pos / sec.bar + 1e-6))) };
+    // the section and the place in it are read together, so the mark never shows one with the other's bar
+    const pos = player.current?.position();
+    const block = pos ? listRef.current.map[pos.index]?.block : undefined;
+    const sec = block === undefined ? undefined : planRef.current.per.find((x) => x.block === block);
+    return !pos || !sec ? null : { block: sec.block, bar: Math.max(0, Math.min(sec.bars - 1, Math.floor(pos.beat / sec.bar + 1e-6))) };
   }, []);
   const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
   const drop = useCallback((p: Payload, index: number | null) => {
@@ -782,9 +785,9 @@ const rowsOf = (secs: Section[]): Row[] => (secs.length ? secs : [{ blockId: "",
 
 /**
  * Play, on every page. ▶ plays the song in order from the section on screen. The strip beside it
- * is the whole song, bar by bar: tap a letter to go to that section; tap a bar to loop it, then
- * another to stretch the loop to there (across sections too). ↻ loops the section on screen, or
- * lets the loop go.
+ * is the whole song, bar by bar: tap a letter to go to that section; tap bars to loop them (each
+ * tap adds a bar, and the bars between; a tap on either end of the loop takes that bar off again).
+ * ↻ loops the section on screen, or lets the loop go.
  */
 function Transport({ per, current, loop, layout, onBar, onLoop, getBar, playing, onPlay, canPlay }: {
   per: SecPlan[];
@@ -847,7 +850,7 @@ function Transport({ per, current, loop, layout, onBar, onLoop, getBar, playing,
             <button className="lb-letter" aria-pressed={x.block === current} aria-label={`Section ${x.letter}`} onClick={() => x.block && x.block !== current && set((s) => ({ ...s, progression: selectBlock(s.progression, x.block) }))}>{x.letter}</button>
             {Array.from({ length: x.bars }, (_, k) => {
               const on = inLoop(layout, loop, { block: x.block, bar: k });
-              return <button key={k} data-bar={`${x.block}:${k}`} className={`lb-bar${on ? " in" : ""}`} aria-pressed={on} aria-label={`Bar ${k + 1} of ${x.letter}${on ? ", looping" : ""}`} onClick={() => onBar({ block: x.block, bar: k })}>{k + 1}</button>;
+              return <button key={k} data-bar={`${x.block}:${k}`} className={`lb-bar${on ? " in" : ""}`} aria-pressed={on} aria-label={`Bar ${k + 1} of ${x.letter}${on ? ", looping" : ": add to the loop"}`} onClick={() => onBar({ block: x.block, bar: k })}>{k + 1}</button>;
             })}
           </span>
         ))}

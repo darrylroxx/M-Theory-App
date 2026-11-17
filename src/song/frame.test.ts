@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barHasHits, barsOf, clearBeat, levelAt, patternBar, setStep, spreadBeat } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { itemTune, sectionStart, type PlayItem } from "../audio/patterns";
-import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barIndex, barsOr, barsText, fitBars, fitLoop, frameBeats, frameItems, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type LoopPick } from "./frame";
+import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barAt, barIndex, barsOr, barsText, fitBars, fitLoop, frameBeats, frameItems, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type LoopSpan } from "./frame";
 import { fingerprint, reviveIdea, snapshot } from "./library";
 import { EMPTY_MELODY, TICKS, barHasNotes, inBars, tileMelody, tuneBetween, type Melody } from "./melody";
 import { addNewSection, commit, ensureSong, repeatSection, reviveSong, sections, selectBlock, setSectionBars, settle, unlinkBlock } from "./structure";
@@ -251,39 +251,62 @@ describe("songs from before sections had lengths sound as they did", () => {
 describe("looping bars", () => {
   // A has 4 bars, B has 8, and A comes again at the end
   const layout = [{ block: "a1", bars: 4 }, { block: "b", bars: 8 }, { block: "a2", bars: 4 }];
-  const none: LoopPick = { span: null, anchor: null };
   const bar = (block: string, n: number) => ({ block, bar: n });
+  /** tap one bar after another, starting with no loop */
+  const taps = (...bars: { block: string; bar: number }[]) => bars.reduce<LoopSpan | null>((sp, b) => tapLoop(layout, sp, b), null);
+  const count = (sp: LoopSpan | null) => (sp ? barIndex(layout, sp.to) - barIndex(layout, sp.from) + 1 : 0);
 
   it("every bar has its place in the song", () => {
     expect(barIndex(layout, bar("a1", 0))).toBe(0);
     expect(barIndex(layout, bar("b", 0))).toBe(4);
     expect(barIndex(layout, bar("a2", 3))).toBe(15);
     expect(barIndex(layout, bar("gone", 0))).toBe(-1);
+    expect(barAt(layout, 0)).toEqual(bar("a1", 0));
+    expect(barAt(layout, 4)).toEqual(bar("b", 0));
+    expect(barAt(layout, 15)).toEqual(bar("a2", 3));
+    expect(barAt(layout, 16)).toBeNull();
   });
 
-  it("one tap loops one bar; a second tap stretches the loop to there", () => {
-    let p = tapLoop(layout, none, bar("b", 2));
-    expect(p.span).toEqual({ from: bar("b", 2), to: bar("b", 2) });
-    p = tapLoop(layout, p, bar("b", 5));
-    expect(p.span).toEqual({ from: bar("b", 2), to: bar("b", 5) });
-    expect([1, 2, 5, 6].map((n) => inLoop(layout, p.span, bar("b", n)))).toEqual([false, true, true, false]);
-    // a tap after that starts again with one bar
-    p = tapLoop(layout, p, bar("a1", 1));
-    expect(p.span).toEqual({ from: bar("a1", 1), to: bar("a1", 1) });
+  it("tap bar 1, bar 2, bar 3: three bars loop", () => {
+    expect(taps(bar("b", 0))).toEqual({ from: bar("b", 0), to: bar("b", 0) });
+    expect(taps(bar("b", 0), bar("b", 1))).toEqual({ from: bar("b", 0), to: bar("b", 1) });
+    expect(taps(bar("b", 0), bar("b", 1), bar("b", 2))).toEqual({ from: bar("b", 0), to: bar("b", 2) });
+    // and a fourth, a fifth … as many as are tapped
+    expect(count(taps(...[0, 1, 2, 3, 4, 5, 6, 7].map((n) => bar("b", n))))).toBe(8);
+    // in any order
+    expect(taps(bar("b", 2), bar("b", 1), bar("b", 3), bar("b", 0))).toEqual({ from: bar("b", 0), to: bar("b", 3) });
   });
 
-  it("the second tap can be earlier, or in another section", () => {
-    let p = tapLoop(layout, tapLoop(layout, none, bar("b", 6)), bar("a1", 2));
-    expect(p.span).toEqual({ from: bar("a1", 2), to: bar("b", 6) });
-    expect(inLoop(layout, p.span, bar("a1", 3)) && inLoop(layout, p.span, bar("b", 0)) && !inLoop(layout, p.span, bar("a2", 0))).toBe(true);
+  it("a bar further off brings everything in between with it", () => {
+    const sp = taps(bar("b", 1), bar("b", 6));
+    expect(sp).toEqual({ from: bar("b", 1), to: bar("b", 6) });
+    expect([0, 1, 4, 6, 7].map((n) => inLoop(layout, sp, bar("b", n)))).toEqual([false, true, true, true, false]);
+  });
+
+  it("a loop can run across sections", () => {
+    const sp = taps(bar("b", 6), bar("a1", 2));
+    expect(sp).toEqual({ from: bar("a1", 2), to: bar("b", 6) });
+    expect(inLoop(layout, sp, bar("a1", 3)) && inLoop(layout, sp, bar("b", 0)) && !inLoop(layout, sp, bar("a2", 0))).toBe(true);
     // whole sections: first bar of one to the last bar of another
-    p = tapLoop(layout, tapLoop(layout, none, bar("a1", 0)), bar("b", 7));
-    expect(barIndex(layout, p.span!.to) - barIndex(layout, p.span!.from) + 1).toBe(12);
+    expect(count(taps(bar("a1", 0), bar("b", 7)))).toBe(12);
+    // and on into a third
+    expect(count(taps(bar("a1", 0), bar("b", 7), bar("a2", 3)))).toBe(16);
   });
 
-  it("tapping the one looped bar again lets the loop go", () => {
-    const p = tapLoop(layout, tapLoop(layout, none, bar("b", 2)), bar("b", 2));
-    expect(p).toEqual(none);
+  it("a bar at either end of the loop comes off again; the last one lets the loop go", () => {
+    const three = taps(bar("b", 0), bar("b", 1), bar("b", 2));
+    expect(tapLoop(layout, three, bar("b", 2))).toEqual({ from: bar("b", 0), to: bar("b", 1) });
+    expect(tapLoop(layout, three, bar("b", 0))).toEqual({ from: bar("b", 1), to: bar("b", 2) });
+    // across a section boundary too
+    const across = taps(bar("a1", 3), bar("b", 0));
+    expect(tapLoop(layout, across, bar("b", 0))).toEqual({ from: bar("a1", 3), to: bar("a1", 3) });
+    expect(tapLoop(layout, across, bar("a1", 3))).toEqual({ from: bar("b", 0), to: bar("b", 0) });
+    expect(taps(bar("b", 2), bar("b", 2))).toBeNull();
+  });
+
+  it("a bar in the middle of the loop becomes the whole loop", () => {
+    const five = taps(bar("b", 0), bar("b", 4));
+    expect(tapLoop(layout, five, bar("b", 2))).toEqual({ from: bar("b", 2), to: bar("b", 2) });
   });
 
   it("a whole section at once", () => {
