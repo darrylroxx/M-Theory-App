@@ -28,6 +28,13 @@ Making a section shorter never deletes anything: what lies past the end is kept 
 
 **Settings carry over.** Whatever you set in the first section (the playing style and its feel, the two harps' sounds, the drum kit, the drum rhythm, drums on or off) is what every other section uses, even if you change it later. Change one of those things in another section and that section keeps it as its own from then on; a small chip says which it is: **= A** (follows A) or **Own ↺** (tap to follow A again). Chords and melody notes always belong to their own section.
 
+**Copy and paste between sections.** The Rhythm, Melody and Drums pages each have **Copy** and **Paste** at the top, next to the letter of the section on screen. Copy takes everything on that page of the section; Paste puts it into the section on screen, in place of what is there. Each page has a clipboard of its own, so a rhythm only pastes as a rhythm, a melody as a melody and drums as drums, and copying drums never wipes a copied rhythm. Paste shows the letter it comes from, and turns into **↶ Undo** for a little while after a paste.
+- **Rhythm** copies the chords (lengths, rests and chosen shapes), the playing style with its feel, and the chord harp's sound.
+- **Melody** copies the notes, the grid, on/off, and the melody harp's sound.
+- **Drums** copies the drum rhythm, on/off, and the whole drum sound (kit, each drum's sound, mix and effects).
+
+A paste changes only that page: the section keeps its length (the Frame decides it) and its other two pages. If what is pasted runs past the end of the section, the part past the end is kept but does not play, and you are told. Pasting into section A changes what the other sections follow, just as changing A by hand does. The clipboards are kept when the app is closed, so a part can be pasted into another idea too; if that song is in another key, the chords and the melody are moved to its key.
+
 On the **Rhythm** page:
 
 1. **Key**: tap one of the 12 notes.
@@ -83,7 +90,7 @@ On the **Rhythm** page:
 10. **Song** (the frame at the top): sections are letters, **A B A C**… The page is section A to begin with. Tap a letter to go there; tap the one you are in to open its tools (move, copy, remove).
    - **+** → **New B** adds a section with its own chords and melody, and A's settings until you change them there; **A again** plays A once more. New sections land right after the one you are on.
    - The same letter twice is the same music: change one A and every A changes. **Unlink** gives one of them its own letter (with a copy of the chords, melody, style and drums), so it can differ.
-   - **Drag** a section to move it anywhere (on a phone: hold, then drag), or use ◀ ▶. **⧉** copies a section; **Paste** puts it after the one you are on. ✕ removes it.
+   - **Drag** a section to move it anywhere (on a phone: hold, then drag), or use ◀ ▶. ✕ removes it.
    - **↻ A** / **→ Song** next to ▶ choose between going round the section you are on and playing on through the song, each section with its own settings, while the page follows along.
    - MIDI export (with each section's drums) and "Copy tab" cover the whole song. Songs saved with Verse / Chorus names open with letters.
 11. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
@@ -161,7 +168,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 313 tests: theory (incl. an audit of every key), voicings, shapes, song structure, melody, library, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the canvas
+npm test          # 320 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the canvas
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

@@ -746,3 +746,9 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
   .tab { font-size: 0.84rem; }
   .cv-opts .spacer { flex-basis: 100%; height: 0; }
 }
+
+/* ── Copy and paste between sections (Rhythm, Melody, Drums) ── */
+.clip-bar { display: flex; align-items: center; gap: 6px; margin-bottom: -6px; }
+.clip-of { display: inline-flex; align-items: center; gap: 7px; font-weight: 750; font-size: 0.92rem; color: var(--muted); }
+.clip-of b { display: inline-grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: var(--kc); color: #14161a; font-weight: 900; font-size: 0.95rem; }
+.clip-from { display: inline-grid; place-items: center; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 5px; background: var(--card); border: 1px solid var(--border-2); font-weight: 800; font-size: 0.72rem; }

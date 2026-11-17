@@ -15,7 +15,9 @@ import { Seg } from "./common";
  * so a tune that sticks to lit rows and dots cannot sound wrong.
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  */
-export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link }: {
+export function MelodyGrid({ fresh, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link }: {
+  /** changes when another section is shown or something is pasted: undo starts afresh */
+  fresh?: string;
   /** the section's melody, as long as the section */
   melody: Melody;
   setMelody: (fn: (m: Melody) => Melody) => void;
@@ -40,6 +42,8 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
   const bars = melodyBars(melody);
   const at = Math.min(shown, bars - 1);
   const steps = Math.max(1, Math.round(bar * melody.div));
+  // undo only goes back through this section's own edits
+  useEffect(() => setPast([]), [fresh]);
   const live = useRef({ at, bars, steps, bar, div: melody.div });
   live.current = { at, bars, steps, bar, div: melody.div };
 

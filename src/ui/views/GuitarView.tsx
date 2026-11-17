@@ -12,7 +12,7 @@ import { QUICK_BARS, MAX_SECTION_BARS, barsOr, barsText, fitLoop, frameBeats, in
 import { addNewSection, ensureSong, letters, linkState, nextLetter, mapAllChords, moveBlock, setSectionBars, relink, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
-import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type KeyChord, type Role } from "../../theory/keys";
+import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
 import { displayNote, mod12, pc } from "../../theory/notes";
 import { suggestNext, type SuggestionGroup } from "../../theory/progression";
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
@@ -28,6 +28,7 @@ import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { barOf, chordBeats, fitBeats, newId, useApp, type ArrangeSettings, type Pane, type ProgChord, type Progression } from "../state";
+import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, type ClipKind, type Clips } from "../../song/clip";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
@@ -337,6 +338,9 @@ export function GuitarView() {
   /** Set how long the section on screen lasts, in bars. */
   const setBars = useCallback((n: number) => set((s) => ({ ...s, progression: { ...s.progression, bars: barsOr(n) } })), [set]);
   const curLetter = secs.find((x) => x.current)?.letter ?? "A";
+  /** how many pastes there have been: a paste starts the melody's and the drums' editing afresh */
+  const [pasted, setPasted] = useState(0);
+  const onPasted = useCallback(() => setPasted((n) => n + 1), []);
   /** How far into its section the music is, while the section on screen is the one sounding. */
   const getPos = useCallback(() => (playBlock.current === curRef.current ? player.current?.sectionBeat() ?? null : null), []);
   /** Where the music is, for the canvas: which section, and how far into it. */
@@ -485,6 +489,7 @@ export function GuitarView() {
           <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} items={items} beat={beat} tune={tune} plan={secs.length ? plan : null} />
         </div>
         <div className="pane" hidden={pane !== "rhythm"}>
+          <ClipBar kind="rhythm" letter={curLetter} frame={frame} onPasted={onPasted} />
           <ChordBoard />
           {/* The tray is part of the page. With the shape finder open it is lifted to the bottom of the screen, so shapes can be dragged straight in. */}
           {sheet && <div style={{ height: dockH.current }} />}
@@ -496,14 +501,16 @@ export function GuitarView() {
           <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={link("style")} soundLink={link("sound")} />
         </div>
         <div className="pane" hidden={pane !== "melody"}>
-          <MelodyGrid melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
+          <ClipBar kind="melody" letter={curLetter} frame={frame} onPasted={onPasted} />
+          <MelodyGrid fresh={`${curBlock}:${pasted}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
           <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
         </div>
         <div className="pane" hidden={pane !== "drums"}>
-          <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} stepSink={stepSink} kitLink={link("kit")} grooveLink={link("groove")} frame={nBars} getPos={getPos} />
+          <ClipBar kind="drums" letter={curLetter} frame={frame} onPasted={onPasted} />
+          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} stepSink={stepSink} kitLink={link("kit")} grooveLink={link("groove")} frame={nBars} getPos={getPos} />
         </div>
       </div>
       {pane === "rhythm" && away && !sheet && (
@@ -793,10 +800,6 @@ function NextChords() {
 
 
 /**
- * The song as a row of lettered blocks: A B A C … Tap one to work on it. Drag it (or use ◀ ▶) to move it.
- * Copy and Paste repeat a section; the same letter twice is the same music.
- */
-/**
  * The song: its sections in order, what ▶ does (go round the section on screen, or play on through
  * the song), and the three things each section is made of. It stays at the top of the screen.
  */
@@ -807,6 +810,82 @@ type SecPlan = { block: string; letter: string; bars: number; bar: number; items
 type Row = { blockId: string; partId: string; letter: string; current: boolean };
 /** The sections in playing order. With no song yet, what is on the page is section A. */
 const rowsOf = (secs: Section[]): Row[] => (secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true }]);
+
+// ── Copy and paste between sections ─────────────────────────
+
+const CLIP_NAME: Record<ClipKind, string> = { rhythm: "rhythm", melody: "melody", drums: "drums" };
+/** The fields of the page that a paste replaces (and an undo puts back). */
+const pageOf = (p: Progression, kind: ClipKind): Partial<Progression> =>
+  kind === "rhythm" ? { chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound } : kind === "melody" ? { melody: p.melody, tuneSound: p.tuneSound } : { beat: p.beat };
+function copyOf(kind: ClipKind, p: Progression, key: Key, letter: string): Clips {
+  return kind === "rhythm" ? { rhythm: copyRhythm(p, key, letter) } : kind === "melody" ? { melody: copyMelody(p, key, letter) } : { drums: copyDrums(p, key, letter) };
+}
+function pasteOf(kind: ClipKind, p: Progression, clips: Clips, key: Key): Progression {
+  if (kind === "rhythm") return clips.rhythm ? pasteRhythm(p, clips.rhythm, key, newId) : p;
+  if (kind === "melody") return clips.melody ? pasteMelody(p, clips.melody, key) : p;
+  return clips.drums ? pasteDrums(p, clips.drums) : p;
+}
+
+/**
+ * Copy and Paste for one page. Copy takes everything on this page of the section on screen; Paste
+ * puts the last thing copied on this same page into the section on screen, in place of what is
+ * there. Rhythm only goes to Rhythm, Melody to Melody, Drums to Drums. Undo takes a paste back.
+ */
+function ClipBar({ kind, letter, frame, onPasted }: { kind: ClipKind; letter: string; frame: number; onPasted: () => void }) {
+  const { state, set, toast } = useApp();
+  const clip = state.clip?.[kind];
+  const block = state.progression.song?.current ?? "";
+  const pane = state.pane;
+  const what = CLIP_NAME[kind];
+  /** what the page held before the last paste, while it can still be taken back */
+  const [undo, setUndo] = useState<{ block: string; before: Partial<Progression> } | null>(null);
+  // the undo belongs to the section and the page it was pasted into
+  useEffect(() => setUndo(null), [block, pane, state.ideaId]);
+  useEffect(() => {
+    if (!undo) return;
+    const t = window.setTimeout(() => setUndo(null), 20000);
+    return () => window.clearTimeout(t);
+  }, [undo]);
+  const copy = () => {
+    set((s) => ({ ...s, clip: { ...s.clip, ...copyOf(kind, s.progression, s.key, letter) } }));
+    setUndo(null);
+    toast(`${letter}: ${what} copied`);
+  };
+  const paste = () => {
+    if (!clip) return;
+    const before = state.progression;
+    const next = pasteOf(kind, before, state.clip ?? {}, state.key);
+    set((s) => ({ ...s, progression: { ...s.progression, ...pageOf(pasteOf(kind, s.progression, s.clip ?? {}, s.key), kind) } }));
+    setUndo({ block, before: pageOf(before, kind) });
+    onPasted();
+    const moved = kind !== "drums" && keyShift(clip.key, state.key) !== 0;
+    const lost = pastFrame(next, kind, frame);
+    toast(`${clip.from}'s ${what} pasted into ${letter}${moved ? `, moved to ${displayNote(state.key.tonic)}` : ""}${lost ? `. Some is past the end of ${letter}` : ""}`);
+  };
+  const takeBack = () => {
+    if (!undo) return;
+    set((s) => ({ ...s, progression: { ...s.progression, ...undo.before } }));
+    setUndo(null);
+    onPasted();
+    toast("Paste undone");
+  };
+  const has = hasPart(state.progression, kind);
+  return (
+    <div className="clip-bar" role="group" aria-label={`Copy and paste the ${what}`}>
+      <span className={`clip-of ${letterClass(letter)}`}><b>{letter}</b>{what[0].toUpperCase() + what.slice(1)}</span>
+      <span className="spacer" />
+      <button className="btn sm" title={`Copy everything on this page of ${letter}${kind === "rhythm" ? ": chords, style and sound" : kind === "melody" ? ": notes and sound" : ": rhythm and drum sound"}`} aria-label={`Copy the ${what} of ${letter}`} onClick={copy}>Copy</button>
+      {undo && undo.block === block ? (
+        <button className="btn sm" aria-label="Undo the paste" title={`Put back the ${what} ${letter} had before`} onClick={takeBack}>↶ Undo</button>
+      ) : (
+        <button className="btn sm" disabled={!clip} aria-label={clip ? `Paste the ${what} of ${clip.from} into ${letter}` : `Paste: copy a ${what} first`}
+          title={clip ? `Put the ${what} copied from ${clip.from} into ${letter}${has ? `, in place of what ${letter} has now` : ""}` : `Copy the ${what} of a section first`} onClick={paste}>
+          Paste{clip ? <small className="clip-from">{clip.from}</small> : null}
+        </button>
+      )}
+    </div>
+  );
+}
 
 /**
  * Play, on every page. ▶ plays the song in order from the section on screen. The strip beside it

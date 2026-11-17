@@ -16,6 +16,7 @@ import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, reviveSong, settle, type Song } from "../song/structure";
+import { reviveClips, type Clips } from "../song/clip";
 import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
@@ -125,6 +126,8 @@ export interface AppState {
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
   tombs?: Record<string, number>;
+  /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each) */
+  clip?: Clips;
 }
 
 export interface SheetState {
@@ -200,6 +203,7 @@ function load(): AppState {
       mySounds: reviveUserSounds(parsed.mySounds),
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
+      clip: reviveClips(parsed.clip),
       progression: reviveProgression(parsed.progression),
     };
   } catch {

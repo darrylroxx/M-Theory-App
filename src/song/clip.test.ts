@@ -1,0 +1,115 @@
+import { describe, expect, it } from "vitest";
+import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern } from "../audio/beats";
+import type { ProgChord, Progression } from "../ui/state";
+import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, reviveClips } from "./clip";
+import { addNewSection, ensureSong, sections, selectBlock } from "./structure";
+import { TICKS } from "./melody";
+
+const chord = (root: string, beats = 4): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats });
+const base = (roots: string[] = []): Progression => ({ chords: roots.map((r) => chord(r)), bpm: 90, pattern: "ring", loop: true, bars: 4 });
+let n = 0;
+const id = () => `id${++n}`;
+const G = { tonic: "G", scaleId: "ionian" };
+const A = { tonic: "A", scaleId: "ionian" };
+const tune = { div: 2 as const, bars: 4, notes: [{ at: 0, midi: 67 }, { at: 24, midi: 71 }] };
+
+/** A song with A (chords, style, sound, melody, drums) and an empty B on screen. */
+function song(): Progression {
+  const drums = { ...applyPattern(DEFAULT_BEAT, BEAT_LIBRARY[3]), on: true, kit: DEFAULT_BEAT.kit };
+  let p: Progression = { ...base(["G", "C", "D", "Em"]), pattern: "pinch", feel: { swing: 0.4 }, sound: { space: 0.7 }, melody: tune, tuneSound: { space: 0.2 }, beat: drums };
+  p = ensureSong(p, id);
+  return addNewSection(p, id);
+}
+
+describe("copy and paste between sections", () => {
+  it("rhythm: chords, style, feel and sound go to the section on screen, as new slots", () => {
+    const p0 = ensureSong({ ...base(["G", "C"]), pattern: "pinch", feel: { swing: 0.4 }, sound: { space: 0.7 } }, id);
+    const clip = copyRhythm(p0, G, "A");
+    const p = pasteRhythm(addNewSection(p0, id), clip, G, id);
+    expect(p.chords.map((c) => c.ref.root)).toEqual(["G", "C"]);
+    expect(p.chords.map((c) => c.id)).not.toEqual(p0.chords.map((c) => c.id));
+    expect(p.pattern).toBe("pinch");
+    expect(p.feel).toEqual({ swing: 0.4 });
+    expect(p.sound).toEqual({ space: 0.7 });
+  });
+
+  it("a copy is a copy: changing the section afterwards leaves the clipboard alone", () => {
+    const p = base(["G", "C"]);
+    const clip = copyRhythm(p, G, "A");
+    p.chords[0].ref.root = "F";
+    expect(clip.chords[0].ref.root).toBe("G");
+  });
+
+  it("each page pastes only its own part: the other two pages and the length stay", () => {
+    const p = song();
+    const a = selectBlock(p, sections(p)[0].blockId);
+    const r = pasteRhythm(p, copyRhythm(a, G, "A"), G, id);
+    expect(r.melody).toBe(p.melody);
+    expect(r.beat).toBe(p.beat);
+    expect(r.bars).toBe(p.bars);
+    const m = pasteMelody(p, copyMelody(a, G, "A"), G);
+    expect(m.melody?.notes).toEqual(tune.notes);
+    expect(m.tuneSound).toEqual({ space: 0.2 });
+    expect(m.chords).toBe(p.chords);
+    expect(m.beat).toBe(p.beat);
+    const d = pasteDrums(p, copyDrums(a, G, "A"));
+    expect(d.beat).toEqual(a.beat);
+    expect(d.chords).toBe(p.chords);
+    expect(d.melody).toBe(p.melody);
+  });
+
+  it("a pasted section keeps what was pasted when the song moves on to other sections", () => {
+    let p = song();
+    const a = selectBlock(p, sections(p)[0].blockId);
+    p = pasteDrums(pasteMelody(pasteRhythm(p, copyRhythm(a, G, "A"), G, id), copyMelody(a, G, "A"), G), copyDrums(a, G, "A"));
+    const [sa, sb] = sections(p);
+    expect(sb.chords.map((c) => c.ref.root)).toEqual(sa.chords.map((c) => c.ref.root));
+    expect(sb.melody?.notes).toEqual(sa.melody?.notes);
+    expect(sb.groove).toEqual(sa.groove);
+    expect(sb.style).toBe(sa.style);
+  });
+
+  it("into a song in another key, the chords and the melody move to that key", () => {
+    expect(keyShift(G, A)).toBe(2);
+    expect(keyShift(A, G)).toBe(-2);
+    expect(keyShift({ tonic: "C", scaleId: "ionian" }, { tonic: "B", scaleId: "ionian" })).toBe(-1);
+    const p = { ...base(["G", "D"]), melody: tune };
+    const r = pasteRhythm(base(), { ...copyRhythm(p, G, "A"), chords: [{ ...chord("G"), voicingId: "320003" }, chord("D")] }, A, id);
+    expect(r.chords.map((c) => c.ref.root)).toEqual(["A", "E"]);
+    expect(r.chords[0].voicingId).toBeUndefined();
+    const m = pasteMelody(base(), copyMelody(p, G, "A"), A);
+    expect(m.melody?.notes.map((x) => x.midi)).toEqual([69, 73]);
+    // up or down, whichever keeps the tune on the new key's grid
+    expect(pasteMelody(base(), copyMelody({ ...p, melody: { ...tune, notes: [{ at: 0, midi: 78 }] } }, G, "A"), { tonic: "C#", scaleId: "ionian" }).melody?.notes[0].midi).toBe(84);
+    // same key: nothing moves, chosen shapes stay
+    const same = pasteRhythm(base(), { ...copyRhythm(p, G, "A"), chords: [{ ...chord("G"), voicingId: "320003" }] }, G, id);
+    expect(same.chords[0].voicingId).toBe("320003");
+  });
+
+  it("knows when a section already has something, and when a paste runs past its end", () => {
+    expect(hasPart(base(), "rhythm")).toBe(false);
+    expect(hasPart(base(["C"]), "rhythm")).toBe(true);
+    expect(hasPart({ ...base(), melody: tune }, "melody")).toBe(true);
+    expect(hasPart({ ...base(), beat: { ...DEFAULT_BEAT, on: false } }, "drums")).toBe(false);
+    const long = base(["C", "F", "G", "C"]);
+    expect(pastFrame(long, "rhythm", 16)).toBe(false);
+    expect(pastFrame(long, "rhythm", 8)).toBe(true);
+    // rests past the end are no loss
+    expect(pastFrame({ ...base(["C", "F"]), chords: [chord("C"), chord("F"), { ...chord("G"), rest: true }] }, "rhythm", 8)).toBe(false);
+    expect(pastFrame({ ...base(), melody: { ...tune, notes: [{ at: 8 * TICKS, midi: 60 }] } }, "melody", 8)).toBe(true);
+    expect(pastFrame({ ...base(), melody: tune }, "melody", 8)).toBe(false);
+  });
+
+  it("clipboards survive a reload; broken ones are dropped", () => {
+    const p = song();
+    const a = selectBlock(p, sections(p)[0].blockId);
+    const kept = reviveClips(JSON.parse(JSON.stringify({ rhythm: copyRhythm(a, G, "A"), melody: copyMelody(a, G, "A"), drums: copyDrums(a, G, "A") })));
+    expect(kept.rhythm?.chords).toHaveLength(4);
+    expect(kept.rhythm?.pattern).toBe("pinch");
+    expect(kept.melody?.melody?.notes).toEqual(tune.notes);
+    expect(kept.drums?.beat.on).toBe(true);
+    expect(kept.drums?.from).toBe("A");
+    expect(reviveClips(undefined)).toEqual({});
+    expect(reviveClips({ rhythm: { from: "A", key: G, chords: [], pattern: "no-such-style" }, drums: { from: "A", key: G, beat: 7 }, melody: { from: 3 } })).toEqual({});
+  });
+});

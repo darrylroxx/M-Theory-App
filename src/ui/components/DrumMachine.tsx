@@ -28,7 +28,7 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink, frame, getPos }: {
+export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink, frame, getPos }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
@@ -42,6 +42,8 @@ export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink,
   /** whether this section's drum sound and drum rhythm are the song's or its own */
   kitLink?: Link;
   grooveLink?: Link;
+  /** changes when something is pasted: an edit in progress is let go */
+  fresh?: number;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.myBeats;
@@ -113,7 +115,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink,
   useEffect(() => {
     setEdit(null);
     setBar(0);
-  }, [state.ideaId, section]);
+  }, [state.ideaId, section, fresh]);
   useEffect(() => {
     setDrumSolo(solo);
     return () => setDrumSolo(null);
