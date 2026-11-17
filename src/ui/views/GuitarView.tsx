@@ -12,7 +12,7 @@ import { QUICK_BARS, MAX_SECTION_BARS, barsOr, barsText, frameBeats, inFrame, st
 import { addNewSection, ensureSong, letters, linkState, nextLetter, mapAllChords, moveBlock, setSectionBars, relink, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
-import { ROLE_INFO, analyzeChord, borrowedChords, chordsInScale, diatonicChords, spiceChords, transposeRef, type KeyChord, type Role } from "../../theory/keys";
+import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type KeyChord, type Role } from "../../theory/keys";
 import { displayNote, mod12, pc } from "../../theory/notes";
 import { suggestNext, type SuggestionGroup } from "../../theory/progression";
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
@@ -515,8 +515,6 @@ type View = "key" | "outside" | "next";
 const GROUP_LABEL: Record<SuggestionGroup["id"], string> = { natural: "Safe", smooth: "Smooth", color: "Colorful", bold: "Bold" };
 /** Short names for the kinds of chord. */
 const KIND: Record<string, string> = { Triads: "Triads", "Power & Sus": "Sus", Sixths: "6ths", Sevenths: "7ths", "Added tones": "Added", "Extended (9, 11, 13)": "Extended", "Altered dominants": "Altered" };
-/** The plainest chord a note offers, for its card. */
-const PLAIN = ["maj", "min", "dim", "aug", "5", "sus2", "sus4", "majb5"];
 
 /** The chord last tapped in one of the chord lists: it gets the Shapes and + buttons. */
 const PickCtx = createContext<{ sel: ChordRef | null; setSel: (r: ChordRef) => void }>({ sel: null, setSel: () => {} });
@@ -558,14 +556,14 @@ const ChordBoard = memo(function ChordBoard() {
   const scale = getScale(key.scaleId);
   const hepta = isHeptatonic(scale);
   const [view, setView] = useState<View>("key");
-  const [size, setSize] = useState<3 | 4>(3);
+  /** which kind of chord the cards show: triads, sevenths, sus chords … */
+  const [kind, setKind] = useState("triads");
   const [deg, setDeg] = useState(1);
   const all = useMemo(() => chordsInScale(key), [key]);
-  // each note's card: its triad (or seventh chord) built from the scale; in other scales, the plainest chord that fits
-  const cards = useMemo(() => {
-    const stacked = hepta ? diatonicChords(key, size).filter((c) => !c.type.synthetic) : [];
-    return all.map((d) => stacked.find((c) => c.degree === d.degree) ?? [...d.chords].sort((x, y) => (PLAIN.indexOf(x.type.id) + 99) % 99 - (PLAIN.indexOf(y.type.id) + 99) % 99)[0] ?? null);
-  }, [all, key, size, hepta]);
+  // each note's card: the chord of this kind that uses only notes of the key (none where it does not fit)
+  const cards = useMemo(() => chordRow(key, kind), [key, kind]);
+  const row = CHORD_ROWS.find((r) => r.id === kind) ?? CHORD_ROWS[0];
+  const fits = cards.filter((c) => c).length;
   const degree = all.find((d) => d.degree === deg) ?? all[0];
   const picked = sel && view === "key" ? degree?.chords.some((c) => sameRef(sel, c.ref)) : !!sel;
 
@@ -573,7 +571,11 @@ const ChordBoard = memo(function ChordBoard() {
     <section className="card board">
       <div className="board-head">
         <Seg value={view} options={[{ value: "key", label: "In key" }, { value: "outside", label: "Outside" }, { value: "next", label: "Next" }]} onChange={setView} label="Which chords" />
-        {view === "key" && hepta && <Seg value={size} options={[{ value: 3, label: "Triads" }, { value: 4, label: "7ths" }]} onChange={setSize} label="Cards show" />}
+        {view === "key" && (
+          <div className="seg kinds" role="radiogroup" aria-label="Which kind of chord the cards show">
+            {CHORD_ROWS.map((r) => <button key={r.id} role="radio" aria-checked={kind === r.id} className={kind === r.id ? "on" : ""} title={r.hint} onClick={() => setKind(r.id)}>{r.label}</button>)}
+          </div>
+        )}
         <span className="board-set">
           <button className="key-chip" title="The key of the song: change it on the Frame page" onClick={() => set((s) => ({ ...s, pane: "frame" }))}>{displayNote(key.tonic)} {scale.short}</button>
           <CapoPick />
@@ -592,9 +594,10 @@ const ChordBoard = memo(function ChordBoard() {
             <div className="key-chords">
               {cards.map((c, i) =>
                 c ? <ChordCard key={`${all[i].degree}-${c.type.id}`} c={c} on={degree?.degree === all[i].degree} onPick={() => setDeg(all[i].degree)} />
-                  : <button key={all[i].degree} className={`kc bare${degree?.degree === all[i].degree ? " on" : ""}`} onClick={() => setDeg(all[i].degree)}><span className="kc-name">{displayNote(all[i].root)}</span></button>,
+                  : <button key={all[i].degree} className={`kc bare${degree?.degree === all[i].degree ? " on" : ""}`} title={`No ${row.label} chord on ${displayNote(all[i].root)} stays in the key. Tap for the chords that do`} onClick={() => setDeg(all[i].degree)}><span className="kc-name">{displayNote(all[i].root)}</span><span className="kc-none">—</span></button>,
               )}
             </div>
+            {fits === 0 && <span className="faint tiny">No {row.label} chords fit this scale</span>}
             {degree && (
               <div className="deg-all" role="group" aria-label={`Every chord in the key on ${displayNote(degree.root)}`}>
                 {CHORD_CATEGORIES.filter((cat) => degree.chords.some((c) => c.type.category === cat)).map((cat) => (

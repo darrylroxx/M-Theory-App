@@ -159,6 +159,56 @@ export function diatonicChords(key: Key, size: 3 | 4 | 5 = 3): KeyChord[] {
 }
 
 /**
+ * A row of chords for the key: one kind of chord, built on every note of the scale.
+ * Each row names the chord types that count as that kind, best first; the one that uses only
+ * notes of the key is the one shown.
+ */
+export interface ChordRow {
+  id: string;
+  label: string;
+  /** what the row is, in a few words */
+  hint: string;
+  /** chord types of this kind, the plainest first */
+  types: string[];
+  /** in seven-note scales, build it by stacking thirds instead: 3 = triads, 4 = sevenths */
+  stack?: 3 | 4;
+  /** when nothing of this kind fits a note, show the plainest chord that does */
+  any?: boolean;
+}
+export const CHORD_ROWS: ChordRow[] = [
+  { id: "triads", label: "Triads", hint: "Three notes: the plain chords of the key", types: ["maj", "min", "dim", "aug", "5", "sus2", "sus4", "majb5"], stack: 3, any: true },
+  { id: "power", label: "Power", hint: "Root and fifth only: neither major nor minor", types: ["5"] },
+  { id: "sus2", label: "Sus2", hint: "The third swapped for the second: open and airy", types: ["sus2"] },
+  { id: "sus4", label: "Sus4", hint: "The third swapped for the fourth: wants to resolve", types: ["sus4"] },
+  { id: "sixths", label: "6ths", hint: "A triad with the sixth on top: warm and settled", types: ["6", "m6", "mb6"] },
+  { id: "sevenths", label: "7ths", hint: "Four notes: richer, jazzier chords of the key", types: ["maj7", "7", "m7", "m7b5", "mMaj7", "dim7", "maj7#5", "dimMaj7"], stack: 4 },
+  { id: "add9", label: "Add9", hint: "A triad with the ninth added: sparkle without the seventh", types: ["add9", "madd9"] },
+  // a flattened ninth over a minor chord clashes with its root, so those are left off this row
+  { id: "ninths", label: "9ths", hint: "A seventh chord with the ninth on top", types: ["maj9", "9", "m9", "mMaj9", "m9b5", "7b9"] },
+  // a plain eleventh over a major third clashes, so major chords get the raised eleventh and dominants the suspended form
+  { id: "elevenths", label: "11ths", hint: "With the eleventh: lush on minor chords, floating on the rest", types: ["m11", "m7add11", "maj9#11", "maj7#11", "9sus4", "7sus4", "9#11", "7#11", "m11b5"] },
+  { id: "thirteenths", label: "13ths", hint: "With the thirteenth: the fullest chords of the key", types: ["maj13", "13", "m13", "7b13"] },
+];
+
+/** One chord of a kind on every note of the scale, in scale order (null where none fits the key). */
+export function chordRow(key: Key, rowId: string): (KeyChord | null)[] {
+  const row = CHORD_ROWS.find((r) => r.id === rowId) ?? CHORD_ROWS[0];
+  const stacked = row.stack && isHeptatonic(keyScale(key)) ? diatonicChords(key, row.stack).filter((c) => !c.type.synthetic) : [];
+  // a chord does the job of the triad on its note: home, near home, away or tension
+  const roles = new Map(diatonicChords(key, 3).map((c) => [c.degree, c.role]));
+  const withRole = (c: KeyChord, degree: number): KeyChord => (c.role || !roles.get(degree) ? c : { ...c, role: roles.get(degree) });
+  return chordsInScale(key).map((d) => {
+    const built = stacked.find((c) => c.degree === d.degree);
+    if (built) return built;
+    for (const id of row.types) {
+      const hit = d.chords.find((c) => c.type.id === id);
+      if (hit) return withRole(hit, d.degree);
+    }
+    return row.any && d.chords[0] ? withRole(d.chords[0], d.degree) : null;
+  });
+}
+
+/**
  * EVERY chord in the library whose notes all live inside the scale,
  * grouped by the scale degree it's built on. This is "all the chords in the key".
  */

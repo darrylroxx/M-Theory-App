@@ -660,3 +660,12 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .key-chip:hover { border-color: var(--accent); color: var(--text); }
 .rest-add.clear:hover { border-color: var(--tension); color: var(--tension); }
 @media (max-width: 620px) { .board-set { margin-left: 0; flex: 1 1 100%; justify-content: space-between; } }
+
+/* Rhythm: one row of cards for every kind of chord the key offers */
+.seg.kinds { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; max-width: 100%; min-width: 0; }
+.seg.kinds::-webkit-scrollbar { display: none; }
+.seg.kinds button { flex: 0 0 auto; white-space: nowrap; }
+.kc.bare { opacity: 0.6; border-style: dashed; border-top-style: dashed; }
+.kc.bare.on { opacity: 1; }
+.kc-none { color: var(--faint); font-weight: 800; }
+@media (max-width: 620px) { .board-head .seg.kinds { flex: 1 1 100%; order: 2; } .board-head .board-set { order: 3; } .board-head .pick-bar { order: 4; } }
