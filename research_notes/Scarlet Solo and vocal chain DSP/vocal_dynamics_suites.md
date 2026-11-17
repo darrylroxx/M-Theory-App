@@ -242,3 +242,25 @@ Total added latency: 0 samples, apart from optional IIR oversampling of a fracti
 
 ### Gaps
 - No Sound On Sound or mix-engineer interview quotes could be fetched (the site was unreachable), so the specific numeric conventions above (HPF 80–100 Hz, 200–500 Hz cut, 3–5 kHz presence, 10–12 kHz air) are uncited and should be treated as common practice, not sourced fact.
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+- **Nectar 4 manual [read]** — [Nectar 4 Help](https://docs.izotope.com/nectar4/en/print/index.html):
+  - modules: "EQ, Auto-Level, Breath Control, Backer, Pitch, Compressor, Voices, De-Esser, Saturation, Reverb, Gate, Delay, and Dimension";
+  - output limiter: "a brickwall, zero latency limiter".
+  - Compressor modes and ranges are identical to Nectar 3: Digital and Vintage 1:1–50:1, 0.1–300 ms attack, 1–1200 ms release; Optical fixed 4:1, 1–100 ms attack, 40–200 ms release; Solid-State 4:1–12:1, 0.2–80 ms attack, 50–1200 ms release; RMS advised for Optical and Peak for Solid-State.
+- **Correction / clarification (de-esser):** in Nectar 4 the 800 Hz–8 kHz value is the "lower frequency boundary for the detection filter frequency band". When triggered, "the De-esser will apply reduction to the entire bandwidth of the incoming signal". That makes it wideband reduction with level-independent detection, not split-band.
+- **Added (Nectar 4 Auto-Level, ALM):**
+  - Learn (sets an RMS target), Target, Mix, Tame Noise, Listen and Strength (speed);
+  - Range: "a setting of 6 decibels will limit the amount of leveling to a maximum of +6 or -6 dB", with 12 "extreme" and 1 "subtle";
+  - side-chain mode.
+- **iZotope product page [read]:** Nectar 4 is still current in Nov 2026. Voices and Backer are in Standard and Advanced; ALM, the 13 component plug-ins and the Breath Control plug-in are Advanced only. The release date (6 Sep 2023) is still [excerpt]. — [iZotope Nectar features](https://www.izotope.com/en/products/nectar/features)
+- **LA-2A [read]:**
+  - UA spec: "Attack Time 10 milliseconds"; "0.06 seconds for 50% release; 0.5 to 5 seconds for complete release". — [UA LA-2A product page](https://www.uaudio.com/products/teletronix-la-2a-classic-leveling-amplifier)
+  - UA article: ratio "roughly 3:1", attack 10 ms, "about 60 milliseconds for 50% of the release, and anywhere from 1 to 15 seconds for the rest". — [UA LA-2A tips & tricks](https://www.uaudio.com/blogs/ua/la-2a-collection-tips-tricks)
+  - The UA WebZine 2003 URL now returns 404.
+- **1176 [read]:** attack 20–800 µs; release 50 ms–1.1 s; ratios 4:1 and 8:1 for compression, 12:1 and 20:1 for limiting. In "All Buttons In", "distortion increases, along with a plateaued slope and a lag time in response to initial transients". help.uaudio.com (the plug-in manual) was refused. — [UA 1176LN product page](https://www.uaudio.com/products/1176ln-classic-limiting-amplifier)
+- **Giannoulis/Massberg/Reiss:** still [recall]. The AES E-Library is paywalled, and the open copies (QMUL, academia.edu, university mirrors) are on hosts this session cannot reach.
+- **KVR Nectar 3 194 ms report:** still [excerpt]. kvraudio.com serves a Cloudflare challenge.

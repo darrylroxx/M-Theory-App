@@ -239,3 +239,27 @@ Independent teardowns of the Solo 3rd Gen identify a Cirrus Logic CS4272 stereo 
 - No schematic and no confirmed preamp topology (discrete front end vs op-amp only) was found.
 - The XMOS part is inferred, not read from the chip marking.
 - No iFixit or EEVblog teardown of the Solo 3rd Gen was found.
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+Sources opened on 17 Nov 2026. Focusrite help-centre articles were read through the sites' public Zendesk API (`/api/v2/help_center/en-gb/articles/<id>.json`), because the HTML pages serve a Cloudflare challenge.
+
+- **Spec page and User Guide v2 read [read].** All 3rd Gen input/output figures in section 1 and section 6 are confirmed. — [Focusrite 3rd Gen specifications](https://userguides.focusrite.com/hc/en-gb/articles/23031457381138-Scarlett-Solo-3rd-Gen-specifications); [User Guide v2](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Scarlett%20Solo%203rd%20Gen%20User%20Guide%20V2_0.pdf)
+- **Correction:** line-output dynamic range is **108.5 dB** (A-wtd), not 108 dB.
+- **Correction / resolution:** the web spec page does print "2 Hz to 20kHz ±0.1dB" for the line input, but the v2 user guide prints **20 Hz to 20 kHz ±0.1 dB**. So "2 Hz" is a typo on the web page.
+- **Note on units:** Focusrite prints the mic EIN as **"−128 dB (A-weighted)"**, not dBu. The value is unchanged.
+- **Correction:** the 48V **five-second hold** to leave Easy Start appears in the v2 guide and on the current Getting Started page, so it is **not** a legacy method. — [Getting started](https://userguides.focusrite.com/hc/en-gb/articles/23031471992082-Getting-started-with-your-Scarlett-Solo-3rd-Gen)
+- **Confirmed [read]:**
+  - halos: green ≥ −24 dBFS, amber at −6 dBFS, red at 0 dBFS;
+  - Direct Monitor: "Your inputs will be summed to mono"; playback is in stereo;
+  - the MONITOR knob sets both the rear outputs and the headphones;
+  - "+10 dBu output level (variable)" on the line outputs;
+  - "1 x USB 2.0 Type-C connector" and "the Solo is a USB 2.0 device". The High-Speed rate and current draw are still unstated. — [hardware features](https://userguides.focusrite.com/hc/en-gb/articles/23031457294610-Scarlett-Solo-3rd-Gen-hardware-features)
+- **Correction (Air):** Focusrite's Air article attributes the "4dB boost at 24kHz" and the 6.2 kΩ → 2.2 kΩ change to **Clarett+ and Red only**. It says 4th Gen "Air Presence is the same as Air was on Scarlett 3rd Gen". 3rd Gen Air is a "completely analogue circuit", has "no DSP", "adds no latency", and can be toggled from Focusrite Control. — [Focusrite: What is Air](https://support.focusrite.com/hc/en-gb/articles/10742398294930-What-is-Air-on-my-interface)
+- **Added (Air impedance):** SOS says "the new Scarlett preamps remain at the Air impedance" whether Air is on or off. — [SOS](https://www.soundonsound.com/reviews/focusrite-scarlett-usbc)
+- **Correction (4th Gen naming):** Focusrite names the 4th Gen modes "Air Presence" and "Air Presence & Drive", not "Presence" and "Harmonic Drive".
+- **Confirmed [read]:** the 4th Gen Solo spec page lists 57 dB, −127 dBu EIN and 9.5 dBu max mic input. — [Solo 4th Gen specs](https://userguides.focusrite.com/hc/en-gb/articles/17505454908562-Scarlett-Solo-4th-Gen-Specifications)
+- **Correction (Easy Start software):** the current Getting Started page names **Focusrite Control 2** (which "also installs the correct driver") as the software that disables Easy Start. FC2 gained 3rd Gen beta support in 1.1081.0 (16 Jul 2026) and listed full support from 1.1108.0 (13 Aug 2026). — [FC2 release notes](https://support.focusrite.com/hc/en-gb/articles/13289679039378-Focusrite-Control-2-Release-Notes)
+- **Correction (iPad):** iPhone/iPad use is **not** "only through a powered USB-C hub". Focusrite lists the Solo 3rd Gen as tested and supported with USB-C iPads. Some USB-C devices (e.g. iPad Pro) power it directly, and a PD hub is the fallback. Lightning devices "can't provide enough power to the interface via a direct connection alone" (Camera Adapter plus charger), and no 3rd Gen is officially supported on Lightning iPads. Since iPadOS 15, units still in MSD mode "may not work". — [USB-C iPad Pro](https://support.focusrite.com/hc/en-gb/articles/360002662100-Using-an-audio-interface-with-a-USB-C-iPad-Pro); [bus-powered on iPhone/iPad](https://support.focusrite.com/hc/en-gb/articles/37768338125074-Connecting-a-bus-powered-audio-interface-to-an-iPhone-or-iPad); [3rd Gen not working on iPad](https://support.focusrite.com/hc/en-gb/articles/360016999880)

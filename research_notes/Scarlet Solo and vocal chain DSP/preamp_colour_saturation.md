@@ -225,3 +225,37 @@ Very little is published. Measured tape frequency responses (head bump) exist fr
 ### Gaps
 - No harmonic-spectrum measurements were found for: the Neve 1073, API 512c/550A, SSL E/G, the JHS Colour Box, or Decapitator styles.
 - Network limits: soundtoys.com, ams-neve.com and jhspedals.info must be allowed in the session's network settings to read the manuals in full.
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+- **JHS Colour Box V2 [read]** — [JHS V2 page](https://jhspedals.info/products/colour-box-v2):
+  - Step: "1st is +18 dB, 2nd is +23 dB, 3rd is +28 dB, 4th is +33 dB, 5th is +39 dB", applied to "each preamp stage".
+  - Pre-Vol "controls the amount of gain between the two internal gain stages" and acts as drive; Master sets the overall volume.
+  - Treble ±15 dB, Middle ±10 dB, Bass ±15 dB, all "flat at noon".
+  - Shift: Treble 2–30 kHz, Middle 150 Hz–2.4 kHz, Bass 20–440 Hz (each moves the "center Freq").
+- **Correction (V2 Hi-Pass slope):** "The HPF is a 2nd order 12dB per octave high pass filter", with the −3 dB cutoff adjustable from 160 Hz to 650 Hz. The 6 dB/oct reading was wrong.
+- **Added [read] (V2 features):**
+  - a **Hi/Lo switch** (Lo for clean headroom; Hi "will distort much more readily");
+  - an output transformer;
+  - a −20 dB pad that "only works when in XLR input mode";
+  - safe 48 V phantom pass-through;
+  - an INST/XLR selector;
+  - version history: V1 has a "smaller enclosure; no 'shift' EQ knobs; seven knobs total". The V1 product page has no description, so V1 steps and EQ points remain unconfirmed.
+- **Colour Box 500 [read]:** step "18db, 23db, 28db, 32db, or 37db"; the core is "two cascaded Neve BA283 stages as found in the Neve 1073 preamps"; Carnhill VTB9046 input transformer. — [JHS Colour Box 500](https://jhspedals.info/products/colour-box-500)
+- **Neve 1073 [read]** — [AMS Neve 1073](https://www.ams-neve.com/outboard/1073-range/1073-mic-preamp-equaliser/):
+  - mic gain "+80db to +20dB in 5dB steps"; line input 10 kΩ, +20 to −10 dB;
+  - HF "+/-16dB fixed frequency shelving at 12kHz";
+  - LF "+/-16dB shelving" at 35/60/110/220 Hz (**the ±16 dB low-shelf gain was missing before**);
+  - mid "+/-18dB peaking, fixed 'Q'" at 0.36/0.7/1.6/3.2/4.8/7.2 kHz;
+  - HPF "18dB per octave", 50/80/160/300 Hz;
+  - Marinair 10468 mic and 31267 line input transformers; LO1166 gapped output transformer;
+  - "three distinct gain stages provided by two independent transistor-based preamplifiers".
+
+  The 1073LB page (ams-neve.com without "www") was refused, so its exact wording is still [excerpt].
+- **Decapitator manual [read]** — [Decapitator manual](https://www.soundtoys.com/wp-content/uploads/Decapitator-Manual.pdf):
+  - styles A = Ampex 350 tape preamp, E = Chandler/EMI TG, N = Neve 1057, T = Culture Vulture triode, P = Culture Vulture pentode;
+  - Punish "adds an extra 20db of gain".
+- **Correction (Decapitator signal order):** Low Cut acts "before they hit the (virtual) saturation circuit"; Thump adds "a few dB of low frequency boost right at the Low Cut frequency"; Tone (AM-radio/tilt) "alters the sound before the saturation section"; High Cut "operates AFTER the saturation section". Steep switches High Cut from 6 dB/oct to 30 dB/oct. Auto lowers Output as Drive rises, and Mix blends dry and wet. The manual gives no numeric Low/High Cut ranges and does not mention oversampling. The earlier inferred chain (tilt and low/high cut after the nonlinearity) is therefore wrong. Use: Low Cut (+Thump) → Tone → drive → style → High Cut → auto-trim → mix.
+- Still unverified: the UA WebZine 2006 EQ article (URL now 404) and the API 550A brochure (host not allowed).

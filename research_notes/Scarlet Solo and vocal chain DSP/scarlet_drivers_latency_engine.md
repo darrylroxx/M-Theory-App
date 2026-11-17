@@ -476,3 +476,46 @@ The **Focusrite Notifier** is the control surface for buffer size, Safe Mode, th
   - the Notifier's behaviour when an ASIO app changes the rate
   - known USB-controller incompatibilities (e.g. some AMD or Intel chipsets)
 - I found no clock-drift problems specific to the Solo 3rd Gen. With one device providing both input and output, there is a single clock, so no drift between record and playback is expected (an inference).
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+Focusrite help-centre articles were read through the public Zendesk API, because the HTML pages serve a Cloudflare challenge. The 2020 and 2022 release-note PDFs were downloaded from fael-downloads-prod.focusrite.com.
+
+- **Correction (current driver):** the latest Windows driver is **4.150.0, released 17 Aug 2026** (Windows 10 64-bit / 11; 3rd Gen Scarlett range listed). Its notes say "Focusrite Notifier now opens Focusrite Control 2 for 2nd/3rd Gen Scarletts". 4.144.0 (28 Apr 2026) is the previous release. 4.143.0 (1 Sep 2025) "fixed an issue that could cause some ASIO DAWs to hang on a sample rate change". FC2 1.1108.0 bundles driver 4.150.0.432. — [Driver release notes](https://support.focusrite.com/hc/en-gb/articles/13070702714130-Focusrite-Windows-Driver-Release-Notes); [FC2 release notes](https://support.focusrite.com/hc/en-gb/articles/13289679039378-Focusrite-Control-2-Release-Notes)
+- **Correction (Notifier):** the Notifier replaced the "ASIO Control Panel", and latency-reporting accuracy was increased, in **4.63.23 (2 Jul 2019)**, not 4.65.5. — [June 2022 release notes PDF](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Focusrite%20driver%20release%20notes%20-%20June%202022.pdf)
+- **Correction (clock rename):** "LOCKED" → "SYNCED" was in **4.65.5 (4 Jun 2020)**, not a 2022 release. — [4.65.5 notes PDF](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Windows%20USB%20Driver%204.65.5%20-%20Release%20Notes_0.pdf)
+- **Correction (Safe Mode):** Safe Mode and the latency readout were added in **beta 4.99.2 (1 Feb 2022)**. 4.102.4 (1 Jun 2022) only added Vocaster support. The first non-beta after 4.99.2 was 4.100.10 (16 May 2022). No page describes what Safe Mode does internally.
+- **Correction (buffer persistence):** "Buffer size now retained on computer restart" is in **4.36.0 (14 Jun 2017)**, for the 2nd Gen at the time. 4.62.1's notes do not mention it.
+- **Confirmed / added [read]:**
+  - 4.65.5 "fixed an issue that caused some DAWs (namely Studio One, Reason and Sibelius) to expose unsupported buffer size options";
+  - 4.65.5 "fixed an issue that could cause glitching when using more than one ASIO application at the same time" (implies multi-ASIO-client use is intended);
+  - 4.63.24 corrected the device running "at a different sample rate than the open DAW session".
+- **Confirmed [read] (driver name):** the Solo 3rd Gen's own Getting Started page says "You must manually select Focusrite USB ASIO as the driver". — [Getting started](https://userguides.focusrite.com/hc/en-gb/articles/23031471992082-Getting-started-with-your-Scarlett-Solo-3rd-Gen)
+- **Added [read] (settings panel and sample rate):** the Notifier's panel is "Focusrite Device Settings". "The sample rate selected here will be the only option that appears in Control Panel → Hardware and Sound → Sound", and "certain DAWs and other software can also control the sample rate and buffer size". — [Change sample rate and buffer size on Windows](https://support.focusrite.com/hc/en-gb/articles/208814065-How-to-change-the-sample-rate-and-buffer-size-on-Windows)
+- **Added [read] (VoIP advice):** Focusrite's VoIP article recommends 48 kHz / **192 samples**, notes that "some DAWs don't support a buffer size of 192 samples", and says opening an ASIO DAW "may change the sample rate/buffer size". — [VoIP issues](https://support.focusrite.com/hc/en-gb/articles/360013759200-Audio-issues-in-Windows-VoIP-apps-Discord-Zoom-Teamspeak)
+- **Still unverified:**
+  - ASIO channel-name strings and the exact buffer list (16/32/64/128…): no Focusrite page read lists them;
+  - the KVR multi-client quote: kvraudio.com serves a Cloudflare challenge;
+  - "since June 2020" and "several hours" iPad claims: us.focusrite.com is not allowed, and article 360012532199 returned no article.
+- **Tauri (v2.tauri.app) [read]:** the updater requirements are confirmed. Additions:
+  - signature verification "cannot be disabled";
+  - pubkey "cannot be a file path";
+  - "TLS is enforced in production mode" (`dangerousInsecureTransportProtocol` override exists);
+  - required `latest.json` keys are `version`, `platforms.[target].url` and `platforms.[target].signature`;
+  - Windows `installMode` defaults to "passive", and the app exits when the installer runs;
+  - `check()` accepts custom headers (an `Authorization: Bearer <token>` example).
+
+  The page has no private-repo guidance. — [v2.tauri.app: Updater](https://v2.tauri.app/plugin/updater/)
+- **Steinberg ASIO SDK [read]:**
+  - "Steinberg ASIO technology is available in open source form under a GNU General Public License, version GPLv3."
+  - Switching to GPLv3 is allowed "if your product is released under GPLv3 license terms (including source code disclosure)".
+  - Name and logo use is optional and "not covered by the GNU License". Logos must be unaltered and follow the SDK usage guidelines. They are allowed on splash screens, About boxes, product websites and docs.
+  - Prohibited: "ASIO" or derivatives in company or product names; the logo on non-ASIO-compatible products; offensive association.
+  - The proprietary route is the "ASIO Licensing Agreement" PDF (on download.steinberg.net, not reachable, so unread), described as "mostly concerned with liability issues".
+  - steinberg.net/asiosdk redirects to **ASIO-SDK_2.3.4_2025-10-15.zip**.
+
+  — [ASIO SDK open](https://www.steinberg.net/developers/asiosdk-open/); [proprietary SDKs](https://www.steinberg.net/developers/prorietary-sdk/)
+- **hound (docs.rs, 3.5.1) [read]:** `flush()` "can be used for 'checkpointing'... the file can still be read by a compliant decoder up to the last flush". There is no RF64/W64 API, and `len()`/`duration()` return `u32`. — [docs.rs: hound WavWriter](https://docs.rs/hound/latest/hound/struct.WavWriter.html)
+- **rtrb (docs.rs, 0.4.1) [read]:** "Reading from and writing into the ring buffer is lock-free and wait-free"; it has chunk APIs (`write_chunk`, `read_chunk`). — [docs.rs: rtrb](https://docs.rs/rtrb/latest/rtrb/)

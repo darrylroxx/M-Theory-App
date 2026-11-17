@@ -408,3 +408,43 @@ Suggested built-in presets for the app. These are a starting set synthesised fro
 ### Gaps
 - I found no survey data (e.g. SOS "Inside Track" or Mix with the Masters) tying specific named engineers to specific decay, pre-delay or EQ numbers, beyond the SOS guideline above.
 - The "bright plate 1.2–2 s with 30 ms pre-delay" in the brief is consistent with the SOS anchor but not directly confirmed by a source here.
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+- **Dattorro 1997 paper read** — [EffectDesignPart1.pdf](https://ccrma.stanford.edu/~dattorro/EffectDesignPart1.pdf):
+  - **Table 1 coefficients [read]:**
+    - Fs = 29761 Hz;
+    - EXCURSION = 16 ("Maximum peak sample excursion of delay modulation");
+    - decay = 0.50; decay diffusion 1 = 0.70;
+    - decay diffusion 2 = 0.50, described as "decay + 0.15, floor = 0.25, ceiling = 0.50";
+    - input diffusion 1 = 0.750 and input diffusion 2 = 0.625;
+    - bandwidth = 0.9995 ("full bandwidth = 0.9999999");
+    - damping = 0.0005 ("no damping = 0.0").
+  - **Correction (first input allpass):** Fig. 1 labels it **142** samples (Plateau uses 141). The others are 107, 379 and 277. Input diffusion 1 applies to 142 and 107; input diffusion 2 to 379 and 277.
+  - **Fig. 1 tank lengths [read]:** left: 672 + EXCURSION (allpass, decay diffusion 1, "note sign"), z^-4453, damping, ×decay, 1800 (allpass, decay diffusion 2), z^-3720. Right: 908 + EXCURSION, z^-4217, 2656, z^-3163. All match the notes.
+  - **Correction (modulation):** "Delay-line taps at nodes 24 and 48 are modulating", i.e. only the two decay-diffusion-1 allpasses. Footnote 14: "At a rate on the order of 1 Hz, and at a peak excursion of about 8 samples for a sample rate of about 29.8 kHz." Plateau's four LFOs (0.10–0.18 Hz) on all four tank allpasses are Plateau's choice, not the paper's.
+  - **Table 2 output taps [read], each × 0.6:**
+    - yL = +node48_54[266] + node48_54[2974] − node55_59[1913] + node59_63[1996] − node24_30[1990] − node31_33[187] − node33_39[1066].
+    - yR = +node24_30[353] + node24_30[3627] − node31_33[1228] + node33_39[2673] − node48_54[2111] − node55_59[335] − node59_63[121].
+    - This confirms the MUMT618 right-output set (previously [excerpt]) and gives its signs, + + − + − − −.
+- **JOS PASP (Jot absorption) [read]:**
+  - per-sample loss G = 10^(−3/n60);
+  - for a delay of M_i samples, 20·log10|H_i| = −60·M_i·T/T60(ω), "the same formula derived by Jot";
+  - first-order filter H_i(z) = g_i/(1 − p_i z⁻¹), with R0 = 10^(−3·M_i·T/T60(0)) and Rπ = 10^(−3·M_i·T/T60(π/T)): p_i = (R0 − Rπ)/(R0 + Rπ) and g_i = 2·R0·Rπ/(R0 + Rπ).
+
+  — [Achieving Desired Reverberation Times](https://ccrma.stanford.edu/~jos/pasp/Achieving_Desired_Reverberation_Times.html); [Delay-Line Damping Filter Design](https://ccrma.stanford.edu/~jos/pasp/Delay_Line_Damping_Filter_Design.html); [First-Order Delay-Filter Design](https://ccrma.stanford.edu/~jos/pasp/First_Order_Delay_Filter_Design.html)
+- **SOS [read]:**
+  - "Undamped, the reverb time could be as long as five seconds or more";
+  - "a plate reverb emulation with a decay time of 1.2 seconds or so and a pre-delay of 60-80ms";
+  - plates "would have been used on virtually all the classic records in the '60s and '70s";
+  - a plate "has no discernable early reflections".
+
+  — [SOS: Choosing the right reverb](https://www.soundonsound.com/techniques/choosing-right-reverb)
+- **UA [read]:**
+  - EMT 140 released 1957, with "a fiber board damper" adjusting reverb time — [UA EMT history](https://www.uaudio.com/blogs/ua/emt-reverb-history);
+  - 480L Random algorithm "Spin and Wander parameters control how much the reverb tail moves over time"; no numeric ranges are given — [UA 480L](https://www.uaudio.com/products/lexicon-480l-digital-reverb-effects).
+  - "Highs decay faster than lows at every setting" is not stated by UA or SOS, so it is still [excerpt] (Vintage King).
+- **Signalsmith ADC21 article [read]:** Householder recommended for 8+ channel feedback loops; Hadamard plus shuffle/polarity flips per diffusion step. This is consistent with the code notes. — [Let's write a reverb](https://signalsmith-audio.co.uk/writing/2021/lets-write-a-reverb/)
+- **Still unverified:** the Valhalla quotes (valhalladsp.com serves a Cloudflare challenge), and the Roland RE-201 and Dimension D details (hosts not allowed).

@@ -203,3 +203,27 @@ Mobile apps strip this down to one toggle (GarageBand iOS "Multi-Take Recording"
 
 ### Gaps
 - BandLab mobile multi-take and count-in specifics are not confirmed from official sources.
+
+---
+
+## Verification pass (Nov 2026): corrections and confirmations
+
+- **Ableton Live 12 manual, Comping [read]:**
+  - "Recording over existing clips, either by recording individual passes or by recording in a loop, adds a new take lane for each pass";
+  - "The last recorded clip in a track is always copied to that track's main lane";
+  - take lanes "are only audible when Audition Mode is enabled" (Live 11 wording: "never audible, unless Audition Mode is enabled");
+  - each take can get a random clip colour via a Theme & Colors setting.
+
+  — [Live 12: Comping](https://www.ableton.com/en/live-manual/12/comping/); [Live 11: Comping](https://www.ableton.com/en/live-manual/11/comping/)
+- **"One long file" [read], from SOS, not the Ableton manual:** loop-recorded audio "is in fact recorded into one long file", in older Live versions. The Live 11/12 manuals do not describe on-disk storage of takes. — [SOS: Ableton Live recording tips](https://www.soundonsound.com/techniques/ableton-live-recording-tips)
+- **Count-in [read]:**
+  - With any count-in other than "None", "Live will not begin recording until the count-in is complete". The count-in runs from negative bar positions (e.g. −2.1.1 for 2 bars) to 1.1.1. — [Live 12: Recording New Clips](https://www.ableton.com/en/live-manual/12/recording-new-clips/)
+  - SOS: Live's count-in "only plays back the metronome, and not the Live song".
+  - The "1-bar default" is **not** stated in the manual and remains [excerpt] (forum.ableton.com not allowed).
+- **Monitoring [read]:**
+  - Ableton recommends monitor "Off" when using "an audio hardware interface with a 'direct monitoring' option";
+  - with In/Auto, "Keep Monitoring Latency in Recorded Audio" is on by default and shifts the recording to match what was heard;
+  - the manual is internally inconsistent about defaults: "The default Auto-monitoring setting", versus "Off" for audio tracks under "Return to Default".
+
+  — [Live 12: Routing and I/O](https://www.ableton.com/en/live-manual/12/routing-and-i-o/)
+- Still unverified: the Logic, Pro Tools, Cubase and REAPER items (hosts not on the allowed list).
