@@ -1,13 +1,8 @@
 import { Component, useState, type ReactNode } from "react";
 import { IdeasPanel } from "./components/IdeasPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
-import { AppProvider, useApp, type Tab } from "./state";
+import { AppProvider, PANES, useApp, type Pane } from "./state";
 import { GuitarView } from "./views/GuitarView";
-
-const TABS: { id: Tab; label: string }[] = [
-  { id: "guitar", label: "Guitar" },
-  { id: "piano", label: "Piano" },
-];
 
 class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -38,9 +33,13 @@ function Shell() {
     if (r === "new") setIdeas("named");
     else toast("Saved");
   };
-  const go = (tab: Tab) => {
-    set((s) => ({ ...s, tab }));
-    window.scrollTo({ top: 0 });
+  const page = state.pane ?? "frame";
+  /** Open a page at its top. (On a phone the first row of the bar scrolls away; the page tabs stay.) */
+  const go = (pane: Pane) => {
+    set((s) => ({ ...s, pane }));
+    const bar = document.querySelector<HTMLElement>(".topbar");
+    const gone = bar ? Math.max(0, -parseFloat(getComputedStyle(bar).top) || 0) : 0;
+    window.scrollTo({ top: Math.min(window.scrollY, gone) });
   };
 
   return (
@@ -48,9 +47,9 @@ function Shell() {
       <header className="topbar">
         <div className="topbar-inner">
           <div className="brand"><div className="brand-mark">M</div><span>M-Theory</span></div>
-          <nav className="tabs" aria-label="Sections">
-            {TABS.map((t) => (
-              <button key={t.id} className={`tab${state.tab === t.id ? " active" : ""}`} aria-current={state.tab === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}</button>
+          <nav className="tabs" aria-label="Pages">
+            {PANES.map((t) => (
+              <button key={t.id} className={`tab${page === t.id ? " active" : ""}`} aria-current={page === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}</button>
             ))}
           </nav>
           <button className={`btn sm save-btn${dirty ? " primary" : ""}`} onClick={save} disabled={!dirty} title={idea ? `Save "${idea.name}"` : "Save this idea to your library"}>{dirty || !idea ? "Save" : "Saved ✓"}</button>
@@ -59,29 +58,13 @@ function Shell() {
         </div>
       </header>
       <main>
-        <ViewBoundary key={state.tab} onReset={() => go("guitar")}>
-          {state.tab === "guitar" ? <GuitarView /> : <PianoSoon />}
+        <ViewBoundary onReset={() => go("frame")}>
+          <GuitarView />
         </ViewBoundary>
       </main>
       {settings && <SettingsPanel onClose={() => setSettings(false)} />}
       {ideas && <IdeasPanel onClose={() => setIdeas(false)} justSaved={ideas === "named"} />}
     </div>
-  );
-}
-
-/** Placeholder until the piano side is built. */
-function PianoSoon() {
-  const whites = Array.from({ length: 14 }, (_, i) => i);
-  const blacks = [0, 1, 3, 4, 5, 7, 8, 10, 11, 12];
-  return (
-    <section className="card piano-soon">
-      <svg viewBox="0 0 280 90" width="280" role="img" aria-label="Piano keyboard">
-        {whites.map((i) => <rect key={i} x={i * 20} y={0} width={19} height={90} rx={3} fill="var(--card-2)" stroke="var(--border-2)" />)}
-        {blacks.map((i) => <rect key={i} x={i * 20 + 13} y={0} width={13} height={54} rx={2} fill="var(--text)" />)}
-      </svg>
-      <h2>Piano</h2>
-      <p className="muted">Coming soon</p>
-    </section>
   );
 }
 

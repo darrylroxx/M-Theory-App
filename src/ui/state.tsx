@@ -21,7 +21,9 @@ import type { Key } from "../theory/keys";
 
 export type Tab = "guitar" | "piano";
 /** The three parts of a song section. */
-export type Pane = "rhythm" | "melody" | "drums";
+/** The four pages: the frame (sections, lengths, key, tempo) and the three parts that play inside it. */
+export type Pane = "frame" | "rhythm" | "melody" | "drums";
+export const PANES: { id: Pane; label: string }[] = [{ id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }];
 export type LabelMode = "intervals" | "notes" | "fingers";
 
 export interface ProgChord {
@@ -127,6 +129,7 @@ const HOST_THEME = typeof document !== "undefined" ? document.documentElement.ge
 
 export const DEFAULT_STATE: AppState = {
   tab: "guitar",
+  pane: "frame",
   key: { tonic: "B", scaleId: "ionian" },
   settings: { tuningId: "standard", capo: 0, leftHanded: false, labels: "fingers", theme: "auto", avoidBarre: true, v: 3 },
   progression: {
@@ -176,7 +179,7 @@ function load(): AppState {
       ...DEFAULT_STATE,
       ...parsed,
       tab,
-      pane: parsed.pane === "melody" || parsed.pane === "drums" ? parsed.pane : "rhythm",
+      pane: PANES.some((x) => x.id === parsed.pane) ? parsed.pane : "rhythm",
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},

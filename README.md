@@ -14,9 +14,11 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 
 ## What's inside
 
-**How the page is laid out.** The **Song frame** sits at the very top and stays there as you scroll. It holds the song's sections (A, B, C …), the one ▶ button, and what ▶ does: **↻ A** goes round the section on screen again and again, **→ Song** plays on through every section to the end (from the section you are on; the page follows along). Under it, each section is made of three parts, one on screen at a time: **Rhythm** (the chords and how they are played), **Melody** and **Drums**.
+**How the app is laid out.** Four pages, chosen at the top: **Frame**, **Rhythm**, **Melody** and **Drums**. The frame directs: it sets the sections, how many bars each has, the key and the tempo. The other three pages are what plays inside the section you are working on. Under the page tabs is the play bar, the same on every page: the one ▶ button, what it does (**↻ A** goes round the section on screen again and again, **→ Song** plays on through every section to the end, and the page follows along), and the sections, to move from one to another. Both stay put as you scroll.
 
-**The frame sets the bars and the key.** Beside the section's letter in the song frame is its length in bars: **−** and **+** change it a bar at a time, and a tap on the number offers 1, 2, 4, 8, 12, 16, 24 and 32. Next to it is the **key** of the whole song; tap it to choose the key and mode there. A section is exactly as many bars as it is set to, and Rhythm, Melody and Drums each show every one of those bars. **What is in a bar plays; an empty bar is silent.** Nothing comes round again on its own.
+**The Frame page.** A row for every section in playing order: its letter (tap to work on it), its length (**−**, **+**, or tap the number for 1, 2, 4, 8, 12, 16, 24, 32 bars), three chips that show whether it has chords, a melody and drums and open that page for that section, and **↑ ↓ ✕** to move or remove it. **+ New section** adds one; **A again** plays a section a second time (the same music; **Unlink** gives a repeat its own letter so it can differ). Below: the **key** and mode of the whole song, **Move song** (key, chords and melodies up or down a semitone together), the **tempo**, and **Export** (MIDI file; chords and tab as text).
+
+**The frame is literal.** A section is exactly as many bars as it is set to, and Rhythm, Melody and Drums each show every one of those bars. **What is in a bar plays; an empty bar is silent.** Nothing comes round again on its own.
 
 - **Rhythm:** the chord ruler is drawn as long as the section. Chords fill it from bar 1; bars with no chord are drawn empty and play nothing. **+ Rest** adds a bar of silence between chords (it can be dragged and resized like a chord). Chords that run past the last bar are struck out, with one tap to make the section long enough.
 - **Melody:** the grid has a tab for every bar of the section. Bars with no notes are drawn hollow.
@@ -26,7 +28,7 @@ Making a section shorter never deletes anything: what lies past the end is kept 
 
 **Settings carry over.** Whatever you set in the first section (the playing style and its feel, the two harps' sounds, the drum kit, the drum rhythm, drums on or off) is what every other section uses, even if you change it later. Change one of those things in another section and that section keeps it as its own from then on; a small chip says which it is: **= A** (follows A) or **Own ↺** (tap to follow A again). Chords and melody notes always belong to their own section.
 
-(A **Piano** tab is reserved for later.) In the **Rhythm** part:
+On the **Rhythm** page:
 
 1. **Key**: tap one of the 12 notes.
 2. **Mode**: Major, Minor, Dorian, Phrygian, Lydian, Mixolydian, Locrian, Harmonic minor, Melodic minor (27 more under "More…").
@@ -85,9 +87,9 @@ Making a section shorter never deletes anything: what lies past the end is kept 
    - **↻ A** / **→ Song** next to ▶ choose between going round the section you are on and playing on through the song, each section with its own settings, while the page follows along.
    - MIDI export (with each section's drums) and "Copy tab" cover the whole song. Songs saved with Verse / Chorus names open with letters.
 11. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
-12. **▶** plays it. **⋯** (in the song frame) has tempo, transpose (the melody moves with the key), **MIDI export** (the harp part exactly as the style plays it, the melody on its own track, and a drum track on channel 10), copy chords + tab, and saved ideas.
+12. **▶** plays it. The Frame page has the tempo, **Move song** (the melody moves with the key) and **MIDI export** (the harp part exactly as the style plays it, the melody on its own track, and a drum track on channel 10), copy chords + tab, and saved ideas.
 
-A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
+A **Capo** menu sits at the top of the Rhythm page, next to the key; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
 Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels, left-handed diagrams, light/dark theme.
 

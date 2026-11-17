@@ -20,7 +20,7 @@ import { DEFAULT_BEAT, barBeats, barsOf, grooveOf, kitOfBeat, reviveGroove, revi
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { hasStyle, reviveFeel, sameFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
 import { melodyBeats, reviveMelody, tileMelody, type Melody } from "./melody";
-import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, fitBars, frameItems } from "./frame";
+import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, fitBars, frameItems } from "./frame";
 import type { ProgChord, Progression } from "../ui/state";
 
 /**
@@ -252,6 +252,15 @@ export function removeBlock(p0: Progression, blockId: string): Progression {
   const next: Song = { parts, blocks, current: song.current, shared: tidy(shared) };
   if (song.current !== blockId) return { ...p, song: next };
   return show(p, next, blocks[Math.min(at, blocks.length - 1)].id);
+}
+
+/** Set how long a section lasts, in bars: the one on screen, or any other (every block with its letter). */
+export function setSectionBars(p0: Progression, blockId: string, bars: number): Progression {
+  const n = barsOr(bars);
+  const part = p0.song && partOf(p0.song, blockId);
+  if (!p0.song || !part || partOf(p0.song, p0.song.current)?.id === part.id) return p0.bars === n ? p0 : { ...p0, bars: n };
+  const p = commit(p0);
+  return { ...p, song: { ...p.song!, parts: p.song!.parts.map((x) => (x.id === part.id ? { ...x, bars: n } : x)) } };
 }
 
 /** Move a block one step earlier (−1) or later (+1). */

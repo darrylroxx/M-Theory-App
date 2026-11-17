@@ -4,7 +4,7 @@ import type { ProgChord, Progression } from "../ui/state";
 import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, barsText, fitBars, frameBeats, frameItems, inFrame, stepBars } from "./frame";
 import { fingerprint, reviveIdea, snapshot } from "./library";
 import { EMPTY_MELODY, TICKS, barHasNotes, inBars, tileMelody, tuneBetween, type Melody } from "./melody";
-import { addNewSection, commit, ensureSong, repeatSection, reviveSong, sections, selectBlock, settle, unlinkBlock } from "./structure";
+import { addNewSection, commit, ensureSong, repeatSection, reviveSong, sections, selectBlock, setSectionBars, settle, unlinkBlock } from "./structure";
 
 const chord = (root: string, beats = 4): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats });
 const base = (roots: string[] = []): Progression => ({ chords: roots.map((r) => chord(r)), bpm: 90, pattern: "ring", loop: true });
@@ -126,6 +126,24 @@ describe("every section keeps its own length", () => {
     p = selectBlock(p, b);
     expect(p.bars).toBe(2);
     expect(sections(p).map((s) => s.bars)).toEqual([8, 2]);
+  });
+
+  it("any section's length can be set from the frame, whichever one is on screen", () => {
+    let p = addNewSection(ensureSong({ ...base(["C"]), bars: 4 }, id), id); // on B
+    const [a, b] = sections(p).map((x) => x.blockId);
+    p = setSectionBars(p, a, 12);
+    expect(sections(p).map((x) => x.bars)).toEqual([12, 4]);
+    expect(p.bars).toBe(4); // B, on screen, is untouched
+    p = setSectionBars(p, b, 2);
+    expect(p.bars).toBe(2);
+    expect(sections(p).map((x) => x.bars)).toEqual([12, 2]);
+    // out of range is brought back in; with no song yet, the page itself is the section
+    expect(sections(setSectionBars(p, a, 99))[0].bars).toBe(MAX_SECTION_BARS);
+    expect(setSectionBars({ ...base(["C"]), bars: 4 }, "", 8).bars).toBe(8);
+    // a repeat of A is the same section: one length for both
+    p = repeatSection(p, p.song!.parts[0].id, id);
+    p = setSectionBars(p, a, 5);
+    expect(sections(p).map((x) => `${x.letter}${x.bars}`).sort()).toEqual(["A5", "A5", "B2"]);
   });
 
   it("the same letter twice has one length; a copy with its own letter keeps it and can then differ", () => {
