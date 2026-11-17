@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { progressionToMidi } from "./midi";
-import { PATTERNS, patternEvents } from "./patterns";
+import { STYLES, styleNotes } from "./patterns";
 
 describe("midi export", () => {
   const items = [
@@ -25,12 +25,22 @@ describe("midi export", () => {
     expect(on).toBe(off);
     expect(on).toBeGreaterThan(10);
   });
-  it("every pattern produces events within the chord length", () => {
-    for (const p of PATTERNS) {
-      const ev = patternEvents(items[0].midi, 4, p.id);
-      expect(ev.length).toBeGreaterThan(0);
-      expect(ev.every((e) => e.beat >= 0 && e.beat < 4)).toBe(true);
-    }
+  it("every style lands inside the chord, in every bar length", () => {
+    for (const p of STYLES)
+      for (const bar of [4, 3, 2]) {
+        const ev = styleNotes(items[0].midi, bar, p.id, 0, { bar, triplet: bar === 2 });
+        // a style made of off-beats can be silent in a bar too short to reach its first one
+        if (bar !== 2 || p.entry !== "") expect(ev.length, p.id).toBeGreaterThan(0);
+        expect(ev.every((e) => e.beat >= 0 && e.beat < bar && e.velocity > 0 && e.velocity <= 1), p.id).toBe(true);
+      }
+  });
+  it("names the harp, and plays what the style plays", () => {
+    const b = progressionToMidi(items, 100, "pima");
+    // program change to Orchestral Harp
+    expect([...b].join(",")).toContain("192,46");
+    let on = 0;
+    for (let i = 22; i < b.length - 2; i++) if (b[i] === 0x90 && b[i + 2] > 0 && b[i + 2] < 128 && b[i + 1] < 128) on++;
+    expect(on).toBeGreaterThanOrEqual(styleNotes(items[0].midi, 4, "pima").length * 2);
   });
 });
 

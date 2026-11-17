@@ -4,6 +4,8 @@
  * devices disagree) can be tested without a browser.
  */
 import { GROOVE_KEYS, reviveBeat } from "../audio/beats";
+import { hasStyle } from "../audio/patterns";
+import { reviveSound } from "../audio/rack";
 import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
@@ -28,7 +30,9 @@ export function fingerprint(s: Snapshot): string {
   const song = p.song ? { parts: p.song.parts, blocks: p.song.blocks } : null;
   // with a song, each section keeps its own rhythm: the one showing in the grid is not counted twice
   const beat = p.beat && song ? Object.fromEntries(Object.entries(p.beat).filter(([k]) => !(GROOVE_KEYS as readonly string[]).includes(k))) : (p.beat ?? null);
-  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: p.pattern, loop: p.loop, arrange: p.arrange ?? null, beat, song, chords: song ? null : p.chords });
+  // a sound saved with only some knobs is the same sound as one with the rest at their defaults
+  const sound = reviveSound(p.sound);
+  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: song ? null : p.pattern, loop: p.loop, arrange: p.arrange ?? null, beat, sound, song, chords: song ? null : p.chords });
 }
 
 /** Nothing worth saving yet. */
@@ -55,11 +59,12 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   if (!i || typeof i.id !== "string" || !i.key || typeof i.key.tonic !== "string" || !i.progression || !Array.isArray(i.progression.chords)) return null;
   const p = i.progression;
   const song = reviveSong(p.song);
-  const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: p.pattern ?? "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song };
+  const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song, ...(p.sound ? { sound: reviveSound(p.sound) } : {}) };
   if (song) {
     const part = song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId);
     progression.chords = part?.chords ?? [];
     if (progression.beat && part?.groove) progression.beat = { ...progression.beat, ...part.groove };
+    if (part?.style) progression.pattern = part.style;
   }
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }

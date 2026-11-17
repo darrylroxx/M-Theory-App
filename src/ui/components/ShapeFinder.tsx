@@ -8,7 +8,8 @@ import { intervalNote } from "../../theory/intervals";
 import { chordsInScale } from "../../theory/keys";
 import { displayNote, pc } from "../../theory/notes";
 import { useDraggable } from "../drag";
-import { useApp, type ProgChord } from "../state";
+import { barOf, fitBeats, useApp, type ProgChord } from "../state";
+import { lengthText } from "./BarRuler";
 import { ChordDiagram } from "./ChordDiagram";
 import { ChordNotes, ChordTheory } from "./ChordInfo";
 
@@ -123,9 +124,9 @@ export function ShapeFinder({ slotShape, onPinSlot }: { slotShape: (slotId: stri
           <button className="btn sm" aria-label="Move earlier" onClick={() => move(-1)} disabled={slotIdx === 0}>◀</button>
           <button className="btn sm" aria-label="Move later" onClick={() => move(1)} disabled={slotIdx === chords.length - 1}>▶</button>
           <span className="beats">
-            <button aria-label="Fewer beats" onClick={() => patch({ beats: Math.max(1, slot.beats - 1) })}>−</button>
-            {slot.beats} beats
-            <button aria-label="More beats" onClick={() => patch({ beats: Math.min(16, slot.beats + 1) })}>+</button>
+            <button aria-label="Shorter" onClick={() => patch({ beats: fitBeats(slot.beats - 0.5) })}>−</button>
+            {lengthText(slot.beats, barOf(state.progression))}
+            <button aria-label="Longer" onClick={() => patch({ beats: fitBeats(slot.beats + 0.5) })}>+</button>
           </span>
           <span className="spacer" />
           <button className="btn sm danger" onClick={() => { setChords((cs) => cs.filter((c) => c.id !== sheet.slotId)); openSheet(null); }}>Remove</button>

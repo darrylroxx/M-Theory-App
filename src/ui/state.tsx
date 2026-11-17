@@ -1,6 +1,9 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
-import type { PatternId } from "../audio/patterns";
+import { barBeats } from "../audio/beats";
+import { hasStyle, styleBar, type PatternId } from "../audio/patterns";
+import type { HarpSound } from "../audio/rack";
+import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
 import { easyVoicing, voicingsFor } from "../guitar/arrange";
 import { getTuning, type Tuning } from "../guitar/tunings";
@@ -19,6 +22,7 @@ export type LabelMode = "intervals" | "notes" | "fingers";
 export interface ProgChord {
   id: string;
   ref: ChordRef;
+  /** how long it lasts, in beats (half beats allowed) */
   beats: number;
   /** Pinned voicing id (frets string). Undefined = auto-arranged. */
   voicingId?: string;
@@ -33,6 +37,8 @@ export interface Progression {
   arrange?: ArrangeSettings | null;
   /** The drum beat under the chords (undefined = never touched). */
   beat?: Beat;
+  /** The harp's sound and effects (missing knobs are at their defaults). */
+  sound?: Partial<HarpSound>;
   /** Song structure: sections in order. `chords` above are then the selected section's chords. */
   song?: Song | null;
 }
@@ -81,6 +87,8 @@ export interface AppState {
   myBeats: BeatPattern[];
   /** Drum setups (machine, sounds and effects) you saved */
   myKits: UserKit[];
+  /** Harp sounds you saved */
+  mySounds: UserSound[];
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
@@ -112,6 +120,7 @@ export const DEFAULT_STATE: AppState = {
   shapes: {},
   myBeats: [],
   myKits: [],
+  mySounds: [],
 };
 
 function load(): AppState {
@@ -129,9 +138,15 @@ function load(): AppState {
       shapes: parsed.shapes ?? {},
       myBeats: Array.isArray(parsed.myBeats) ? parsed.myBeats : [],
       myKits: reviveUserKits(parsed.myKits),
+      mySounds: reviveUserSounds(parsed.mySounds),
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
-      progression: { ...DEFAULT_STATE.progression, ...parsed.progression, beat: reviveBeat(parsed.progression?.beat), song: reviveSong(parsed.progression?.song) },
+      progression: {
+        ...DEFAULT_STATE.progression, ...parsed.progression,
+        pattern: hasStyle(parsed.progression?.pattern) ? parsed.progression.pattern : "ring",
+        chords: (parsed.progression?.chords ?? []).map(reviveChord),
+        beat: reviveBeat(parsed.progression?.beat), song: reviveSong(parsed.progression?.song),
+      },
     };
   } catch {
     return DEFAULT_STATE;
@@ -174,11 +189,20 @@ interface Ctx {
 
 const AppCtx = createContext<Ctx | null>(null);
 
-/** How long a new chord lasts: one bar of the current beat (3 in a waltz), otherwise 4 beats. */
-export function chordBeats(p: Progression): number {
-  const n = p.beat?.on ? p.beat.steps / p.beat.div : 4;
-  return Number.isInteger(n) && n >= 1 ? n : 4;
+/** Beats in a bar: the drums' when they are on, otherwise the playing style's (3 for a waltz, else 4). */
+export function barOf(p: Progression): number {
+  const n = p.beat?.on ? barBeats(p.beat) : styleBar(p.pattern);
+  return n >= 1 && n <= 16 ? n : 4;
 }
+
+/** How long a new chord lasts: one bar. */
+export const chordBeats = (p: Progression): number => (Number.isInteger(barOf(p)) ? barOf(p) : 4);
+
+/** The shortest and longest a chord can be, in beats, and the step between lengths. */
+export const MIN_BEATS = 0.5;
+export const MAX_BEATS = 16;
+export const fitBeats = (n: number) => Math.min(MAX_BEATS, Math.max(MIN_BEATS, Math.round(n * 2) / 2));
+const reviveChord = (c: ProgChord): ProgChord => (Number.isFinite(c?.beats) && c.beats >= MIN_BEATS && c.beats <= MAX_BEATS ? c : { ...c, beats: 4 });
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
 

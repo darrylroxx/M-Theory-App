@@ -1,73 +1,219 @@
 /**
- * Rhythm patterns shared by the audio player and the MIDI exporter,
- * so what you hear is exactly what lands in your DAW.
+ * Playing styles: how a chord is strummed, picked or rolled.
+ *
+ * A style is written the way guitarists write them down, one symbol per step of the bar:
+ *
+ *   strums   D down · U up (top strings) · X muted "chuck" · S short stab · s short up-stab
+ *            H the upper strings without the bass ("chick") · h the same, softer, upwards
+ *            K palm-muted low strings · R roll upwards (a harpist's rolled chord) · L roll downwards
+ *            T all strings plucked together · G a sweep up through two octaves · g the same, downwards
+ *   picking  p thumb on the bass note · q thumb on the other bass string · r a third bass string
+ *            i m a  first, middle and ring finger on the three highest strings
+ *            (several together are a pinch: "pa")
+ *            1 2 3 …  the chord's notes counted up from the bass, carrying on into the next octave
+ *   others   . nothing · > after a symbol = accent · < = soft
+ *
+ * The pattern is tied to the bar, not to the chord: two chords sharing a bar share one pass of
+ * the pattern, just as a player would keep the hand moving through the change.
+ *
+ * Shared by the player and the MIDI exporter, so what you hear is what lands in your DAW.
  */
-export type PatternId = "ring" | "strum" | "pulse" | "arpeggio" | "travis";
+import { barBeats, type Beat } from "./beats";
+import { STYLES, type Style } from "./styles";
 
-export const PATTERNS: { id: PatternId; label: string; hint: string }[] = [
-  { id: "ring", label: "Let ring", hint: "One strum per chord. Best for hearing the harmony." },
-  { id: "strum", label: "Strum", hint: "D – D U – U D U. The classic campfire pattern." },
-  { id: "pulse", label: "8th pulse", hint: "Palm-muted 8ths. Driving rock / post-rock." },
-  { id: "arpeggio", label: "Arpeggio", hint: "Picked 8ths, low to high and back. Dreamy." },
-  { id: "travis", label: "Fingerpick", hint: "Alternating bass + melody: folk / Travis style." },
-];
+export type PatternId = string;
 
-export interface PatternEvent {
-  /** Beat offset from the start of the chord */
+/** The bar the pattern is laid over. */
+export interface Meter {
+  /** beats in a bar (0 = the style's own) */
+  bar: number;
+  /** the beat divides in three (6/8, 12/8): straight styles are bent to fit */
+  triplet?: boolean;
+  /** the drums' swing, which the 16th-note styles follow */
+  swing?: number;
+}
+
+export interface NoteEvent {
+  /** beats after the start of the chord */
   beat: number;
-  /** MIDI notes (low → high order for strums) */
-  notes: number[];
-  /** "down"/"up" strum direction (affects note order); "pick" for single notes */
-  dir: "down" | "up" | "pick";
-  velocity: number; // 0..1
-  /** How long it rings, in beats (Infinity = until the next chord) */
+  /** seconds after that (one string after another in a strum) */
+  delay: number;
+  midi: number;
+  /** which string plays it: a new note on the same string stops the old one */
+  slot: number;
+  /** 0..1 */
+  velocity: number;
+  /** how long it rings, in beats (Infinity = until the chord ends) */
   length: number;
-  /** Seconds between strummed strings */
-  spread: number;
+  /** and never longer than this many seconds (muted strums) */
+  cut?: number;
 }
 
-/** Turn one chord (voicing MIDI notes) + its length in beats into note events. */
-export function patternEvents(midi: (number | null)[], beats: number, pattern: PatternId): PatternEvent[] {
-  const notes = midi.filter((m): m is number => m !== null);
-  if (!notes.length) return [];
-  const ev: PatternEvent[] = [];
-  const strum = (beat: number, dir: "down" | "up", velocity: number, length = Infinity, spread = 0.018, subset?: number[]) =>
-    ev.push({ beat, notes: subset ?? notes, dir, velocity, length, spread });
-  const pick = (beat: number, note: number, velocity: number, length = Infinity) =>
-    ev.push({ beat, notes: [note], dir: "pick", velocity, length, spread: 0 });
+const byId = new Map(STYLES.map((s) => [s.id, s]));
+export const getStyle = (id: PatternId): Style => byId.get(id) ?? byId.get("ring")!;
+export const hasStyle = (id: unknown): id is PatternId => typeof id === "string" && byId.has(id);
 
-  switch (pattern) {
-    case "ring":
-      strum(0, "down", 0.85, Infinity, 0.03);
-      break;
-    case "strum": {
-      // D . D U . U D U  (per 4 beats, repeated / truncated for other lengths)
-      const bar: [number, "down" | "up", number][] = [
-        [0, "down", 0.9], [1, "down", 0.7], [1.5, "up", 0.5], [2.5, "up", 0.55], [3, "down", 0.75], [3.5, "up", 0.5],
-      ];
-      for (let b = 0; b < beats; b += 4)
-        for (const [o, d, v] of bar) if (b + o < beats) strum(b + o, d, v, Infinity, d === "up" ? 0.012 : 0.016, d === "up" ? notes.slice(-4) : undefined);
-      break;
-    }
-    case "pulse":
-      for (let b = 0; b < beats; b += 0.5) strum(b, "down", b % 1 === 0 ? 0.8 : 0.6, 0.35, 0.008, notes.slice(0, Math.min(3, notes.length)));
-      break;
-    case "arpeggio": {
-      const seq = [...notes, ...notes.slice(1, -1).reverse()];
-      let i = 0;
-      for (let b = 0; b < beats; b += 0.5) pick(b, seq[i++ % seq.length], i === 1 ? 0.8 : 0.6);
-      break;
-    }
-    case "travis": {
-      const bass = notes.slice(0, Math.min(2, notes.length));
-      const treble = notes.slice(-3);
-      for (let b = 0; b < beats; b += 1) {
-        pick(b, bass[(b % 2) % bass.length], 0.75);
-        pick(b + 0.5, treble[(b * 2 + 1) % treble.length], 0.55);
-        if (b % 2 === 1) pick(b + 0.75, treble[treble.length - 1], 0.45);
+/** Beats in the bar this style is written for: 3 for a waltz, otherwise 4. */
+export const styleBar = (id: PatternId): number => (getStyle(id).four ? 4 : 3);
+
+const STRUMS = "DUXSsHhKRLTGg";
+const hasStrum = (st: Style) => [...(st.four ?? []), ...(st.three ?? [])].some((bar) => [...bar].some((ch) => STRUMS.includes(ch)));
+
+/** Where a step falls inside its beat. */
+function inBeat(k: number, div: number, st: Style, meter: Meter): number {
+  if (div === 3) return k / 3;
+  if (meter.triplet) return div === 2 ? [0, 2 / 3][k] : [0, 1 / 3, 2 / 3, 5 / 6][k];
+  const swing = div === 4 ? Math.max(meter.swing ?? 0, st.swing ?? 0) : (st.swing ?? 0);
+  return k / div + (k % 2 === 1 ? swing / (3 * div) : 0);
+}
+
+/** A small, repeatable wobble in loudness, so no two strums are exactly alike. */
+const wobble = (n: number) => {
+  const x = Math.sin(n * 12.9898) * 43758.5453;
+  return 0.97 + (x - Math.floor(x)) * 0.06;
+};
+
+interface Str {
+  m: number;
+  s: number;
+}
+
+/** Turn one chord (the note on each string, null = not played) into notes, for a chord that starts `at` beats into its section. */
+export function styleNotes(midi: (number | null)[], beats: number, styleId: PatternId, at = 0, meter: Meter = { bar: 0 }): NoteEvent[] {
+  const strings: Str[] = midi.map((m, s) => ({ m, s })).filter((x): x is Str => x.m !== null);
+  if (!strings.length || beats <= 0) return [];
+  const st = getStyle(styleId);
+  const native = st.four ? 4 : 3;
+  const L = meter.bar > 0 ? meter.bar : native;
+  const three = !!st.three && (Math.abs(L - 3) < 1e-6 || !st.four);
+  const grid = (three ? st.three! : st.four!).map((b) => b.trim().split(/\s+/));
+  const P = three ? 3 : 4;
+  const div = st.div;
+  // a strum crosses six strings in about 20 to 35 ms: quicker when the hand is moving fast
+  const spread = st.spread ?? (div === 2 ? 0.007 : 0.0045);
+  const roll = st.roll ?? 0.03;
+
+  const K = strings.length;
+  const bass = strings[0];
+  // the thumb's strings: a chord rooted on the 6th string alternates 6 and 4, one on the 5th alternates 5 and 4
+  const alt = strings[K >= 6 ? 2 : Math.min(1, K - 1)];
+  const third = strings[K >= 6 ? 1 : Math.min(2, K - 1)];
+  const up = (x: Str, oct = 1): Str => ({ m: x.m + 12 * oct, s: x.s + 6 * oct });
+  // on a four-string chord the thumb takes two of them, so the fingers move up to the two that are left
+  const thumbs = K === 4 && grid.some((bar) => bar.some((t) => t.includes("q")));
+  const top = strings.slice(thumbs ? 2 : Math.max(1, K - 3));
+  /** the nth note counted up from the bass; past the top string it starts again an octave higher (two octaves at most) */
+  const nth = (n: number): Str => up(strings[(n - 1) % K], Math.floor((n - 1) / K) % 3);
+  const sweep = Array.from({ length: Math.min(12, K * 2) + 1 }, (_, j) => nth(j + 1));
+  const fingers: Record<string, Str> =
+    top.length >= 3 ? { i: top[0], m: top[1], a: top[2] } : top.length === 2 ? { i: top[0], m: top[1], a: up(bass) } : top.length === 1 ? { i: top[0], m: up(bass), a: up(top[0]) } : { i: up(bass), m: up(bass), a: up(bass, 2) };
+
+  const out: NoteEvent[] = [];
+  const strum = (beat: number, list: Str[], velocity: number, gap: number, length = Infinity, cut?: number, lift = -0.03) =>
+    list.forEach((x, j) => out.push({ beat, delay: j * gap, midi: x.m, slot: x.s, velocity: Math.min(1, velocity * (1 + j * lift)), length, cut }));
+
+  /** Play one token. Returns false when it was a rest. */
+  const play = (tok: string, beat: number, weight: number): boolean => {
+    if (!tok || tok === ".") return false;
+    const accent = tok.includes(">") ? 1.2 : tok.includes("<") ? 0.62 : 1;
+    const v = weight * accent;
+    const high = strings.slice(-Math.min(4, K));
+    const chick = K > 2 ? strings.slice(1) : strings;
+    let any = false;
+    for (const ch of tok) {
+      if (ch === ">" || ch === "<") continue;
+      any = true;
+      if (ch >= "1" && ch <= "9") {
+        const y = nth(Number(ch));
+        out.push({ beat, delay: 0, midi: y.m, slot: y.s, velocity: Math.min(1, (ch === "1" ? 0.78 : 0.66) * v), length: Infinity });
+        continue;
       }
-      break;
+      switch (ch) {
+        case "D": strum(beat, strings, 0.84 * v, spread); break;
+        case "U": strum(beat, [...high].reverse(), 0.7 * v, spread * 0.8); break;
+        case "X": strum(beat, strings, 0.38 * v, 0.003, 0.12, 0.045); break;
+        case "S": strum(beat, strings, 0.8 * v, spread * 0.6, 0.3, 0.16); break;
+        case "s": strum(beat, [...high].reverse(), 0.68 * v, spread * 0.6, 0.3, 0.16); break;
+        case "H": strum(beat, chick, 0.68 * v, spread); break;
+        case "h": strum(beat, [...chick.slice(-3)].reverse(), 0.56 * v, spread * 0.8); break;
+        case "K": strum(beat, strings.slice(0, Math.min(3, K)), 0.74 * v, 0.006, 0.42, 0.2); break;
+        // a rolled chord swells a little towards its top note
+        case "R": strum(beat, strings, 0.74 * v, roll, Infinity, undefined, 0.025); break;
+        case "L": strum(beat, [...strings].reverse(), 0.72 * v, roll, Infinity, undefined, -0.02); break;
+        case "T": strum(beat, strings, 0.76 * v, 0.002, Infinity, undefined, 0); break;
+        case "G": strum(beat, sweep, 0.5 * v, 0.032, Infinity, undefined, 0.035); break;
+        case "g": strum(beat, [...sweep].reverse(), 0.62 * v, 0.032, Infinity, undefined, -0.03); break;
+        case "p": case "q": case "r": case "i": case "m": case "a": {
+          const y = ch === "p" ? bass : ch === "q" ? alt : ch === "r" ? third : fingers[ch];
+          out.push({ beat, delay: 0, midi: y.m, slot: y.s, velocity: Math.min(1, (ch === "p" ? 0.8 : ch === "q" || ch === "r" ? 0.72 : 0.64) * v), length: Infinity });
+          break;
+        }
+      }
     }
+    return any;
+  };
+
+  const entry = st.entry ?? (hasStrum(st) ? "D" : /[1-9]/.test(grid[0].join("")) ? "1" : "p");
+  let started = false;
+  for (let g = Math.ceil(at * div - 1e-6); g / div < at + beats - 1e-6; g++) {
+    const whole = Math.floor(g / div + 1e-9);
+    const k = g - whole * div;
+    const rel = whole + inBeat(k, div, st, meter) - at;
+    if (rel >= beats - 1e-6) continue;
+    const straight = g / div;
+    const barIdx = Math.floor(straight / L + 1e-6);
+    const inBar = straight - barIdx * L;
+    const step = Math.round((inBar % P) * div);
+    let tok = grid[barIdx % grid.length][step] ?? ".";
+    const first = Math.abs(straight - at) < 1e-6;
+    if (first) {
+      started = true;
+      // a chord that arrives part-way through the pattern is always heard: the bass under a picked note, a strum where the hand would rest
+      if (entry && step !== 0) {
+        if (tok === ".") tok = entry;
+        else if (!hasStrumChar(tok) && !/[1-9]/.test(tok)) tok = tok.includes("p") ? tok : /[qr]/.test(tok) ? tok.replace(/[qr]/, "p") : "p" + tok;
+        else if (/^[2-9]/.test(tok)) tok = "1";
+      }
+    }
+    const weight = (k === 0 ? (inBar < 1e-6 ? 1 : 0.94) : div === 4 ? (k === 2 ? 0.86 : 0.78) : div === 3 ? 0.82 : 0.86) * wobble(g);
+    play(tok, Math.max(0, rel), weight);
   }
-  return ev;
+  // the chord starts between two steps of the pattern
+  if (!started && entry) play(entry, 0, 0.94);
+  return out.sort((x, y) => x.beat - y.beat || x.delay - y.delay);
 }
+
+const hasStrumChar = (tok: string) => [...tok].some((ch) => STRUMS.includes(ch));
+
+
+/** The bar a style is laid over: the drums' when they are on, otherwise the style's own. */
+export function meterOf(b: Beat | null | undefined): Meter {
+  if (!b?.on) return { bar: 0 };
+  return { bar: barBeats(b), triplet: b.div === 3, swing: b.div === 4 ? b.swing : 0 };
+}
+
+export interface PlayItem {
+  midi: (number | null)[];
+  beats: number;
+  /** the drum rhythm under this chord (missing = the player's own beat) */
+  drums?: Beat;
+  /** the playing style of this chord (missing = the player's own) */
+  style?: PatternId;
+  /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
+  section?: boolean;
+}
+
+/** Every note of a run of chords, with the time (in beats from the start) each one sounds. */
+export function itemNotes(items: PlayItem[], pattern: PatternId, beat: Beat | null = null) {
+  const out: { at: number; item: number; e: NoteEvent; beats: number }[] = [];
+  let at = 0;
+  let origin = 0;
+  items.forEach((item, i) => {
+    if (i === 0 || item.section) origin = at;
+    for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat))) out.push({ at, item: i, e, beats: item.beats });
+    at += item.beats;
+  });
+  return out;
+}
+
+export { STYLES, STYLE_GROUPS, type Style, type StyleGroup } from "./styles";

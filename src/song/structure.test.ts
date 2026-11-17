@@ -164,4 +164,32 @@ describe("song structure", () => {
     expect(s.current).toBe("3");
     expect(s.parts.find((x) => x.id === "c")!.chords[0].ref.root).toBe("F");
   });
+
+  it("each section keeps its own playing style, and a new section carries the current one on", () => {
+    let p = ensureSong({ ...base(["C", "G"]), pattern: "strum" }, id);
+    p = addNewSection(p, id);
+    expect(p.pattern).toBe("strum");
+    p = { ...setTray(p, ["F"]), pattern: "pinch" };
+    p = selectBlock(p, block(p, 0));
+    expect(p.pattern).toBe("strum");
+    p = selectBlock(p, block(p, 1));
+    expect(p.pattern).toBe("pinch");
+    expect(sections(p).map((x) => x.style)).toEqual(["strum", "pinch"]);
+    // a block given its own letter takes a copy of the style with it
+    p = repeatSection(p, partId(p, "B"), id);
+    p = unlinkBlock(p, block(p, 2), id);
+    expect(sections(p).map((x) => `${x.letter}:${x.style}`)).toEqual(["A:strum", "B:pinch", "C:pinch"]);
+    // saved and loaded: known styles stay, unknown ones are dropped (the section then follows the song)
+    const saved = JSON.parse(JSON.stringify(p.song));
+    saved.parts[0].style = "nonsense";
+    const back = reviveSong(saved)!;
+    expect(back.parts.map((x) => x.style)).toEqual([undefined, "pinch", "pinch"]);
+  });
+
+  it("chord lengths in half beats travel with their section", () => {
+    let p = ensureSong({ ...base(["C", "G"]), chords: [{ ...chord("C"), beats: 2.5 }, { ...chord("G"), beats: 1.5 }] }, id);
+    p = addNewSection(p, id);
+    p = selectBlock(p, block(p, 0));
+    expect(p.chords.map((c) => c.beats)).toEqual([2.5, 1.5]);
+  });
 });

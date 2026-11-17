@@ -1,8 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_BEAT, applyPattern, barBeats, barsOf, chordRounds, type Beat, type BeatPattern } from "../../audio/beats";
 import { progressionToMidi, saveFile } from "../../audio/midi";
-import { PATTERNS, type PatternId } from "../../audio/patterns";
-import { ProgressionPlayer, getAudio, playSequence, strum, type PlayItem } from "../../audio/synth";
+import { itemNotes, type PatternId, type PlayItem } from "../../audio/patterns";
+import { reviveSound, type HarpSound } from "../../audio/rack";
+import { ProgressionPlayer, getAudio, playSequence, prepareNotes, setHarpSound, strum } from "../../audio/synth";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
@@ -15,11 +16,13 @@ import { MOODS, sparkProgression, suggestNext, type Mood, type SuggestionGroup }
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
+import { BarRuler } from "../components/BarRuler";
 import { DrumMachine } from "../components/DrumMachine";
+import { HarpPanel } from "../components/HarpPanel";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
-import { chordBeats, newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
+import { barOf, chordBeats, fitBeats, newId, useApp, type ArrangeSettings, type ProgChord, type Progression } from "../state";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
@@ -100,11 +103,12 @@ export function GuitarView() {
     for (const sec of secs) {
       const vs = sec.current ? voicings : voicingsOf(sec.chords);
       const drums = sec.current || !sec.groove ? beat : { ...beat, ...sec.groove };
+      const style = sec.current ? prog.pattern : (sec.style ?? prog.pattern);
       parts.push({ sec, voicings: vs });
       const rounds = chordRounds(sec.chords.reduce((a, c) => a + c.beats, 0), drums);
       for (let r = 0; r < rounds; r++)
         sec.chords.forEach((c, i) => {
-          list.push({ midi: vs[i]?.midi ?? [], beats: c.beats, drums, section: r === 0 && i === 0 });
+          list.push({ midi: vs[i]?.midi ?? [], beats: c.beats, drums, style, section: r === 0 && i === 0 });
           map.push({ block: sec.blockId, idx: i });
         });
       if (!sec.chords.length && beat.on) {
@@ -113,23 +117,46 @@ export function GuitarView() {
       }
     }
     return { items: list, map, parts };
-  }, [secs, voicings, voicingsOf, beat]);
+  }, [secs, voicings, voicingsOf, beat, prog.pattern]);
   const planRef = useRef(plan);
   planRef.current = plan;
+
+  // ── the harp's sound ──
+  const sound = useMemo(() => reviveSound(prog.sound), [prog.sound]);
+  const hear = useRef(0);
+  const voicingsRef = useRef(voicings);
+  voicingsRef.current = voicings;
+  useEffect(() => setHarpSound(sound, prog.bpm), [sound, prog.bpm]);
+  // every note the section (and the song) will need is made ready ahead of time
+  useEffect(() => {
+    const t = window.setTimeout(() => prepareNotes([...itemNotes(items, prog.pattern, beat), ...itemNotes(plan.items, prog.pattern, beat)].map((n) => n.e.midi)), 250);
+    return () => window.clearTimeout(t);
+  }); // eslint-disable-line react-hooks/exhaustive-deps
+  const playingRef = useRef(false);
+  /** Roll the first chord once the knobs have settled, so a change can be heard without pressing play. */
+  const hearSoon = useCallback(() => {
+    window.clearTimeout(hear.current);
+    hear.current = window.setTimeout(() => {
+      const v = voicingsRef.current.find((x) => x);
+      if (!playingRef.current) strum(v?.midi ?? [48, 55, 60, 64, 67, 72]);
+    }, 240);
+  }, []);
+  const setSound = useCallback((patch: Partial<HarpSound>) => set((s) => ({ ...s, progression: { ...s.progression, sound: { ...reviveSound(s.progression.sound), ...patch } } })), [set]);
 
   useEffect(() => {
     if (player.current?.playing) player.current.update(songMode ? plan.items : items, prog.bpm, prog.pattern, songMode ? false : prog.loop, beat);
   });
   useEffect(() => () => player.current?.stop(), []);
+  playingRef.current = playing;
 
-  const startPlay = (list: typeof items, b: Beat) => {
+  const startPlay = (list: PlayItem[], b: Beat, style: PatternId = prog.pattern) => {
     if (!list.length && !b.on) return;
     getAudio();
     const p = (player.current ??= new ProgressionPlayer());
     p.onStep = (i) => setNowIdx(list.length ? i % Math.max(1, prog.chords.length) : -1);
     p.onDrumStep = (n) => stepSink.current?.(n);
     p.onEnd = () => { setPlaying(false); setNowIdx(-1); };
-    p.start(list, prog.bpm, prog.pattern, prog.loop, b);
+    p.start(list, prog.bpm, style, prog.loop, b);
     setSongMode(false);
     setPlaying(true);
   };
@@ -177,6 +204,21 @@ export function GuitarView() {
       startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), next) }, () => one).flat(), next);
     }
   };
+  /** Choose how the section on screen is played. With the drums off, a waltz style makes the bars three beats long. */
+  const pickStyle = (id: PatternId) => {
+    const from = barOf(prog);
+    const to = barOf({ ...prog, pattern: id });
+    const fit = (c: ProgChord) => (from !== to && c.beats % from === 0 ? { ...c, beats: fitBeats((c.beats / from) * to) } : c);
+    const chords = prog.chords.map(fit);
+    set((s) => ({ ...s, progression: { ...s.progression, pattern: id, chords: s.progression.chords.map(fit) } }));
+    if (from !== to && chords.some((c, i) => c.beats !== prog.chords[i].beats)) toast(`Chords: ${to} beats each`);
+    // hear it straight away
+    if (!playing && chords.length) {
+      const one = chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
+      startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), beat) }, () => one).flat(), beat, id);
+    }
+  };
+  const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
     set((s) => {
@@ -297,8 +339,10 @@ export function GuitarView() {
         <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
           {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
           <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-          <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} />
+          <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} bar={barOf(prog)} onLengths={setLengths} />
         </div>
+        <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} playing={playing} onPlay={togglePlay} onHear={hearSoon}
+          letters={letters(prog)} onLetter={(blockId: string) => set((s) => ({ ...s, progression: selectBlock(s.progression, blockId) }))} />
         <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onPlay={togglePlay} stepSink={stepSink}
           letters={letters(prog)} onLetter={(blockId: string) => set((s) => ({ ...s, progression: selectBlock(s.progression, blockId) }))} />
       </div>
@@ -734,7 +778,7 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
   );
 }
 
-function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beatOn, secs, songPlaying, onSong }: {
+function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beatOn, secs, songPlaying, onSong, bar, onLengths }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -748,6 +792,9 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   secs: Section[];
   songPlaying: boolean;
   onSong: () => void;
+  /** beats in a bar */
+  bar: number;
+  onLengths: (beats: Record<string, number>) => void;
 }) {
   const { state, set, toast } = useApp();
   const chords = state.progression.chords;
@@ -777,6 +824,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
       <div className="dock-inner">
         <div className="dock-top">
           <SongBar secs={secs} playing={songPlaying} onPlay={onSong} />
+          <button className="chip dock-drums" aria-label="Go to the harp" title="Playing style and sound" onClick={() => document.querySelector(".harp")?.scrollIntoView({ behavior: "smooth", block: "start" })}>♪</button>
           <button className={`chip dock-drums${beatOn ? " on" : ""}`} aria-label="Go to the drums" title="Go to the drums" onClick={() => document.querySelector(".drums")?.scrollIntoView({ behavior: "smooth", block: "start" })}>🥁</button>
         </div>
         {chords.length >= 2 && (
@@ -811,6 +859,7 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
           <button className="icon-btn" aria-label="Song options" title="Tempo, export" onClick={onMenu}>⋯</button>
         </div>
         </div>
+        {chords.length > 0 && <BarRuler chords={chords} bar={bar} nowIdx={nowIdx} onChange={onLengths} />}
       </div>
     </div>
   );
@@ -854,9 +903,9 @@ function tabText(vs: (Voicing | undefined)[], names: string[], stringNames: stri
   return [header, ...lines].join("\n");
 }
 
-type SongPlan = { items: { midi: (number | null)[]; beats: number }[]; parts: { sec: Section; voicings: (Voicing | undefined)[] }[] };
+type SongPlan = { items: PlayItem[]; parts: { sec: Section; voicings: (Voicing | undefined)[] }[] };
 
-function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing | undefined)[]; items: { midi: (number | null)[]; beats: number }[]; beat: Beat; plan: SongPlan | null; onClose: () => void }) {
+function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing | undefined)[]; items: PlayItem[]; beat: Beat; plan: SongPlan | null; onClose: () => void }) {
   const { state, set, tuning, toast, idea } = useApp();
   const prog = state.progression;
   const has = prog.chords.length > 0;
@@ -930,12 +979,6 @@ function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing
             <span className="kb-label">Tempo</span>
             <input type="range" min={40} max={200} value={prog.bpm} aria-label="Tempo" onChange={(e) => setProg((p) => ({ ...p, bpm: Number(e.target.value) }))} />
             <b className="mono">{prog.bpm}</b>
-          </div>
-          <div className="menu-row">
-            <span className="kb-label">Rhythm</span>
-            <select value={prog.pattern} aria-label="Rhythm" onChange={(e) => setProg((p) => ({ ...p, pattern: e.target.value as PatternId }))}>
-              {PATTERNS.map((p) => <option key={p.id} value={p.id}>{p.label}</option>)}
-            </select>
             <label className="toggle"><input type="checkbox" checked={prog.loop} onChange={(e) => setProg((p) => ({ ...p, loop: e.target.checked }))} /> Loop</label>
           </div>
           <div className="menu-row">

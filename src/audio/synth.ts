@@ -1,187 +1,259 @@
 /**
- * A tiny guitar synthesizer using the Karplus–Strong plucked-string algorithm:
- * a burst of noise circulates through a short delay line whose length sets the
- * pitch; a gentle low-pass in the loop makes it decay like a real string.
- * No samples, no downloads, works offline.
+ * The harp, live: plays notes rendered by harp.ts through the effects in rack.ts,
+ * and steps through a progression in time (with the drums).
  */
-import { midiToFreq } from "../theory/notes";
 import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
 import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
-import { DRUM_IDS } from "./drums";
-import { PatternId, patternEvents } from "./patterns";
+import { DRUM_IDS, drumRng } from "./drums";
+import { STRING_KEYS, renderHarp, stringKey, type HarpString } from "./harp";
+import { itemNotes, meterOf, styleNotes, type PatternId, type PlayItem } from "./patterns";
+export type { PlayItem } from "./patterns";
+import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
-let master: GainNode | null = null;
-/** The guitar's own volume dip under each kick (the drums' Pump control). */
-let duck: GainNode | null = null;
-const buffers = new Map<number, { buf: AudioBuffer; rate: number }>();
-
-export function getAudio(): AudioContext {
-  const ctx = audioContext();
-  if (!master) {
-    master = ctx.createGain();
-    master.gain.value = 1.1;
-    const body = ctx.createBiquadFilter(); // a little wooden body resonance
-    body.type = "peaking";
-    body.frequency.value = 180;
-    body.Q.value = 0.9;
-    body.gain.value = 4;
-    const presence = ctx.createBiquadFilter();
-    presence.type = "peaking";
-    presence.frequency.value = 2500;
-    presence.Q.value = 1;
-    presence.gain.value = 2;
-    const air = ctx.createBiquadFilter();
-    air.type = "lowpass";
-    air.frequency.value = 7000;
-    const comp = ctx.createDynamicsCompressor();
-    comp.threshold.value = -16;
-    comp.ratio.value = 3;
-    duck = ctx.createGain();
-    master.connect(duck).connect(body).connect(presence).connect(air).connect(comp).connect(ctx.destination);
-    // Pump: the guitar dips under every kick and swells back, like a sidechained compressor
-    onKickHit((when, depth) => {
-      const g = duck!.gain;
-      g.cancelScheduledValues(when);
-      g.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
-      g.setTargetAtTime(1, when + 0.03, 0.09);
-    });
-  }
-  return ctx;
-}
-
-/**
- * Render one plucked note (pure function, testable without a browser).
- * Returns the samples plus the playback-rate correction that makes the pitch exact
- * (the delay line can only be a whole number of samples long).
- */
-export function renderPluck(sr: number, midi: number, rand: () => number = Math.random): { data: Float32Array; rate: number } {
-  const freq = midiToFreq(midi);
-  const exact = sr / freq;
-  // Each loop step averages the current and *next* sample, so the loop period is N − 0.5.
-  const N = Math.max(2, Math.floor(exact + 0.5));
-  const dur = Math.min(4.5, Math.max(1.6, 4.6 - (midi - 40) * 0.06));
-  const len = Math.floor(sr * dur);
-  const out = new Float32Array(len);
-  const line = new Float32Array(N);
-  // excitation: warm (low-passed) noise with a pick-position comb
-  let lp = 0;
-  for (let i = 0; i < N; i++) {
-    lp += 0.55 * (rand() * 2 - 1 - lp);
-    line[i] = lp;
-  }
-  const pickPos = Math.max(1, Math.floor(N * 0.18));
-  const tmp = Float32Array.from(line);
-  for (let i = 0; i < N; i++) line[i] = tmp[i] - 0.7 * tmp[(i + pickPos) % N];
-  const mean = line.reduce((a, b) => a + b, 0) / N;
-  for (let i = 0; i < N; i++) line[i] -= mean;
-  // per-period loss so low strings sustain and high strings fade faster
-  const t60 = dur * 0.75;
-  const rho = Math.pow(10, -3 / (t60 * (sr / (N - 0.5))));
-  let idx = 0;
-  let peak = 0;
-  for (let i = 0; i < len; i++) {
-    const a = line[idx];
-    const b = line[idx + 1 === N ? 0 : idx + 1];
-    out[i] = a;
-    if (Math.abs(a) > peak) peak = Math.abs(a);
-    line[idx] = rho * 0.5 * (a + b); // 2-tap average: linear phase, so pitch stays exact
-    idx = idx + 1 === N ? 0 : idx + 1;
-  }
-  const norm = peak > 0 ? 0.6 / peak : 1;
-  const fade = Math.floor(sr * 0.08);
-  for (let i = 0; i < len; i++) {
-    out[i] *= norm;
-    if (i > len - fade) out[i] *= (len - i) / fade;
-  }
-  return { data: out, rate: (N - 0.5) / exact };
-}
-
-function pluck(c: AudioContext, midi: number): { buf: AudioBuffer; rate: number } {
-  const hit = buffers.get(midi);
-  if (hit) return hit;
-  const { data, rate } = renderPluck(c.sampleRate, midi);
-  const buf = c.createBuffer(1, data.length, c.sampleRate);
-  buf.getChannelData(0).set(data);
-  const r = { buf, rate };
-  buffers.set(midi, r);
-  return r;
-}
+/** How many rendered notes are kept (each is up to a megabyte). */
+const MAX_NOTES = 96;
 
 interface Ringing {
-  src: AudioBufferSourceNode;
+  srcs: AudioBufferSourceNode[];
   gain: GainNode;
 }
-const ringing = new Map<number, Ringing>(); // by string/voice slot
 
-function damp(r: Ringing, at: number) {
-  try {
-    r.gain.gain.cancelScheduledValues(at);
-    r.gain.gain.setTargetAtTime(0, at, 0.025);
-    r.src.stop(at + 0.2);
-  } catch {
-    /* already stopped */
+/** A set of strings on one audio context (the live one, or an offline one for measuring and bouncing). */
+export class Harp {
+  readonly rack: Rack;
+  sound: HarpSound = SOUND_DEFAULT;
+  /** the strings the notes are rendered with (they can lag behind `sound` while a knob is moving) */
+  strings: HarpString = SOUND_DEFAULT;
+  private buffers = new Map<string, AudioBuffer>();
+  private ringing = new Map<number, Ringing>(); // by string
+  private all = new Set<Ringing>();
+
+  constructor(readonly c: BaseAudioContext, out?: AudioNode) {
+    this.rack = createRack(c, out);
+    this.rack.set(this.sound, 90);
+  }
+
+  /** Change the sound. The effects follow at once; `strings: false` leaves the notes themselves as they were. */
+  setSound(s: HarpSound, bpm: number, strings = true) {
+    this.sound = s;
+    if (strings) this.strings = s;
+    this.rack.set(s, bpm);
+  }
+
+  /** Is this note ready to play without a pause? */
+  has(midi: number): boolean {
+    return this.buffers.has(stringKey(midi, this.strings));
+  }
+
+  buffer(midi: number): AudioBuffer {
+    const key = stringKey(midi, this.strings);
+    let buf = this.buffers.get(key);
+    if (!buf) {
+      const data = renderHarp(this.c.sampleRate, midi, this.strings, drumRng(midi * 131 + 7));
+      buf = this.c.createBuffer(1, data.length, this.c.sampleRate);
+      buf.getChannelData(0).set(data);
+      if (this.buffers.size >= MAX_NOTES) this.buffers.delete(this.buffers.keys().next().value!);
+      this.buffers.set(key, buf);
+    }
+    return buf;
+  }
+
+  private damp(r: Ringing, at: number, tc = 0.025) {
+    try {
+      r.gain.gain.cancelScheduledValues(at);
+      r.gain.gain.setTargetAtTime(0, at, tc);
+      for (const src of r.srcs) src.stop(at + tc * 8);
+    } catch {
+      /* already stopped */
+    }
+  }
+
+  /**
+   * Pluck one string. `slot` = which string: a new note on the same string stops the old one, as on a real instrument.
+   * `lengthSec` = when the hand lifts; how gently the note then fades follows the Ring knob.
+   */
+  play(midi: number, when: number, velocity = 0.8, slot?: number, lengthSec = Infinity, cut = false) {
+    const c = this.c;
+    const s = this.sound;
+    const src = c.createBufferSource();
+    src.buffer = this.buffer(midi);
+    // a harder pluck is a brighter one
+    const vcf = c.createBiquadFilter();
+    vcf.type = "lowpass";
+    vcf.frequency.value = Math.min(20000, 700 * Math.pow(2, velocity * 5));
+    vcf.Q.value = 0.4;
+    const g = c.createGain();
+    g.gain.value = VOICE_GAIN * Math.pow(velocity, 1.3);
+    const pan = c.createStereoPanner();
+    pan.pan.value = slot !== undefined ? (((slot % 6) - 2.5) / 2.5) * 0.7 * s.wide : 0;
+    src.connect(vcf).connect(g).connect(pan).connect(this.rack.input);
+    const r: Ringing = { srcs: [src], gain: g };
+    src.start(when);
+    if (s.octave > 0) {
+      // the octave string of a twelve-string: the same pluck an octave up, a moment later
+      const oct = c.createBufferSource();
+      oct.buffer = src.buffer;
+      oct.detune.value = 1200;
+      const og = c.createGain();
+      og.gain.value = 0.7 * s.octave;
+      oct.connect(og).connect(vcf);
+      oct.start(when + 0.009);
+      r.srcs.push(oct);
+    }
+    if (s.shimmer > 0 && !cut) {
+      // a halo an octave up that swells in after the pluck and is heard only in the reverb
+      const sh = c.createBufferSource();
+      sh.buffer = src.buffer;
+      sh.detune.value = 1200;
+      const sg = c.createGain();
+      sg.gain.setValueAtTime(0, when);
+      sg.gain.linearRampToValueAtTime(VOICE_GAIN * velocity * s.shimmer * 0.85, when + 0.28);
+      sh.connect(sg).connect(this.rack.halo);
+      sh.start(when);
+      r.srcs.push(sh);
+    }
+    if (slot !== undefined) {
+      const prev = this.ringing.get(slot);
+      if (prev) this.damp(prev, when);
+      this.ringing.set(slot, r);
+    }
+    this.all.add(r);
+    src.onended = () => this.all.delete(r);
+    if (Number.isFinite(lengthSec)) this.damp(r, when + lengthSec, cut ? 0.012 : 0.04 + 0.3 * s.ring * s.ring);
+  }
+
+  stopAll(at = this.c.currentTime) {
+    for (const r of this.all) this.damp(r, at);
+    this.all.clear();
+    this.ringing.clear();
   }
 }
 
-/** Play a single note. `slot` = string index; a new note on the same string damps the old one, like a real guitar. */
+/** How loud one string is before the effects. */
+const VOICE_GAIN = 0.4;
+
+let harp: Harp | null = null;
+let sound: HarpSound = SOUND_DEFAULT;
+let tempo = 90;
+
+function live(): Harp {
+  const ctx = audioContext();
+  if (!harp) {
+    harp = new Harp(ctx);
+    harp.setSound(sound, tempo);
+    // Pump: the harp dips under every kick and swells back, like a sidechained compressor
+    const duck = harp.rack.duck.gain;
+    onKickHit((when, depth) => {
+      duck.cancelScheduledValues(when);
+      duck.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
+      duck.setTargetAtTime(1, when + 0.03, 0.09);
+    });
+  }
+  return harp;
+}
+
+export function getAudio(): AudioContext {
+  return live().c as AudioContext;
+}
+
+let settle = 0;
+/**
+ * Change the harp's sound and effects. Safe to call before any sound has been made.
+ * The effects follow at once. New strings (instrument, pluck, soft, ring, body) mean new notes have
+ * to be made, so those wait until the knob has stopped moving.
+ */
+export function setHarpSound(s: HarpSound, bpm: number) {
+  sound = s;
+  tempo = bpm;
+  const h = harp;
+  if (!h) return;
+  const same = STRING_KEYS.every((k) => h.strings[k] === s[k]);
+  h.setSound(s, bpm, same);
+  window.clearTimeout(settle);
+  if (!same)
+    settle = window.setTimeout(() => {
+      h.setSound(sound, tempo);
+      prepareNotes(queue);
+    }, 150);
+}
+
+let queue: number[] = [];
+let queued = 0;
+/** Get these notes ready in the background, one at a time, so playing never has to wait for them. */
+export function prepareNotes(midis: Iterable<number>) {
+  queue = [...new Set(midis)];
+  if (queued) return;
+  const step = () => {
+    queued = 0;
+    const h = harp;
+    if (!h) return;
+    const next = queue.find((m) => !h.has(m));
+    if (next === undefined) return;
+    h.buffer(next);
+    queued = window.setTimeout(step, 0);
+  };
+  queued = window.setTimeout(step, 0);
+}
+
+/** Play a single note. `slot` = string index. */
 export function playNote(midi: number, when?: number, velocity = 0.8, slot?: number, lengthSec = Infinity) {
-  const c = getAudio();
-  const t = when ?? c.currentTime + 0.01;
-  const { buf, rate } = pluck(c, midi);
-  const src = c.createBufferSource();
-  src.buffer = buf;
-  src.playbackRate.value = rate;
-  const g = c.createGain();
-  g.gain.value = 0.32 * velocity;
-  const pan = c.createStereoPanner();
-  pan.pan.value = slot !== undefined ? (slot - 2.5) * 0.08 : 0;
-  src.connect(g).connect(pan).connect(master!);
-  if (slot !== undefined) {
-    const prev = ringing.get(slot);
-    if (prev) damp(prev, t);
-    ringing.set(slot, { src, gain: g });
-  }
-  src.start(t);
-  if (Number.isFinite(lengthSec)) damp({ src, gain: g }, t + lengthSec);
+  const h = live();
+  h.play(midi, when ?? h.c.currentTime + 0.01, velocity, slot, lengthSec);
 }
 
-/** Strum a voicing (array of MIDI notes per string, null = muted). */
+/** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. */
 export function strum(midi: (number | null)[], opts: { when?: number; dir?: "down" | "up"; spread?: number; velocity?: number; length?: number } = {}) {
-  const c = getAudio();
-  const t0 = opts.when ?? c.currentTime + 0.02;
+  const h = live();
   const strings = midi.map((m, s) => ({ m, s })).filter((x): x is { m: number; s: number } => x.m !== null);
+  // the first note sounds as soon as the notes are ready
+  for (const x of strings) h.buffer(x.m);
+  const t0 = opts.when ?? h.c.currentTime + 0.02;
   if (opts.dir === "up") strings.reverse();
-  strings.forEach(({ m, s }, i) =>
-    playNote(m, t0 + i * (opts.spread ?? 0.025), (opts.velocity ?? 0.8) * (1 - i * 0.03), s, opts.length ?? Infinity),
-  );
+  strings.forEach(({ m, s }, i) => h.play(m, t0 + i * (opts.spread ?? 0.028), (opts.velocity ?? 0.78) * (1 + i * 0.02), s, opts.length ?? Infinity));
 }
 
 export function stopAll() {
-  const ctx = audioIfStarted();
-  if (!ctx) return;
-  const t = ctx.currentTime;
-  for (const r of ringing.values()) damp(r, t);
-  ringing.clear();
+  if (audioIfStarted()) harp?.stopAll();
 }
 
 /** Play a scale / list of notes one after another. */
 export function playSequence(midis: number[], noteSec = 0.28) {
-  const c = getAudio();
-  const t0 = c.currentTime + 0.05;
-  midis.forEach((m, i) => playNote(m, t0 + i * noteSec, 0.75, 0, noteSec * 1.6));
+  const h = live();
+  for (const m of new Set(midis)) h.buffer(m);
+  const t0 = h.c.currentTime + 0.05;
+  midis.forEach((m, i) => h.play(m, t0 + i * noteSec, 0.75, 0, noteSec * 1.6));
+}
+
+/** Pluck everything one chord's style asks for, starting at time `t`. */
+function playItem(h: Harp, item: PlayItem, t: number, spb: number, pattern: PatternId, at: number, beat: Beat | null) {
+  for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat))) {
+    const held = Math.min(e.length, item.beats - e.beat) * spb - e.delay;
+    h.play(e.midi, t + e.beat * spb + e.delay, e.velocity, e.slot, Math.min(held, e.cut ?? Infinity), e.cut !== undefined);
+  }
+}
+
+/**
+ * The chords alone, played once through the effects into a buffer, without a speaker.
+ * Used to measure levels; it is also everything an audio export would need.
+ */
+export async function renderOffline(items: PlayItem[], bpm: number, pattern: PatternId, s: HarpSound, tail = 2, sr = 44100): Promise<AudioBuffer> {
+  const spb = 60 / bpm;
+  const total = items.reduce((a, x) => a + x.beats, 0) * spb + tail;
+  const c = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
+  const h = new Harp(c);
+  h.setSound(s, bpm);
+  let at = 0;
+  let origin = 0;
+  items.forEach((item, i) => {
+    if (i === 0 || item.section) origin = at;
+    playItem(h, item, 0.05 + at * spb, spb, pattern, at - origin, null);
+    at += item.beats;
+  });
+  return c.startRendering();
 }
 
 // ── Progression player (look-ahead scheduler) ─────────────────
-
-export interface PlayItem {
-  midi: (number | null)[];
-  beats: number;
-  /** the drum rhythm under this chord (missing = the player's own beat) */
-  drums?: Beat;
-  /** a song section starts here: its drum pattern starts again from bar 1 */
-  section?: boolean;
-}
 
 /** Where a chord starts: the drum grid re-locks to each of these, so tempo changes and loops stay tight. */
 interface Anchor {
@@ -245,8 +317,6 @@ export class ProgressionPlayer {
     this.nextIndex = fromIndex;
     this.passBeat = list.slice(0, fromIndex).reduce((a, x) => a + x.beats, 0);
     this.origin = 0;
-    this.startTime = c.currentTime + 0.08;
-    this.nextTime = this.startTime;
     this.endAt = null;
     this.dDiv = beat?.div ?? 4;
     setBedPlaying(true, beat);
@@ -254,6 +324,13 @@ export class ProgressionPlayer {
       syncDrums(beat, bpm);
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
     }
+    // the first chords are made ready before the clock starts, the rest while they play
+    const h = live();
+    const need = itemNotes(list, pattern, beat);
+    for (const n of need) if (n.item <= fromIndex + 1 && n.item >= fromIndex) h.buffer(n.e.midi);
+    prepareNotes(need.map((n) => n.e.midi));
+    this.startTime = c.currentTime + 0.08;
+    this.nextTime = this.startTime;
     this.playing = true;
     this.timer = window.setInterval(() => this.schedule(), 25);
     this.stepTimer = window.setInterval(() => this.tick(), 30);
@@ -293,17 +370,7 @@ export class ProgressionPlayer {
       if (this.nextIndex === 0 || item.section) this.origin = this.passBeat;
       this.marks.push({ time: t, index: this.nextIndex });
       this.anchors.push({ time: t, beat: this.passBeat, spb, index: this.nextIndex, origin: this.origin });
-      for (const e of patternEvents(item.midi, item.beats, this.pattern)) {
-        const when = t + e.beat * spb;
-        const lenSec = Number.isFinite(e.length) ? e.length * spb : Infinity;
-        if (e.dir === "pick") {
-          const s = item.midi.indexOf(e.notes[0]);
-          playNote(e.notes[0], when, e.velocity, s >= 0 ? s : undefined, lenSec);
-        } else {
-          const sub = item.midi.map((m) => (m !== null && e.notes.includes(m) ? m : null));
-          strum(sub, { when, dir: e.dir, spread: e.spread, velocity: e.velocity, length: lenSec });
-        }
-      }
+      playItem(live(), item, t, spb, this.pattern, this.passBeat - this.origin, this.beat);
       this.nextTime += item.beats * spb;
       this.passBeat += item.beats;
       this.nextIndex++;
@@ -381,8 +448,10 @@ export class ProgressionPlayer {
     this.drumMarks = [];
     this.onDrumStep(-1);
     setBedPlaying(false, null);
-    duck?.gain.cancelScheduledValues(0);
-    duck?.gain.setValueAtTime(1, getAudio().currentTime);
+    if (harp) {
+      harp.rack.duck.gain.cancelScheduledValues(0);
+      harp.rack.duck.gain.setValueAtTime(1, harp.c.currentTime);
+    }
     stopAll();
     stopDrums();
   }

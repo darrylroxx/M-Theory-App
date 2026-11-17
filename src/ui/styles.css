@@ -446,3 +446,32 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .piano-soon svg { max-width: 100%; height: auto; margin-bottom: 8px; }
 @media (max-width: 620px) { .finder-filters .kb-label { display: none; } .now { width: 104px; } .now-info h2 { font-size: 1.4rem; } .finder { padding: 10px; } }
 @media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* ── Harp ── */
+.harp { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 66px; }
+.style-hint { margin: 0; font-size: 0.82rem; color: var(--muted); min-height: 1.2em; }
+@media (max-width: 620px) { .harp { padding: 10px; } }
+
+/* ── Bar ruler: the section drawn to scale ── */
+.ruler-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.ruler-scroll { overflow-x: auto; scrollbar-width: none; border-radius: 8px; }
+.ruler-scroll::-webkit-scrollbar { display: none; }
+.ruler { position: relative; display: flex; height: 26px; min-width: calc(var(--beats) * 11px); border-radius: 8px; border: 1px solid var(--border-2); overflow: hidden;
+  background-color: var(--bg-2); background-image: linear-gradient(to right, var(--border-2) 1px, transparent 1px); background-size: calc(100% / var(--beats)) 100%; }
+.ruler-block { position: relative; flex: 1 1 0; min-width: 0; display: flex; }
+.ruler-name { flex: 1; min-width: 0; margin: 2px 1px; padding: 0 5px; border: none; border-radius: 5px; background: color-mix(in srgb, var(--accent) 28%, var(--card)); color: var(--text);
+  font-size: 0.72rem; font-weight: 700; overflow: hidden; white-space: nowrap; text-align: left; cursor: pointer; }
+.ruler-name:hover { background: color-mix(in srgb, var(--accent) 42%, var(--card)); }
+.ruler-block.on .ruler-name { background: var(--accent); color: var(--accent-ink); }
+.ruler-block.now .ruler-name { box-shadow: inset 0 0 0 2px var(--accent); }
+.ruler-grip { position: absolute; right: -7px; top: 0; bottom: 0; width: 14px; z-index: 2; cursor: ew-resize; touch-action: none; }
+.ruler-grip::after { content: ""; position: absolute; left: 5px; top: 6px; bottom: 6px; width: 3px; border-radius: 2px; background: var(--text); opacity: 0.5; }
+.ruler-grip:hover::after, .ruler-grip:active::after { opacity: 1; background: var(--accent-2); }
+.ruler-rest { flex: 1 1 0; min-width: 0; margin: 2px 1px; border-radius: 5px; border: 1px dashed var(--border-2); background: repeating-linear-gradient(135deg, transparent 0 5px, var(--border) 5px 6px); }
+.ruler-line { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--muted); opacity: 0.75; pointer-events: none; z-index: 1; }
+.ruler-edit { display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; padding: 6px 8px; border-radius: 10px; background: var(--card-2); border: 1px solid var(--accent); }
+.ruler-edit > b { min-width: 2.2em; }
+.ruler-edit .beats span { min-width: 64px; text-align: center; color: var(--text); }
+.ruler-edit .beats button { width: 30px; height: 30px; font-size: 1.05rem; }
+.ruler-edit .icon-btn { margin-left: auto; }
+@media (max-width: 620px), (pointer: coarse) { .ruler { height: 36px; min-width: calc(var(--beats) * 14px); } .ruler-name { margin: 3px 1px; } .ruler-grip { width: 24px; right: -12px; } .ruler-grip::after { left: 10px; top: 8px; bottom: 8px; } }

@@ -1,0 +1,385 @@
+/**
+ * The harp's effects: a pedalboard in the order guitarists wire one.
+ *
+ *   strings ─ squeeze ─ saturation ─ tone ─ phaser ─ wobble ─ chorus ─ tremolo ─┬────────────┐
+ *                                                                                ├─ echo ─────┤
+ *                                 shimmer (octave-up strings) ───────────────────┴─ reverb ───┤
+ *                                                                                             ▼
+ *                                                           pump (from the kick) ─ volume ─ ceiling ─ out
+ *
+ * Compressing first hands the saturation an even signal; modulation works on the tone that has
+ * already been shaped; echo and reverb come last so they repeat the finished sound.
+ *
+ * Works on any audio context, live or offline, so the same chain can be measured in tests.
+ */
+import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
+import { renderSpace, drumRng } from "./drums";
+import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
+
+export type DriveType = "tape" | "tube" | "fuzz";
+export const DRIVES: { id: DriveType; name: string; hint: string }[] = [
+  { id: "tape", name: "Tape", hint: "Soft and even: thickens the sound, rounds the peaks" },
+  { id: "tube", name: "Tube", hint: "Lopsided like a valve amp: warm, with an edge when pushed" },
+  { id: "fuzz", name: "Fuzz", hint: "Hard clipping: buzzy and aggressive" },
+];
+export type TremSpeed = "1/4" | "1/8" | "1/8t" | "1/16";
+export const TREM_SPEEDS: { id: TremSpeed; name: string; hint: string; perBeat: number }[] = [
+  { id: "1/4", name: "Beat", hint: "One swell per beat", perBeat: 1 },
+  { id: "1/8", name: "8th", hint: "Two per beat", perBeat: 2 },
+  { id: "1/8t", name: "Triplet", hint: "Three per beat", perBeat: 3 },
+  { id: "1/16", name: "16th", hint: "Four per beat: a flutter", perBeat: 4 },
+];
+export type HarpVerb = Exclude<VerbId, "gated">;
+export const HARP_VERBS: { id: HarpVerb; name: string; hint: string }[] = [
+  { id: "hall", name: "Hall", hint: "A concert hall: long and smooth, the harp's natural home" },
+  { id: "room", name: "Room", hint: "A small wooden room: close and real" },
+  { id: "plate", name: "Plate", hint: "Dense and bright: the studio classic" },
+  { id: "spring", name: "Spring", hint: "The drippy reverb inside a guitar amp" },
+  { id: "dark", name: "Lo-fi", hint: "Dark and grainy, like a cheap old digital reverb" },
+];
+
+export interface HarpFx {
+  /** overall volume */
+  level: number;
+  /** saturation: how hard, and which kind */
+  drive: number;
+  driveType: DriveType;
+  /** compressor: evens out loud and quiet notes, lengthens the ring */
+  squeeze: number;
+  /** −1 dark … +1 bright */
+  tone: number;
+  chorus: number;
+  phaser: number;
+  trem: number;
+  tremSpeed: TremSpeed;
+  /** tape wow and flutter: the pitch drifts */
+  wobble: number;
+  echo: number;
+  echoTime: EchoTime;
+  /** reverb amount, type and size */
+  space: number;
+  verb: HarpVerb;
+  size: number;
+  /** a halo an octave above, heard only in the reverb */
+  shimmer: number;
+  /** each string doubled an octave up, like a twelve-string */
+  octave: number;
+  /** how far the strings are spread between the speakers */
+  wide: number;
+}
+
+export type HarpSound = HarpString & HarpFx;
+
+export const FX_DEFAULT: HarpFx = {
+  level: 0.8, drive: 0, driveType: "tape", squeeze: 0.2, tone: 0, chorus: 0, phaser: 0, trem: 0, tremSpeed: "1/8", wobble: 0,
+  echo: 0, echoTime: "1/8.", space: 0.3, verb: "hall", size: 0.4, shimmer: 0, octave: 0, wide: 0.5,
+};
+export const SOUND_DEFAULT: HarpSound = { ...STRING_DEFAULT, ...FX_DEFAULT };
+
+const unit = (v: unknown, d: number, min = 0) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(min, v)) : d);
+
+/** A sound loaded from storage, made whole and safe: unknown names and missing knobs fall back to the default. */
+export function reviveSound(raw: unknown): HarpSound {
+  const r = (raw ?? {}) as Partial<Record<keyof HarpSound, unknown>>;
+  const d = SOUND_DEFAULT;
+  const pick = <T extends string>(v: unknown, list: { id: T }[], def: T): T => (list.some((x) => x.id === v) ? (v as T) : def);
+  return {
+    voice: pick(r.voice, HARP_VOICES, d.voice), pluck: unit(r.pluck, d.pluck), soft: unit(r.soft, d.soft), ring: unit(r.ring, d.ring), body: unit(r.body, d.body),
+    level: unit(r.level, d.level), drive: unit(r.drive, d.drive), driveType: pick(r.driveType, DRIVES, d.driveType), squeeze: unit(r.squeeze, d.squeeze), tone: unit(r.tone, d.tone, -1),
+    chorus: unit(r.chorus, d.chorus), phaser: unit(r.phaser, d.phaser), trem: unit(r.trem, d.trem), tremSpeed: pick(r.tremSpeed, TREM_SPEEDS, d.tremSpeed), wobble: unit(r.wobble, d.wobble),
+    echo: unit(r.echo, d.echo), echoTime: pick(r.echoTime, ECHO_TIMES, d.echoTime), space: unit(r.space, d.space), verb: pick(r.verb, HARP_VERBS, d.verb), size: unit(r.size, d.size),
+    shimmer: unit(r.shimmer, d.shimmer), octave: unit(r.octave, d.octave), wide: unit(r.wide, d.wide),
+  };
+}
+
+/** The level a strummed chord arrives at; saturation leaves a sound of this size about as loud as it was. */
+const DRIVE_REF = 0.2;
+/** How much gain each kind of saturation adds at full: warm tape, crunchy tube, fuzz. */
+const DRIVE_DB: Record<DriveType, number> = { tape: 16, tube: 24, fuzz: 40 };
+
+/**
+ * The saturation curve. Tape bends both halves of the wave the same way (odd overtones only);
+ * a tube bends one half sooner than the other, which adds the even overtones that sound warm;
+ * fuzz clips hard. A sound at the usual level comes out about as loud as it went in.
+ */
+export function saturationCurve(type: DriveType, amount: number): Float32Array<ArrayBuffer> {
+  const k = Math.pow(10, (DRIVE_DB[type] * Math.min(1, Math.max(0, amount))) / 20);
+  const f = (x: number) => {
+    if (type === "tape") return Math.tanh(k * x);
+    if (type === "tube") return x >= 0 ? Math.tanh(k * x) : Math.tanh(k * 0.62 * x) / 0.8;
+    // fuzz: almost straight, then flat. The top is shaved a little sooner than the bottom, as a transistor does it
+    const y = k * x;
+    return y >= 0 ? Math.min(0.85, y) + 0.1 * Math.tanh(y) : Math.max(-1, y);
+  };
+  const ref = (f(DRIVE_REF) - f(-DRIVE_REF)) / 2 / DRIVE_REF;
+  const curve = new Float32Array(4097);
+  for (let i = 0; i < curve.length; i++) curve[i] = f((i / (curve.length - 1)) * 2 - 1) / ref;
+  return curve;
+}
+
+/** Straight up to 0.75, then bending over so nothing can leave louder than about 0.94. */
+function ceiling(): Float32Array<ArrayBuffer> {
+  const curve = new Float32Array(2049);
+  for (let i = 0; i < curve.length; i++) {
+    const x = (i / (curve.length - 1)) * 2 - 1;
+    const a = Math.abs(x);
+    curve[i] = Math.sign(x) * (a <= 0.75 ? a : 0.75 + 0.25 * Math.tanh((a - 0.75) / 0.25));
+  }
+  return curve;
+}
+
+export interface Rack {
+  /** the strings go in here */
+  input: GainNode;
+  /** sounds sent here are heard only through the reverb (the shimmer) */
+  halo: GainNode;
+  /** dips under each kick when the drums' Pump is up */
+  duck: GainNode;
+  set(s: HarpSound, bpm: number): void;
+}
+
+/**
+ * Most effects make the sound louder or quieter as a side effect. These numbers (measured by
+ * rendering a strummed progression through the finished chain) take that back, so each knob
+ * changes the character and leaves the volume where it was.
+ */
+const QUARTERS = [0, 0.25, 0.5, 0.75, 1];
+/** the compressor has automatic make-up gain */
+export const SQUEEZE_DB = [0, -0.9, -4.3, -6, -5];
+const DRIVE_AT = [0, 0.1, 0.25, 0.5, 0.75, 1];
+export const DRIVE_TRIM: Record<DriveType, number[]> = { tape: [0, 1.6, -2.5, -2.6, -2.9, -3.5], tube: [0, 1.6, -2.6, -2.8, -3.5, -5.1], fuzz: [0, 0.9, -2.3, -5, -7.7, -8.6] };
+/** each kind of reverb returns a different amount of what it is sent, once its lows are cut */
+const VERB_SEND: Record<HarpVerb, number> = { hall: 1, room: 1.13, plate: 1.35, spring: 0.87, dark: 0.75 };
+/** Read a value off a curve given as points. */
+const table = (xs: number[], ys: number[], x: number) => {
+  let i = 0;
+  while (i < xs.length - 2 && x > xs[i + 1]) i++;
+  const t = Math.min(1, Math.max(0, (x - xs[i]) / (xs[i + 1] - xs[i])));
+  return ys[i] + (ys[i + 1] - ys[i]) * t;
+};
+const db = (v: number) => Math.pow(10, v / 20);
+
+export function createRack(c: BaseAudioContext, out: AudioNode = c.destination): Rack {
+  const gain = (v = 1) => {
+    const g = c.createGain();
+    g.gain.value = v;
+    return g;
+  };
+  const filter = (type: BiquadFilterType, freq: number, q = 0.707, db = 0) => {
+    const f = c.createBiquadFilter();
+    f.type = type;
+    f.frequency.value = freq;
+    f.Q.value = q;
+    f.gain.value = db;
+    return f;
+  };
+  const lfo = (hz: number, type: OscillatorType = "sine") => {
+    const o = c.createOscillator();
+    o.type = type;
+    o.frequency.value = hz;
+    o.start();
+    return o;
+  };
+
+  const input = gain();
+  // ── squeeze ──
+  const comp = c.createDynamicsCompressor();
+  comp.knee.value = 12;
+  comp.attack.value = 0.015;
+  comp.release.value = 0.12;
+  comp.threshold.value = 0;
+  comp.ratio.value = 1;
+  const compTrim = gain();
+  input.connect(comp).connect(compTrim);
+
+  // ── saturation: the lows go round it, so chords stay clear instead of turning to mud ──
+  const clean = gain(1);
+  const dirtIn = filter("highpass", 190);
+  const shaper = c.createWaveShaper();
+  shaper.oversample = "4x";
+  const dc = filter("highpass", 20);
+  const dirtLp = filter("lowpass", 6500);
+  const dirt = gain(0);
+  const lowsLp = filter("lowpass", 190);
+  const lows = gain(0);
+  const driven = gain();
+  compTrim.connect(clean).connect(driven);
+  compTrim.connect(dirtIn).connect(shaper).connect(dc).connect(dirtLp).connect(dirt).connect(driven);
+  compTrim.connect(lowsLp).connect(lows).connect(driven);
+
+  // ── tone ──
+  const hp = filter("highpass", 60);
+  const lowShelf = filter("lowshelf", 240);
+  const highShelf = filter("highshelf", 3200);
+  driven.connect(hp).connect(lowShelf).connect(highShelf);
+
+  // ── phaser: four all-pass stages swept slowly, mixed half and half with the dry sound ──
+  const phased = gain();
+  const phaseWet = gain(0);
+  const stages = [0, 1, 2, 3].map(() => filter("allpass", 870, 0.6));
+  const phaseLfo = lfo(0.33);
+  const phaseDepth = gain(1500); // cents either side of 870 Hz: about 360 Hz to 2.1 kHz
+  phaseLfo.connect(phaseDepth);
+  stages.forEach((s) => phaseDepth.connect(s.detune));
+  highShelf.connect(phased);
+  stages.reduce<AudioNode>((a, s) => a.connect(s), highShelf).connect(phaseWet).connect(phased);
+
+  // ── wobble: a short delay whose length drifts, as a worn tape does ──
+  const tape = c.createDelay(0.05);
+  tape.delayTime.value = 0.006;
+  const wow = gain(0);
+  const flutter = gain(0);
+  lfo(0.55).connect(wow).connect(tape.delayTime);
+  lfo(6.3).connect(flutter).connect(tape.delayTime);
+  phased.connect(tape);
+
+  // ── chorus: two delayed copies, drifting opposite ways, one in each speaker ──
+  const chorused = gain();
+  const chorusWet = gain(0);
+  const merge = c.createChannelMerger(2);
+  const chorusLfo = lfo(0.62, "triangle");
+  const slowLfo = lfo(0.17);
+  [0.013, 0.0175].forEach((base, ch) => {
+    const d = c.createDelay(0.05);
+    d.delayTime.value = base;
+    d.channelCount = 1;
+    d.channelCountMode = "explicit";
+    const depth = gain(ch ? -0.0026 : 0.0026);
+    const slow = gain(ch ? 0.0011 : -0.0011);
+    chorusLfo.connect(depth).connect(d.delayTime);
+    slowLfo.connect(slow).connect(d.delayTime);
+    tape.connect(d).connect(merge, 0, ch);
+  });
+  tape.connect(chorused);
+  merge.connect(chorusWet).connect(chorused);
+
+  // ── tremolo ──
+  const trem = gain(1);
+  const tremLfo = lfo(4);
+  const tremDepth = gain(0);
+  tremLfo.connect(tremDepth).connect(trem.gain);
+  chorused.connect(trem);
+
+  // ── echo: two delays feeding each other, so the repeats bounce from side to side; each repeat is duller and thinner ──
+  const mix = gain();
+  trem.connect(mix);
+  const echoSend = gain(0);
+  const left = c.createDelay(2);
+  const right = c.createDelay(2);
+  const echoHp = filter("highpass", 180);
+  const echoLp = filter("lowpass", 3200);
+  const feedback = gain(0.34);
+  const echoOut = c.createChannelMerger(2);
+  const echoWet = gain(1);
+  left.channelCount = right.channelCount = 1;
+  left.channelCountMode = right.channelCountMode = "explicit";
+  trem.connect(echoSend).connect(left);
+  left.connect(right).connect(echoHp).connect(echoLp).connect(feedback).connect(left);
+  left.connect(echoOut, 0, 0);
+  right.connect(echoOut, 0, 1);
+  echoOut.connect(echoWet).connect(mix);
+
+  // ── reverb: a short gap before it, so the pluck stays clear; its lows cut, so it never booms ──
+  const halo = gain();
+  const verbSend = gain(0);
+  const pre = c.createDelay(0.2);
+  pre.delayTime.value = 0.018;
+  const verbHp = filter("highpass", 120);
+  const verb = c.createConvolver();
+  verb.normalize = false; // the room is already scaled to return exactly the energy it is sent
+  const verbWet = gain(1);
+  trem.connect(verbSend).connect(pre);
+  echoWet.connect(gain(0.35)).connect(verbSend);
+  halo.connect(pre);
+  pre.connect(verbHp).connect(verb).connect(verbWet).connect(mix);
+
+  // ── out ──
+  const duck = gain();
+  const level = gain(0.8);
+  const top = c.createWaveShaper();
+  top.curve = ceiling();
+  mix.connect(duck).connect(level).connect(top).connect(out);
+
+  let was: Partial<HarpSound> & { bpm?: number } = {};
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const live = "resume" in c; // an offline render has no time to wait for a knob to settle
+  const to = (p: AudioParam, v: number, tc = 0.03) => (was.level === undefined ? (p.value = v) : p.setTargetAtTime(v, c.currentTime, tc));
+  const room = (s: HarpSound) => {
+    const sides = renderSpace(c.sampleRate, s.size, drumRng(11), s.verb);
+    const buf = c.createBuffer(2, sides[0].length, c.sampleRate);
+    sides.forEach((d, ch) => buf.getChannelData(ch).set(d));
+    verb.buffer = buf;
+  };
+
+  return {
+    input,
+    halo,
+    duck,
+    set(s, bpm) {
+      if (s.squeeze !== was.squeeze) {
+        to(comp.threshold, -34 * s.squeeze);
+        to(comp.ratio, 1 + 4 * s.squeeze);
+      }
+      if (s.drive !== was.drive || s.driveType !== was.driveType || s.squeeze !== was.squeeze) {
+        if (s.drive !== was.drive || s.driveType !== was.driveType) {
+          shaper.curve = s.drive > 0 ? saturationCurve(s.driveType, s.drive) : null;
+          to(dirtIn.frequency, s.driveType === "fuzz" ? 260 : 190);
+          to(lowsLp.frequency, s.driveType === "fuzz" ? 260 : 190);
+          to(dirtLp.frequency, s.driveType === "fuzz" ? 4800 : s.driveType === "tube" ? 6000 : 7000);
+        }
+        // the first fifth of the knob fades the saturation in; after that it only gets harder
+        const wet = Math.min(1, s.drive * 5);
+        to(clean.gain, 1 - wet);
+        to(dirt.gain, wet);
+        to(lows.gain, wet);
+        to(compTrim.gain, db(table(QUARTERS, SQUEEZE_DB, s.squeeze)));
+      }
+      if (s.tone !== was.tone) {
+        to(lowShelf.gain, s.tone < 0 ? -2 * s.tone : -3 * s.tone);
+        to(highShelf.gain, s.tone < 0 ? 14 * s.tone : 8 * s.tone);
+      }
+      if (s.drive !== was.drive || s.driveType !== was.driveType || s.tone !== was.tone)
+        to(driven.gain, db(table(DRIVE_AT, DRIVE_TRIM[s.driveType], s.drive) + (s.tone < 0 ? 1.2 * s.tone : 1.5 * s.tone)));
+      if (s.phaser !== was.phaser) {
+        to(phaseWet.gain, s.phaser);
+        to(phased.gain, 1 - 0.26 * s.phaser);
+      }
+      if (s.wobble !== was.wobble) {
+        // up to about ±12 cents of slow drift and ±3 cents of flutter
+        to(wow.gain, 0.002 * s.wobble * s.wobble);
+        to(flutter.gain, 0.00005 * s.wobble);
+      }
+      if (s.chorus !== was.chorus) {
+        to(chorusWet.gain, 0.75 * s.chorus);
+        to(chorused.gain, 1 - 0.2 * s.chorus);
+      }
+      if (s.trem !== was.trem) {
+        // at full the volume swings from almost nothing to well above where it was
+        to(tremDepth.gain, 0.62 * s.trem);
+        to(trem.gain, 1 - 0.2 * s.trem);
+      }
+      if (s.tremSpeed !== was.tremSpeed || bpm !== was.bpm) to(tremLfo.frequency, ((TREM_SPEEDS.find((x) => x.id === s.tremSpeed)?.perBeat ?? 2) * bpm) / 60);
+      if (s.echo !== was.echo) {
+        to(echoSend.gain, Math.pow(s.echo, 1.2) * 0.75);
+        to(feedback.gain, s.echo > 0 ? 0.22 + 0.3 * s.echo : 0);
+      }
+      if (s.echoTime !== was.echoTime || bpm !== was.bpm) {
+        const sec = Math.min(1.9, ((ECHO_TIMES.find((x) => x.id === s.echoTime)?.beats ?? 0.75) * 60) / bpm);
+        to(left.delayTime, sec, 0.05);
+        to(right.delayTime, sec, 0.05);
+      }
+      if (s.space !== was.space || s.verb !== was.verb) {
+        to(verbSend.gain, Math.pow(s.space, 1.3) * 1.5 * VERB_SEND[s.verb]);
+        to(mix.gain, db(-7 * Math.pow(s.space, 1.6)));
+      }
+      if (s.size !== was.size || s.verb !== was.verb) {
+        // building a room takes a moment: wait until the knob stops moving
+        clearTimeout(timer);
+        if (!verb.buffer || !live) room(s);
+        else timer = setTimeout(() => room(s), 140);
+      }
+      if (s.level !== was.level) to(level.gain, s.level * s.level * 1.25);
+      was = { ...s, bpm };
+    },
+  };
+}

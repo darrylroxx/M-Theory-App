@@ -6,6 +6,7 @@ import { RECIPES, getRecipe } from "../../audio/voices";
 import { newId, useApp } from "../state";
 import { letterClass } from "../letters";
 import { Seg } from "./common";
+import { Choice, Knob, Picker, toneText } from "./controls";
 
 type GroupId = BeatGroupId | "mine";
 /** What a grid edit can change, and so what Undo and Cancel put back. */
@@ -13,7 +14,6 @@ type Snap = Pick<Beat, "rows" | "edited" | "patternId" | "name" | "on" | "bars">
 const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
-const pct = (v: number) => String(Math.round(v * 100));
 /** A drum's sound by name: a library sound ("Felt"), or the machine's ("808"). */
 const soundName = (v: VoiceId) => getRecipe(v)?.name ?? (isMachine(v) ? getKit(v).name : v);
 /** Every sound a drum can have: the library's for that drum, then each machine's version. */
@@ -21,7 +21,6 @@ const choicesFor = (id: DrumId): VoiceId[] => [...RECIPES[id].map((r) => r.id), 
 const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : "0");
 const panText = (v: number) => (Math.abs(v) < 0.025 ? "C" : `${v < 0 ? "L" : "R"}${Math.round(Math.abs(v) * 100)}`);
 const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low" : "High"} ${Math.round(Math.abs(v) * 100)}`);
-const toneText = (v: number) => (Math.abs(v) < 0.025 ? "Flat" : `${v < 0 ? "Dark" : "Bright"} ${Math.round(Math.abs(v) * 100)}`);
 
 /**
  * The drum machine, always on the page under the chords.
@@ -477,53 +476,11 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
           <div className="knobs">
             <Knob label="Tone" min={-1} max={1} value={fx.tone} def={0} fmt={toneText} onChange={(v) => setFx({ tone: v })} />
             <Knob label="Glue" title="Squashes the kit together" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
-            <Knob label="Pump" title="The guitar ducks under every kick, then swells back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
+            <Knob label="Pump" title="The harp ducks under every kick, then swells back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
           </div>
         </div>
       )}
     </section>
-  );
-}
-
-/** A small labelled menu, the same size as a knob. */
-function Choice<T extends string>({ label, value, options, onChange }: { label: string; value: T; options: { id: T; name: string; hint: string }[]; onChange: (v: T) => void }) {
-  return (
-    <label className="knob choice" title={options.find((o) => o.id === value)?.hint}>
-      <span><i>{label}</i></span>
-      <select value={value} aria-label={label} onChange={(e) => onChange(e.target.value as T)}>
-        {options.map((o) => <option key={o.id} value={o.id} title={o.hint}>{o.name}</option>)}
-      </select>
-    </label>
-  );
-}
-
-/** ‹ name ›: the arrows flip through, the name opens the full list. */
-function Picker({ label, name, open, onOpen, onStep, disabled }: { label: string; name: string; open: boolean; onOpen: () => void; onStep: (dir: -1 | 1) => void; disabled?: boolean }) {
-  return (
-    <div className={`beat-pick${open ? " open" : ""}${disabled ? " off" : ""}`}>
-      <button aria-label={`Previous ${label.toLowerCase()}`} disabled={disabled} onClick={() => onStep(-1)}>‹</button>
-      <button className="beat-name" aria-expanded={open} aria-label={`${label}: ${name}`} disabled={disabled} onClick={onOpen}>
-        <span>{label}</span>
-        <b>{name}</b>
-      </button>
-      <button aria-label={`Next ${label.toLowerCase()}`} disabled={disabled} onClick={() => onStep(1)}>›</button>
-    </div>
-  );
-}
-
-/** A labelled slider that shows its value. Double-click puts it back to its default. */
-function Knob({ label, value, onChange, min = 0, max = 1, step = 0.05, title, def, fmt = pct, wide, children }: {
-  label: string; value: number; onChange: (v: number) => void; min?: number; max?: number; step?: number; title?: string;
-  def?: number; fmt?: (v: number) => string; wide?: boolean; children?: React.ReactNode;
-}) {
-  const at = ((value - min) / (max - min)) * 100;
-  const mid = min < 0 ? 50 : 0;
-  const style = { "--a": `${Math.min(at, mid)}%`, "--b": `${Math.max(at, mid)}%` } as CSSProperties;
-  return (
-    <label className={`knob${wide ? " wide" : ""}${def !== undefined && Math.abs(value - def) > 1e-6 ? " moved" : ""}`} title={title} onDoubleClick={() => def !== undefined && onChange(def)}>
-      <span><i>{label}</i><b>{fmt(value)}</b>{children}</span>
-      <input type="range" min={min} max={max} step={step} value={value} aria-label={label} style={style} onChange={(e) => onChange(Number(e.target.value))} />
-    </label>
   );
 }
 

@@ -5,8 +5,7 @@
  */
 import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import type { DrumId } from "./drums";
-import { PatternId, patternEvents } from "./patterns";
-import type { PlayItem } from "./synth";
+import { itemNotes, type PatternId, type PlayItem } from "./patterns";
 
 const TPQ = 480; // ticks per quarter note
 
@@ -29,7 +28,7 @@ export const GM_DRUM: Record<DrumId, number> = { kick: 36, snare: 38, clap: 39, 
 
 /**
  * The progression as a MIDI file. With a beat switched on, the file has two tracks:
- * guitar, and drums on channel 10. Items can carry their own drum rhythm (song sections); a
+ * harp, and drums on channel 10. Items can carry their own drum rhythm (song sections); a
  * section's pattern starts again from its first bar. With no chords, the beat is exported as
  * four bars, or the whole pattern if it is longer.
  */
@@ -37,21 +36,15 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
   type Ev = { tick: number; data: number[]; order: number };
   const events: Ev[] = [];
   const secPerTick = 60 / bpm / TPQ;
-  let chordStart = 0;
-  for (const item of items) {
-    const chordEnd = chordStart + item.beats * TPQ;
-    for (const e of patternEvents(item.midi, item.beats, pattern)) {
-      const notes = e.dir === "up" ? [...e.notes].reverse() : e.notes;
-      notes.forEach((note, i) => {
-        const on = Math.round(chordStart + e.beat * TPQ + (i * e.spread) / secPerTick);
-        const lenTicks = Number.isFinite(e.length) ? e.length * TPQ : chordEnd - on;
-        const off = Math.max(on + 10, Math.min(chordEnd, Math.round(on + lenTicks)));
-        const vel = Math.max(1, Math.min(127, Math.round(e.velocity * 110)));
-        events.push({ tick: off, data: [0x80, note, 0], order: 0 });
-        events.push({ tick: on, data: [0x90, note, vel], order: 1 });
-      });
-    }
-    chordStart = chordEnd;
+  const chordStart = Math.round(items.reduce((a, x) => a + x.beats, 0) * TPQ);
+  for (const { at, e, beats } of itemNotes(items, pattern, beat)) {
+    const chordEnd = Math.round((at + beats) * TPQ);
+    const on = Math.round((at + e.beat) * TPQ + e.delay / secPerTick);
+    const lenTicks = Math.min(Number.isFinite(e.length) ? e.length * TPQ : Infinity, e.cut !== undefined ? e.cut / secPerTick : Infinity, chordEnd - on);
+    const off = Math.max(on + 10, Math.min(chordEnd, Math.round(on + lenTicks)));
+    const vel = Math.max(1, Math.min(127, Math.round(e.velocity * 118)));
+    events.push({ tick: off, data: [0x80, e.midi, 0], order: 0 });
+    events.push({ tick: on, data: [0x90, e.midi, vel], order: 1 });
   }
   // overlapping identical notes: make sure each note-off precedes the next note-on at the same tick
   events.sort((a, b) => a.tick - b.tick || a.order - b.order);
@@ -62,7 +55,7 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
   const mpq = Math.round(60_000_000 / bpm);
   meta(0x51, [(mpq >> 16) & 255, (mpq >> 8) & 255, mpq & 255]);
   meta(0x58, [4, 2, 24, 8]);
-  track.push(0, 0xc0, 25); // Acoustic Guitar (steel)
+  track.push(0, 0xc0, 46); // Orchestral Harp
   let last = 0;
   for (const e of events) {
     track.push(...vlq(e.tick - last), ...e.data);

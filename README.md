@@ -27,11 +27,20 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - Tap a shape to hear it and use it. **Flavours** along the top swap the chord itself (C → Cmaj7, Cadd9, Csus2, C6…; "All…" has all 44 types).
    - Only comfortable grips are listed: no muted strings in the middle of a chord (except the classic thumb-muted ones like 3x0003 and 5x555x), no stretch wider than four frets, no open strings mixed with notes far up the neck.
 5. **Build the progression in the tray.** It sits under the chords, and sticks to the bottom of the screen while you browse them. Drag chords in (touch: press and hold, then drag; or tap **+**), drag to reorder, ✕ to remove. The finder stays open above the tray, so you can **drag one exact shape straight into the tray**. Tap a chord in the tray to hear it; the small grid button under it opens the finder for that spot (shape, flavour, length, position).
+   - **How long each chord lasts**: the strip under the tray is the section drawn to scale, every chord as wide as it is long, with a line at each bar. **Drag the edge between two chords** to move where the change falls inside the bar (the two share the time). **Tap a chord** in the strip to set its length exactly: − / + in half beats, or 1 beat, ½ bar, 1 bar, 2 bars. A bar that is not full yet is shown hatched.
 6. **Arrange** (the bar on top of the tray, once you have two chords): tap a neck area (**Open · 1–3 · 4–6 · 7–9 · 10–12**) and every chord in the progression is re-voiced there together, picking the set of shapes that needs the least hand movement. The bar shows the frets the whole progression now spans.
    - **Strings** (Any / 3 / 4 / 5–6) and **Inversions** (let the bass note change for smoother moves) re-deal the set.
    - **‹ ›** under each chord in the tray sifts that one chord through its other shapes, best fit with its neighbours first, while everything else stays put. Do it while the loop is playing to hear each option in context.
    - Chords you add later land in the same area. **My shapes** switches back to each chord's own shape.
-7. **Drums** (its own section, directly under the tray; the 🥁 button in the tray jumps to it). At first it shows only what you need: play, the kit, the rhythm and the grid.
+7. **Harp** (its own section under the tray; the ♪ button in the tray jumps to it). The chords are played on a harp, built for writing with: warm, clear and never tiring.
+   - **Style ‹ ›**: 102 ways to play the chords, in eleven groups. The arrows flip through a group, the name opens the list, and picking one plays it straight away.
+     - **Simple** (let ring, plucked, on the beat), **Strumming** (the island strum and its relatives, sixteenth-note ballad and pop strums, strums with a muted "chuck" on two and four), **Bass & strum** (boom-chick, bluegrass, bolero), **Fingerpicking** (alternating thumb, pinches, banjo-style rolls, bass and chord), **Arpeggios** (rolling up and down, ripples, sixes, triplets), **Harp** (rolled chords, broken chords, roving thumb, cascades, glissando), **Rock** (muted eighths, gallops, stabs), **Funk & reggae** (scratched sixteenths, skank, ska, one drop), **Latin** (bossa nova, samba, rumba, tresillo, habanera, clave), **Shuffle & 6/8**, **Waltz**.
+     - The pattern follows the bar, not the chord: two chords sharing a bar share one pass of the pattern, the way a player keeps the hand moving through a change. In a 3/4 or 6/8 drum rhythm every style changes to fit, and sixteenth-note styles follow the drums' swing.
+     - **Section** (when the song has more than one): every section has its own style, so a verse can be picked and a chorus strummed.
+   - **Sound ‹ ›**: 19 ready-made sounds (Concert harp, Warm, Bright, Dry and close, Dreamy, Ambient, Cathedral, Lo-fi tape, Underwater, Wire harp, Twelve-string, Music box, Glass, Dotted echo, Tremolo, Phaser, Steel guitar, Crunch, Fuzz). **+ Save this sound** keeps your own.
+   - **Strings**: Instrument (Concert harp, Folk harp, Wire harp, Music box, Guitar), **Pluck** (the middle of the string, round and hollow … by the soundboard, thin and bright), **Soft** (nail … finger pad), **Ring** (how long the strings sing, and how far one chord runs into the next), **Body** (the soundboard's warmth and knock), **Octave** (every string doubled an octave up), **Wide**, Volume.
+   - **Effects**, in the order a pedalboard is wired: **Saturation** (Tape, Tube or Fuzz), **Squeeze** (compressor), **Tone**, **Chorus**, **Phaser**, **Wobble** (tape wow and flutter), **Tremolo** (in time with the song), **Echo** (bouncing side to side, in time), **Reverb** (Hall, Room, Plate, Spring, Lo-fi) with Size, and **Shimmer** (a halo an octave above, heard in the reverb). The knobs change the character, not the volume. Double-click any knob to reset it.
+8. **Drums** (its own section, directly under the harp; the 🥁 button in the tray jumps to it). At first it shows only what you need: play, the kit, the rhythm and the grid.
    - **Kit ‹ ›**: the arrows flip through kits, the name opens the list.
      - 18 kits by sound and genre: Soft Box, Cassette, Dusty, Cold Wave, Dark Club, Neon, Arena, Studio, Brushes, Trap, Techno, Industrial, Glitch, Dub, Breaks, Analog, Mallets, Hand Drums. Each picks a sound for every drum, knob settings and effects.
      - 8 machines, each built the way the real one makes sound: **Vintage** (70s organ rhythm box), **808**, **909**, **707**, **Linn**, **Volca**, **Lo-fi** (8-bit), **Modular**.
@@ -44,18 +53,18 @@ One page, very little text. (A **Piano** tab is reserved for later.)
    - **Effects** for the whole kit: one-tap vibes (**Clean, Dreamy, Cassette, Dusty, Gated 80s, Big Room, Crunch, Dub, Pump**), or set them yourself:
      - **Reverb type** (Room, Hall, Plate, Spring, Gated, Lo-fi), Reverb, Size, Echo and Echo time.
      - **Sampler** (12-bit, Warm 12, 8-bit, Toy, Crushed): the grain of old sampling drum machines. **Noise** (Vinyl, Tape, Room, Hum) under the drums while they play. Grit, Tape (wobble and dullness).
-     - Tone, Glue (compression), **Pump** (the guitar ducks under every kick and swells back).
+     - Tone, Glue (compression), **Pump** (the harp ducks under every kick and swells back).
      - Tempo, Volume, Swing, Human (looser timing and touch).
      - The knobs change the character, not the volume.
    - Picking a 3/4 or 6/8 rhythm changes whole-bar chords to match (4 beats become 3 in a waltz). With no chords in the tray, ▶ plays the drums alone so you can jam over them.
-8. **Song** (the first row of the tray): sections are letters, **A B A C**… The tray is section A to begin with.
-   - **+** → **New B** adds a section with its own chords and drums; **A again** plays A once more. New sections land right after the one you are on.
-   - The same letter twice is the same music: change one A and every A changes. **Unlink** gives one of them its own letter (with a copy of the chords and drums), so it can differ.
+9. **Song** (the first row of the tray): sections are letters, **A B A C**… The tray is section A to begin with.
+   - **+** → **New B** adds a section with its own chords, playing style and drums; **A again** plays A once more. New sections land right after the one you are on.
+   - The same letter twice is the same music: change one A and every A changes. **Unlink** gives one of them its own letter (with a copy of the chords, style and drums), so it can differ.
    - **Drag** a section to move it anywhere (on a phone: hold, then drag), or use ◀ ▶. **⧉** copies a section; **Paste** puts it after the one you are on. ✕ removes it.
-   - **▶ Song** plays the whole thing once from the top, each section with its own drums, while the tray follows along; the round ▶ loops just the section you are on.
+   - **▶ Song** plays the whole thing once from the top, each section with its own style and drums, while the tray follows along; the round ▶ loops just the section you are on.
    - MIDI export (with each section's drums) and "Copy tab" cover the whole song. Songs saved with Verse / Chorus names open with letters.
-9. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
-10. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, rhythm, loop, idea settings, transpose, **MIDI export** (guitar + a drum track on channel 10), copy chords + tab, and saved ideas.
+10. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
+11. **▶** plays it. **✨** writes a starting idea. **⋯** has tempo, loop, idea settings, transpose, **MIDI export** (the harp part exactly as the style plays it + a drum track on channel 10), copy chords + tab, and saved ideas.
 
 A **Capo** menu sits next to the scale; ★ marks the capo that removes the most barre chords (B major: capo 4).
 
@@ -80,7 +89,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 131 tests: theory, voicings, shapes, song structure, library, synth, drums, MIDI
+npm test          # 174 tests: theory, voicings, shapes, song structure, library, harp, styles, effects, drums, MIDI
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -116,12 +125,16 @@ src/
     arrange.ts     easy default shapes, voice-leading optimizer (dynamic programming), capo finder
     tunings.ts
   audio/
-    synth.ts       Karplus-Strong guitar synth + look-ahead player for chords and drums
+    harp.ts        the harp: every note built from its partials (pluck point, finger, string, soundboard)
+    rack.ts        the harp's effects chain, with loudness-compensated knobs
+    sounds.ts      the ready-made harp sounds
+    styles.ts      the library of 102 playing styles, written as strum and picking patterns
+    patterns.ts    the style engine: turns a style and a chord into notes, bar by bar (shared by playback and MIDI export)
+    synth.ts       the live harp voices + look-ahead player for chords and drums
     voices.ts      the sound library: ~105 drum recipes for one general drum synthesizer
     drums.ts       the 8 machine voices, rendering (round-robin takes, sampler grit, loudness), reverbs, noise beds
     drumbus.ts     the live mixing desk: per-drum level, pan and sends, then grit, tape, tone, glue, pump
     beats.ts       step-grid format (multi-bar), the rhythm library, swing, variation, vibes, kits
-    patterns.ts    rhythm patterns (shared by playback and MIDI export)
     midi.ts        Standard MIDI File writer
   ui/            React app: the guitar page, shape finder, tray, drag & drop
 ```
@@ -131,7 +144,19 @@ src/
 - **Suggestions** score every candidate chord by root motion (falling 5ths, steps, 3rds, chromatic slides), shared notes, voice-leading distance and resolution of tension, then group them by character.
 - **Progression voicings** use dynamic programming to minimise total difficulty plus hand movement and top-note jumps across the whole progression.
 
+- **The harp** is not a recording. Each note is a sum of fading sine waves, one per overtone, shaped by what acoustics research says makes a harp sound like a harp: harpists pluck a third to two fifths of the way along the string, which removes whole families of overtones (pluck the exact middle and only the odd ones are left); the soft finger pad rounds the attack; gut and nylon lose their high overtones quickly (a quality factor near 1000 that falls above 2–3 kHz), so the tail is pure; nothing damps the string; each overtone swings two ways at slightly different pitches, which gives the slow shimmer of a real string; a concert harp's soundboard radiates most around 148, 166, 228 and 335 Hz and little below, and answers each pluck with a soft knock; and the other strings hum along. A harder pluck is brighter as well as louder. Notes are in tune to within a few cents and all equally loud.
+- **Playing styles** are written the way teachers write them: one symbol per step of the bar (D down, U up, X muted, p-i-m-a for the picking fingers, and so on). Down-strums cross the strings in 20 to 35 ms, low string loudest; up-strums catch only the top four and are softer; muted strums are cut after 45 ms; a rolled harp chord climbs more slowly and swells to the top. The same notes go to the MIDI file.
+- **The harp's effects** are wired like a pedalboard: compressor, saturation, tone, phaser, tape wobble, chorus, tremolo, then echo and reverb. The saturation lets the lowest notes pass round it, so chords stay clear instead of turning to mud; tape bends both halves of the wave alike, the tube bends one half sooner (the even overtones that sound warm), fuzz clips hard. The chorus is two delayed copies drifting opposite ways, one in each speaker; the phaser is four all-pass stages swept between about 360 Hz and 2 kHz; the echo's repeats bounce from side to side and get duller each time; the reverb starts 18 ms late so the pluck stays clear. Shimmer is done without a pitch shifter: an octave-up copy of each string swells in and is sent only to the reverb. Every knob is loudness-compensated from measurements of the finished output.
+
 - **Drum sounds** come from one general drum synthesizer, built from how the classic machines and the best drum synths work (circuit studies of the TR-808, the Mutable Instruments Plaits source, Perry Cook's PhISEM shaker models, Sound On Sound's "Synth Secrets"). Each sound is a short recipe of layers: oscillators with a fast pitch drop and a slow sag; a pulse ringing a resonant filter (the 808's bridged-T way); several drum-head modes at the ratios of a real membrane; a bank of square waves through band-pass filters for hats, cymbals and cowbell; noise that is white, pink or clocked, with clap bursts, gated tails and snare wires that follow the head; beads and jingles colliding for shakers and tambourines; and dozens of decaying partials for cymbals and bells. Each sound is rendered in three slightly different takes that are played in turn, and every sound is brought to the same loudness (over 40 ms, 300 ms and, for kicks, a second), so swapping one never upsets the mix.
 - **Drum effects** are a small mixing desk of Web Audio nodes: each drum has its own level, pan, and reverb and echo sends; the kit then passes through saturation, a tape stage (a short delay whose length drifts), tone, a compressor and a soft ceiling that adds no delay. The reverbs are generated stereo impulse responses (a spring is an impulse sent round a loop of 60 all-pass filters; the gated room is a flat burst that stops dead). The sampler modes hold samples at a lower rate without filtering and quantise them, as the old sampling drum machines did. The noise beds (vinyl crackle, tape hiss, room tone, hum) are rendered once as seamless loops. Saturation, compression and tone are loudness-compensated from measurements of the finished output. The drum grid re-locks to every chord change, so the beat and the chords cannot drift apart.
 
 Everything runs locally in your browser. Your ideas are saved in the browser's local storage. When the app is opened as a claude.ai artifact, each saved idea is also written to your private area of the artifact's database, so the same library shows up on your other devices.
+
+### Where the harp, the styles and the effects come from
+
+The numbers and patterns were collected from published acoustics research, teaching material and audio-engineering references. The session that gathered them could read search-result excerpts of these pages, not always the full text, so treat the list as where to look rather than as a guarantee that every figure was checked against the original.
+
+- Harp acoustics: Chadefaux, Le Carrou et al., *Experimentally based description of harp plucking* (JASA 2012); Le Carrou, Gautier et al. on the concert harp's soundboard and sound-hole modes and on sympathetic strings; Woodhouse, *Euphonics* (string damping, plucked-string synthesis); Waltham's harp chapters and ASA papers; UNSW Music Acoustics (harp); the Vienna Symphonic Library's harp notes; Sound On Sound, *Synthesizing plucked strings*.
+- Playing styles: Wikipedia (Strum, Carter Family picking, Tresillo, Clave, Ska stroke, Banjo roll); guitar lesson sites (rhythmguitar.org, justinguitar, andyguitar, Fender, MusicRadar, Guitar World, Premier Guitar, Classical Guitar Magazine, jazzguitar.be); the Giuliani right-hand studies; harp accompaniment guides (myharpsdelight.com, harpmastery, Harp Column).
+- Effects: J. O. Smith, *Physical Audio Signal Processing* (flanging and phasing); Valhalla DSP's notes on reverb types, shimmer and echo; Sound On Sound technique articles; the Web Audio API documentation (MDN); circuit analyses of classic overdrive, chorus and phaser pedals.

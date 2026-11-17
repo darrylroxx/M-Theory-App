@@ -5,11 +5,13 @@
  * one drum rhythm, so changing one changes the other. A block can be given its own letter
  * (and its own copy of the chords and drums) when it needs to differ.
  *
- * The tray always shows the chords of the block that is selected, and the drum grid shows its
- * rhythm. Those live copies sit in `progression.chords` and `progression.beat`; they are written
- * back into the song whenever another block is chosen, the song is played, saved or exported.
+ * The tray always shows the chords of the block that is selected, the drum grid shows its rhythm
+ * and the harp its playing style. Those live copies sit in `progression.chords`, `.beat` and
+ * `.pattern`; they are written back into the song whenever another block is chosen, the song is
+ * played, saved or exported.
  */
 import { DEFAULT_BEAT, GROOVE_KEYS, grooveOf, reviveGroove, type Groove } from "../audio/beats";
+import { hasStyle, type PatternId } from "../audio/patterns";
 import type { ProgChord, Progression } from "../ui/state";
 
 /** One set of chords and one drum rhythm, used by one or more blocks. */
@@ -20,6 +22,8 @@ export interface SongPart {
   chords: ProgChord[];
   /** the drum rhythm of this section (missing in songs saved before sections had drums) */
   groove?: Groove;
+  /** how this section is played: strummed, picked, rolled … (missing in older songs) */
+  style?: PatternId;
 }
 /** One step of the song, in playing order. */
 export interface SongBlock {
@@ -52,14 +56,14 @@ export function commit(p: Progression): Progression {
   // every section keeps a rhythm, even before one has been picked (then it is the default one)
   const groove = grooveOf(p.beat ?? DEFAULT_BEAT);
   const sameGroove = !!part.groove && GROOVE_KEYS.every((k) => part.groove![k] === groove[k]);
-  if (part.chords === p.chords && sameGroove) return p;
-  return { ...p, song: { ...song, parts: song.parts.map((x) => (x.id === part.id ? { ...x, chords: p.chords, groove } : x)) } };
+  if (part.chords === p.chords && sameGroove && part.style === p.pattern) return p;
+  return { ...p, song: { ...song, parts: song.parts.map((x) => (x.id === part.id ? { ...x, chords: p.chords, groove, style: p.pattern } : x)) } };
 }
 
 /** Turn the tray into section A, if there is no song yet. */
 export function ensureSong(p: Progression, id: () => string = uid): Progression {
   if (p.song?.blocks.length) return commit(p);
-  const part: SongPart = { id: id(), letter: "A", chords: p.chords, groove: grooveOf(p.beat ?? DEFAULT_BEAT) };
+  const part: SongPart = { id: id(), letter: "A", chords: p.chords, groove: grooveOf(p.beat ?? DEFAULT_BEAT), style: p.pattern };
   const block: SongBlock = { id: id(), partId: part.id };
   return { ...p, song: { parts: [part], blocks: [block], current: block.id } };
 }
@@ -68,7 +72,7 @@ export function ensureSong(p: Progression, id: () => string = uid): Progression 
 function show(p: Progression, song: Song, blockId: string): Progression {
   const part = partOf(song, blockId)!;
   const beat = part.groove ? { ...(p.beat ?? DEFAULT_BEAT), ...part.groove } : p.beat;
-  return { ...p, chords: part.chords, beat, song: { ...song, current: blockId } };
+  return { ...p, chords: part.chords, beat, pattern: part.style ?? p.pattern, song: { ...song, current: blockId } };
 }
 
 /** Insert a block right after the selected one and select it. */
@@ -79,12 +83,12 @@ function insert(song: Song, block: SongBlock): Song {
   return { ...song, blocks, current: block.id };
 }
 
-/** A brand-new section with the next free letter: no chords yet, and the drums carry on as they were. */
+/** A brand-new section with the next free letter: no chords yet; the drums and the playing style carry on as they were. */
 export function addNewSection(p0: Progression, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
   const from = partOf(song, song.current);
-  const part: SongPart = { id: id(), letter: nextLetter(song.parts), chords: [], ...(from?.groove ? { groove: from.groove } : {}) };
+  const part: SongPart = { id: id(), letter: nextLetter(song.parts), chords: [], ...(from?.groove ? { groove: from.groove } : {}), ...(from?.style ? { style: from.style } : {}) };
   return addBlock(p, song, part, id);
 }
 
@@ -156,7 +160,7 @@ export function unlinkBlock(p0: Progression, blockId: string, id: () => string =
   const song = p.song;
   const part = song && partOf(song, blockId);
   if (!song || !part || sharedCount(p, blockId) < 2) return p;
-  const copy: SongPart = { id: id(), letter: nextLetter(song.parts), chords: part.chords.map((c) => ({ ...c, id: id() })), ...(part.groove ? { groove: part.groove } : {}) };
+  const copy: SongPart = { id: id(), letter: nextLetter(song.parts), chords: part.chords.map((c) => ({ ...c, id: id() })), ...(part.groove ? { groove: part.groove } : {}), ...(part.style ? { style: part.style } : {}) };
   const next: Song = { ...song, parts: [...song.parts, copy], blocks: song.blocks.map((b) => (b.id === blockId ? { ...b, partId: copy.id } : b)) };
   return song.current === blockId ? { ...p, chords: copy.chords, song: next } : { ...p, song: next };
 }
@@ -167,6 +171,7 @@ export interface Section {
   letter: string;
   chords: ProgChord[];
   groove?: Groove;
+  style?: PatternId;
   current: boolean;
 }
 
@@ -177,7 +182,7 @@ export function sections(p0: Progression): Section[] {
   if (!song) return [];
   return song.blocks.map((b) => {
     const part = song.parts.find((x) => x.id === b.partId)!;
-    return { blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, groove: part.groove, current: b.id === song.current };
+    return { blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, groove: part.groove, style: part.style, current: b.id === song.current };
   });
 }
 
@@ -208,7 +213,7 @@ export function mapAllChords(p0: Progression, fn: (c: ProgChord) => ProgChord): 
 export function reviveSong(raw: unknown): Song | null {
   const s = raw as Partial<Song> | null | undefined;
   if (!s || !Array.isArray(s.parts) || !Array.isArray(s.blocks)) return null;
-  type Raw = { id: string; chords: ProgChord[]; letter?: unknown; groove?: unknown };
+  type Raw = { id: string; chords: ProgChord[]; letter?: unknown; groove?: unknown; style?: unknown };
   const valid = (s.parts as unknown[]).filter((x): x is Raw => !!x && typeof (x as Raw).id === "string" && Array.isArray((x as Raw).chords));
   const blocks = s.blocks.filter((b): b is SongBlock => !!b && typeof b.id === "string" && valid.some((x) => x.id === b.partId));
   if (!blocks.length) return null;
@@ -220,7 +225,7 @@ export function reviveSong(raw: unknown): Song | null {
     const taken = [...parts, ...used.filter((u) => typeof u.letter === "string" && u.id !== pid).map((u) => ({ letter: u.letter as string }))];
     const letter = typeof x.letter === "string" && x.letter && !parts.some((q) => q.letter === x.letter) ? x.letter : nextLetter(taken);
     const groove = reviveGroove(x.groove);
-    parts.push({ id: x.id, letter, chords: x.chords, ...(groove ? { groove } : {}) });
+    parts.push({ id: x.id, letter, chords: x.chords, ...(groove ? { groove } : {}), ...(hasStyle(x.style) ? { style: x.style } : {}) });
   }
   return { parts, blocks, current: blocks.some((b) => b.id === s.current) ? s.current! : blocks[0].id };
 }
