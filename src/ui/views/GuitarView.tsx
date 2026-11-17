@@ -28,6 +28,8 @@ import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { VocalsPage } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { focusTrack, normalize, tracksOf, type EditKind } from "../../song/tracks";
+import { activeTake, groupsOf } from "../../song/takes";
+import { loadTake, takeBuffer } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
@@ -131,6 +133,14 @@ export function GuitarView() {
   }, [prog.bars, prog.pattern, prog.feel, tune]);
   const items = fill(prog.chords, voicings, beat);
 
+  // recorded takes are read from disk once, then play with the song
+  const [takesReady, setTakesReady] = useState(0);
+  const takePaths = useMemo(() => (prog.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])?.wet) : [])).filter((x): x is string => !!x), [prog.tracks]);
+  useEffect(() => {
+    let live = true;
+    for (const p of takePaths) if (!takeBuffer(p)) void loadTake(p).then((b) => live && b && setTakesReady((n) => n + 1));
+    return () => { live = false; };
+  }, [takePaths]);
   // The whole song, section after section. A section with no chords is one bar of the beat on its own.
   const secs = useMemo(() => sections(prog), [prog]);
   // Each section plays with its own settings where it has them, and the song's (the first section's) everywhere else.
@@ -164,7 +174,16 @@ export function GuitarView() {
         } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound) } });
         else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
       }
-      return ex.chords.length || ex.tunes.length || ex.drums.length ? ex : undefined;
+      // recorded takes that start in this section (the take chosen from each recording)
+      for (const t of np.tracks ?? []) {
+        if (t.kind !== "vocals") continue;
+        for (const g of groupsOf(t.takes)) {
+          const tk = activeTake(t.takes ?? [], g, t.active?.[g]);
+          const buffer = tk && tk.at.block === sec.blockId ? takeBuffer(tk.wet) : undefined;
+          if (tk && buffer) (ex.takes ??= []).push({ track: t.id, buffer, at: tk.at.bar * secBar, offset: tk.start / tk.rate, dur: tk.frames / tk.rate });
+        }
+      }
+      return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
     };
     for (const sec of row) {
       const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords);
@@ -199,7 +218,7 @@ export function GuitarView() {
       if (sec.chords.some((c) => !c.rest) || drums.on || secTune || extra) any = true;
     }
     return { items: list, map, parts: secs.length ? parts : [], lengths, any, per };
-  }, [secs, voicings, voicingsOf, beat, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound]);
+  }, [secs, voicings, voicingsOf, beat, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound, prog.tracks, takesReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── looping: nothing loops until some bars are chosen; then those bars go round and round ──
   const [span, setSpan] = useState<LoopSpan | null>(null);
@@ -210,8 +229,8 @@ export function GuitarView() {
     if (span && !loop) setSpan(null);
   }, [span, loop]);
   /** What ▶ plays: the whole song in order, or just the bars of the loop. */
-  const playList = useMemo(() => {
-    if (!loop) return { items: plan.items, map: plan.map, loop: false };
+  /** The bars of a loop, as items to play (or to render for the recording engine). */
+  const sliceLoop = useCallback((loop: LoopSpan) => {
     const a = plan.per.findIndex((x) => x.block === loop.from.block);
     const b = plan.per.findIndex((x) => x.block === loop.to.block);
     const items: PlayItem[] = [];
@@ -227,7 +246,8 @@ export function GuitarView() {
       });
     }
     return { items, map, loop: true };
-  }, [plan, loop]);
+  }, [plan]);
+  const playList = useMemo(() => (loop ? sliceLoop(loop) : { items: plan.items, map: plan.map, loop: false }), [plan, loop, sliceLoop]);
   const listRef = useRef(playList);
   listRef.current = playList;
   /** the section that is sounding right now (it need not be the one on screen) */
@@ -343,9 +363,20 @@ export function GuitarView() {
     if (audition && !playingRef.current) startPlay();
   }, [audition]); // eslint-disable-line react-hooks/exhaustive-deps
   /** A bar of the strip was tapped: it joins the loop (or, at an end of the loop, leaves it). */
-  const onLoopBar = (bar: BarRef) => setSpan((sp) => tapLoop(layout, sp, bar));
+  /** true while the Vocals page is recording: the loop cannot change under the singer */
+  const [recording, setRecording] = useState(false);
+  const onLoopBar = (bar: BarRef) => !recording && setSpan((sp) => tapLoop(layout, sp, bar));
   /** ↻: loop the section on screen, or let the loop go. */
-  const toggleLoop = () => setSpan(loop ? null : loopSection(curBlock, nBars));
+  const toggleLoop = () => !recording && setSpan(loop ? null : loopSection(curBlock, nBars));
+  /** What a recording goes round: the loop if there is one, else the section on screen. */
+  const recordPlan = useCallback(() => {
+    const span = loop ?? fitLoop(layout, loopSection(curBlock, nBars));
+    if (!span) return null;
+    const list = sliceLoop(span);
+    const first = plan.per.find((x) => x.block === span.from.block);
+    const beats = list.items.reduce((a, x) => a + x.beats, 0);
+    return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.letter ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : "and on"}` };
+  }, [loop, layout, curBlock, nBars, sliceLoop, plan.per, bar, prog.bpm, prog.pattern, firstBeat]);
 
   const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
   /** Load a rhythm. Chords that lasted whole bars keep lasting whole bars (4 beats become 3 in a waltz). */
@@ -541,7 +572,7 @@ export function GuitarView() {
   return (
     <DragCtx.Provider value={api}>
       <div className={`page write${drag ? " dragging" : ""}`}>
-        <Transport per={plan.per} current={curBlock} loop={loop} layout={layout} onBar={onLoopBar} onLoop={toggleLoop} getBar={getBar} playing={playing} onPlay={togglePlay} canPlay={plan.any} />
+        <Transport locked={recording} per={plan.per} current={curBlock} loop={loop} layout={layout} onBar={onLoopBar} onLoop={toggleLoop} getBar={getBar} playing={playing} onPlay={togglePlay} canPlay={plan.any} />
         <div className="pane" hidden={pane !== "track"}>
           <TrackPage sections={trackSecs} current={curBlock} loop={loop} layout={layout} playing={playing} getWhere={getWhere} />
         </div>
@@ -566,7 +597,7 @@ export function GuitarView() {
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
-          <VocalsPage active={pane === "vocals"} />
+          <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
           <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
@@ -965,7 +996,9 @@ function ClipBar({ kind, letter, frame, onPasted }: { kind: ClipKind; letter: st
  * tap adds a bar, and the bars between; a tap on either end of the loop takes that bar off again).
  * ↻ loops the section on screen, or lets the loop go.
  */
-function Transport({ per, current, loop, layout, onBar, onLoop, getBar, playing, onPlay, canPlay }: {
+function Transport({ locked, per, current, loop, layout, onBar, onLoop, getBar, playing, onPlay, canPlay }: {
+  /** recording: the loop cannot be changed */
+  locked?: boolean;
   per: SecPlan[];
   /** the section on screen */
   current: string;
@@ -1017,7 +1050,7 @@ function Transport({ per, current, loop, layout, onBar, onLoop, getBar, playing,
     return () => { cancelAnimationFrame(raf); clear(); };
   }, [playing, getBar]);
   return (
-    <section className={`song-frame transport${loop ? " looping" : ""}`} aria-label="Play">
+    <section className={`song-frame transport${loop ? " looping" : ""}${locked ? " locked" : ""}`} aria-label="Play" title={locked ? "Recording: the loop is locked until you stop" : undefined}>
       <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : loop ? "Play the loop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>
       <button className={`loop-btn${loop ? " on" : ""}`} aria-pressed={!!loop} aria-label={loop ? "Stop looping" : `Loop section ${cur?.letter ?? "A"}`} title={loop ? "Stop looping: play straight through" : `Loop section ${cur?.letter ?? "A"}. Or tap bars to loop just those`} onClick={onLoop}>↻</button>
       <div className="loopbar" ref={row} role="group" aria-label="The song, bar by bar. Tap a letter to go to a section; tap bars to loop them">

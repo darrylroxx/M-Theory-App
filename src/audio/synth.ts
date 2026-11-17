@@ -3,7 +3,7 @@
  * and steps through a progression in time (with the drums).
  */
 import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
-import { audioContext, audioIfStarted } from "./context";
+import { audioContext, audioIfStarted, withContext } from "./context";
 import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
 import { DRUM_IDS, drumRng } from "./drums";
 import { STRING_KEYS, renderHarp, stringKey, voiceShift, type HarpString } from "./harp";
@@ -421,6 +421,10 @@ export class ProgressionPlayer {
   private tTick = 0;
   /** where recent chords started, to tell how far into its section the music is */
   private spans: Anchor[] = [];
+  /** recorded takes that are playing */
+  private sources = new Set<AudioBufferSourceNode>();
+  /** the next item scheduled starts a pass (play pressed, or the loop came round): takes already under way start part-way */
+  private fresh = true;
   /** the drum tracks added on the Track page, each on a grid of its own */
   private lanes = new Map<string, { anchors: Anchor[]; cur: Anchor | null; step: number; div: number }>();
   onStep: (index: number) => void = () => {};
@@ -523,6 +527,7 @@ export class ProgressionPlayer {
         }
         this.nextIndex = 0;
         this.passBeat = 0;
+        this.fresh = true;
       }
       const item = this.items[this.nextIndex];
       const t = this.nextTime;
@@ -543,7 +548,22 @@ export class ProgressionPlayer {
           if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
             playItem(trackHarp(c.track, c.sound, "chord"), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums }, t + (c.at - s0) * spb, spb, this.pattern, c.at, this.beat);
         for (const d of ex.drums) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div });
+        // recorded takes: from their start, or part-way in when playing starts in the middle of one
+        for (const tk of ex.takes ?? []) {
+          const starts = tk.at >= s0 - 1e-6 && tk.at < s1 - 1e-6;
+          const under = this.fresh && tk.at < s0 - 1e-6 && tk.at + tk.dur / spb > s0;
+          if (!starts && !under) continue;
+          const c = getAudio();
+          const src = c.createBufferSource();
+          src.buffer = tk.buffer;
+          src.connect(fader(tk.track, c));
+          const skip = starts ? 0 : (s0 - tk.at) * spb;
+          src.start(Math.max(c.currentTime, t + (starts ? (tk.at - s0) * spb : 0)), tk.offset + skip, Math.max(0.01, tk.dur - skip));
+          this.sources.add(src);
+          src.onended = () => this.sources.delete(src);
+        }
       }
+      this.fresh = false;
       for (const lane of this.lanes.values()) lane.anchors.push(anchor);
       this.nextTime += item.beats * spb;
       this.passBeat += item.beats;
@@ -712,6 +732,15 @@ export class ProgressionPlayer {
     this.spans = [];
     this.cur = null;
     this.lanes.clear();
+    this.fresh = true;
+    for (const src of this.sources) {
+      try {
+        src.stop();
+      } catch {
+        /* already ended */
+      }
+    }
+    this.sources.clear();
     this.drumMarks = [];
     this.onDrumStep(-1);
     dropPulses();
@@ -723,4 +752,87 @@ export class ProgressionPlayer {
     stopAll();
     stopDrums();
   }
+}
+
+/**
+ * The song, rendered to audio in one go (faster than it plays), for the recording engine to
+ * play under the singer on the interface's own clock. Everything that sounds in the song is
+ * in it: the chords, the melody, the drums, the added tracks and recorded takes (except those
+ * of `skip`, the track being recorded), each through its own fader. Notes still ringing at the
+ * end are folded back onto the start, because the engine plays the song round and round.
+ */
+export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: PatternId; beat: Beat | null; rate: number; skip?: string; tail?: number }): Promise<Float32Array[]> {
+  const spb = 60 / o.bpm;
+  const beats = items.reduce((a, x) => a + x.beats, 0);
+  const length = Math.max(1, Math.round(beats * spb * o.rate));
+  const tail = Math.round((o.tail ?? 3) * o.rate);
+  const off = new OfflineAudioContext(2, length + tail, o.rate);
+  withContext(off, () => {
+    const harp = (id: string, sound: HarpSound) => {
+      const h = new Harp(off, fader(id, off));
+      h.setSound(sound, o.bpm);
+      return h;
+    };
+    const chords = harp("chords", chordsLive.sound);
+    const tune = harp("melody", tuneLive.sound);
+    const extra = new Map<string, Harp>();
+    const extraHarp = (id: string, sound: HarpSound) => {
+      let h = extra.get(id);
+      if (!h) extra.set(id, (h = harp(id, sound)));
+      return h;
+    };
+    if (o.beat) syncDrums(o.beat, o.bpm);
+    let at = 0;
+    let origin = 0;
+    items.forEach((item, i) => {
+      origin = sectionStart(item, i, at, origin);
+      const t = at * spb;
+      const s0 = at - origin;
+      const s1 = s0 + item.beats;
+      playItem(chords, item, t, spb, o.pattern, s0, o.beat);
+      const tn = item.tune ?? null;
+      if (tn && tn.m.on !== false) for (const h of tuneBetween(tn.m, tn.bar, s0, s1, tn.swing)) tune.play(h.midi, t + (h.beat - s0) * spb, 0.9, TUNE_SLOT, Infinity, false, TUNE_LIFT, tn.sound);
+      const ex = item.extra;
+      for (const c of ex?.chords ?? [])
+        if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6) playItem(extraHarp(c.track, c.sound), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums }, t + (c.at - s0) * spb, spb, o.pattern, c.at, o.beat);
+      for (const x of ex?.tunes ?? []) {
+        const xt = x.tune;
+        if (xt.m.on === false) continue;
+        const h = extraHarp(x.track, xt.sound ?? SOUND_DEFAULT);
+        for (const n of tuneBetween(xt.m, xt.bar, s0, s1, xt.swing)) h.play(n.midi, t + (n.beat - s0) * spb, 0.9, TUNE_SLOT, Infinity, false, TUNE_LIFT, xt.sound);
+      }
+      const drums = [{ beat: item.drums ?? o.beat, gain: 1, track: undefined as string | undefined }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, gain: levelOf(d.track), track: d.track }))];
+      for (const d of drums) {
+        const b = d.beat;
+        if (!b?.on || d.gain <= 0) continue;
+        const div = b.div;
+        for (let k = Math.ceil(s0 * div - 1e-6); k / div < s1 - 1e-9; k++) {
+          const time = t + (Math.floor(k / div) + stepBeat(k % div, div, b.swing ?? 0) - s0) * spb;
+          const step = k % lenOf(b);
+          for (const id of DRUM_IDS) {
+            const lv = levelAt(b.rows, id, step);
+            if (lv) playStep(b, id, lv, time, d.gain, d.track);
+          }
+        }
+      }
+      for (const tk of ex?.takes ?? []) {
+        if (tk.track === o.skip || tk.at < s0 - 1e-6 || tk.at >= s1 - 1e-6) continue;
+        const src = off.createBufferSource();
+        src.buffer = tk.buffer;
+        src.connect(fader(tk.track, off));
+        src.start(t + (tk.at - s0) * spb, tk.offset, tk.dur);
+      }
+      at += item.beats;
+    });
+  });
+  const buf = await off.startRendering();
+  const out: Float32Array[] = [];
+  for (let ch = 0; ch < 2; ch++) {
+    const d = buf.getChannelData(ch);
+    const loop = d.slice(0, length);
+    // what rings past the end comes round again at the start
+    for (let i = 0; i < tail && i < length; i++) loop[i] += d[length + i];
+    out.push(loop);
+  }
+  return out;
 }

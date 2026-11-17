@@ -6,6 +6,7 @@ export type { TrackId };
 import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame, inLoop, type LoopSpan } from "../../song/frame";
 import { selectBlock } from "../../song/structure";
+import { activeTake, groupsOf } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
@@ -193,7 +194,7 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
                   return (
                     <button key={s.block || "a"} className={`tv-block ${letterClass(s.letter)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
                       aria-label={`${t.name} of section ${s.letter}: open`} onClick={() => open(s.block, t)}>
-                      {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <span className="tv-empty">No takes yet</span>}
+                      {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} bpm={state.progression.bpm} />}
                     </button>
                   );
                 })}
@@ -257,3 +258,17 @@ function DrumBlock({ s, bw }: { s: TrackSection; bw: number }) {
   );
 }
 
+
+/** A vocal track's takes in a section: the take chosen from each recording, where it starts and how long it lasts. */
+function TakeBlock({ t, s, bw, bpm }: { t: Track; s: TrackSection; bw: number; bpm: number }) {
+  const spans = groupsOf(t.takes)
+    .map((g) => activeTake(t.takes ?? [], g, t.active?.[g]))
+    .filter((tk): tk is NonNullable<typeof tk> => !!tk && tk.at.block === s.block)
+    .map((tk) => ({ id: tk.id, n: tk.n, x: tk.at.bar * bw, w: Math.max(6, (tk.frames / tk.rate / (60 / bpm) / s.bar) * bw) }));
+  if (!spans.length) return <span className="tv-empty">{t.takes?.length ? "" : "No takes yet"}</span>;
+  return (
+    <span className="tv-takes">
+      {spans.map((x) => <span key={x.id} className="tv-take" style={{ left: x.x, width: x.w }}>Take {x.n}</span>)}
+    </span>
+  );
+}

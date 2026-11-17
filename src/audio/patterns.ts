@@ -257,6 +257,8 @@ export interface ExtraPlay {
   tunes: { track: string; tune: PlayTune }[];
   /** extra drum tracks */
   drums: { track: string; beat: Beat }[];
+  /** recorded takes that start in this section: where (beats into the section), and which part of the recording */
+  takes?: { track: string; buffer: AudioBuffer; at: number; offset: number; dur: number }[];
 }
 
 /**

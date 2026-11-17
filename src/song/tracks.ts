@@ -20,6 +20,8 @@ import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patter
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { reviveMelody, type Melody } from "./melody";
 import type { ProgChord, Progression } from "../ui/state";
+import { reviveFx, type VocalFx } from "../audio/vocalfx";
+import { reviveTakes, type Take } from "./takes";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
 /** The kinds a page edits by bringing a track forward. */
@@ -38,6 +40,10 @@ export interface Track {
   sound?: Partial<HarpSound>;
   /** a vocal track: which input it records (1 = the mic input, 2 = the instrument/line jack) */
   input?: 1 | 2;
+  /** a vocal track: its live sound (the vocal chain), its recorded takes, and which take plays from each recording */
+  fx?: VocalFx;
+  takes?: Take[];
+  active?: Record<string, string>;
 }
 
 /** What one track holds in one section (and, for the first track kept aside, its settings too). */
@@ -197,6 +203,9 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
       id: r.id, kind: r.kind as TrackKind, name: typeof r.name === "string" && r.name.trim() ? r.name.trim().slice(0, 32) : KIND_NAME[r.kind as TrackKind],
       ...(hasStyle(r.style) ? { style: r.style } : {}), ...(r.feel ? { feel: reviveFeel(r.feel) } : {}), ...(r.sound ? { sound: reviveSound(r.sound) } : {}),
       ...(r.kind === "vocals" ? { input: r.input === 2 ? 2 : 1 } : {}),
+      ...(r.kind === "vocals" && reviveFx(r.fx) ? { fx: reviveFx(r.fx) } : {}),
+      ...(r.kind === "vocals" && reviveTakes(r.takes) ? { takes: reviveTakes(r.takes) } : {}),
+      ...(r.kind === "vocals" && r.active && typeof r.active === "object" ? { active: Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) } : {}),
     });
   }
   return out.length ? out : undefined;

@@ -151,6 +151,15 @@ export interface Studio {
   checks?: Partial<Record<"phantom" | "air" | "inst" | "direct", boolean>>;
   /** hear yourself through the interface (Direct Monitor), or through the app's effects */
   monitor?: "hardware" | "effects";
+  /** bars of count-in before recording (0 = none) */
+  countIn?: 0 | 1 | 2;
+  /** a click while recording, not only in the count-in */
+  clickOn?: boolean;
+  /** how loud the song and the click are in the headphones while recording (0..1.5) */
+  backing?: number;
+  click?: number;
+  /** extra milliseconds to move takes by (for converters the driver does not count) */
+  nudge?: number;
 }
 
 export interface SheetState {
@@ -230,7 +239,7 @@ function load(): AppState {
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
       clip: reviveClips(parsed.clip),
-      studio: parsed.studio && typeof parsed.studio === "object" ? { host: typeof parsed.studio.host === "string" ? parsed.studio.host : undefined, device: typeof parsed.studio.device === "string" ? parsed.studio.device : undefined, checks: parsed.studio.checks ?? {}, monitor: parsed.studio.monitor === "effects" ? "effects" : "hardware" } : undefined,
+      studio: parsed.studio && typeof parsed.studio === "object" ? { host: typeof parsed.studio.host === "string" ? parsed.studio.host : undefined, device: typeof parsed.studio.device === "string" ? parsed.studio.device : undefined, checks: parsed.studio.checks ?? {}, monitor: parsed.studio.monitor === "effects" ? "effects" : "hardware", countIn: parsed.studio.countIn === 0 || parsed.studio.countIn === 2 ? parsed.studio.countIn : 1, clickOn: !!parsed.studio.clickOn, backing: typeof parsed.studio.backing === "number" ? parsed.studio.backing : 1, click: typeof parsed.studio.click === "number" ? parsed.studio.click : 0.5, nudge: typeof parsed.studio.nudge === "number" ? parsed.studio.nudge : 0 } : undefined,
       progression: reviveProgression(parsed.progression),
     };
   } catch {

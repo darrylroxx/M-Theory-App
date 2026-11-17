@@ -20,6 +20,8 @@ tauri-plugin-process = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 cpal = "0.18"
+rtrb = "0.3"
+hound = "3.5"
 
 # On Windows the app talks to audio interfaces through their ASIO drivers (Steinberg ASIO SDK, GPLv3 option).
 [target.'cfg(target_os = "windows")'.dependencies]

@@ -14,7 +14,7 @@
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
-import { audioContext, audioIfStarted } from "./context";
+import { audioContext, audioIfStarted, isRendering } from "./context";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem } from "./stems";
@@ -85,9 +85,13 @@ function trim(fx: BeatFx): number {
 const IN = 0.44;
 const OUT = 1.7;
 
-let bus: Bus | null = null;
-let applied: Partial<BeatFx> & { bpm?: number } = {};
-const mixed = new Map<DrumId, string>();
+/** One desk per audio context: the one you hear, and one made for each offline render of the song. */
+interface Desk { bus: Bus; applied: Partial<BeatFx> & { bpm?: number }; mixed: Map<DrumId, string> }
+const desks = new WeakMap<BaseAudioContext, Desk>();
+const deskOf = (): Desk => {
+  getBus();
+  return desks.get(audioContext())!;
+};
 const drumBuffers = new Map<string, AudioBuffer>();
 const live = new Set<Ringing>();
 let openHat: Ringing | null = null;
@@ -122,7 +126,8 @@ function impulse(c: AudioContext, size: number, type: VerbId): AudioBuffer {
 
 function getBus(): Bus {
   const c = audioContext();
-  if (bus) return bus;
+  const had = desks.get(c);
+  if (had) return had.bus;
   const dry = c.createGain();
   dry.gain.value = IN;
   const sat = createSaturator(c, GRIT_REF);
@@ -209,9 +214,8 @@ function getBus(): Bus {
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
-  applied = {};
-  mixed.clear();
+  const bus: Bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
+  desks.set(c, { bus, applied: {}, mixed: new Map() });
   return bus;
 }
 
@@ -221,13 +225,14 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
   const c = audioContext();
   const t = c.currentTime;
   const fx = fxOf(settings);
-  const was = applied;
+  const desk = deskOf();
+  const was = desk.applied;
   const to = (param: AudioParam, value: number, tc = 0.03) => param.setTargetAtTime(value, t, tc);
   if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
   if (fx.size !== was.size || fx.verb !== was.verb) {
     // building a room takes a moment: wait until the knob stops moving
     window.clearTimeout(sizeTimer);
-    if (!b.verb.buffer) b.verb.buffer = impulse(c, fx.size, fx.verb);
+    if (isRendering() || !b.verb.buffer) b.verb.buffer = impulse(c, fx.size, fx.verb);
     else sizeTimer = window.setTimeout(() => (b.verb.buffer = impulse(c, fx.size, fx.verb)), 140);
   }
   if (fx.noise !== was.noise || fx.noiseAmt !== was.noiseAmt) {
@@ -263,7 +268,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
     to(b.comp.attack, 0.02 - fx.glue * 0.012);
   }
   if (fx.level !== was.level || fx.glue !== was.glue || fx.tone !== was.tone) to(b.makeup.gain, (fx.level / 0.8) * OUT * trim(fx), 0.02);
-  applied = { ...fx, bpm };
+  desk.applied = { ...fx, bpm };
 }
 
 /** Bring the desk in line with a beat: effects, and each drum's level, pan and sends. */
@@ -271,6 +276,7 @@ export function syncDrums(beat: Beat, bpm: number) {
   setDrumFx(beat, bpm);
   const b = getBus();
   const t = audioContext().currentTime;
+  const mixed = deskOf().mixed;
   for (const id of DRUM_IDS) {
     const p = soundOf(beat, id);
     const key = `${p.level}|${p.pan}|${p.space}|${p.echo}`;
@@ -404,7 +410,7 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const src = c.createBufferSource();
   src.buffer = takeFor(c, beat, id);
   // for the canvas: what this hit is made of, measured from the hit itself
-  if (listening()) pulse({ kind: "drum", track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
+  if (listening() && !isRendering()) pulse({ kind: "drum", track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
   const g = c.createGain();
   g.gain.value = velocity * velocity * 1.1 * gain;
@@ -418,13 +424,15 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   }
   tail.connect(b.channels[id].input);
   const r: Ringing = { src, gain: g };
+  src.start(t);
+  // (an offline render plays every hit as written: no choking hats, no pumping harps)
+  if (isRendering()) return;
   if (id === "hat" || id === "open") {
     if (openHat) damp(openHat, t);
     openHat = id === "open" ? r : null;
   }
   live.add(r);
   src.onended = () => live.delete(r);
-  src.start(t);
   if (id === "kick" && pump > 0 && onKick) onKick(t, pump * velocity);
 }
 

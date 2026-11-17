@@ -48,28 +48,32 @@ export function reviveMix(raw: unknown): Mix | undefined {
   return Object.keys(out).length ? out : undefined;
 }
 
-// ── the faders themselves (made when the first sound needs them) ──
+// ── the faders themselves (made when the first sound needs them; one set per audio context) ──
 let current: Mix | undefined;
-const faders: Record<TrackId, GainNode | undefined> = {};
+const desks = new WeakMap<BaseAudioContext, Record<TrackId, GainNode>>();
+let liveFaders: Record<TrackId, GainNode> = {};
 
 /** The fader for a track: its instrument connects into it, and it goes on to the speakers. */
 export function fader(id: TrackId, c: BaseAudioContext): GainNode {
-  const f = faders[id];
-  if (f && f.context === c) return f;
+  let set = desks.get(c);
+  if (!set) {
+    set = {};
+    desks.set(c, set);
+    if (typeof AudioContext !== "undefined" && c instanceof AudioContext) liveFaders = set;
+  }
+  const f = set[id];
+  if (f) return f;
   const g = c.createGain();
   g.gain.value = gainOf(current, id);
   g.connect(c.destination);
-  faders[id] = g;
+  set[id] = g;
   return g;
 }
 
 /** Set the faders (they glide over a few milliseconds, so nothing clicks). */
 export function setMix(mix: Mix | undefined) {
   current = mix;
-  for (const id of Object.keys(faders)) {
-    const g = faders[id];
-    if (g) g.gain.setTargetAtTime(gainOf(mix, id), g.context.currentTime, 0.015);
-  }
+  for (const [id, g] of Object.entries(liveFaders)) g.gain.setTargetAtTime(gainOf(mix, id), g.context.currentTime, 0.015);
 }
 
 /** A track's fader setting right now (for sounds that do not pass through a fader of their own). */

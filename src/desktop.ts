@@ -74,3 +74,47 @@ export async function meterStop(): Promise<void> {
   const { invoke } = await import("@tauri-apps/api/core");
   await invoke("meter_stop");
 }
+
+// ── the recording engine ──
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number }
+export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string }
+
+async function core() {
+  return import("@tauri-apps/api/core");
+}
+/** Open the interface's inputs and outputs together, and hear about levels and position. */
+export async function engineOpen(host: string, device: string, onStatus: (s: EngineStatus) => void): Promise<EngineOpened> {
+  const { invoke, Channel } = await core();
+  const ch = new Channel<EngineStatus>();
+  ch.onmessage = onStatus;
+  return invoke<EngineOpened>("engine_open", { host, deviceName: device, status: ch });
+}
+export async function engineClose(): Promise<void> {
+  if (!isDesktop()) return;
+  await (await core()).invoke("engine_close");
+}
+export async function engineSet(o: { monitor: boolean; input: number; fx: import("./audio/vocalfx").VocalFx; backingGain: number; clickGain: number; clickOn: boolean }): Promise<void> {
+  await (await core()).invoke("engine_set", o);
+}
+/** The song to sing over: left and right, at the engine's rate. */
+export async function engineBacking(left: Float32Array, right: Float32Array): Promise<number> {
+  const inter = new Float32Array(left.length * 2);
+  for (let i = 0; i < left.length; i++) {
+    inter[2 * i] = left[i];
+    inter[2 * i + 1] = right[i];
+  }
+  return (await core()).invoke<number>("engine_backing", new Uint8Array(inter.buffer));
+}
+export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; record: boolean; name: string }): Promise<string | null> {
+  return (await core()).invoke<string | null>("engine_start", o);
+}
+export async function engineStop(): Promise<import("./song/takes").Recorded | null> {
+  return (await core()).invoke("engine_stop");
+}
+/** The vocal chain over a whole recording again (after its settings changed): the new file. */
+export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalFx): Promise<string> {
+  return (await core()).invoke<string>("fx_render", { dry, fx });
+}
+export async function readTake(path: string): Promise<ArrayBuffer> {
+  return (await core()).invoke<ArrayBuffer>("read_take", { path });
+}
