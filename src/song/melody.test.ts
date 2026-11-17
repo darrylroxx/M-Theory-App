@@ -4,7 +4,7 @@ import { FEEL_DEFAULT, itemTune, reviveFeel, styleNotes, type PlayItem } from ".
 import { chordRounds, DEFAULT_BEAT } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { fingerprint, reviveIdea, snapshot } from "./library";
-import { EMPTY_MELODY, TICKS, cellTick, clearMelody, copyMelodyBar, hasTune, melodyBase, melodyBeats, melodyRows, notesInCell, reviveMelody, setMelodyBars, toggleNote, transposeMelody, tuneBetween, type Melody } from "./melody";
+import { EMPTY_MELODY, MELODY_MAX_BARS, TICKS, cellTick, clearMelody, copyMelodyBar, hasTune, melodyBase, melodyBeats, melodyRows, notesInCell, reviveMelody, setMelodyBars, toggleNote, transposeMelody, tuneBetween, type Melody } from "./melody";
 import { addNewSection, ensureSong, reviveSong, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
 
 const C = { tonic: "C", scaleId: "ionian" };
@@ -72,7 +72,7 @@ describe("the melody grid", () => {
     expect(clearMelody(m, 4, 0).notes.map((x) => x.at)).toEqual([48, 72]);
     expect(clearMelody(m, 4).notes).toEqual([]);
     expect(setMelodyBars(m, 1, 4).notes.length).toBe(2);
-    expect(setMelodyBars(m, 99, 4).bars).toBe(8);
+    expect(setMelodyBars(m, 99, 4).bars).toBe(MELODY_MAX_BARS);
     expect(transposeMelody(m, 2).notes[0].midi).toBe(62);
   });
 
@@ -99,7 +99,7 @@ describe("the melody grid", () => {
   it("stored melodies are made safe", () => {
     expect(reviveMelody(undefined)).toBeUndefined();
     expect(reviveMelody({ notes: "x" })).toBeUndefined();
-    expect(reviveMelody({ div: 7, bars: 99, notes: [{ at: 0, midi: 60 }, { at: -1, midi: 60 }, { at: 1.5, midi: 60 }, { at: 3, midi: 200 }, null], on: false })).toEqual({ div: 2, bars: 8, notes: [{ at: 0, midi: 60 }], on: false });
+    expect(reviveMelody({ div: 7, bars: 99, notes: [{ at: 0, midi: 60 }, { at: -1, midi: 60 }, { at: 1.5, midi: 60 }, { at: 3, midi: 200 }, null], on: false })).toEqual({ div: 2, bars: MELODY_MAX_BARS, notes: [{ at: 0, midi: 60 }], on: false });
   });
 });
 

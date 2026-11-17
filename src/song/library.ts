@@ -6,6 +6,7 @@
 import { reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
+import { fitBars } from "./frame";
 import { reviveSound } from "../audio/rack";
 import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
@@ -32,7 +33,7 @@ export function fingerprint(s: Snapshot): string {
   // with a song, everything on the page is a copy of one section: the song itself is what counts
   if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
-  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords });
+  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords });
 }
 
 /** Nothing worth saving yet. */
@@ -68,7 +69,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
     // the melody used to share the chords' harp: one written back then keeps the sound it had
     ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : (melody?.notes.length || anyTune(p.song)) && p.sound ? { tuneSound: reviveSound(p.sound) } : {}),
-    ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}),
+    ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),
     play: p.play === "song" ? "song" : "section",
   });
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };

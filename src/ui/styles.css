@@ -568,3 +568,28 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .pick-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 .sec-caret { font-style: normal; font-size: 0.6rem; margin-left: 3px; opacity: 0.8; }
 @media (max-width: 620px) { .pick-wrap { flex: 1 1 100%; } .pick-wrap .beat-pick { flex: 1; min-width: 0; } .pick-wrap .beat-pick .beat-name { flex: 1; } }
+
+/* ── Section length: set in the song frame, shown in the ruler and on the bars ── */
+.sf-len { flex: 0 0 auto; display: inline-flex; align-items: stretch; height: 36px; border-radius: 10px; overflow: hidden; background: var(--kc, var(--accent)); color: #14161a; }
+.sf-len > b { display: grid; place-items: center; min-width: 30px; padding: 0 4px 0 8px; font-weight: 900; font-size: 1.02rem; }
+.sf-len button { border: none; background: rgba(255, 255, 255, 0.22); color: inherit; font-weight: 850; font-size: 1.1rem; min-width: 30px; padding: 0; border-left: 1px solid rgba(0, 0, 0, 0.16); }
+.sf-len button:hover:not(:disabled) { background: rgba(255, 255, 255, 0.42); }
+.sf-len button:disabled { opacity: 0.4; }
+.sf-len .sf-len-n { display: inline-flex; align-items: baseline; justify-content: center; gap: 3px; min-width: 58px; padding: 0 6px; font-size: 1rem; font-variant-numeric: tabular-nums; align-self: stretch; align-items: center; }
+.sf-len .sf-len-n small { font-size: 0.68rem; font-weight: 750; opacity: 0.8; }
+/* a length nobody has set follows what is in the section: drawn lighter, with a dotted line under it */
+.sf-len:not(.set) .sf-len-n { text-decoration: underline dotted; text-underline-offset: 3px; }
+.sf-pick { display: flex; align-items: center; gap: 6px; overflow-x: auto; scrollbar-width: none; padding-bottom: 1px; }
+.sf-pick::-webkit-scrollbar { display: none; }
+.sf-pick .chip { flex: 0 0 auto; min-width: 40px; height: 34px; font-weight: 800; font-variant-numeric: tabular-nums; }
+.sec-len { margin-left: 4px; font-size: 0.62rem; font-weight: 800; opacity: 0.72; font-variant-numeric: tabular-nums; }
+.ruler-again { flex: 1 1 0; min-width: 0; display: flex; }
+.ruler-again > span { flex: 1; min-width: 0; box-sizing: border-box; margin: 2px 1px; padding: 0 4px; border-radius: 5px; border: 1px dashed color-mix(in srgb, var(--accent) 45%, var(--border-2)); color: var(--muted); font-size: 0.74rem; font-weight: 700; display: flex; align-items: center; overflow: hidden; white-space: nowrap; }
+.ruler-cut { position: absolute; top: 0; bottom: 0; z-index: 3; pointer-events: none; border-left: 2px solid var(--tension); background: repeating-linear-gradient(135deg, color-mix(in srgb, var(--bg) 62%, transparent) 0 5px, color-mix(in srgb, var(--tension) 38%, transparent) 5px 7px); }
+.ruler-fit { align-self: flex-start; padding: 5px 10px; border-radius: 8px; border: 1px solid var(--tension); background: color-mix(in srgb, var(--tension) 12%, transparent); color: var(--text); font-size: 0.8rem; font-weight: 700; text-align: left; }
+.ruler-fit:hover { background: color-mix(in srgb, var(--tension) 24%, transparent); }
+.dm-bars button.out { opacity: 0.4; border-style: dashed; text-decoration: line-through; }
+@media (max-width: 620px), (pointer: coarse) { .ruler-again > span { margin: 3px 1px; } }
+@media (max-width: 620px) { .sf-len > b { min-width: 26px; padding-left: 6px; } .sf-len button { min-width: 28px; } .sf-len .sf-len-n { min-width: 50px; padding: 0 4px; } .sf-tabs [role="tab"] { font-size: 0.86rem; } }
+.slot.out { opacity: 0.45; }
+.slot.out .sym { text-decoration: line-through; }

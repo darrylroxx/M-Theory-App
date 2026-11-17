@@ -14,12 +14,14 @@ import { Seg } from "./common";
  * Rows that belong to the key are lit; a dot marks the notes of the chord sounding underneath,
  * so a tune that sticks to lit rows and dots cannot sound wrong.
  */
-export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link }: {
+export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, limit }: {
   melody: Melody;
   setMelody: (fn: (m: Melody) => Melody) => void;
   keyOf: Key;
   /** beats in a bar */
   bar: number;
+  /** the section ends after this many bars: bars past it are not played (not given = no end set) */
+  limit?: number;
   /** the chords under the melody, to mark the notes that fit them */
   chords: ProgChord[];
   playing: boolean;
@@ -107,10 +109,11 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
     setMelody(() => last);
   };
   const addBar = () => {
-    if (bars >= MELODY_MAX_BARS) return;
+    if (!canAdd) return;
     change((m) => setMelodyBars(m, bars + 1, bar));
     setShown(bars);
   };
+  const canAdd = bars < MELODY_MAX_BARS && (limit === undefined || bars < limit);
   const on = melody.on !== false;
   const count = melody.notes.length;
 
@@ -127,8 +130,8 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, get
       <div className="dm-bar">
         <span className="kb-label">Bar</span>
         <div className="dm-bars" role="tablist" aria-label="Bar">
-          {Array.from({ length: bars }, (_, b) => <button key={b} role="tab" aria-selected={b === at} className={b === at ? "on" : ""} onClick={() => setShown(b)}>{b + 1}</button>)}
-          {bars < MELODY_MAX_BARS && <button className="dm-bar-add" aria-label="Add a bar" title="Add a bar" onClick={addBar}>+</button>}
+          {Array.from({ length: bars }, (_, b) => <button key={b} role="tab" aria-selected={b === at} className={`${b === at ? "on" : ""}${limit !== undefined && b >= limit ? " out" : ""}`} title={limit !== undefined && b >= limit ? "Past the end of the section: not played" : undefined} onClick={() => setShown(b)}>{b + 1}</button>)}
+          {canAdd && <button className="dm-bar-add" aria-label="Add a bar" title="Add a bar" onClick={addBar}>+</button>}
         </div>
         {bars > 1 && <button className="btn sm" title="Copy the bar before this one into it" disabled={at === 0} onClick={() => change((m) => copyMelodyBar(m, bar, at - 1, at))}>⧉</button>}
         {bars > 1 && <button className="btn sm" aria-label="Remove the last bar" title="Remove the last bar" onClick={() => { change((m) => setMelodyBars(m, bars - 1, bar)); setShown(Math.min(at, bars - 2)); }}>−</button>}

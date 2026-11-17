@@ -11,7 +11,7 @@ import { getScale, scalePcs } from "../theory/scales";
 
 /** Twelfths of a beat. */
 export const TICKS = 12;
-export const MELODY_MAX_BARS = 8;
+export const MELODY_MAX_BARS = 16;
 
 export interface MelodyNote {
   /** when it sounds, in twelfths of a beat from the start of the section */

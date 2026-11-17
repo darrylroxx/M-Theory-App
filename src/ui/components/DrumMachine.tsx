@@ -28,11 +28,13 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink }: {
+export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink, limit }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
   playing: boolean;
+  /** the section ends after this many bars: bars past it are not played (not given = no end set) */
+  limit?: number;
   /** The player calls this with the step that is sounding (−1 = stopped) */
   stepSink: { current: ((step: number) => void) | null };
   /** whether this section's drum sound and drum rhythm are the song's or its own */
@@ -363,9 +365,9 @@ export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink,
         <div className="dm-bars" role="tablist" aria-label="Bars">
           <span className="kb-label">Bar</span>
           {Array.from({ length: bars }, (_, i) => (
-            <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={i === shownBar ? "on" : ""} onClick={() => setBar(i)}>{i + 1}</button>
+            <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={`${i === shownBar ? "on" : ""}${limit !== undefined && i >= limit ? " out" : ""}`} title={limit !== undefined && i >= limit ? "Past the end of the section: not played" : undefined} onClick={() => setBar(i)}>{i + 1}</button>
           ))}
-          {editing && bars < MAX_BARS && <button className="dm-bar-add" title="Add a bar: a copy of this one" aria-label="Add a bar" onClick={addBar}>+</button>}
+          {editing && bars < MAX_BARS && (limit === undefined || bars < limit) && <button className="dm-bar-add" title="Add a bar: a copy of this one" aria-label="Add a bar" onClick={addBar}>+</button>}
           {editing && bars > 1 && <button className="dm-bar-del" title={`Remove bar ${shownBar + 1}`} aria-label={`Remove bar ${shownBar + 1}`} onClick={dropBar}>✕</button>}
         </div>
       )}

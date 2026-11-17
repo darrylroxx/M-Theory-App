@@ -5,18 +5,22 @@
  * one drum rhythm, so changing one changes the other. A block can be given its own letter
  * (and its own copy of the chords and drums) when it needs to differ.
  *
+ * Every section has a length in bars (or none: then it is as long as what is in it). Its chords, its
+ * melody and its drums all play inside that length.
+ *
  * Settings carry over. The first section sets the playing style, the sounds and the drums for the
  * whole song; every other section follows it until something is changed there, and from then on
  * keeps that one thing as its own. Chords and melody notes always belong to their own section.
  *
  * The page always shows the block that is selected. Those live copies sit in `progression.chords`,
- * `.melody`, `.pattern`, `.feel`, `.sound`, `.tuneSound` and `.beat`; they are written back into
+ * `.melody`, `.bars`, `.pattern`, `.feel`, `.sound`, `.tuneSound` and `.beat`; they are written back into
  * the song whenever another block is chosen, the song is played, saved or exported.
  */
 import { DEFAULT_BEAT, grooveOf, kitOfBeat, reviveGroove, reviveKit, sameGroove, sameKit, type DrumKit, type Groove } from "../audio/beats";
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { hasStyle, reviveFeel, sameFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveMelody, type Melody } from "./melody";
+import { fitBars } from "./frame";
 import type { ProgChord, Progression } from "../ui/state";
 
 /**
@@ -48,6 +52,8 @@ export interface SongPart extends Settings {
   chords: ProgChord[];
   /** this section's melody */
   melody?: Melody;
+  /** how long the section lasts, in bars. Not set = as long as what is in it. */
+  bars?: number;
 }
 /** One step of the song, in playing order. */
 export interface SongBlock {
@@ -124,7 +130,7 @@ export function commit(p: Progression): Progression {
   const first = song.parts[0]?.id === part.id;
   const live = liveSettings(p);
   let shared = sharedOf(p, song);
-  let next: SongPart = { ...part, chords: p.chords, melody: p.melody };
+  let next: SongPart = { ...part, chords: p.chords, melody: p.melody, bars: p.bars };
   for (const g of SETTING_GROUPS) {
     if (first) {
       shared = { ...shared, ...pick(g, live) };
@@ -140,7 +146,7 @@ export function commit(p: Progression): Progression {
 /** Turn the page into section A, if there is no song yet. */
 export function ensureSong(p: Progression, id: () => string = uid): Progression {
   if (p.song?.blocks.length) return commit(p);
-  const part: SongPart = tidy({ id: id(), letter: "A", chords: p.chords, melody: p.melody });
+  const part: SongPart = tidy({ id: id(), letter: "A", chords: p.chords, melody: p.melody, bars: p.bars });
   const block: SongBlock = { id: id(), partId: part.id };
   return { ...p, song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
 }
@@ -150,7 +156,7 @@ function show(p: Progression, song: Song, blockId: string): Progression {
   const part = partOf(song, blockId)!;
   const s = resolve(part, song.parts[0]?.id === part.id, sharedOf(p, song));
   const beat = { ...(p.beat ?? DEFAULT_BEAT), ...s.kit, ...s.groove };
-  return { ...p, chords: part.chords, melody: part.melody, pattern: s.style ?? p.pattern, feel: s.feel, sound: s.sound, tuneSound: s.tuneSound, beat: { ...beat, on: s.groove?.on ?? beat.on }, song: { ...song, current: blockId } };
+  return { ...p, chords: part.chords, melody: part.melody, bars: part.bars, pattern: s.style ?? p.pattern, feel: s.feel, sound: s.sound, tuneSound: s.tuneSound, beat: { ...beat, on: s.groove?.on ?? beat.on }, song: { ...song, current: blockId } };
 }
 
 /** Put the page back in step with the song (after loading one). */
@@ -190,11 +196,11 @@ function insert(song: Song, block: SongBlock): Song {
   return { ...song, blocks, current: block.id };
 }
 
-/** A brand-new section with the next free letter: no chords and no melody yet, and every setting follows the song. */
+/** A brand-new section with the next free letter: no chords and no melody yet, every setting follows the song, and it starts as long as the section it was made from. */
 export function addNewSection(p0: Progression, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
-  const part: SongPart = { id: id(), letter: nextLetter(song.parts), chords: [] };
+  const part: SongPart = tidy({ id: id(), letter: nextLetter(song.parts), chords: [], bars: p.bars });
   return addBlock(p, song, part, id);
 }
 
@@ -292,6 +298,8 @@ export interface Section extends Settings {
   letter: string;
   chords: ProgChord[];
   melody?: Melody;
+  /** the length it is set to, in bars (not set = as long as what is in it) */
+  bars?: number;
   current: boolean;
 }
 
@@ -303,7 +311,7 @@ export function sections(p0: Progression): Section[] {
   const shared = sharedOf(p, song);
   return song.blocks.map((b) => {
     const part = song.parts.find((x) => x.id === b.partId)!;
-    return { ...resolve(part, song.parts[0].id === part.id, shared), blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, melody: part.melody, current: b.id === song.current };
+    return { ...resolve(part, song.parts[0].id === part.id, shared), blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, melody: part.melody, bars: part.bars, current: b.id === song.current };
   });
 }
 
@@ -338,7 +346,7 @@ export function mapAllChords(p0: Progression, fn: (c: ProgChord) => ProgChord): 
 export function reviveSong(raw: unknown): Song | null {
   const s = raw as Partial<Song> | null | undefined;
   if (!s || !Array.isArray(s.parts) || !Array.isArray(s.blocks)) return null;
-  type Raw = { id: string; chords: ProgChord[]; letter?: unknown } & { [K in keyof Settings | "melody"]?: unknown };
+  type Raw = { id: string; chords: ProgChord[]; letter?: unknown; bars?: unknown } & { [K in keyof Settings | "melody"]?: unknown };
   const valid = (s.parts as unknown[]).filter((x): x is Raw => !!x && typeof (x as Raw).id === "string" && Array.isArray((x as Raw).chords));
   const blocks = s.blocks.filter((b): b is SongBlock => !!b && typeof b.id === "string" && valid.some((x) => x.id === b.partId));
   if (!blocks.length) return null;
@@ -363,7 +371,7 @@ export function reviveSong(raw: unknown): Song | null {
     const taken = [...letterOf.values(), ...used.filter((u) => typeof u.letter === "string" && u.id !== pid && !letterOf.has(u.id)).map((u) => u.letter as string)].map((letter) => ({ letter }));
     letterOf.set(pid, typeof x.letter === "string" && x.letter && ![...letterOf.values()].includes(x.letter) ? x.letter : nextLetter(taken));
   }
-  for (const x of used) parts.push(tidy({ id: x.id, letter: letterOf.get(x.id)!, chords: x.chords, melody: reviveMelody(x.melody), ...settings(x) }));
+  for (const x of used) parts.push(tidy({ id: x.id, letter: letterOf.get(x.id)!, chords: x.chords, melody: reviveMelody(x.melody), bars: fitBars(x.bars), ...settings(x) }));
   let shared = settings(s.shared as Settings | undefined);
   // the first section holds nothing of its own: whatever it has is the song's
   const lead = parts[0];

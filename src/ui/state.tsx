@@ -3,6 +3,7 @@ import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit }
 import { barBeats } from "../audio/beats";
 import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
 import { reviveMelody, type Melody } from "../song/melody";
+import { fitBars } from "../song/frame";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
@@ -13,7 +14,7 @@ import { getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { loadCurrent, reviveSong, type Song } from "../song/structure";
+import { commit, reviveSong, type Song } from "../song/structure";
 import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
@@ -45,6 +46,8 @@ export interface Progression {
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
+  /** How long the section on screen lasts, in bars. Not set = as long as what is in it. */
+  bars?: number;
   /** The sound and effects of the harp that plays the chords (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
   /** The same for the harp that plays the melody: a separate instrument on a separate effects channel. */
@@ -150,11 +153,13 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song),
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
+    bars: fitBars(raw?.bars),
     // the melody used to share the chords' harp: one written back then keeps the sound it had
     tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
   };
-  return loadCurrent(p);
+  // what was on screen is the newest there is: it goes back into its section, never the other way round
+  return commit(p);
 }
 
 function load(): AppState {
