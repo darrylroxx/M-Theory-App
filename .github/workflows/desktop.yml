@@ -52,7 +52,7 @@ jobs:
         env:
           NOTES: ${{ github.event.head_commit.message }}
         run: |
-          TAG=$([ "$CHANNEL" = main ] && echo "v$VERSION" || echo draft)
+          TAG=$([ "$CHANNEL" = main ] && echo "v$VERSION" || echo draft-latest)
           echo "TAG=$TAG" >> "$GITHUB_ENV"
           node scripts/desktop-release.mjs "$CHANNEL" "$VERSION" "$TAG" out
       - name: Publish
@@ -61,8 +61,10 @@ jobs:
         run: |
           if [ "$CHANNEL" = draft ]; then
             # the draft always lives at the same address, replaced each time
+            # (the old name, "draft", clashed with the branch of the same name)
             gh release delete draft --cleanup-tag --yes || true
-            gh release create draft out/* --prerelease --title "Draft $VERSION" --notes "Latest draft, built from ${GITHUB_SHA::7}. Install M-Theory-Draft-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
+            gh release delete draft-latest --cleanup-tag --yes || true
+            gh release create draft-latest out/* --prerelease --title "Draft $VERSION" --notes "Latest draft, built from ${GITHUB_SHA::7}. Install M-Theory-Draft-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
           else
             gh release create "$TAG" out/* --latest --title "M-Theory $VERSION" --notes "Install M-Theory-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
           fi

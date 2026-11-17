@@ -185,7 +185,7 @@ The same app, packaged as a Windows program with a native audio engine for the a
 
 Each keeps its own saved ideas, so trying a draft never touches your real work.
 
-Install once from the repository's Releases page: `M-Theory-Draft-setup.exe` (release "draft") or
+Install once from the repository's Releases page: `M-Theory-Draft-setup.exe` (release "Draft", tag `draft-latest`) or
 `M-Theory-setup.exe` (the latest release). Windows may say "Windows protected your PC" the first
 time, because the installer is not signed with a paid certificate: choose **More info → Run anyway**.
 After that the app checks for a new version when it starts (and every half hour), and a bar at the

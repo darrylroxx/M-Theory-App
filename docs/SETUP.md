@@ -38,7 +38,7 @@ for your GitHub account (**Settings** of your account → **Password and authent
 ## Installing on your PC
 
 1. Open the repository's **Releases** page.
-2. Release **draft** → download `M-Theory-Draft-setup.exe` and run it. (The published app,
+2. Release **Draft** (tag `draft-latest`) → download `M-Theory-Draft-setup.exe` and run it. (The published app,
    `M-Theory-setup.exe`, appears in the latest release once something has been published.)
 3. Windows may show **"Windows protected your PC"**: choose **More info** → **Run anyway**.
 4. For the audio interface: install the **Focusrite USB ASIO** driver from focusrite.com (Scarlett
