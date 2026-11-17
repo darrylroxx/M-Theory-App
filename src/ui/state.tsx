@@ -13,11 +13,14 @@ import { getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { reviveSong, type Song } from "../song/structure";
+import { loadCurrent, reviveSong, type Song } from "../song/structure";
+import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
 
 export type Tab = "guitar" | "piano";
+/** The three parts of a song section. */
+export type Pane = "rhythm" | "melody" | "drums";
 export type LabelMode = "intervals" | "notes" | "fingers";
 
 export interface ProgChord {
@@ -42,8 +45,12 @@ export interface Progression {
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
-  /** The harp's sound and effects (missing knobs are at their defaults). */
+  /** The sound and effects of the harp that plays the chords (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
+  /** The same for the harp that plays the melody: a separate instrument on a separate effects channel. */
+  tuneSound?: Partial<HarpSound>;
+  /** What ▶ does: go round the section on screen, or play on through every section of the song. */
+  play?: "section" | "song";
   /** Song structure: sections in order. `chords` above are then the selected section's chords. */
   song?: Song | null;
 }
@@ -94,6 +101,8 @@ export interface AppState {
   myKits: UserKit[];
   /** Harp sounds you saved */
   mySounds: UserSound[];
+  /** Which part of the section is on screen */
+  pane?: Pane;
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
@@ -128,6 +137,26 @@ export const DEFAULT_STATE: AppState = {
   mySounds: [],
 };
 
+/** Does any section of a stored song have a melody? */
+const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
+
+/** The idea on the page, loaded from storage and made whole. */
+function reviveProgression(raw: Partial<Progression> | undefined): Progression {
+  const melody = reviveMelody(raw?.melody);
+  const p: Progression = {
+    ...DEFAULT_STATE.progression, ...raw,
+    pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
+    chords: (raw?.chords ?? []).map(reviveChord),
+    beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song),
+    feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
+    melody,
+    // the melody used to share the chords' harp: one written back then keeps the sound it had
+    tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
+    play: raw?.play === "song" ? "song" : "section",
+  };
+  return loadCurrent(p);
+}
+
 function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -138,6 +167,7 @@ function load(): AppState {
       ...DEFAULT_STATE,
       ...parsed,
       tab,
+      pane: parsed.pane === "melody" || parsed.pane === "drums" ? parsed.pane : "rhythm",
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},
@@ -146,14 +176,7 @@ function load(): AppState {
       mySounds: reviveUserSounds(parsed.mySounds),
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
-      progression: {
-        ...DEFAULT_STATE.progression, ...parsed.progression,
-        pattern: hasStyle(parsed.progression?.pattern) ? parsed.progression.pattern : "ring",
-        chords: (parsed.progression?.chords ?? []).map(reviveChord),
-        beat: reviveBeat(parsed.progression?.beat), song: reviveSong(parsed.progression?.song),
-        ...(parsed.progression?.feel ? { feel: reviveFeel(parsed.progression.feel) } : {}),
-        melody: reviveMelody(parsed.progression?.melody),
-      },
+      progression: reviveProgression(parsed.progression),
     };
   } catch {
     return DEFAULT_STATE;

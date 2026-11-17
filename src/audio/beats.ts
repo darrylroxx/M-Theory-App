@@ -350,6 +350,14 @@ export const DEFAULT_BEAT: Beat = {
   sounds: {},
 };
 
+const DEFAULT_KIT_BEAT = () => DEFAULT_BEAT;
+/** A drum sound loaded from storage, made safe. */
+export function reviveKit(raw: unknown): DrumKit | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const b = reviveBeat({ ...DEFAULT_BEAT, ...(raw as object), on: false, steps: DEFAULT_BEAT.steps, div: DEFAULT_BEAT.div, bars: 1, rows: DEFAULT_BEAT.rows });
+  return b ? kitOfBeat(b) : undefined;
+}
+
 /** Load a library rhythm into a beat. The kit, sound settings and effects stay as they are. */
 export function applyPattern(beat: Beat, p: BeatPattern): Beat {
   return { ...beat, on: true, patternId: p.id, name: p.name, edited: false, steps: p.steps, div: p.div, bars: p.bars ?? 1, swing: p.swing, rows: p.rows };
@@ -376,8 +384,24 @@ export const MAX_BARS = 8;
 
 /** The rhythm on its own: what each song section keeps for itself. Kit, sounds and effects are shared by the whole song. */
 export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
-export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]>;
-export const grooveOf = (b: Beat): Groove => ({ patternId: b.patternId, name: b.name, edited: !!b.edited, steps: b.steps, div: b.div, bars: barsOf(b), swing: b.swing, rows: b.rows });
+/** A section's drum rhythm: the pattern, and whether the drums play at all there. */
+export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]> & { on?: boolean };
+export const grooveOf = (b: Beat): Groove => ({ patternId: b.patternId, name: b.name, edited: !!b.edited, steps: b.steps, div: b.div, bars: barsOf(b), swing: b.swing, rows: b.rows, on: b.on });
+export const sameGroove = (a: Groove | undefined, b: Groove | undefined): boolean =>
+  !!a && !!b && a.patternId === b.patternId && a.name === b.name && !!a.edited === !!b.edited && a.steps === b.steps && a.div === b.div && barsOf(a) === barsOf(b) && a.swing === b.swing && (a.on ?? null) === (b.on ?? null) && DRUM_IDS.every((d) => a.rows[d] === b.rows[d]);
+
+/** The drum sound: the machine, each drum's own sound, the mix and the effects. Everything about a beat that is not its rhythm. */
+export type DrumKit = Omit<Beat, (typeof GROOVE_KEYS)[number] | "on">;
+export function kitOfBeat(b: Beat): DrumKit {
+  const { patternId: _p, name: _n, edited: _e, steps: _s, div: _d, bars: _b, swing: _w, rows: _r, on: _o, ...kit } = b;
+  return kit;
+}
+/** Two drum sounds are the same when every setting matches (a missing effect setting is its default). */
+const kitSig = (k: DrumKit): string => {
+  const full = { ...kitOfBeat(DEFAULT_KIT_BEAT()), ...k, ...fxOf(k), voices: k.voices ?? {}, mutes: [...(k.mutes ?? [])].sort(), userKit: k.userKit ?? null };
+  return JSON.stringify(Object.entries(full).sort(([a], [b]) => (a < b ? -1 : 1)));
+};
+export const sameKit = (a: DrumKit | undefined, b: DrumKit | undefined): boolean => !!a && !!b && kitSig(a) === kitSig(b);
 
 /**
  * Make the pattern longer or shorter. New bars start as a copy of the last bar, so the beat carries
@@ -533,5 +557,5 @@ export function reviveGroove(raw: unknown): Groove | undefined {
   const g = raw as Partial<Groove>;
   const rhythm = cleanRhythm(g);
   if (!rhythm) return undefined;
-  return { patternId: typeof g.patternId === "string" ? g.patternId : null, name: typeof g.name === "string" ? g.name : "Beat", edited: !!g.edited, swing: Number(g.swing) || 0, ...rhythm };
+  return { patternId: typeof g.patternId === "string" ? g.patternId : null, name: typeof g.name === "string" ? g.name : "Beat", edited: !!g.edited, swing: Number(g.swing) || 0, ...rhythm, ...(typeof g.on === "boolean" ? { on: g.on } : {}) };
 }

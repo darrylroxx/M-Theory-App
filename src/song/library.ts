@@ -3,7 +3,7 @@
  * Pure functions, so the rules (what counts as "changed", who wins when two
  * devices disagree) can be tested without a browser.
  */
-import { GROOVE_KEYS, reviveBeat } from "../audio/beats";
+import { reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
 import { reviveSound } from "../audio/rack";
@@ -11,7 +11,7 @@ import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
 import type { Progression, SavedProgression } from "../ui/state";
-import { commit, reviveSong, sections } from "./structure";
+import { commit, loadCurrent, reviveSong, sections } from "./structure";
 
 /** Everything that makes up an idea, ready to store. */
 export interface Snapshot {
@@ -28,12 +28,11 @@ export function snapshot(key: Key, progression: Progression, capo: number, tunin
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
   const p = commit(s.progression);
-  const song = p.song ? { parts: p.song.parts, blocks: p.song.blocks } : null;
-  // with a song, each section keeps its own rhythm: the one showing in the grid is not counted twice
-  const beat = p.beat && song ? Object.fromEntries(Object.entries(p.beat).filter(([k]) => !(GROOVE_KEYS as readonly string[]).includes(k))) : (p.beat ?? null);
+  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section" };
+  // with a song, everything on the page is a copy of one section: the song itself is what counts
+  if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
-  const sound = reviveSound(p.sound);
-  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: song ? null : p.pattern, feel: song ? null : reviveFeel(p.feel), melody: song ? null : (p.melody?.notes.length ? p.melody : null), loop: p.loop, arrange: p.arrange ?? null, beat, sound, song, chords: song ? null : p.chords });
+  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords });
 }
 
 /** Nothing worth saving yet. */
@@ -54,21 +53,24 @@ export function describeIdea(i: SavedProgression): string {
   return i.progression.chords.map((c) => chordSymbol(c.ref)).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
 }
 
+/** Does any section of a stored song have a melody? */
+const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
+
 /** Make a stored idea safe to load (older versions, hand-edited backups). */
 export function reviveIdea(raw: unknown): SavedProgression | null {
   const i = raw as Partial<SavedProgression> | null;
   if (!i || typeof i.id !== "string" || !i.key || typeof i.key.tonic !== "string" || !i.progression || !Array.isArray(i.progression.chords)) return null;
   const p = i.progression;
   const song = reviveSong(p.song);
-  const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song, ...(p.sound ? { sound: reviveSound(p.sound) } : {}), ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(reviveMelody(p.melody) ? { melody: reviveMelody(p.melody) } : {}) };
-  if (song) {
-    const part = song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId);
-    progression.chords = part?.chords ?? [];
-    if (progression.beat && part?.groove) progression.beat = { ...progression.beat, ...part.groove };
-    if (part?.style) progression.pattern = part.style;
-    progression.feel = part?.feel;
-    progression.melody = part?.melody;
-  }
+  const melody = reviveMelody(p.melody);
+  const progression: Progression = loadCurrent({
+    chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
+    ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
+    // the melody used to share the chords' harp: one written back then keeps the sound it had
+    ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : (melody?.notes.length || anyTune(p.song)) && p.sound ? { tuneSound: reviveSound(p.sound) } : {}),
+    ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}),
+    play: p.play === "song" ? "song" : "section",
+  });
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
 

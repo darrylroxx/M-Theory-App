@@ -542,3 +542,29 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .mg-chords { height: 16px; }
 .mg-chords span { font-size: 0.66rem; font-weight: 800; color: var(--muted); white-space: nowrap; overflow: visible; padding-left: 2px; line-height: 16px; }
 .mg-corner { height: 16px; border: none; background: none; }
+
+/* ── The song frame: sections, what play does, and the three parts of a section. It stays at the top. ── */
+.song-frame { position: sticky; top: 0; z-index: 28; display: flex; flex-direction: column; gap: 6px; padding: 8px 10px; border-radius: 0 0 16px 16px; margin-top: -14px;
+  background: color-mix(in srgb, var(--card) 95%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--border-2); border-top: none; box-shadow: var(--shadow); }
+.sf-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.sf-row .songbar { flex: 1; min-width: 0; }
+.sf-row .songbar.open { flex-wrap: wrap; }
+.sf-mode { flex: 0 0 auto; }
+.sf-mode button { white-space: nowrap; padding-inline: 10px; }
+.sf-tabs { display: flex; align-items: center; gap: 6px; }
+.sf-tabs [role="tab"] { flex: 1 1 0; min-width: 0; height: 36px; border-radius: 10px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-weight: 800; font-size: 0.92rem; }
+.sf-tabs [role="tab"].on { background: var(--text); border-color: var(--text); color: var(--bg); }
+.sf-letter { flex: 0 0 auto; display: grid; place-items: center; width: 36px; height: 36px; border-radius: 10px; font-weight: 900; background: var(--kc, var(--accent)); color: #fff; }
+.sf-key { flex: 0 0 auto; padding: 0 6px; font-size: 0.78rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
+.pane { display: flex; flex-direction: column; gap: 14px; }
+.pane[hidden] { display: none; }
+/* the top bar scrolls away; the song frame is what stays */
+.topbar { position: static; }
+.sound-row { padding-top: 2px; }
+.link-chip { flex: 0 0 auto; display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--faint); font-size: 0.74rem; font-weight: 800; white-space: nowrap; }
+.link-chip.own { border-style: solid; border-color: var(--accent); color: var(--accent); cursor: pointer; }
+@media (max-width: 620px) { .song-frame { padding: 6px 8px; margin-inline: -4px; } .sf-mode button { padding-inline: 8px; font-size: 0.8rem; } .sf-key { display: none; } }
+.mg-steps { overflow: hidden; }
+.pick-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.sec-caret { font-style: normal; font-size: 0.6rem; margin-left: 3px; opacity: 0.8; }
+@media (max-width: 620px) { .pick-wrap { flex: 1 1 100%; } .pick-wrap .beat-pick { flex: 1; min-width: 0; } .pick-wrap .beat-pick .beat-name { flex: 1; } }

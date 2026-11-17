@@ -5,7 +5,7 @@ import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LAB
 import { SAT_TYPES } from "../../audio/saturation";
 import { RECIPES, getRecipe } from "../../audio/voices";
 import { newId, useApp } from "../state";
-import { letterClass } from "../letters";
+import { LinkChip, type Link } from "./HarpPanel";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
 
@@ -28,17 +28,16 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, letters, onLetter }: {
+export function DrumMachine({ beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
   playing: boolean;
-  onPlay: () => void;
   /** The player calls this with the step that is sounding (−1 = stopped) */
   stepSink: { current: ((step: number) => void) | null };
-  /** the song's sections, each letter once: every section has its own rhythm */
-  letters: { partId: string; letter: string; blockId: string; current: boolean }[];
-  onLetter: (blockId: string) => void;
+  /** whether this section's drum sound and drum rhythm are the song's or its own */
+  kitLink?: Link;
+  grooveLink?: Link;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.myBeats;
@@ -91,7 +90,7 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
     if (current) setGroup(current.group);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // another idea or another section: the edit so far is kept, and the grid starts at bar 1
-  const section = letters.find((l) => l.current)?.partId;
+  const section = state.progression.song?.current;
   useEffect(() => {
     setEdit(null);
     setBar(0);
@@ -294,22 +293,18 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
   return (
     <section className={`card drums${editing ? " editing" : ""}`} aria-label="Drums">
       <div className="dm-head">
-        <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"}>{playing ? "■" : "▶"}</button>
         <h2>Drums</h2>
         <button className={`chip${beat.on ? " on" : ""}`} role="switch" aria-checked={beat.on} title="Play the drums under the chords" onClick={() => setBeat((b) => ({ ...b, on: !b.on }))}>{beat.on ? "On" : "Off"}</button>
-        <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
+        <span className="pick-wrap">
+          <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
           onStep={(d) => pickKit(kits[(kitAt + d + kits.length) % kits.length])} />
-        <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
+          <LinkChip link={kitLink} what="drum sound" />
+        </span>
+        <span className="pick-wrap">
+          <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
+          <LinkChip link={grooveLink} what="drum rhythm" />
+        </span>
       </div>
-
-      {letters.length > 1 && (
-        <div className="dm-secs" role="radiogroup" aria-label="Section">
-          <span className="kb-label">Section</span>
-          {letters.map((l) => (
-            <button key={l.partId} role="radio" aria-checked={l.current} className={`sec-chip ${letterClass(l.letter)}${l.current ? " on" : ""}`} title={`Drums for section ${l.letter}`} onClick={() => !l.current && onLetter(l.blockId)}>{l.letter}</button>
-          ))}
-        </div>
-      )}
 
       {drawer === "kit" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Drum kit">

@@ -4,7 +4,8 @@ import { EMPTY_MELODY, GRIDS, MELODY_MAX_BARS, cellTick, clearMelody, copyMelody
 import { chordSymbol, refPcs } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
 import { displayNote, mod12 } from "../../theory/notes";
-import { letterClass } from "../letters";
+import type { HarpSound } from "../../audio/rack";
+import { SoundControls, type Link } from "./HarpPanel";
 import type { ProgChord } from "../state";
 import { Seg } from "./common";
 
@@ -13,7 +14,7 @@ import { Seg } from "./common";
  * Rows that belong to the key are lit; a dot marks the notes of the chord sounding underneath,
  * so a tune that sticks to lit rows and dots cannot sound wrong.
  */
-export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, onPlay, getPos, letters, onLetter }: {
+export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link }: {
   melody: Melody;
   setMelody: (fn: (m: Melody) => Melody) => void;
   keyOf: Key;
@@ -22,11 +23,13 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, onP
   /** the chords under the melody, to mark the notes that fit them */
   chords: ProgChord[];
   playing: boolean;
-  onPlay: () => void;
   /** how many beats into the section the music is (null = stopped) */
   getPos: () => number | null;
-  letters: { partId: string; letter: string; blockId: string; current: boolean }[];
-  onLetter: (blockId: string) => void;
+  /** the melody's own harp: its instrument and effects, apart from the chords' */
+  sound: HarpSound;
+  setSound: (patch: Partial<HarpSound>) => void;
+  onHear: () => void;
+  link?: Link;
 }) {
   const [shown, setShown] = useState(0);
   const [keyOnly, setKeyOnly] = useState(false);
@@ -114,22 +117,12 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, onP
   return (
     <section className="card melody" aria-label="Melody">
       <div className="dm-head">
-        <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"}>{playing ? "■" : "▶"}</button>
         <h2>Melody</h2>
         {count > 0 && <button className={`chip${on ? " on" : ""}`} role="switch" aria-checked={on} title="Play the melody with the chords" onClick={() => setMelody((m) => ({ ...m, on: !on }))}>{on ? "On" : "Off"}</button>}
         <span className="spacer" />
         <span className="kb-label" title="How many steps there are to a beat">Grid</span>
         <Seg value={melody.div} options={GRIDS.map((g) => ({ value: g.value, label: g.label }))} onChange={(v) => setMelody((m) => ({ ...m, div: v }))} label="Steps to a beat" />
       </div>
-
-      {letters.length > 1 && (
-        <div className="dm-secs" role="radiogroup" aria-label="Section">
-          <span className="kb-label">Section</span>
-          {letters.map((l) => (
-            <button key={l.partId} role="radio" aria-checked={l.current} className={`sec-chip ${letterClass(l.letter)}${l.current ? " on" : ""}`} title={`Melody for section ${l.letter}`} onClick={() => !l.current && onLetter(l.blockId)}>{l.letter}</button>
-          ))}
-        </div>
-      )}
 
       <div className="dm-bar">
         <span className="kb-label">Bar</span>
@@ -166,6 +159,7 @@ export function MelodyGrid({ melody, setMelody, keyOf, bar, chords, playing, onP
           <i className="mg-now" />
         </div>
       </div>
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={link} />
     </section>
   );
 }

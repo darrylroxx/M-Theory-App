@@ -20,6 +20,7 @@
  */
 import { barBeats, type Beat } from "./beats";
 import { tuneBetween, type Melody, type TuneHit } from "../song/melody";
+import type { HarpSound } from "./rack";
 import { STYLES, type Style } from "./styles";
 
 export type PatternId = string;
@@ -238,6 +239,8 @@ export interface PlayItem {
   section?: boolean;
   /** the melody over this chord's section (missing = the player's own) */
   tune?: PlayTune | null;
+  /** the harp this chord is played on, when its section has a sound of its own (missing = the harp as it is set) */
+  sound?: HarpSound;
 }
 
 /** A melody ready to play: its notes, the length of a bar under it, and the drums' swing. */
@@ -245,6 +248,8 @@ export interface PlayTune {
   m: Melody;
   bar: number;
   swing: number;
+  /** the melody harp's sound in this section (missing = as it is set) */
+  sound?: HarpSound;
 }
 
 /** Every melody note of a run of chords, with the time (in beats from the start) each one sounds. */
