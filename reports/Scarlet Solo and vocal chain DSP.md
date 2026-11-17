@@ -1,0 +1,412 @@
+# Turning the Scarlett Solo into a live vocal studio
+
+The Focusrite Scarlett Solo 3rd Gen is a bus-powered **2-in/2-out USB interface**: one 56 dB mic preamp on XLR (Input 1), one front ¼" jack that is line level or, with INST pressed, a 1.5 MΩ guitar input (Input 2), and one stereo output pair that the headphone jack mirrors. Its four switches (48V, Air, INST, Direct Monitor) are analogue or firmware controls that Windows, macOS and iOS audio APIs cannot read, so the app has to treat them as a checklist the user confirms. On Windows the app talks to the **Focusrite USB ASIO** driver. The user, not the host, sets the buffer size in the Focusrite Notifier. Comparable 3rd and 4th Gen Scarletts measure about **6–7 ms round trip at 48 kHz with a 32-sample buffer**. Nobody has published a Solo-specific figure, so the app must measure its own with a loopback calibration. That budget decides the DSP design. Every effect requested here can run causally with **zero lookahead**: Neve 1073 or Colour Box colour, FET-then-opto compression, split-band de-essing, a Dattorro plate or modulated FDN hall, tape echo, and micro-shift doubling. The app therefore adds nothing to the driver's latency. Only pitch correction falls outside the budget. The Rust side is ready. **cpal 0.18.2** with its `asio` feature now gives latency-aware timestamps and handles driver resets, but it has no single duplex callback and takes a mutex inside the driver callback. The ASIO SDK is now **dual-licensed (proprietary or GPLv3)**, so the licence has to be chosen before the first line of code. Cycle recording should follow DAW convention: one count-in, one continuous dry file, sliced at the loop boundaries into Take 1…N after a latency shift, with the last full take active and short final passes hidden but kept. The main caveat is that the Focusrite hosts were blocked, so most Focusrite figures come from search excerpts. About twenty measurements on the real unit close the remaining gaps (listed in a later section).
+
+**Evidence key used throughout.** **[read]** means a researcher opened the primary source itself: crate source code, official help pages, GitHub code, or the tauri-docs files. **[excerpt]** means the fact comes from a search-engine excerpt of the cited page, which nobody opened, usually because the host was blocked. **[recall]** means a researcher wrote it from memory of a published source and could not check it in this session. **[inference]** means engineering reasoning by the researchers or by this report, not a quoted fact. Where the notes did not record whether a third-party page was opened, the citation carries no tag. Every design default in this report is an [inference] unless a source is cited for it.
+
+## The Solo has one mic preamp, one jack, and switches software cannot see
+
+### Inputs, outputs and converters, with the numbers that drive app defaults
+
+The two inputs are physically and electrically separate. **Input 1 is an XLR mic input only.** **Input 2 is a front-panel ¼" jack** that is a 60 kΩ line input by default and becomes a 1.5 MΩ Hi-Z instrument input when INST is pressed. There is no combo jack, so a second microphone is impossible without an external preamp ([Focusrite hardware features](https://userguides.focusrite.com/hc/en-gb/articles/23031457294610-Scarlett-Solo-3rd-Gen-hardware-features); [MusicProductionWiki](https://musicproductionwiki.com/articles/focusrite-scarlett-solo-review)). The official 3rd Gen figures below come from excerpts of Focusrite's specification page, cross-checked against a retailer copy of the spec sheet. Focusrite says it measures to AES17 where possible ([Focusrite 3rd Gen specifications](https://userguides.focusrite.com/hc/en-gb/articles/23031457381138-Scarlett-Solo-3rd-Gen-specifications); [Vallee retailer copy](https://www.vallee.com/products/focusrite-scarlett-solo-3rd-gen-usb-audio-interface)).
+
+| Path | Key figures (3rd Gen) | Evidence |
+|---|---|---|
+| Mic in (Input 1, XLR) | Gain range **56 dB**; EIN **−128 dBu A-wtd**; max in **+9 dBu** (min gain); 3 kΩ; 20 Hz–20 kHz ±0.1 dB; DR 111 dB A; THD+N <0.0012% | [excerpt], retailer-corroborated ([spec page](https://userguides.focusrite.com/hc/en-gb/articles/23031457381138-Scarlett-Solo-3rd-Gen-specifications); [Symphony Music](https://symphonymusicstore.co.uk/interfaces/4136-focusrite-scarlett-solo-3rd-generation-usb-audio-interface.html)) |
+| Line in (Input 2, INST off) | Max in **+22 dBu**; 60 kΩ; DR 110.5 dB A; THD+N <0.002% (the official "2 Hz" frequency-response start is probably a typo for 20 Hz) | [excerpt] ([spec page](https://userguides.focusrite.com/hc/en-gb/articles/23031457381138-Scarlett-Solo-3rd-Gen-specifications)) |
+| Inst in (Input 2, INST on) | Max in **+12.5 dBu**; **1.5 MΩ**; 56 dB gain; DR 110 dB A; THD+N <0.03% | [excerpt] (same) |
+| Line outs | 2 × ¼" TRS balanced; max **+15.5 dBu** at 0 dBFS; 430 Ω; DR 108 dB A | [excerpt] ([spec page](https://userguides.focusrite.com/hc/en-gb/articles/23031457381138-Scarlett-Solo-3rd-Gen-specifications); [Muziker](https://www.muziker.co.uk/focusrite-scarlett-solo-3rd-generation)) |
+| Headphones | ¼" TRS; max **+7 dBu**; <1 Ω; DR 104 dB A; THD+N <0.002% | [excerpt] (same) |
+| Converters | 24-bit; 44.1, 48, 88.2, 96, 176.4, 192 kHz | [excerpt] (same) |
+
+One trap matters for any spec table built into the app. Snippets quoting "57 dB gain / −127 dBu EIN / +9.5 dBu max input" for "the Solo" trace back to the **4th Gen** specification page ([Focusrite Solo 4th Gen specifications](https://userguides.focusrite.com/hc/en-gb/articles/17505454908562-Scarlett-Solo-4th-Gen-Specifications)). The line outputs also differ between generations: the 2nd Gen used RCA jacks with a +9 dBu maximum, and the 3rd Gen moved to balanced TRS ([2nd Gen guide](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/focusrite/downloads/20883/scarlett-solo-user-guidecl6.pdf)). The official guide quotes "+10 dBu output level (variable)" alongside the +15.5 dBu maximum. The notes did not resolve the difference; it is probably nominal versus maximum level ([User Guide v1](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Scarlett%20Solo%203rd%20Gen%20User%20Guide_EN.pdf)).
+
+Two independent teardowns agree on the internals. A **Cirrus Logic CS4272** stereo codec does both ADC and DAC, clocked by a CS2100-CP. A probable XMOS XU208 handles USB; the part was identified from its package size, not its marking. **NJM2122** low-noise op-amps sit in the preamps, and NJM8065 op-amps elsewhere ([Khron's Cave teardown, Aug 2025](https://khronscave.blogspot.com/2025/08/88-focusrite-scarlett-solo-3rd-gen.html)). The ASR teardown measured about **0.0015% THD+N for the ADC+DAC loopback at 1.145 V RMS** and recommends headphones of at least 100 Ω ([ASR forum teardown](https://www-audiosciencereview-com.translate.goog/forum/index.php?threads%2Fteardown-few-basic-measurements-and-personal-thoughts-of-the-focusrite-solo-gen3.9101%2F=&_x_tr_sl=en&_x_tr_tl=es&_x_tr_hl=es&_x_tr_pto=tc)). Gearank struggled to drive 250 Ω DT 770s and suggests 150 Ω or less ([Gearank](https://gearank.com/gear/focusrite-scarlett-solo-3rd-gen-usb-audio-interface/)). The engineering consequence is an [inference]. **One codec and one clock mean the two captured channels are sample-aligned**, so a simultaneous vocal and guitar recording needs no inter-channel skew correction. Input and output also share a clock, so record/playback drift cannot happen. The op-amp parts list also suggests the preamp is op-amp based rather than transformer based, which fits Air being an EQ emulation.
+
+The unit draws all its power over USB ([User Guide v2](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Scarlett%20Solo%203rd%20Gen%20User%20Guide%20V2_0.pdf)) through a USB-C socket ([Sound On Sound review](https://www.soundonsound.com/reviews/focusrite-scarlett-usbc)). No first-party source stating USB 2.0 High-Speed or the current draw with 48V on was found.
+
+### What each front-panel control does, and what the app must do about it
+
+**Air** on the 3rd Gen is an analogue change to the mic input stage's frequency response. The manual says it "model[s] the classic, transformer-based Focusrite ISA microphone preamps", with no DSP and no added latency ([User Guide v1](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Scarlett%20Solo%203rd%20Gen%20User%20Guide_EN.pdf); [Focusrite: What is Air](https://support.focusrite.com/hc/en-gb/articles/10742398294930-What-is-Air-on-my-interface)) [excerpt]. Reviewers hear a noticeable upper-mid and high lift and warn about using it with bright mics ([Podcastage](https://podcastage.com/rev/2i23rd)). **No 3rd Gen Air curve has been published.** The often-quoted "4 dB at 24 kHz" and the 6.2 kΩ→2.2 kΩ impedance switch belong to Clarett+, Red and 4th Gen "Presence". Sound On Sound notes the 3rd Gen Scarlett preamp is a different circuit ([SOS](https://www.soundonsound.com/reviews/focusrite-scarlett-usbc)). The design rule that follows is an [inference]. **Air is printed into the recording** and cannot be removed later. The app's software "air" shelf and de-esser defaults should therefore depend on a "Hardware Air on?" checkbox, so the two lifts do not stack into harsh sibilance.
+
+**48V** feeds phantom power to Input 1 only. Holding the button for about 5 seconds takes the unit out of Easy Start (MSD) mode, according to the older v1 guide; this method may be legacy ([User Guide v1](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Scarlett%20Solo%203rd%20Gen%20User%20Guide_EN.pdf)) [excerpt]. The app should mute software monitoring while the user toggles phantom, to avoid passing the thump to headphones [inference].
+
+The **Gain Halo** ring meters the signal after the converter: **green at −24 dBFS or above, amber at −6 dBFS or above, red at 0 dBFS** ([Focusrite hardware features](https://userguides.focusrite.com/hc/en-gb/articles/23031457294610-Scarlett-Solo-3rd-Gen-hardware-features)) [excerpt]. The 4th Gen's finer scale (−42 to −6 dBFS) does not apply ([18i16 4th Gen features](https://userguides.focusrite.com/hc/en-gb/articles/21616729762322-Scarlett-18i16-hardware-features)). The app's input meter should use the same three breakpoints and colours so the screen and the hardware agree. Coach vocal peaks to land between −18 and −6 dBFS [inference].
+
+**Direct Monitor** on the standalone Solo 3rd Gen is a two-position switch. When it is on, both inputs go to the outputs **summed to mono in the centre with zero latency**, and computer playback continues in stereo. The manual says "the pre-recorded tracks will be heard in stereo, and the current input signals in mono" ([Manuals+ copy of the guide](https://manuals.plus/focusrite/scarlett-solo-3rd-gen-usb-audio-interface-manual); [thinkdifferent review](https://www.thinkdifferent.blog/blog/focusrite-scarlett-solo-3rd-gen-review/)). There is no blend knob. The three-position OFF/MONO/STEREO switch belongs to the *Solo Studio* bundle and 2i2-style units ([Solo Studio guide](https://manuals.plus/focusrite/scarlett-solo-studio-3rd-generation-recording-bundle-manual)). This is the most consequential control for the app [inference]. If DM is on *and* the app monitors through its effects, the singer hears the dry voice at 0 ms plus the processed voice about 6–7 ms later, which sounds like comb filtering. The app therefore needs two explicit modes. **"Hardware monitoring"** turns software input monitoring off; the singer hears dry vocal plus backing. **"Hear my effects"** tells the user to switch DM off and monitors through the engine.
+
+**Outputs.** One MONITOR knob sets the level of both the rear line outputs and the headphones, which always carry the same stereo feed. There is no way to mute the speakers separately ([Focusrite hardware features](https://userguides.focusrite.com/hc/en-gb/articles/23031457294610-Scarlett-Solo-3rd-Gen-hardware-features); [MusicLibraryReport](https://musiclibraryreport.com/hardware-reviews/focusrite-scarlett-solo-3rd-generation/)). Three [inference]s follow. There is no separate cue mix to offer. The **count-in click and backing track reach the speakers too**, so the tracking checklist must say "turn the monitor speakers off". And the app should not compensate for quiet high-impedance headphones by pushing playback to 0 dBFS.
+
+### Easy Start mode, firmware, and telling generations apart
+
+Out of the box the unit runs in **Easy Start / MSD mode**. It appears as a USB drive and works only at **48 kHz or below**. Installing Focusrite's software or updating the firmware turns MSD off and unlocks rates up to 192 kHz ([Getting started with your Scarlett Solo 3rd Gen](https://userguides.focusrite.com/hc/en-gb/articles/23031471992082-Getting-started-with-your-Scarlett-Solo-3rd-Gen); [Focusrite Control 3rd Gen guide](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Focusrite%20Control%20Scarlett%203rd%20Gen%20User%20Guide%20v2.pdf)) [excerpt]. Day-to-day use needs no software. For a 48 kHz app, MSD mode is harmless, but onboarding should detect it: the device offers only ≤48 kHz, or a "Scarlett" drive is mounted. The app should then explain how to leave it [inference].
+
+The Linux **scarlett2** driver shows that the 3rd Gen Solo's Air, phantom, Direct Monitor and MSD states can be reached through USB vendor commands. The 2nd Gen Solo exposes none of them ([ALSA patch: Solo and 2i2 Gen 3](https://yhbt.net/lore/all/67c4ef3ef9fff1f89a7de60fbeb0fceb2d0b3561.1624294591.git.g@b4.vu/); [MSD-mode patch](https://patches.linaro.org/project/alsa-devel/patch/06f41cdc8c843a1c0ab0f7a1c01160ebbe7a7cdb.1624294591.git.g@b4.vu/); [linux-fcp](https://github.com/geoffreybennett/linux-fcp)). On Windows no audio API exposes these states. Reading them would mean implementing Focusrite's vendor protocol over raw USB alongside the ASIO driver. That is out of scope for v1, and it is the reason the checklist UX is mandatory [inference].
+
+The 4th Gen Solo adds a 57 dB preamp, Air "Presence" and "Harmonic Drive", Focusrite Control 2 and finer halos. Most reviews say it lacks the Auto Gain and Clip Safe features that the 2i2 and larger 4th Gen units have ([SoundGuys](https://www.soundguys.com/focusrite-scarlett-solo-4th-gen-review-126209/)). An audio-API device name such as "Scarlett Solo" cannot distinguish the generations. The **USB product ID** can, and the Linux driver uses it that way. The app should never prompt for Auto Gain or Clip Safe, and should describe 3rd Gen Air as a simple on/off switch [inference].
+
+## Windows, macOS and iOS all see a plain 2×2 device
+
+### Windows: one ASIO driver, a tray app that owns the buffer, and a shared sample rate
+
+3rd Gen Scarletts use Focusrite's combined Windows driver, which provides "Focusrite USB ASIO" plus WDM. The latest version visible was **4.144.0 (28 April 2026)** for Windows 10/11 64-bit. A download page also mentions 4.150.0, but its release notes could not be seen ([Focusrite Windows Driver Release Notes](https://support.focusrite.com/hc/en-gb/articles/13070702714130-Focusrite-Windows-Driver-Release-Notes)) [excerpt]. In DAWs the driver appears as **"Focusrite USB ASIO"**; this naming was seen for the 2i2, which uses the same driver family ([2i2 guide](https://www.adorama.com/col/productManuals/FRAMS18183G.pdf)) [excerpt].
+
+The **Focusrite Notifier** tray app holds the driver controls. It replaced the old ASIO Control Panel in driver 4.65.5, and that release also improved latency-reporting accuracy ([4.65.5 release notes](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Windows%20USB%20Driver%204.65.5%20-%20Release%20Notes_0.pdf)) [excerpt]. **Safe Mode** and a **latency readout** were added in 2022 (beta 4.99.2, release 4.102.4). The same notes renamed the clock status from "LOCKED" to "SYNCED" ([June 2022 release notes](https://fael-downloads-prod.focusrite.com/customer/prod/downloads/Focusrite%20driver%20release%20notes%20-%20June%202022.pdf)) [excerpt]. **What Safe Mode changes internally is undocumented.** The common assumption that it adds safety buffering is unverified.
+
+Users see buffer sizes of **16, 32, 64, 128 and up** in the Focusrite panel, and those sizes did not appear in Cantabile's own menu, because under ASIO the driver tells the host what it supports. One 2i2 3rd Gen defaulted to 16 samples ([Cantabile forum](https://community.cantabilesoftware.com/t/hands-on-latency/4421?page=2)) [excerpt]. Another user reports the buffer resetting after a reboot ([Audiofanzine](https://en.audiofanzine.com/focusrite/forums/t.10223,focusrite-scarlet-solo-asio-buffer-reset.html)), although driver 4.62.1 was meant to make the buffer size persist ([4.65.5 notes](https://fael-downloads-prod.focusrite.com/customer/prod/s3fs-public/downloads/Windows%20USB%20Driver%204.65.5%20-%20Release%20Notes_0.pdf)) [excerpt]. The design consequence is an [inference]. The app reads the min, max, preferred and granularity values (asio-sys exposes these as `BufferPreference`). It shows the current size. It offers an **"Open driver settings"** button that calls `ASIOControlPanel`. And it rebuilds its streams whenever the driver signals a buffer-size change or a reset.
+
+**Multi-client** use works only at one sample rate. Focusrite support states that "multi-client support relies on the Windows sound settings having the same sample rate as you are using in your DAW" ([KVR thread quoting Focusrite](https://www.kvraudio.com/forum/viewtopic.php?p=7845689)) [excerpt]. A mismatch can produce "Audio device in use" errors ([hydrogenaud](https://hydrogenaud.io/index.php/topic,117437.0.html)), and opening an ASIO host can change the interface's rate or buffer underneath other apps ([Focusrite: VoIP issues](https://support.focusrite.com/hc/de/articles/360013759200-Audio-issues-in-Windows-VoIP-apps-Discord-Zoom-Teamspeak)) [excerpt]. Whether several ASIO clients can run at once is disputed, and nothing documents what the driver does when an ASIO host requests a different rate from WDM. **Default to 48 kHz, matching the usual Windows default device**, and treat any rate change as a stream rebuild [inference].
+
+The exact **ASIO channel-name strings were not confirmed**. Search found no loopback channel on the Solo; loopback appears only in 4i4-and-up guides. Read the names at runtime with `ASIOGetChannelInfo` rather than hard-coding them [inference]. The mapping should be capture 1 = mic and capture 2 = instrument/line. Drivers often present these as a "1+2" pair, but they are **two independent mono signals**. Never store them as one stereo file that plays mic-left and guitar-right [inference].
+
+Most reported Windows crackles with 3rd Gen Scarletts trace to the system rather than the box. The usual fixes are the Ultimate Performance power plan, disabling USB selective suspend and PCIe link-state power management, and checking GPU driver options ([Microsoft Q&A, Solo 3rd Gen laptop](https://learn.microsoft.com/en-us/answers/questions/5558646/problem-with-the-operation-of-any-external-audio-i)). Another fix is to untick "Allow the computer to turn off this device" on the USB root hub ([TCNO guide](https://hub.tcno.co/audio/hardware/fix-focusright/)). Avoid multi-port hubs, which bus-powered interfaces with phantom power can overload ([Rational Acoustics](https://support.rationalacoustics.com/support/solutions/articles/150000091757--windows-audio-device-disconnects-or-stops-working-after-inactivity-within-smaart)). Some users report problems with USB cables over 6 ft ([KVR](https://www.kvraudio.com/forum/viewtopic.php?p=8408214)) [excerpt]. These belong in a first-run checklist.
+
+### macOS and iOS: class-compliant, with power as the iPad constraint
+
+On Apple platforms the Scarlett range is USB class compliant. CoreAudio needs no driver, and cpal's CoreAudio backend covers macOS and iOS. cpal 0.18 timestamps on iOS include hardware latency and update when the audio route changes ([cpal 0.18.2 changelog](https://static.crates.io/crates/cpal/cpal-0.18.2.crate)) [read]. Focusrite has officially supported the 3rd Gen Solo on **USB-C iPads since June 2020**. The unit runs bus-powered "for several hours", but Focusrite recommends a USB-C hub with Power Delivery for permanent use ([Focusrite: Now on iPad Pro](https://us.focusrite.com/articles/the-focusrite-sound-now-on-ipad-pro/); [support article](https://support.focusrite.com/hc/en-gb/articles/360012532199)) [excerpt]. Update the firmware on a computer first. On Lightning devices "an iPhone or iPad cannot bus-power the interface", so an Apple Lightning to USB 3 Camera Adapter with external power is required ([Focusrite: bus-powered interface on iPhone/iPad](https://support.focusrite.com/hc/en-gb/articles/37768338125074-Connecting-a-bus-powered-audio-interface-to-an-iPhone-or-iPad); [support 115005430409](https://support.focusrite.com/hc/en-gb/articles/115005430409)) [excerpt]. iOS 14.5–14.8 blocked USB audio over that adapter, and iOS 15 fixed it ([PreSonus KB](https://support.presonus.com/hc/en-us/articles/360059975732-PreSonus-Hardware-iOS-iPadOS-Compatibility)). Focusrite once shipped a Mac "Low Latency" kext that shrank CoreAudio buffers. It is legacy and irrelevant to a Windows-first app ([Focusrite support](https://support.focusrite.com/hc/en-gb/articles/208736249)). No Solo RTL was found for macOS or iOS. An 18i20 3rd Gen measured **6.125 ms at 48 kHz/32 on macOS** ([Gearspace](https://gearspace.com/threads/focusrite-scarlett-18i20-3rd-gen-latency-question.1322286/)) [excerpt]. For portability, keep the engine behind a host-agnostic trait: ASIO on Windows, CoreAudio on Apple, and WASAPI as a fallback. Use cpal's latency-aware timestamps as the common alignment primitive [inference].
+
+## Six to seven milliseconds is the floor, so the engine must add nothing
+
+### What the round trip will be, and where it goes
+
+**No published round-trip latency (RTL) table exists for the Solo 3rd Gen.** The nearest data points cluster tightly:
+
+| Unit | Rate / buffer | RTL | Evidence |
+|---|---|---|---|
+| Scarlett 3rd Gen range (MusicTech; unit unclear, "not exactly scientific") | 48 kHz / 32 | **6.8 ms** | ([MusicTech](https://musictech.com/reviews/studio-recording-gear/focusrite-scarlett-3rd-gen/)) |
+| Scarlett 2i2 **4th** Gen | 48 kHz / 32 | **6.792 ms** | [excerpt] ([Gearspace latency database](https://gearspace.com/board/music-computers/618474-audio-interface-low-latency-performance-data-base-224.html)) |
+| Scarlett 18i20 3rd Gen, macOS | 48 kHz / 32 | **6.125 ms** | [excerpt] ([Gearspace](https://gearspace.com/threads/focusrite-scarlett-18i20-3rd-gen-latency-question.1322286/)) |
+| Scarlett 2i2 3rd Gen | not stated | ~7 ms | ([Delamar](https://www.delamar.de/test/focusrite-scarlett-2i2-3rd-gen-test/)) |
+| 2nd vs 3rd Gen Scarlett, Logic | 48 kHz / 64 | ~1 ms RTL difference; one-way 3.9 vs 3.4 ms | [excerpt] ([Audiobus forum](https://forum.audiob.us/discussion/58564/comparing-interface-latency)) |
+
+The buffers themselves account for little of the round trip. At 48 kHz one buffer lasts buffer ÷ rate: **0.33 ms at 16, 0.67 ms at 32, 1.33 ms at 64, 2.67 ms at 128 and 5.33 ms at 256**. Focusrite's own arithmetic, quoted on an Adobe forum, gives 5.8 ms for 256 and 11.6 ms for 512 at 44.1 kHz ([Adobe community](https://community.adobe.com/questions-544/reasonable-latency-only-at-256-samples-does-that-sound-right-164431)) [excerpt]. A 6–7 ms RTL at 32 samples therefore implies about **5 ms of fixed overhead** for USB transfer, driver safety buffering and converter filters, beyond the two 0.67 ms buffers. The researchers' estimate for the Solo [inference] is **about 6–7 ms at 48k/32, about 8 ms at 48k/64 and about 10–11 ms at 48k/128**, lower at 96 kHz and higher at 44.1 kHz. Ear to ear, effected monitoring will sit around 6–8 ms at the smallest stable buffer, which most singers tolerate. Direct Monitor remains the 0 ms fallback that skips the effects.
+
+The architectural rule this creates is the central decision of the report [inference]. **The effects chain must add zero samples.** Any lookahead limiter, linear-phase EQ, FFT de-esser or FIR oversampler stacks directly on top of the driver's 6–7 ms. A 2 ms extra allowance equals 96 samples at 48 kHz; the chain proposed below uses none of it except a few samples of optional IIR oversampling. Default to **48 kHz and a 64-sample buffer**. Offer 32 and 16 for capable machines, and 128 or 256 as safe settings.
+
+### The Rust audio engine on cpal's ASIO host
+
+**cpal 0.18.2 (16 August 2026)** with `features = ["asio"]` pulls in **asio-sys 0.4.0**. The researchers read both crates' source ([cpal 0.18.2 crate](https://static.crates.io/crates/cpal/cpal-0.18.2.crate); [asio-sys 0.4.0 crate](https://static.crates.io/crates/asio-sys/asio-sys-0.4.0.crate)) [read]. The 2026 releases closed most historical gaps:
+- 0.18.0: ASIO timestamps include the driver-reported hardware latency, which is re-queried on `kAsioLatenciesChanged`.
+- 0.18.0: `kAsioResyncRequest` or a sample-rate change of 1 Hz or more yields `ErrorKind::StreamInvalidated`.
+- 0.18.0: buffer resizing on `kAsioBufferSizeChange` is fixed.
+- 0.18.0: `kAsioOverload` is reported as an overrun.
+- 0.18.0: a `BufferSize::Fixed` size that is not aligned to the driver's step returns `UnsupportedConfig`.
+- 0.17.0: `kAsioResetRequest` is handled.
+- 0.18.2: a fix for duplex streams "silently dropping audio when built from separate `Device` handles".
+- asio-sys 0.3.0: added `Driver::latencies()` and the driver's preferred buffer size and granularity.
+
+Three properties of the code shape the design [read]. First, asio-sys maps channels as `0..n_channels`, so **cpal always opens the first N channels**. Open both inputs and ignore one in code. Second, **ASIO keeps one buffer set for both directions**. Building the output stream re-runs `ASIOCreateBuffers` with the input included, and **both stream callbacks run back-to-back inside the same driver `bufferSwitch`**, followed by `ASIOOutputReady()`. Third, that callback **locks a global `BUFFER_CALLBACK` mutex**. The source comment admits "locks in the audio stream are not great". **cpal still has no single duplex-callback API**: issue #349 is open, and a `build_duplex_stream` proposal (PR #1096) was seen only through a mirror.
+
+The recommended v1 engine is an [inference] built on these facts. Open one `Device` from `cpal::host_from_id(HostId::Asio)`, the one named "Focusrite USB ASIO". Build the **input stream first** (2 channels), then the output stream (2 channels), with identical rate and buffer size. Hand input to output through an `rtrb` single-producer/single-consumer ring **pre-filled with zero frames**. If the input callback runs first within each period, as registration order implies (verify this on the hardware), input from period *k* plays in period *k*. The app then adds exactly zero buffering beyond the driver. The uncontended mutex is an accepted v1 risk. The upgrade path is a thin custom layer on asio-sys that owns `bufferSwitch`, which gives one true duplex callback, arbitrary channel selection and no lock. RtAudio and PortAudio offer native duplex ASIO callbacks in C/C++, but the notes did not verify them in this session.
+
+The real-time rules are standard, and the researchers verified the crate versions [read]: **rtrb 0.4.1, ringbuf 0.6.0, hound 3.5.1 and audio_thread_priority 0.38.0** ([crates.io index: rtrb](https://index.crates.io/rt/rb/rtrb); [hound](https://index.crates.io/ho/un/hound)). The ASIO driver owns the callback thread, so cpal makes no MMCSS call there. For its WASAPI backend with the `realtime` feature, cpal calls `promote_current_thread_to_real_time`, which uses `AvSetMmThreadCharacteristicsW` with the "Audio" task ([audio_thread_priority source](https://static.crates.io/crates/audio_thread_priority/audio_thread_priority-0.34.0.crate)) [read]. Inside the callback [inference], the engine does the following, with no allocation, no `Mutex`, no logging and no I/O:
+1. Set FTZ/DAZ.
+2. Deinterleave the input.
+3. Push the **raw dry input** plus the current transport sample counter into a pre-allocated record ring sized for 1–2 s at 96 kHz.
+4. Run the pre-allocated effects.
+5. Write the processed signal to the outputs.
+6. Update meter atomics.
+
+A writer thread drains the record ring into `hound` as 24-bit integer or 32-bit float WAV. If the ring ever fills, an atomic counts the dropped frames and the callback never blocks. UI parameters arrive as atomics or through a command ring and are smoothed over 10–50 ms. Monitor the **wet** signal and record the **dry** one. Offer "print effects" as an option, not the default, because Air is already printed and nothing else should be irreversible.
+
+### Aligning recordings: trust the driver, then measure
+
+Reaper's documented method is to use the latency the ASIO driver reports and then refine it with a loopback test: a cable from output to input, a test signal, and the resulting sample offset entered as a recording offset ([reaper.blog](https://reaper.blog/2018/11/rec_latency_offset/)). Cakewalk users describe driver figures as "generally very accurate" ([Cakewalk forum](https://discuss.cakewalk.com/topic/21276-how-many-use-the-audio-interfaces-reported-latencies)) [excerpt]. One Cubasis user on other Scarlett models saw **12–13 ms of extra compensation on Input 1 only**, while Reaper on the same hardware showed consistent latency ([Steinberg forum](https://forums.steinberg.net/t/scarlett-interfaces-increased-latency-on-input-1/781632)) [excerpt]. That report is a reason to calibrate each input. The app's rule [inference] is to shift recorded input earlier by **reported input latency + reported output latency + a calibrated residual**, stored per driver version, buffer size and sample rate, with a manual ms trim like Logic's Recording Delay.
+
+Build the calibration in. Play an impulse or chirp from Out 1 into **Input 2 with INST off**. The line input takes +22 dBu, so a +15.5 dBu line output cannot clip it, whereas the +9 dBu mic input could. Cross-correlate the recording with the test signal to find the residual offset. **Direct Monitor must be off during the test**, otherwise Input 2 feeds back to the outputs and into itself.
+
+### Tauri shell, licensing and CI decisions
+
+Current stable versions are **tauri 2.12.6** and **tauri-plugin-updater 2.14.1**; Tauri 3 is at 3.0.0-alpha.6 ([crates.io index: tauri](https://index.crates.io/ta/ur/tauri)) [read]. Run the engine as plain Rust in the Tauri process, on a control thread that owns the cpal `Stream`s, because they are `!Send` on some hosts. Drive it from commands such as `start_engine`, `set_param`, `arm_record`, `stop_record` and `open_asio_panel` [inference]. Stream meters through **`tauri::ipc::Channel`**, not events. The tauri docs say the event system "is not designed for low latency or high throughput", whereas "channels are designed to be fast and deliver ordered data" ([tauri-docs: calling the frontend](https://raw.githubusercontent.com/tauri-apps/tauri-docs/v2/src/content/docs/develop/calling-frontend.mdx)) [read]. A 30 Hz frame of peak and RMS values for 2 inputs and 2 outputs is plenty [inference]. Never capture audio through the WebView. If any web-audio path is ever used, `getUserMedia` echo cancellation, noise suppression and AGC must be off [inference].
+
+The updater has fixed requirements ([tauri-docs: updater](https://raw.githubusercontent.com/tauri-apps/tauri-docs/v2/src/content/docs/plugin/updater.mdx)) [read]:
+- a key pair from `tauri signer generate`, whose private key lives in `TAURI_SIGNING_PRIVATE_KEY` ("`.env` files do _not_ work!");
+- the warning that losing the key ends updates for installed users;
+- `createUpdaterArtifacts: true`;
+- the public key *text* in config;
+- HTTPS endpoints only;
+- a `latest.json` file with `version`, `platforms.[target].url` and the `.sig` *content*.
+
+**tauri-action** builds NSIS and MSI installers on `windows-latest` and uploads `latest.json` ([tauri-action README](https://raw.githubusercontent.com/tauri-apps/tauri-action/dev/README.md)) [read]. A private repo's release assets are not publicly downloadable. Publish updates to a public releases repo or another public HTTPS host; do not ship a token in the app [inference]. **WebView2** can be bootstrapped by download (the default, adding 0 MB), embedded (about 1.8 MB) or installed offline (about 127 MB) ([tauri-docs: Windows installer](https://raw.githubusercontent.com/tauri-apps/tauri-docs/v2/src/content/docs/distribute/windows-installer.mdx)) [read]. Authenticode signing is separate from updater signing; without it, users get SmartScreen warnings.
+
+**Licensing is the decision with the longest tail.** Since October 2025 the ASIO SDK has been offered under a **proprietary agreement or GPLv3** ([Steinberg press release, 15 Oct 2025](https://ocl-steinberg-live.steinberg.net/_storage/asset/808575/storage/master/Press%20Release%20-%202025-10-15%20-%20OBS%20Partnership-%20EN.pdf); [VST 3.8 release, 29 Oct 2025](https://ocl-steinberg-live.steinberg.net/_storage/asset/819253/storage/master/Press%20Release%20-%202025-10-29%20-%20VST%203.8%20-%20EN.pdf)). The SDK's `LICENSE.txt` reads "Dual license: Proprietary Agreement and GPLv3", and its trademark rules forbid "ASIO" in a product or company name ([audiosdk/asio](https://github.com/audiosdk/asio)) [read]. cpal's path compiles Steinberg's host sources into the binary. A closed-source app therefore needs Steinberg's proprietary licence, and developers were still asking how to obtain it in May 2026 ([Steinberg forum](https://forums.steinberg.net/t/subject-request-for-asio-sdk-access-licensing-information/1031382.md)). An open-source app can take GPLv3, which OBS cites as its precedent [inference from the cited sources].
+
+The build needs MSVC, LLVM/clang for bindgen (`LIBCLANG_PATH`), and the SDK. asio-sys downloads the SDK from `steinberg.net/asiosdk` unless `CPAL_ASIO_DIR` points to a copy ([asio-sys 0.4.0 source](https://static.crates.io/crates/asio-sys/asio-sys-0.4.0.crate); [cpal README](https://github.com/RustAudio/cpal)) [read]. The minimum Rust version for WASAPI/ASIO is 1.85. The November 2026 GitHub Windows runners already ship **LLVM 20.1.8, Rust 1.99.1, WiX 3.14 and NSIS 3.10** (NSIS on windows-2022) ([runner image manifest](https://raw.githubusercontent.com/actions/runner-images/main/images/windows/Windows2025-Readme.md)) [read]. Vendor or cache the SDK so CI does not depend on steinberg.net, and use ASIO4ALL for hardware-free tests [inference].
+
+## Colour and dynamics fit in zero samples of lookahead
+
+### The live chain and its defaults
+
+The order below is the engineer-standard vocal chain, and it is also Nectar's architecture once the Pitch module is removed. Nectar's official help, which the researchers read, documents the layout this chain follows: two EQs, two serial compressors, a de-esser, saturation, dimension, wet-only-filtered delay and reverb, and a **"brickwall, zero latency limiter"** at the output ([Nectar 3 Help](https://s3.amazonaws.com/izotopedownloads/docs/nectar300/en/print/index.html)) [read]. The 1176's microsecond attack versus the LA-2A's ~10 ms attack and slow release supports putting FET before opto ([UA 1176 manual](https://help.uaudio.com/hc/en-us/articles/34530260482324-1176-Classic-FET-Compressor-Manual); [UA WebZine LA-2A](https://www.uaudio.com/webzine/2003/july/text/content4.html)). The specific numbers in the table are common practice. The researchers could not cite interview sources for them, so they are [inference] defaults.
+
+| # | Stage | Default (male / female where it differs) | Range to expose |
+|---|---|---|---|
+| 0 | Preamp colour (1073 / Colour Box / clean) | Low drive, 5–15 % effective saturation | Drive 0–100 %, voice select |
+| 1 | HPF | 80 Hz / 100 Hz, 2nd–4th order | 20–300 Hz |
+| 2 | Expander (gate) | −50 dBFS, 1:2, 10 dB range, open 4–6 dB above close, attack 0.5–2 ms, hold 20–80 ms, release 100–250 ms, 100 Hz sidechain HPF | ratio 1:1.5–1:4, range 0–20 dB |
+| 3 | Subtractive bell | −2 to −4 dB at 250–400 Hz, Q ≈ 1.5 | 20 Hz–20 kHz, −30/+15 dB (Nectar range) |
+| 4 | FET compressor | Peak, attack 0.2–0.8 ms, release 60–150 ms, 4:1, 6 dB soft knee, 3–5 dB GR | 1176 ranges below |
+| 5 | De-esser | 6 kHz / 8 kHz, relative detection, up to −8 dB split-band | 800 Hz–8 kHz detect (Nectar), up to 10 kHz |
+| 6 | Opto compressor | RMS, ~10 ms attack, 60 ms + 1–3 s two-stage release, ≈3:1, 2–4 dB GR | Compress/Limit |
+| 7 | Tone EQ | Presence +2–3 dB at 3–5 kHz; air shelf +2–3 dB at 10–12 kHz (reduce if hardware Air is on) | full |
+| 8 | Saturation | 5–15 % even-order "warm" | mode select |
+| 9 | Doubler / Dimension | Off | mix −20 to −6 dB |
+| 10 | Sends: delay, reverb (ducked) | Slap 80–120 ms; plate 1.2–2 s, 20–40 ms pre-delay | see next section |
+| 11 | Output safety | Zero-latency soft-clip limiter at −1 dBFS | ceiling −6 to 0 dBFS |
+
+Every stage is causal and minimum-phase, so the chain adds **0 samples**. The only exception is optional 2× polyphase IIR oversampling inside the saturators, which costs a few samples. Give each module a **Mix** knob as Nectar does, which gives parallel ("NY") compression and parallel saturation for free. Because nothing has lookahead, dry and wet stay time-aligned apart from small IIR phase shifts [inference].
+
+### Preamp colour means modelling gain staging, not just a curve
+
+The **JHS Colour Box** is a pedal-format preamp built to evoke the Neve 1073. It has **two discrete gain stages in series** ([GearNews](https://www.gearnews.com/jhs-makes-good-things-better-with-color-box-version-2-preamp-pedal)). "The pre-vol control has no effect on the first stage. It sets the signal level getting into stage two," so Pre-Volume acts as the drive control and Master as the output level ([Guitar.com review](https://guitar.com/review/jhs-colour-box-review/)). The V2 Step switch sets both stages' gain to **+18, +23, +28, +33 or +39 dB** ([JHS V2 page](https://jhspedals.info/products/colour-box-v2); [Delicious Audio](https://delicious-audio.com/jhs-colour-box-v2/)) [excerpt]. Older and 500-series versions list different steps (18/23/28/33 and 18/23/28/32/37 dB) ([Moog Audio](https://www.moogaudio.com/en/jhs-colour-box-500)). On the V2:
+- Treble and Bass are ±15 dB and Middle is ±10 dB.
+- The best-supported Shift sweeps are **Treble 2–30 kHz, Middle 150 Hz–2.4 kHz and Bass 20–440 Hz**.
+- The Hi-Pass sweeps **160–650 Hz**, but sources disagree on its slope (6 vs 12 dB/oct).
+- The combo input has a −20 dB pad and 48 V pass-through ([JHS V2 page](https://jhspedals.info/products/colour-box-v2); [Premier Guitar](https://www.premierguitar.com/jhs-pedals-announces-the-colour-box-v2)) [excerpt].
+
+The V1's fixed EQ points, whether the EQ sits between or after the stages, and the curve shapes are all undocumented. The researchers' DSP model [inference] is: pad → HPF → stage 1 (gain = Step, soft nonlinearity) → Pre-Volume attenuator → stage 2 (gain = Step, soft nonlinearity) → EQ → Master. Placing the EQ last follows the 1073. The sound then depends on how gain is split between the stages, which is the pedal's character. A vocal preset should keep Step at +18/+23 dB and set level with Pre-Volume and Master. It should also allow an HPF below the pedal's 160 Hz minimum, because 160 Hz is high for vocals.
+
+The **Neve 1073** offers +20 to +80 dB of mic gain in 5 dB steps. It has a Marinair-spec 10468 input transformer, an LO1166 gapped output transformer, and "two discrete transistor-based preamp gain stages, and one output gain stage" ([AMS Neve 1073LB](https://ams-neve.com/1073lb/); [SOS BAE 1073 MPF](https://www.soundonsound.com/reviews/bae-1073-mpf)) [excerpt]. Its inductor EQ has:
+- a **12 kHz high shelf at ±16 dB**;
+- a mid peak at **0.36/0.7/1.6/3.2/4.8/7.2 kHz, ±18 dB**, with no Q control;
+- a low shelf at **35/60/110/220 Hz**;
+- an **18 dB/oct HPF at 50/80/160/300 Hz** ([AMS Neve 1073](https://www.ams-neve.com/?p=1562)) [excerpt].
+
+The mid bandwidth narrows as gain rises ([Logic training notes](https://sites.google.com/whosthebass.com/logictraining/effects/spectral-effects/vintage-console-eq)). UA explains that the inductor raises Q at higher centre frequencies, and that parasitic capacitance pulls the high-frequency peaks toward unity ([UA WebZine 2006](https://www.uaudio.com/webzine/2006/may/text/content2.html)) [excerpt]. The model [inference] is as follows:
+- HPF: a 1st-order plus a 2nd-order Butterworth section.
+- Low shelf: an RBJ shelf, optionally with Q above 0.707 for the inductor-style bump, which is unconfirmed for the 1073.
+- Mid: an RBJ peak with Q = Q0(fc)·(1 + k·|G_dB|/18), and the realised gain trimmed down slightly in the 7.2 kHz band.
+- 12 kHz shelf: a **matched design (Vicanek/Massberg/Orfanidis) rather than bilinear RBJ**. Bilinear designs cramp near Nyquist at 44.1/48 kHz ([Vicanek, Matched Second Order Digital Filters](https://www.vicanek.de/articles/BiquadFits.pdf)).
+
+Q0, k and the shelf overshoot must be fitted to measured sweeps of a reference plug-in or hardware. Nobody has published a harmonic spectrum of the 1073, so its colour is built from first principles [inference]: a mild asymmetric soft clip for the class-A stages (H2), then a transformer stage (low-frequency H3).
+
+The **API 550A** is the proportional-Q alternative:
+- LF 50/100/200/300/400 Hz, MF 0.4/0.8/1.5/3/5 kHz and HF 5/7/10/12.5/15 kHz ([UAD API 500 manual](https://help.uaudio.com/hc/en-us/articles/32524771071636-API-500-Series-EQ-Collection-Manual));
+- boost/cut steps of 2, 4, 6, 9 and 12 dB, with **reciprocal** boost and cut curves and shelf/peak switching on LF and HF ([API 550A brochure](https://www.APIaudio.com/docs/brochures/br550a.pdf)) [excerpt].
+
+The suggested Q law is Q = Qmin + (Qmax − Qmin)·|G|/12, with Qmin around 0.4–0.7 and Qmax around 1.5–2.5. These constants are unsourced and must be fitted [inference]. The **SSL** E-series comes in "Brown Knob" (02) and "Black Knob" (242, developed with George Martin) variants, and Waves models the G-series as the 383 ([Waves](https://www.waves.com/ssl-e-channel-or-g-channel); [Abbey Road Institute](https://abbeyroadinstitute.nl/blog/ssl-e-g-series-eq/)). Its band ranges were not retrieved. Treat it as the clean, surgical 4-band option.
+
+**Decapitator**'s five styles name the targets well: A = Ampex 350 tape preamp, E = Chandler/EMI TG, N = Neve 1057, T = Culture Vulture triode, and P = Culture Vulture pentode. Punish adds 20 dB, and Tone is an AM-radio-style tilt ([Decapitator manual](https://www.soundtoys.com/wp-content/uploads/Decapitator-Manual.pdf)) [excerpt]. The per-style chain [inference] is: pre-EQ → drive → style nonlinearity → tilt (opposite-gain 1st-order shelves around 1 kHz) → low/high cut → auto-trim → mix. **Tape** contributes three things:
+- A speed-dependent **head bump**. A forum account puts it around 80–120 Hz at 30 ips. Endino's measurements show about 35–40 Hz at 15 ips and a steep roll-off below 70 Hz at 30 ips ([Endino graphs](https://www.endino.com/graphs/); [Premier Rock Forum](https://premierrockforum.com/viewtopic.php?p=7128)).
+- High-frequency loss.
+- Hysteresis. Chowdhury's real-time Jiles-Atherton model (DAFx 2019) is published, but ChowTape's code is GPLv3 and its solvers want oversampling ([DAFx 2019](https://dafx.de/paper-archive/details/Z5Ow_E5YHVxvndTAyeEuzA); [ChowTape manual](https://ccrma.stanford.edu/~jatin/chowdsp/Products/ChowTapeManual.pdf)).
+
+For live vocals, the [inference] is a symmetric soft clip with light hysteresis, a +1–3 dB head-bump peak at 40–100 Hz and an HF shelf, and **no wow or flutter in the monitor path**.
+
+The physics that ties these together is well sourced:
+- Asymmetric transfer curves (single-ended stages, a DC-biased core) produce even harmonics.
+- Symmetric curves (push-pull, op-amp rails, tape) cancel the even terms and produce odd harmonics ([Wikipedia: Tube sound](https://en.wikipedia.org/wiki/Tube_sound); [Airwindows Coils](https://airwindows.com/coils)).
+- "Tubes even, transistors odd" is "enduring audio folklore" ([Till](https://till.com/articles/devicedistortion/)).
+- Op-amp third harmonic climbs steeply near clipping ([Hamm](https://www.butleraudio.com/tubesvstrans2.html)).
+- A transformer behaves like an integrator (voltage to flux) feeding a differentiator ([Eventide forum](https://www.eventideaudio.com/?p=184528)).
+
+Two consequences follow [inference]. Because flux ∝ V/f, **transformer distortion rises about 6 dB per octave toward low frequencies** at constant level. And for any smooth shaper at low drive, H2 rises 1 dB and H3 2 dB per dB of input relative to the fundamental. That is why gentle console colour is second-harmonic-dominant and pushing it turns odd.
+
+| Building block | Recipe [inference unless cited] |
+|---|---|
+| Triode / class-A stage | y = tanh(k(x+b)) − tanh(kb), with b > 0 for H2; DC blocker at 5–20 Hz afterwards |
+| Transformer | leaky-integrate → saturate flux (tanh or Langevin) → differentiate; cheap version: split at 100–200 Hz with a complementary 1st-order pair and saturate only the LF branch, adding a tiny DC bias for H2 |
+| Op-amp / API-style | linear until near the rail, then hard clip with ADAA |
+| Tape | pre-emphasis shelf → symmetric soft clip (+ light hysteresis) → exact inverse de-emphasis |
+| Anti-aliasing | **First-order ADAA**: y[n] = (F1(x[n]) − F1(x[n−1]))/(x[n] − x[n−1]), falling back to f((x[n]+x[n−1])/2) when the difference is below about 1e-5. For tanh, F1 = log cosh x (use \|x\| − log 2 for large \|x\|). For hard clip, F1 = x²/2 inside ±1 and ±x − ½ outside. ADAA adds half a sample of delay and a slight HF droop. Method: ([CCRMA ADAA notebook](https://ccrma.stanford.edu/~jatin/Notebooks/adaa.html); [Bilbao et al. 2017](https://aaltodoc.aalto.fi/items/a46ae786-3014-4c49-a409-957b4c330bcd)) |
+| Oversampling | Optional 2× **polyphase IIR allpass half-band** pair (a few samples of delay); avoid linear-phase FIR half-bands, which add tens of samples ([musicdsp.org](https://www.musicdsp.org/en/latest/Filters/39-polyphase-filters.html)) |
+| Dry/wet | Delay the dry signal by the same few samples as the wet path |
+
+### Compression: feedforward, log-domain, FET then opto
+
+The template is the Giannoulis, Massberg and Reiss tutorial (JAES 60(6), 2012) ([AES E-Library](https://www.aes.org/e-lib/browse.cfm?elib=16354)). Its structure is a level detector, then a static soft-knee gain computer in dB, then smoothing in the gain domain, then make-up. The formulas below are **[recall]**: verify them against the paper. With threshold T, ratio R and knee W (all in dB), the gain computer gives:
+- y_G = x_G below the knee (2(x_G − T) < −W);
+- y_G = x_G + (1/R − 1)(x_G − T + W/2)²/(2W) inside it;
+- y_G = T + (x_G − T)/R above it.
+
+Then x_L = x_G − y_G and α = exp(−1/(τ·fs)). The smooth branching detector uses α_A when x_L rises and α_R when it falls. Auto make-up is M = −y_G(0 dB). Feedforward is exact and permits any ratio. A "feedback" feel can be added by detecting on y[n−1] [inference]. Without lookahead, 1–3 ms overshoots are unavoidable whenever the attack is longer than about 0.1 ms. The final zero-latency soft clipper exists to catch them [inference].
+
+| Model | Sourced behaviour | Live model [inference] |
+|---|---|---|
+| **1176 (FET)** | Attack **20–800 µs**, release **50 ms–1.1 s**, ratios 4/8/12/20:1; higher knob numbers mean faster; "all-buttons" mode makes "compression distortion increase radically" ([UA 1176 manual](https://help.uaudio.com/hc/en-us/articles/34530260482324-1176-Classic-FET-Compressor-Manual); [1176LN manual](https://c3.zzounds.com/media/1176LN_manual-1a90c9dff91ec30316551923e877c4d0.pdf)) | Peak branching detector; program-dependent release; light FET waveshaper; all-buttons = ratio ≥20:1, knee overshoot and more distortion |
+| **LA-2A (opto T4)** | Average attack about **10 ms**; release about **60 ms to 50 %, then 1–15 s** (original manual) or 0.5–5 s (UA) "depending upon the amount of previous reduction" ([UA WebZine 2003](https://www.uaudio.com/webzine/2003/july/text/content4.html); [UA spec via Mediacast](https://www.mediacastsys.com/universal-audio/la-2a.html)) [excerpt] | RMS detector driving "panel brightness"; two parallel cell states, fast (τ 60–90 ms, about 50 % weight) and slow (τ 0.5–5 s) that charges only under heavy GR, with τ_slow scaled by a GR-history integrator; soft 1/(1+kG) curve, about 3:1 Compress; mild even-order output colour |
+| **Distressor** | Ratios 1:1 (saturation only), 2, 3, 4, 6, 10 (Opto, release up to 20 s), 20, Nuke; Dist 2 = 2nd harmonic, Dist 3 = 3rd ("more similar to tape") ([Distressor manual](https://www.barryrudolph.com/recall/manuals/distressor1.pdf); [EL-8 manual](https://www.manualsdir.com/manuals/674530/empirical-labs-el-8.html?page=11)) | Generic compressor with an H2/H3 colour switch and an opto-release mode |
+| **Nectar 3 modes** | Digital 1:1–50:1, attack 0.1–300 ms, release 1–1200 ms; Vintage (same ranges, non-linear release); Optical **fixed 4:1**, attack 1–100 ms, release 40–200 ms; Solid-state 4–12:1, attack 0.2–80 ms, release 50–1200 ms; RMS suggested for Optical and Peak for Solid-state ([Nectar 3 Help](https://s3.amazonaws.com/izotopedownloads/docs/nectar300/en/print/index.html)) [read] | Use directly as the parameter ranges to expose |
+
+Two gentle serial stages of 3–6 dB each sound more natural than one stage doing 10 dB. Parallel compression of dry plus a 10:1, fast-attack, about −10 dB GR copy mixed in at −10 to −6 dB is a sound default [inference].
+
+### De-essing, gating and riding without lookahead
+
+Split-band de-essing (attenuating only the sibilant band) is the transparent default. Wideband de-essing is more predictable on full mixes ([Unison](https://unison.audio/what-is-a-de-esser/)). Sibilance sits at about **4–7 kHz for male voices and 7–10 kHz for female and child voices**, depending on the singer and mic ([Unison: De-essing](https://unison.audio/de-essing/); [Violet Recording](https://violetrecording.com/blog/how-to-de-ess-vocals/)). Nectar's de-esser detects between **800 Hz and 8 kHz**, reduces in proportion to how far the signal exceeds threshold, has a Listen mode, and is level-independent ([Nectar 3 Help](https://s3.amazonaws.com/izotopedownloads/docs/nectar300/en/print/index.html)) [read]. The zero-lookahead design [inference] works like this:
+- **Sidechain**: a band-pass at 6 or 8 kHz whose energy is compared with the full-band energy. This makes detection level-independent and stops loud bright vowels from triggering it.
+- **Detector**: peak, attack 0.1–0.5 ms, release 30–80 ms.
+- **Action**: a dynamic high-shelf or bell, or a complementary IIR split (low = x − high), at up to −6 to −10 dB.
+
+The first millisecond of an "s" leaks through, but sibilants build over tens of milliseconds, so the leak is inaudible in practice. Nectar's gate uses separate open and close thresholds. Its **Auto Level Mode** moves input gain toward a target only when the RMS level is within 3 dB of target, and by at most ±3 dB ([Nectar 3 Help](https://s3.amazonaws.com/izotopedownloads/docs/nectar300/en/print/index.html)) [read]. That is a safe pattern for live riding. Add a slow RMS (τ 200–500 ms) and freeze the gain below a noise floor so the rider never lifts breaths into the headphones [inference]. A cheap breath reducer is an expander keyed on low level plus high spectral flatness or zero-crossing rate, at −6 to −10 dB [inference]. Nectar's own Breath Control is RX's spectral detector, which is not a live tool.
+
+### What a Nectar-style suite adds, and what to leave out
+
+Nectar 4 shipped on 6 September 2023 in Elements, Standard and Advanced editions. It added Auto-Level, Voices, Backer, a new De-esser and Audiolens. No Nectar 5 was found by November 2026 ([The Beat Community](https://thebeatcommunity.com/2023/09/09/izotope-release-nectar-4/); [iZotope features](https://www.izotope.com/en/products/nectar/features)) [excerpt]. Nectar 3's **Vocal Assistant** analyses input level, vocal character, register, subtractive-EQ frequencies, sibilance and output level. It then sets the EQ, compressors, de-esser cutoff and threshold, and a light reverb mix, with "Vibes" and "Intensity" as the only user controls. It needs about 20 s of material ([Nectar 3 Help](https://s3.amazonaws.com/izotopedownloads/docs/nectar300/en/print/index.html)) [read]. **Waves CLA Vocals** shows the opposite approach. It has six faders (Bass, Treble, Compress, Reverb, Delay, Pitch), each with a three-way colour switch; Compress offers Push, Spank or Wall ([Production Expert](https://www.production-expert.com/home-page/2017/8/15/free-tutorial-how-to-use-waves-cla-vocals-plug-in?format=amp); [B&H](https://www.bhphotovideo.com/c/product/845448-REG/Waves_CLVCLNA_CLA_Vocals_Vocal.html/overview)) [excerpt]. For a songwriter who wants to sing rather than tweak, the right UI [inference] is a CLA-style macro layer over the detailed chain. Each macro drives several parameters along voiced curves. For example, Compress raises ratio and lowers threshold together, and its colour picks FET, opto or limiter timing. An "assistant" pass on a recorded take can set ALM gain, the HPF, the de-esser frequency and the threshold.
+
+Leave out the latency-bearing modules. With pitch processing on, one DAW reported **194 ms** for Nectar 3, and the DAW's low-latency mode simply bypassed the plug-in ([KVR forum](https://www.kvraudio.com/forum/viewtopic.php?p=7721761)) [excerpt]. The best-documented live pitch figure is UAD Auto-Tune Realtime's **Classic mode at 1–2 ms extra at 44.1 kHz; Modern mode adds 4–7 ms** ([UA help](https://help.uaudio.com/hc/en-us/articles/43460658366612)) [excerpt]. Antares publishes no figure for Auto-Tune 2026's Low Latency mode ([Antares](https://help.antarestech.com/hc/en-us/articles/47422439594132-Incorrect-Latency-Numbers-Reported-in-AutoTune-2026)). A pitch detector needs at least one period of the lowest note to be confident (12.5 ms at 80 Hz) [inference]. Pitch correction, harmony voices and spectral breath control therefore stay off the monitor path. If they ever ship, they belong on recorded takes.
+
+## Space and width: plate, hall, tape echo and doubling
+
+### Plates and halls from published structures
+
+The **EMT 140** (1957) is a steel plate whose felt damper sets the decay, up to about **5 s undamped**. Highs decay faster than lows at every setting ([UA EMT history](https://www.uaudio.com/blogs/ua/emt-reverb-history); [Vintage King](https://vintageking.com/blogs/guitar/replicating-plate-reverb)) [excerpt]. Sound On Sound's typical vocal plate is about **1.2 s of decay with 60–80 ms of pre-delay**, and SOS notes plates were on "virtually all the classic records in the '60s and '70s" ([SOS: Choosing the right reverb](https://www.soundonsound.com/techniques/choosing-right-reverb)) [excerpt]. A plate has no discrete early reflections and builds density fast. That is the likely reason it flatters vocals [inference].
+
+The **Dattorro (1997) plate** is the standard algorithmic version, and many plug-ins recreate it exactly ([Valhalla](https://valhalladsp.com/2021/09/22/getting-started-with-reverb-design-part-2-the-foundations/)) [excerpt]. The researchers read its topology and lengths in Valley Audio's Plateau source ([Plateau Dattorro.cpp](https://github.com/ValleyAudio/ValleyRackFree/blob/main/src/Plateau/Dattorro.cpp); [Dattorro.hpp](https://github.com/ValleyAudio/ValleyRackFree/blob/main/src/Plateau/Dattorro.hpp)) [read]:
+1. An input one-pole, then pre-delay.
+2. Four series input allpasses (141, 107, 379, 277 samples).
+3. A figure-8 tank. Each half runs: modulated allpass (gain −diffusion1) → long delay → damping low-pass → ×decay → allpass (+diffusion2) → long delay → ×decay → into the other half.
+
+All lengths are at **29,761 Hz**. Scale by fs/29,761, which is ×1.6128 at 48 kHz.
+
+| Tank element | @29,761 | ms | @48 kHz |
+|---|---|---|---|
+| L mod allpass / delay 1 / allpass 2 / delay 2 | 672 / 4453 / 1800 / 3720 | 22.6 / 149.6 / 60.5 / 125.0 | 1084 / 7182 / 2903 / 6000 |
+| R mod allpass / delay 1 / allpass 2 / delay 2 | 908 / 4217 / 2656 / 3163 | 30.5 / 141.7 / 89.2 / 106.3 | 1464 / 6801 / 4284 / 5101 |
+| Output A taps (signs + + − + − − −) | 266, 2974, 1913, 1996, 1990, 187, 1066 | | 429, 4797, 3085, 3219, 3210, 302, 1719 |
+| Output B taps (MUMT618, [excerpt]) | 353, 3627, 1228, 2673, 2111, 335, 121 | | 569, 5850, 1981, 4311, 3405, 540, 195 |
+
+Output A's taps read, in order: the same-side first allpass output; Delay1 at 266 and at 2974; inside Apf2 at 1913 (negative); Delay2 at 1996; the opposite Delay1 at 1990 (negative); inside the opposite Apf2 at 187 (negative); and the opposite Delay2 at 1066 (negative). Implement the allpasses as explicit delay buffers so these internal taps can be read. Plateau reuses the same taps for both outputs, while the paper's second output uses the MUMT618 set ([MUMT618](https://kaseypocius.github.io/MUMT618-DREV/how)) [excerpt].
+
+Plateau's modulation details [read]:
+- maximum excursion **16 samples** at 29,761 Hz (about 26 at 48 kHz);
+- four LFOs at **0.10, 0.15, 0.12 and 0.18 Hz**, with phases 0, ¼, ½ and ¾, modulating all four tank allpasses;
+- diffusion capped at 0.7;
+- 20 Hz DC blockers;
+- `double` state.
+
+The paper's own coefficients are **[recall]** and need checking against the PDF: decay 0.5, bandwidth 0.9995, damping 0.0005, input diffusion 0.75/0.625, decay diffusion 0.70 and clamp(decay+0.15, 0.25, 0.50), output gain 0.6. Only the 0.6 is corroborated. The whole structure costs about a dozen delay operations per sample, far under 1 % of a core [inference].
+
+For a **lush hall**, the template is Signalsmith's ADC 2021 code ([reverb-example-code.h](https://github.com/Signalsmith-Audio/reverb-example-code/blob/main/reverb-example-code.h)) [read]. It has 8 channels and a 4-step diffuser; each step applies random per-channel delays, a Hadamard mix and random polarity flips, with the delay range halving each step from a 50 ms default. The feedback loop has 8 delays spread exponentially over one octave from 150 ms, mixed by a Householder matrix. Its decay gain is derived from RT60: loopsPerRt60 = rt60 / (1.5·roomSizeMs), then −60 dB divided across those loops. The [inference] upgrades are:
+- prime lengths;
+- per-line Jot loss g_i = 10^(−3·d_i/(fs·RT60)), made frequency-dependent with a low/high split, e.g. LF RT 1.2× and HF RT 0.5× the mid;
+- 2–8 lines modulated at 0.1–2 Hz by ±0.5–2 ms with decorrelated phases.
+
+Lexicon's lushness comes from exactly this kind of random tank modulation. The 480L's "Random" algorithms expose it as Spin and Wander ([UA 480L](https://www.uaudio.com/products/lexicon-480l-digital-reverb-effects)). Valhalla notes the old units modulated "far beyond" any real room ([Valhalla](https://valhalladsp.com/?p=1563)) [excerpt]. Keep **Freeverb** as the A/B baseline [read]:
+- 8 combs at 1116, 1188, 1277, 1356, 1422, 1491, 1557, 1617 samples;
+- 4 allpasses at 556, 441, 341, 225;
+- right-channel spread +23;
+- feedback = room·0.28 + 0.7;
+- all tuned at 44.1 kHz ([Freeverb tuning.h](https://github.com/sinshu/freeverb/blob/master/Components/tuning.h); [freeverb-rs](https://github.com/irh/freeverb-rs/blob/master/freeverb/src/freeverb.rs)).
+
+Its fixed combs ring metallically on vocals, which is why the FDN exists [inference].
+
+**Pre-delay and ducking** follow the same zero-latency rule [inference]. Expose pre-delay from 0 to 250 ms with tempo sync (1/64 = 60000/BPM/16 ms, so 31.25 ms at 120 BPM). Duck the return from a detector on the dry vocal (attack 1–10 ms, release 150–400 ms, 3–10 dB range). Duck after the reverb for smooth tails, or before it to let existing tails ring.
+
+### Echo and doubling stay causal too
+
+The **Roland RE-201** has one record head and three playback heads at **1:2:3 spacing** (Roland's GX-10 guide documents heads 2 and 3 as 2× and 3× head 1). A Repeat Rate knob changes tape speed, and a 12-position mode selector chooses the heads ([Roland GX-10 guide](https://static.roland.com/manuals/gx-10_parameter/en-US/95886987161270155.html); [BOSS](https://articles.boss.info/space-echo-sounds-and-how-to-use-them/)) [excerpt]. Its absolute delay range was not found. The Rust model [inference] uses one circular buffer with three cubic-interpolated read heads at d, 2d and 3d. The feedback loop runs: tanh saturation → HPF 80–150 Hz → LPF 2.5–5 kHz → gain, which may exceed 1 for self-oscillation. Wow (0.5–2 Hz, 0.1–0.5 %) and flutter (6–15 Hz plus filtered noise, 0.05–0.2 %) modulate the shared time base. When the delay time changes, slew the read pointer so it pitch-shifts like moving tape. A BBD delay is the same idea plus a low-pass whose cutoff falls as delay time rises, plus companding noise. Tempo math: 1/4 = 60000/BPM ms; at 120 BPM, 1/4 = 500 ms and dotted 1/8 = 375 ms.
+
+For **doubling and width**, the sourced anchors are the Eventide MicroPitch ranges (0 to ±50 cents per side) and the H3000-style **±9 cents** H9000 preset ([Eventide H9000 manual](https://cdn.eventideaudio.com/manuals/h9000/2.0/content/appendix/algorithms/96_H9000_Vintage_Emulations.html); [Plugin Boutique MicroPitch](https://www.pluginboutique.com/product/2-Effects/35-Pitch-Shifter/6350-MicroPitch)). Producers use **±7 cents** ([Splice](https://splice.com/blog/the-classic-vocal-mix-trick-every-producer-should-know)), and one forum user uses −9/+11 cents at 15/25 ms ([Neural DSP forum](https://unity.neuraldsp.com/t/eventide-h3000-micropitch-detune/9643)). The **Dimension D** uses two BBD lines driven by a trapezoidal LFO, giving width without obvious warble ([muzines](https://www.muzines.co.uk/articles/roland-dimension-d/4054)) [excerpt]. The implementation [inference] is a **delay-line pitch shifter**: two read taps sweep a 20–50 ms window and are crossfaded with complementary Hann windows, at read rate r = 2^(c/1200) (1.0052 for +9 cents). Run one instance at L +9 c with 13 ms base delay and one at R −9 c with 21 ms, mixed about −10 dB under the dry vocal. The dry vocal stays at 0 ms, so **monitoring latency is unchanged**. Granular and phase-vocoder shifters add block latency and are excluded. A Dimension-style widener uses two 5–15 ms taps on one 0.2–0.5 Hz LFO in antiphase, cross-mixed as L = dry + a(t1 − t2) and R = dry − a(t1 − t2) and low-passed around 8–10 kHz. The SDD-320's real matrix and LFO rates are unsourced.
+
+Real-time hazards in these feedback structures are denormals, interpolation artefacts and parameter zipper noise. The [inference] fixes:
+- **Denormals**: set FTZ/DAZ per callback, and add a 1e-18-scale offset in loops or flush tiny values to zero.
+- **Interpolation**: linear is fine for small reverb-tank excursions; cubic Hermite or Lagrange for audible pitch modulation; first-order allpass only for slowly varying delays.
+- **Buffers**: power-of-two circular buffers preallocated for 192 kHz, as Plateau does ([Plateau](https://github.com/ValleyAudio/ValleyRackFree/blob/main/src/Plateau/Dattorro.cpp)) [read].
+- **Stereo decorrelation**: different taps or matrix rows per side, and distinct LFO rates and phases.
+
+The whole effects suite should use a few percent of one core.
+
+### Starter presets
+
+The presets below synthesise the anchors above with normal practice. Only the "Classic Plate" numbers carry a source (SOS); the rest are [inference].
+
+| Preset | Engine | Settings |
+|---|---|---|
+| Bright Vocal Plate | Dattorro | RT60 ≈ 1.4 s, pre-delay 30 ms or 1/64, mod 50 % of excursion, return HPF 150 Hz / LPF 9 kHz, duck 3 dB |
+| Classic Plate | Dattorro | RT60 ≈ 1.2 s, pre-delay 60–80 ms, LPF 7 kHz ([SOS](https://www.soundonsound.com/techniques/choosing-right-reverb)) |
+| Lush Hall | 8-line FDN | RT60 2.5–3.5 s, pre-delay 40–80 ms, mod 0.5 Hz / 1 ms, LF 1.2× / HF 0.5×, HPF 200 Hz, duck 4–6 dB |
+| Slapback | Tape echo, 1 head | 90–120 ms, feedback 0–10 %, HPF 150 Hz / LPF 3.5 kHz, light saturation and wow |
+| Quarter / Dotted-Eighth Throw | Ping-pong | Synced, feedback 25–35 %, loop HPF 250 Hz / LPF 5 kHz, ducked 6–10 dB |
+| Vocal Doubler | Micro-shift | L +9 c @ 13 ms, R −9 c @ 21 ms, −10 dB |
+| Space Echo | 3-head tape | d ≈ 120–180 ms, feedback near self-oscillation, dark loop, wow and flutter on (playback and effect use; consider off for tracking) |
+
+## Cycle recording: one count-in, one file, many takes
+
+### What every DAW agrees on
+
+The convention is consistent across DAWs. The transport loops a bar-snapped region, each pass becomes a numbered take, takes are kept together on the track, and **the last pass plays by default** while earlier ones remain available to audition and comp:
+- **Logic** creates a take folder after the second pass, and the whole cycle recording, with all its takes, is stored as one audio file ([Apple Logic help](https://help.apple.com/logicpro/mac/10.1/en.lproj/lgcpb19806af.html); [Logic 8 manual](https://www.manualsdir.com/manuals/548098/apple-logic-pro-8.html?page=365)) [excerpt].
+- **Ableton** adds a take lane per pass. Those lanes are "never audible, unless Audition Mode is enabled", and the audio is "recorded into one long file" ([Ableton Live 11 manual](https://www.ableton.com/en/live-manual/11/comping/); [SOS](https://www.soundonsound.com/techniques/ableton-live-recording-tips)) [excerpt].
+- **Cubase** shows the laps with "the last recorded take active and on top" ([Steinberg: Audio Record Modes](https://archive.steinberg.help/cubase_pro/v12/en/cubase_nuendo/topics/recording/recording_audio_record_modes_r.html)) [excerpt].
+- **Pro Tools** shows the most recent take and lists all takes as sequentially numbered clips ([Avid: Loop recording](https://www.avid.com/pro-tools/user-guide/loop-recording)) [excerpt].
+- **REAPER** writes one file on stop by default. Its per-pass-file option "can cause a brief monitoring glitch" as each file is created ([REAPER Blog](https://reaper.blog/2023/11/layered-loop-recording/)).
+- **GarageBand iOS** collapses all of this into a Multi-Take toggle and a "Takes" menu with a check mark ([Apple support 101934](https://support.apple.com/en-au/101934)).
+
+Partial final passes split the field. **Pro Tools discards a take stopped before the loop midpoint** ([Avid](https://www.avid.com/pro-tools/user-guide/loop-recording)). Logic 8 discarded a pass stopped inside its first bar ([Logic 8 manual](https://www.manualsdir.com/manuals/548098/apple-logic-pro-8.html?page=366)). Others keep partial passes [excerpt]. Logic offers count-ins of **None, 1–6 bars or a beat fraction**, and pre-roll (time-based, playing the backing track) replaces the count-in when chosen ([Apple: recording settings](https://support.apple.com/en-afri/guide/logicpro/lgcpbc10f1ea/mac)). Its metronome can click "only during count-in" ([Apple: metronome settings](https://support.apple.com/guide/logicpro/metronome-project-settings-lgcpe1d6118e/mac)). Ableton defaults to a **1-bar count-in**, and users report the first click after the count-in sometimes being skipped ([Ableton forum](https://forum.ableton.com/viewtopic.php?p=1830915)) [excerpt]. Comp boundaries get automatic crossfades; one tutorial gives Logic's default as **10 ms** ([MusicTech](https://www.musictech.net/tutorials/logic-pu-2/); [Logic Editing Comps](https://help.apple.com/logicpro/mac/9.1.6/help/English.lproj/en/logicpro/usermanual/chapter_15_section_5.html)). Fender Studio Pro's undo works per pass rather than per recording ([Fender Studio Pro manual](https://fenderstudiopromanual.fender.com/en/Content/Recording_Topics/Loop_Recording_on_Audio_Tracks.htm)). No DAW documents editing the loop while recording.
+
+### How the engine should run a cycle recording
+
+The design below is an [inference] that combines the conventions above with the engine already described. The transport is a **sample counter in the output clock**. Because the Solo has one clock for input and output, the input stream can be indexed by the same counter.
+
+When the user presses Loop Record, the transport starts countInBars × barLength before loop start L (one bar is 2 s at 120 BPM in 4/4). Only the engine-generated click plays during the count-in, with an accented beat 1 and an on-screen 4-3-2-1. The backing track enters at L. The count-in happens **once**; later passes wrap from R to L with no count, as in every DAW. **Capture starts at the start of the count-in**, not at L. The dry input streams through the record ring into one continuous file, from count-in until stop. That gives Take 1 free handles before L, the same benefit as Logic's Quick Punch-In and Fender Studio Pro's retrospective recording ([Fender: Retrospective Recording](https://fenderstudiopromanual.fender.com/en/Content/Fundamentals_Topics/Retrospective_Record.htm)).
+
+Pass *k* covers output frames [c_L + (k−1)N, c_L + kN), where N = R − L. The matching recorded audio is the same span shifted later by the latency offset (reported input + output latency + calibrated residual). After stop, the app slices the file into **Take 1…N**:
+- The last *complete* pass is active, marked with a check.
+- Each take gets a distinct colour.
+- A final pass shorter than **half the loop** is hidden, following Pro Tools' midpoint rule, but stays recoverable because its audio remains in the file.
+- Take *k*'s tail beyond R is take *k*+1's head, so comp switches can use about 10 ms crossfades with no gaps.
+
+Lock the loop handles while recording, and offer "loop this section" from the app's song sections, as GarageBand iOS does with its sections. Provide undo for "remove last pass".
+
+**Monitoring during cycle recording** should be backing track, click and live voice. It must **never include a previous take**, because the pass being recorded is replacing them in the main lane. The live voice comes through the effects path, or through Direct Monitor in "Hardware monitoring" mode, which follows Logic's auto-input-monitoring model ([Logic Pro X manual](https://manualsdir.com/manuals/547422/apple-logic-pro-x.html?page=206); [Logic Studio Training](https://logicstudiotraining.com/wiki/index.php/Software_Monitoring)). The click is generated in the engine and therefore never reaches the recorded file directly. On the Solo it can only go to Outputs 1/2, so it **reaches any connected speakers as well as the headphones**. Bleed into the mic is the risk to manage, through closed-back headphones, a click level control and a "speakers off" prompt.
+
+Storage is modest. Mono 24-bit/48 kHz is 144 kB/s, about 0.5 GB per hour. Both inputs come to 288 kB/s, about 1 GB per hour. A plain RIFF WAV caps at 4 GiB, which is about four hours of 2-channel 24-bit audio at 48 kHz, so either roll files or use RF64/W64 for marathon sessions (hound's RF64 support is unverified). The writer thread should flush and rewrite the WAV header periodically so a crash leaves a playable file.
+
+## Measure these on the real Solo before freezing defaults
+
+These questions can only be answered on the guitarist's own unit and PC. Most of them settle a default described above.
+
+| # | Open question | How to measure | What it decides |
+|---|---|---|---|
+| 1 | ASIO channel names and counts; any loopback channel | `ASIOGetChannelInfo` dump | Channel labels, input picker |
+| 2 | Buffer sizes offered (min/max/preferred/granularity) on the installed driver (4.144.0 or 4.150.0) | asio-sys `BufferPreference` | Buffer menu, default 64 |
+| 3 | `ASIOGetLatencies` values vs loopback-measured RTL at 44.1/48/96 kHz × 16/32/64/128, Safe Mode on/off | Impulse Out 1 → In 2 (INST off, DM off), cross-correlate | Compensation residual table; whether Safe Mode adds buffering |
+| 4 | Is latency identical on Input 1 and Input 2? | Loopback via a pad into the XLR vs straight into the jack | Per-input offsets (Cubasis anomaly) |
+| 5 | Do cpal input callbacks run before output callbacks within one `bufferSwitch`? | Log period counters in both callbacks | Zero-frame ring vs one-period ring |
+| 6 | Smallest xrun-free buffer with the full chain on the target laptop | 30-min soak with the glitch counter | Shipping default buffer |
+| 7 | Driver response when the app requests a rate different from the Windows default | Request 44.1 kHz with Windows at 48 kHz | Rate-handling UX |
+| 8 | Does the buffer size persist across reboot; does a Notifier change fire `kAsioResetRequest`/`BufferSizeChange`; how long does the rebuild take? | Change the size in the Notifier mid-session | Rebuild path, user messaging |
+| 9 | Direct Monitor level relative to unity playback | Record DM'd signal vs playback on an external recorder or second interface | Mixing guidance |
+| 10 | 3rd Gen Air curve on Input 1; does Air touch Input 2? | Sweep from Out 1 through a −30 to −40 dB pad into the XLR (48V off), Air off/on, divide spectra | Software air-shelf compensation |
+| 11 | Does the halo meter after Air? | Sine at threshold, toggle Air | Meter text |
+| 12 | Gain-knob position and noise floor for the user's mic at singing level | Record silence at working gain | Expander threshold, ALM floor |
+| 13 | INST headroom with the user's guitar (hot/active pickups) | Hard strums, watch halo/clip | Guitar setup copy |
+| 14 | Headphone loudness with the user's headphones | Listening test at the MONITOR maximum | Playback-limiter guidance |
+| 15 | Current draw with and without 48V | USB power meter | iPad/hub advice |
+| 16 | MSD/Easy Start state, firmware version, and whether Focusrite Control or Control 2 updates the 3rd Gen | Device enumeration, Focusrite software | Onboarding flow |
+| 17 | USB product ID of the 3rd Gen Solo | Device Manager / USB descriptors | Generation detection |
+| 18 | Does cpal's safe API expose `ASIOControlPanel` and channel names, or is raw asio-sys needed? | Code check | "Open driver settings" button |
+| 19 | Do WDM system sounds during an ASIO session cause glitches at matched rates? | Play browser audio during a recording | Multi-client warning |
+| 20 | Is the first click after the count-in reliably present? | Record the click output in a loopback | Count-in correctness (Ableton bug class) |
+
+## Blocked hosts and unverified claims to close later
+
+The network blocked these hosts during research. Opening them would turn many [excerpt] and [recall] items into [read] ones.
+
+| Blocked host | What it would confirm |
+|---|---|
+| userguides.focusrite.com, fael-downloads-prod.focusrite.com, support.focusrite.com | Exact 3rd Gen specs and qualifiers; user guides v1/v2; driver 4.144.0/4.150.0 release notes; Safe Mode; iPad support details; firmware path |
+| docs.rs | rtrb, ringbuf and hound APIs (`WavSpec` with float, chunk APIs, RF64) |
+| kvraudio.com, gearspace.com | Multi-client claims; the RTL database entries; Nectar latency report in full |
+| dawbench.substack.com | DAWbench/"D25" RTL database, possibly with Solo data |
+| linuxgamecast.com, americansongwriter.com | Secondary latency and review data |
+| v2.tauri.app | Current Tauri guidance on private-repo update hosting |
+| steinberg.net | ASIO SDK point version, licence agreement text |
+| soundtoys.com | Decapitator Low/High Cut ranges, Thump, Auto, Steep, oversampling |
+| ams-neve.com | Full 1073 manual, Marinair data |
+| jhspedals.info | Colour Box V1/V2 control sets, EQ order, Hi-Pass slope |
+| izotope.com, docs.izotope.com | Nectar 4 modules, de-esser modes, Auto-Level speed, Vocal Assistant defaults |
+| soundonsound.com | Full reviews and engineer techniques (vocal chain numbers) |
+| uaudio.com | 1176/LA-2A/480L/EMT manuals in full, Spin/Wander ranges |
+| josephnilo.com | CLA Vocals explainer |
+| ccrma.stanford.edu, dsprelated.com | Dattorro PDF (coefficients, LFO), JOS PASP (Jot absorption filters, interpolation) |
+| signalsmith-audio.co.uk, valhalladsp.com, kaseypocius.github.io | Reverb design articles; the MUMT618 tap list |
+| ableton.com | Comping, count-in and monitor-mode definitions |
+
+Several items are **[recall]** and need checking even with full network access: the Giannoulis/Massberg/Reiss gain-computer and detector formulas, the Dattorro paper's coefficients and whether its first input allpass is 141 or 142 samples, the RBJ cookbook formulas, and the API details of the Rust crates. The researchers also did not research the API 512c preamp, the exact SSL E/G band ranges, the RE-201 delay range, measured harmonic spectra of any of the modelled units, FL Studio or Bitwig loop recording, or iOS AVAudioSession configuration.
+
+## Conclusion
+
+The research changes where the difficulty lies. The DSP is not the hard part: every requested effect has a well-understood causal form, and the whole vocal suite fits in a few percent of one core with no added latency. The hard parts sit at the edges of the system. The first is a driver whose buffer size, Safe Mode and real latency the app does not control and cannot fully trust, so loopback calibration and a resilient stream-rebuild path are core features rather than polish. The second is an interface whose four switches are invisible to software, and one of them, Direct Monitor, silently decides whether the user's effects work at all. The third is a licence choice, proprietary ASIO or GPLv3, that is cheap to make now and expensive to reverse later.
+
+Two design choices pay off beyond their immediate purpose. Recording the dry input continuously from the count-in onward makes cycle takes, handles, comping and latency correction all fall out of one file and one offset. It also means that every colour, compressor and reverb choice made while singing can be revisited later without asking the songwriter to sing again. Measuring the twenty open questions on the actual unit should come before tuning any preset, because items 3, 6 and 10 decide the default buffer, the compensation table and the brightness of every vocal preset.
