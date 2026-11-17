@@ -12,6 +12,8 @@ import { heard } from "./mix";
 export interface NotePulse {
   /** which harp: the one that plays the chords, or the one that plays the melody */
   kind: "chord" | "melody";
+  /** the track, when it is one added on the Track page */
+  track?: string;
   /** when it is heard (audio clock, seconds) */
   time: number;
   /** the note that sounds (MIDI number; an instrument that sounds an octave up is reported an octave up) */
@@ -34,6 +36,8 @@ export interface NotePulse {
 /** A drum hit. */
 export interface DrumPulse {
   kind: "drum";
+  /** the track, when it is one added on the Track page */
+  track?: string;
   time: number;
   drum: DrumId;
   velocity: number;
@@ -65,7 +69,7 @@ export const listening = () => listeners > 0;
 export function pulse(p: Pulse) {
   if (!listeners) return;
   // a muted track is not painted
-  if (!heard(p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody")) return;
+  if (!heard(p.track ?? (p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody"))) return;
   queue.push(p);
   // nobody collected for a long while: let the oldest go
   if (queue.length > 6000) queue.splice(0, 2000);

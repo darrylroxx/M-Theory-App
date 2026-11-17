@@ -18,11 +18,16 @@ describe("the mixer", () => {
     expect(gainOf(solo, "melody")).toBe(0);
     // a muted track stays muted even when soloed
     expect(audible({ drums: { solo: true, mute: true } }, "drums")).toBe(false);
+    // a solo on an added track counts too
+    expect(audible({ t9: { solo: true } }, "chords")).toBe(false);
+    expect(audible({ t9: { solo: true } }, "t9")).toBe(true);
   });
   it("a stored mix is made safe; a mix with nothing set is no mix", () => {
     expect(reviveMix(undefined)).toBeUndefined();
     expect(reviveMix({ chords: { db: 0 } })).toBeUndefined();
-    expect(reviveMix({ chords: { db: -3.04, mute: 1 }, bogus: { db: 3 }, drums: { db: "x", solo: true } })).toEqual({ chords: { db: -3, mute: true }, drums: { solo: true } });
+    expect(reviveMix({ chords: { db: -3.04, mute: 1 }, junk: 4, drums: { db: "x", solo: true } })).toEqual({ chords: { db: -3, mute: true }, drums: { solo: true } });
+    // tracks added on the Track page have strips of their own
+    expect(reviveMix({ t1: { db: -6 } })).toEqual({ t1: { db: -6 } });
     expect(reviveMix({ melody: { db: -500 } })).toEqual({ melody: { db: -60 } });
   });
 });

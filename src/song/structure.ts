@@ -22,6 +22,7 @@ import { hasStyle, reviveFeel, sameFeel, styleBar, type Feel, type PatternId } f
 import { melodyBeats, reviveMelody, tileMelody, type Melody } from "./melody";
 import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, fitBars, frameItems } from "./frame";
 import type { ProgChord, Progression } from "../ui/state";
+import { normalize, reviveLayers, settled, type Layers, type Track } from "./tracks";
 
 /**
  * What a section sounds like, apart from its notes: how the chords are played, the two harps'
@@ -54,6 +55,8 @@ export interface SongPart extends Settings {
   melody?: Melody;
   /** how long the section lasts, in bars (only missing in songs made before sections had lengths) */
   bars?: number;
+  /** what the extra tracks (added on the Track page) hold in this section, by track id */
+  layers?: Layers;
 }
 /** One step of the song, in playing order. */
 export interface SongBlock {
@@ -122,7 +125,7 @@ const sig = (x: unknown) => JSON.stringify(x);
  * the settings either into the song (from the first section) or, where they differ from the
  * song's, into this section alone.
  */
-export function commit(p: Progression): Progression {
+function commitN(p: Progression): Progression {
   const song = p.song;
   if (!song) return p;
   const part = partOf(song, song.current);
@@ -130,7 +133,7 @@ export function commit(p: Progression): Progression {
   const first = song.parts[0]?.id === part.id;
   const live = liveSettings(p);
   let shared = sharedOf(p, song);
-  let next: SongPart = { ...part, chords: p.chords, melody: p.melody, bars: p.bars };
+  let next: SongPart = { ...part, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers };
   for (const g of SETTING_GROUPS) {
     if (first) {
       shared = { ...shared, ...pick(g, live) };
@@ -139,14 +142,14 @@ export function commit(p: Progression): Progression {
   }
   next = tidy(next);
   shared = tidy(shared);
-  if (part.chords === p.chords && part.melody === p.melody && sig({ ...part, chords: 0, melody: 0 }) === sig({ ...next, chords: 0, melody: 0 }) && sig(song.shared) === sig(shared)) return p;
+  if (part.chords === p.chords && part.melody === p.melody && part.layers === p.layers && sig({ ...part, chords: 0, melody: 0 }) === sig({ ...next, chords: 0, melody: 0 }) && sig(song.shared) === sig(shared)) return p;
   return { ...p, song: { ...song, shared, parts: song.parts.map((x) => (x.id === part.id ? next : x)) } };
 }
 
 /** Turn the page into section A, if there is no song yet. */
-export function ensureSong(p: Progression, id: () => string = uid): Progression {
+function ensureSongN(p: Progression, id: () => string = uid): Progression {
   if (p.song?.blocks.length) return commit(p);
-  const part: SongPart = tidy({ id: id(), letter: "A", chords: p.chords, melody: p.melody, bars: p.bars });
+  const part: SongPart = tidy({ id: id(), letter: "A", chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers });
   const block: SongBlock = { id: id(), partId: part.id };
   return { ...p, song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
 }
@@ -156,17 +159,18 @@ function show(p: Progression, song: Song, blockId: string): Progression {
   const part = partOf(song, blockId)!;
   const s = resolve(part, song.parts[0]?.id === part.id, sharedOf(p, song));
   const beat = { ...(p.beat ?? DEFAULT_BEAT), ...s.kit, ...s.groove };
-  return { ...p, chords: part.chords, melody: part.melody, bars: part.bars, pattern: s.style ?? p.pattern, feel: s.feel, sound: s.sound, tuneSound: s.tuneSound, beat: { ...beat, on: s.groove?.on ?? beat.on }, song: { ...song, current: blockId } };
+  return { ...p, chords: part.chords, melody: part.melody, bars: part.bars, layers: part.layers, pattern: s.style ?? p.pattern, feel: s.feel, sound: s.sound, tuneSound: s.tuneSound, beat: { ...beat, on: s.groove?.on ?? beat.on }, song: { ...song, current: blockId } };
 }
 
 /** Put the page back in step with the song (after loading one). */
-export function loadCurrent(p: Progression): Progression {
+function loadCurrentN(p: Progression): Progression {
   return p.song && partOf(p.song, p.song.current) ? show(p, p.song, p.song.current) : p;
 }
 
 /** Which groups of settings the section on screen has as its own, and which section the others follow. */
-export function linkState(p: Progression): { first: boolean; source: string; own: Record<SettingGroup, boolean> } {
+export function linkState(p0: Progression): { first: boolean; source: string; own: Record<SettingGroup, boolean> } {
   const none = { style: false, sound: false, tuneSound: false, groove: false, kit: false };
+  const p = normalize(p0);
   const song = p.song;
   const part = song && partOf(song, song.current);
   if (!song || !part) return { first: true, source: "A", own: none };
@@ -178,7 +182,7 @@ export function linkState(p: Progression): { first: boolean; source: string; own
 }
 
 /** Give up a section's own settings for one group: it follows the song again. */
-export function relink(p: Progression, g: SettingGroup): Progression {
+function relinkN(p: Progression, g: SettingGroup): Progression {
   if (!p.song) return p;
   const sh = sharedOf(p, p.song);
   const beat = p.beat ?? DEFAULT_BEAT;
@@ -197,7 +201,7 @@ function insert(song: Song, block: SongBlock): Song {
 }
 
 /** A brand-new section with the next free letter: no chords and no melody yet, every setting follows the song, and it starts as long as the section it was made from. */
-export function addNewSection(p0: Progression, id: () => string = uid): Progression {
+function addNewSectionN(p0: Progression, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
   const part: SongPart = tidy({ id: id(), letter: nextLetter(song.parts), chords: [], bars: p.bars });
@@ -211,7 +215,7 @@ function addBlock(p: Progression, song: Song, part: SongPart, id: () => string):
 }
 
 /** Play a section again: a new block with the same letter, right after the selected one. */
-export function repeatSection(p0: Progression, partId: string, id: () => string = uid): Progression {
+function repeatSectionN(p0: Progression, partId: string, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
   const part = song.parts.find((x) => x.id === partId);
@@ -219,7 +223,7 @@ export function repeatSection(p0: Progression, partId: string, id: () => string 
 }
 
 /** Put another block's chords in the tray and its rhythm in the drum grid. */
-export function selectBlock(p0: Progression, blockId: string): Progression {
+function selectBlockN(p0: Progression, blockId: string): Progression {
   const p = commit(p0);
   if (!p.song || p.song.current === blockId || !partOf(p.song, blockId)) return p;
   return show(p, p.song, blockId);
@@ -229,7 +233,7 @@ export function selectBlock(p0: Progression, blockId: string): Progression {
  * Remove a block. Removing the last one turns the song back into a single idea (the page keeps what it shows).
  * If the first section goes, the next one takes its place, and every section keeps sounding as it did.
  */
-export function removeBlock(p0: Progression, blockId: string): Progression {
+function removeBlockN(p0: Progression, blockId: string): Progression {
   const p = commit(p0);
   const song = p.song;
   if (!song) return p;
@@ -255,7 +259,7 @@ export function removeBlock(p0: Progression, blockId: string): Progression {
 }
 
 /** Set how long a section lasts, in bars: the one on screen, or any other (every block with its letter). */
-export function setSectionBars(p0: Progression, blockId: string, bars: number): Progression {
+function setSectionBarsN(p0: Progression, blockId: string, bars: number): Progression {
   const n = barsOr(bars);
   const part = p0.song && partOf(p0.song, blockId);
   if (!p0.song || !part || partOf(p0.song, p0.song.current)?.id === part.id) return p0.bars === n ? p0 : { ...p0, bars: n };
@@ -264,13 +268,13 @@ export function setSectionBars(p0: Progression, blockId: string, bars: number): 
 }
 
 /** Move a block one step earlier (−1) or later (+1). */
-export function moveBlock(p: Progression, blockId: string, dir: -1 | 1): Progression {
+function moveBlockN(p: Progression, blockId: string, dir: -1 | 1): Progression {
   const i = p.song?.blocks.findIndex((b) => b.id === blockId) ?? -1;
   return i < 0 ? p : moveBlockTo(p, blockId, dir < 0 ? i - 1 : i + 2);
 }
 
 /** Move a block so it lands before the block now at `index` (blocks.length = the end). */
-export function moveBlockTo(p: Progression, blockId: string, index: number): Progression {
+function moveBlockToN(p: Progression, blockId: string, index: number): Progression {
   const song = p.song;
   if (!song) return p;
   const i = song.blocks.findIndex((b) => b.id === blockId);
@@ -290,7 +294,7 @@ export function sharedCount(p: Progression, blockId: string): number {
 }
 
 /** Give a block a letter of its own, with a copy of the chords, melody and settings, so it can differ from the others. */
-export function unlinkBlock(p0: Progression, blockId: string, id: () => string = uid): Progression {
+function unlinkBlockN(p0: Progression, blockId: string, id: () => string = uid): Progression {
   const p = commit(p0);
   const song = p.song;
   const part = song && partOf(song, blockId);
@@ -309,18 +313,20 @@ export interface Section extends Settings {
   melody?: Melody;
   /** the length it is set to, in bars (not set = as long as what is in it) */
   bars?: number;
+  /** what the extra tracks hold in it */
+  layers?: Layers;
   current: boolean;
 }
 
 /** The song in playing order, each section with its chords, melody and the settings it plays with. Empty when there is no structure. */
 export function sections(p0: Progression): Section[] {
-  const p = commit(p0);
+  const p = commit(normalize(p0));
   const song = p.song;
   if (!song) return [];
   const shared = sharedOf(p, song);
   return song.blocks.map((b) => {
     const part = song.parts.find((x) => x.id === b.partId)!;
-    return { ...resolve(part, song.parts[0].id === part.id, shared), blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, melody: part.melody, bars: part.bars, current: b.id === song.current };
+    return { ...resolve(part, song.parts[0].id === part.id, shared), blockId: b.id, partId: b.partId, letter: part.letter, chords: part.chords, melody: part.melody, bars: part.bars, layers: part.layers, current: b.id === song.current };
   });
 }
 
@@ -339,12 +345,15 @@ export function letters(p: Progression): { partId: string; letter: string; block
 }
 
 /** Apply a change to every chord in the song (transpose, change bar length), not just the ones in the tray. */
-export function mapAllChords(p0: Progression, fn: (c: ProgChord) => ProgChord): Progression {
+function mapAllChordsN(p0: Progression, fn: (c: ProgChord) => ProgChord): Progression {
   const p = commit(p0);
   const chords = p.chords.map(fn);
-  if (!p.song) return { ...p, chords };
+  // the extra chords tracks change with the first one
+  const mapLayers = (l: Layers | undefined): Layers | undefined => (l ? Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v.chords ? { ...v, chords: v.chords.map(fn) } : v])) : l);
+  const layers = mapLayers(p.layers);
+  if (!p.song) return { ...p, chords, layers };
   const cur = partOf(p.song, p.song.current);
-  return { ...p, chords, song: { ...p.song, parts: p.song.parts.map((x) => ({ ...x, chords: x.id === cur?.id ? chords : x.chords.map(fn) })) } };
+  return { ...p, chords, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, chords, layers } : { ...x, chords: x.chords.map(fn), layers: mapLayers(x.layers) })) } };
 }
 
 /**
@@ -369,7 +378,7 @@ const barOfBeat = (beat: Beat, style: PatternId) => {
  * Songs made before sections had lengths: every section gets one, and whatever used to come
  * round again inside it is written out in full. Sections that have a length are left alone.
  */
-export function settle(p0: Progression): Progression {
+function settleN(p0: Progression): Progression {
   const live = p0.beat ?? DEFAULT_BEAT;
   if (!p0.song) {
     if (fitBars(p0.bars)) return p0;
@@ -393,7 +402,7 @@ export function settle(p0: Progression): Progression {
  * playing order. Songs saved when every section kept a copy of its own drum rhythm and style are
  * moved to today's way: the first section's are the song's, and the others keep only what differs.
  */
-export function reviveSong(raw: unknown): Song | null {
+export function reviveSong(raw: unknown, tracks?: Track[]): Song | null {
   const s = raw as Partial<Song> | null | undefined;
   if (!s || !Array.isArray(s.parts) || !Array.isArray(s.blocks)) return null;
   type Raw = { id: string; chords: ProgChord[]; letter?: unknown; bars?: unknown } & { [K in keyof Settings | "melody"]?: unknown };
@@ -421,7 +430,7 @@ export function reviveSong(raw: unknown): Song | null {
     const taken = [...letterOf.values(), ...used.filter((u) => typeof u.letter === "string" && u.id !== pid && !letterOf.has(u.id)).map((u) => u.letter as string)].map((letter) => ({ letter }));
     letterOf.set(pid, typeof x.letter === "string" && x.letter && ![...letterOf.values()].includes(x.letter) ? x.letter : nextLetter(taken));
   }
-  for (const x of used) parts.push(tidy({ id: x.id, letter: letterOf.get(x.id)!, chords: x.chords, melody: reviveMelody(x.melody), bars: fitBars(x.bars), ...settings(x) }));
+  for (const x of used) parts.push(tidy({ id: x.id, letter: letterOf.get(x.id)!, chords: x.chords, melody: reviveMelody(x.melody), bars: fitBars(x.bars), layers: reviveLayers((x as { layers?: unknown }).layers, tracks), ...settings(x) }));
   let shared = settings(s.shared as Settings | undefined);
   // the first section holds nothing of its own: whatever it has is the song's
   const lead = parts[0];
@@ -439,3 +448,20 @@ export function reviveSong(raw: unknown): Song | null {
   });
   return { parts, blocks, shared: tidy(shared), current: blocks.some((b) => b.id === s.current) ? s.current! : blocks[0].id };
 }
+
+// ── The song as the pages change it. Each change is made with every track in its place, and the
+// track each page was editing is brought forward again afterwards (see ./tracks).
+export const commit = settled(commitN);
+export const ensureSong = settled(ensureSongN);
+export const loadCurrent = settled(loadCurrentN);
+export const relink = settled(relinkN);
+export const addNewSection = settled(addNewSectionN);
+export const repeatSection = settled(repeatSectionN);
+export const selectBlock = settled(selectBlockN);
+export const removeBlock = settled(removeBlockN);
+export const setSectionBars = settled(setSectionBarsN);
+export const moveBlock = settled(moveBlockN);
+export const moveBlockTo = settled(moveBlockToN);
+export const unlinkBlock = settled(unlinkBlockN);
+export const mapAllChords = settled(mapAllChordsN);
+export const settle = settled(settleN);

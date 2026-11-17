@@ -4,6 +4,7 @@
  * devices disagree) can be tested without a browser.
  */
 import { reviveMix } from "../audio/mix";
+import { normalize, reviveLayers, reviveTracks } from "./tracks";
 import { reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
@@ -24,17 +25,17 @@ export interface Snapshot {
 }
 
 export function snapshot(key: Key, progression: Progression, capo: number, tuningId: string): Snapshot {
-  return { key, progression: commit(progression), capo, tuningId };
+  return { key, progression: commit(normalize(progression)), capo, tuningId };
 }
 
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
-  const p = commit(s.progression);
-  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}) };
+  const p = commit(normalize(s.progression));
+  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}) };
   // with a song, everything on the page is a copy of one section: the song itself is what counts
   if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
-  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords });
+  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: p.layers } : {}) });
 }
 
 /** Nothing worth saving yet. */
@@ -63,7 +64,8 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const i = raw as Partial<SavedProgression> | null;
   if (!i || typeof i.id !== "string" || !i.key || typeof i.key.tonic !== "string" || !i.progression || !Array.isArray(i.progression.chords)) return null;
   const p = i.progression;
-  const song = reviveSong(p.song);
+  const tracks = reviveTracks(p.tracks);
+  const song = reviveSong(p.song, tracks);
   const melody = reviveMelody(p.melody);
   const progression: Progression = settle(loadCurrent({
     chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
@@ -73,6 +75,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),
     play: p.play === "song" ? "song" : "section",
     ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
+    ...(tracks ? { tracks } : {}), ...(reviveLayers(p.layers, tracks) ? { layers: reviveLayers(p.layers, tracks) } : {}),
   }));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }

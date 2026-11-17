@@ -58,3 +58,19 @@ export async function checkUpdate(): Promise<Update | null> {
     return null;
   }
 }
+
+export interface Levels { peak: number[]; rms: number[] }
+export interface Opened { host: string; device: string; channels: number; sample_rate: number; format: string }
+
+/** Open an input device and hear about its levels about thirty times a second. */
+export async function meterStart(host: string, device: string, onLevels: (l: Levels) => void): Promise<Opened> {
+  const { invoke, Channel } = await import("@tauri-apps/api/core");
+  const ch = new Channel<Levels>();
+  ch.onmessage = onLevels;
+  return invoke<Opened>("meter_start", { host, device, levels: ch });
+}
+export async function meterStop(): Promise<void> {
+  if (!isDesktop()) return;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("meter_stop");
+}

@@ -1,9 +1,10 @@
 /**
- * The mixer: one fader per track (the chords, the melody, the drums) for the whole song.
+ * The mixer: one fader per track for the whole song: the first chords, melody and drums tracks
+ * (ids "chords", "melody", "drums") and every track added on the Track page (by its id).
  * Each fader sits between its instrument and the speakers, so a track's volume, mute and solo
  * apply in every section at once.
  */
-export type TrackId = "chords" | "melody" | "drums";
+export type TrackId = string;
 export const TRACK_IDS: TrackId[] = ["chords", "melody", "drums"];
 
 export interface TrackMix {
@@ -12,7 +13,7 @@ export interface TrackMix {
   mute?: boolean;
   solo?: boolean;
 }
-export type Mix = Partial<Record<TrackId, TrackMix>>;
+export type Mix = Record<TrackId, TrackMix | undefined>;
 
 export const MIN_DB = -60;
 export const MAX_DB = 6;
@@ -21,7 +22,7 @@ export const MAX_DB = 6;
 export function audible(mix: Mix | undefined, id: TrackId): boolean {
   const t = mix?.[id];
   if (t?.mute) return false;
-  const solo = TRACK_IDS.some((x) => mix?.[x]?.solo);
+  const solo = !!mix && Object.values(mix).some((x) => x?.solo);
   return !solo || !!t?.solo;
 }
 
@@ -37,7 +38,7 @@ export function reviveMix(raw: unknown): Mix | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const r = raw as Record<string, Partial<TrackMix> | undefined>;
   const out: Mix = {};
-  for (const id of TRACK_IDS) {
+  for (const id of Object.keys(r).slice(0, 64)) {
     const t = r[id];
     if (!t || typeof t !== "object") continue;
     const db = typeof t.db === "number" && Number.isFinite(t.db) ? Math.max(MIN_DB, Math.min(MAX_DB, Math.round(t.db * 10) / 10)) : undefined;
@@ -49,7 +50,7 @@ export function reviveMix(raw: unknown): Mix | undefined {
 
 // ── the faders themselves (made when the first sound needs them) ──
 let current: Mix | undefined;
-const faders: Partial<Record<TrackId, GainNode>> = {};
+const faders: Record<TrackId, GainNode | undefined> = {};
 
 /** The fader for a track: its instrument connects into it, and it goes on to the speakers. */
 export function fader(id: TrackId, c: BaseAudioContext): GainNode {
@@ -65,11 +66,14 @@ export function fader(id: TrackId, c: BaseAudioContext): GainNode {
 /** Set the faders (they glide over a few milliseconds, so nothing clicks). */
 export function setMix(mix: Mix | undefined) {
   current = mix;
-  for (const id of TRACK_IDS) {
+  for (const id of Object.keys(faders)) {
     const g = faders[id];
     if (g) g.gain.setTargetAtTime(gainOf(mix, id), g.context.currentTime, 0.015);
   }
 }
+
+/** A track's fader setting right now (for sounds that do not pass through a fader of their own). */
+export const levelOf = (id: TrackId) => gainOf(current, id);
 
 /** Is a track heard right now? (The canvas paints only what is heard.) */
 export const heard = (id: TrackId) => audible(current, id);

@@ -245,6 +245,18 @@ export interface PlayItem {
   pad?: boolean;
   /** how many beats into its section this item starts (given when playing starts or loops part-way through a section) */
   from?: number;
+  /** the extra tracks of this item's section (the same object on every item of the section) */
+  extra?: ExtraPlay;
+}
+
+/** What the tracks added on the Track page play in one section. */
+export interface ExtraPlay {
+  /** extra chords tracks: each chord with where it starts in the section, in beats */
+  chords: { track: string; at: number; beats: number; midi: (number | null)[]; style: PatternId; feel?: Partial<Feel>; sound: HarpSound }[];
+  /** extra melody tracks */
+  tunes: { track: string; tune: PlayTune }[];
+  /** extra drum tracks */
+  drums: { track: string; beat: Beat }[];
 }
 
 /**

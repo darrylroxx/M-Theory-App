@@ -18,6 +18,7 @@ import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPus
 import { commit, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
 import { reviveMix, type Mix } from "../audio/mix";
+import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
@@ -25,8 +26,8 @@ import type { Key } from "../theory/keys";
 export type Tab = "guitar" | "piano";
 /** The three parts of a song section. */
 /** The four pages: the frame (sections, lengths, key, tempo) and the three parts that play inside it. */
-export type Pane = "track" | "frame" | "rhythm" | "melody" | "drums" | "canvas";
-export const PANES: { id: Pane; label: string }[] = [{ id: "track", label: "Track" }, { id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "canvas", label: "Canvas" }];
+export type Pane = "track" | "frame" | "rhythm" | "melody" | "drums" | "vocals" | "canvas";
+export const PANES: { id: Pane; label: string }[] = [{ id: "track", label: "Track" }, { id: "frame", label: "Frame" }, { id: "rhythm", label: "Chords" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "vocals", label: "Vocals" }, { id: "canvas", label: "Canvas" }];
 /** How the canvas is set: its colours, its surface, and how fast old paint fades (0 = it stays, 2 = fast). */
 export interface CanvasPrefs {
   palette: string;
@@ -73,6 +74,12 @@ export interface Progression {
   song?: Song | null;
   /** The mixer: each track's volume, mute and solo, for the whole song (set on the Track page) */
   mix?: Mix;
+  /** Tracks added on the Track page (the first chords, melody and drums tracks are always there) */
+  tracks?: Track[];
+  /** What the extra tracks hold in the section on screen (see song/tracks) */
+  layers?: Layers;
+  /** Which track each page is editing, when it is not the first of its kind */
+  focus?: Focus;
 }
 
 export interface ArrangeSettings {
@@ -131,6 +138,19 @@ export interface AppState {
   tombs?: Record<string, number>;
   /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each) */
   clip?: Clips;
+  /** The recording setup on this computer: which interface, the switches on it, how you listen */
+  studio?: Studio;
+}
+
+/** The recording setup on this computer. */
+export interface Studio {
+  /** the audio system and device to record from ("ASIO", "Focusrite USB ASIO") */
+  host?: string;
+  device?: string;
+  /** the interface's switches, as you have set them (no software can read them) */
+  checks?: Partial<Record<"phantom" | "air" | "inst" | "direct", boolean>>;
+  /** hear yourself through the interface (Direct Monitor), or through the app's effects */
+  monitor?: "hardware" | "effects";
 }
 
 export interface SheetState {
@@ -169,11 +189,13 @@ const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { no
 /** The idea on the page, loaded from storage and made whole. */
 function reviveProgression(raw: Partial<Progression> | undefined): Progression {
   const melody = reviveMelody(raw?.melody);
+  const tracks = reviveTracks(raw?.tracks);
   const p: Progression = {
     ...DEFAULT_STATE.progression, ...raw,
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
-    beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song),
+    beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
+    tracks, layers: reviveLayers(raw?.layers, tracks), focus: undefined,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),
@@ -208,6 +230,7 @@ function load(): AppState {
       saved: (Array.isArray(parsed.saved) ? parsed.saved : []).map(reviveIdea).filter((i): i is SavedProgression => !!i),
       tombs: parsed.tombs ?? {},
       clip: reviveClips(parsed.clip),
+      studio: parsed.studio && typeof parsed.studio === "object" ? { host: typeof parsed.studio.host === "string" ? parsed.studio.host : undefined, device: typeof parsed.studio.device === "string" ? parsed.studio.device : undefined, checks: parsed.studio.checks ?? {}, monitor: parsed.studio.monitor === "effects" ? "effects" : "hardware" } : undefined,
       progression: reviveProgression(parsed.progression),
     };
   } catch {
@@ -276,7 +299,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   useEffect(() => {
     try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      // kept with every track in its place, so what was being edited can never be mistaken for another track
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, progression: normalize(state.progression) }));
     } catch {
       /* storage unavailable (private mode) — app still works */
     }

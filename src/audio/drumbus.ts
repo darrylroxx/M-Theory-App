@@ -397,17 +397,17 @@ function damp(r: Ringing, at: number) {
  * Play one hit of a beat's drum. Softer hits are also a little duller, as on a real drum, and
  * a closed or open hat cuts off a ringing open hat. `human` adds small differences between hits.
  */
-export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, human = 0) {
+export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, human = 0, gain = 1, track?: string) {
   const c = audioContext();
   const b = getBus();
   const t = when ?? c.currentTime + 0.01;
   const src = c.createBufferSource();
   src.buffer = takeFor(c, beat, id);
   // for the canvas: what this hit is made of, measured from the hit itself
-  if (listening()) pulse({ kind: "drum", time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
+  if (listening()) pulse({ kind: "drum", track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
   const g = c.createGain();
-  g.gain.value = velocity * velocity * 1.1;
+  g.gain.value = velocity * velocity * 1.1 * gain;
   let tail: AudioNode = src.connect(g);
   if (velocity < 0.7 && id !== "kick") {
     const soft = c.createBiquadFilter();
@@ -429,14 +429,14 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
 }
 
 /** Play one step of the grid for a drum, respecting mute, solo and the "human" setting. */
-export function playStep(beat: Beat, id: DrumId, level: number, when: number) {
+export function playStep(beat: Beat, id: DrumId, level: number, when: number, gain = 1, track?: string) {
   if (solo ? solo !== id : beat.mutes?.includes(id)) return;
   const human = beat.human ?? 0;
-  if (!human) return playDrum(beat, id, when, STEP_VELOCITY[level]);
+  if (!human) return playDrum(beat, id, when, STEP_VELOCITY[level], 0, gain, track);
   // a player is never exactly on the grid, and never hits twice the same; the kick stays tightest
   const late = (Math.random() - 0.35) * 0.02 * human * (id === "kick" ? 0.35 : 1);
   const touch = 1 + (Math.random() - 0.5) * 0.3 * human;
-  playDrum(beat, id, when + Math.max(0, late), Math.min(1, STEP_VELOCITY[level] * touch), human);
+  playDrum(beat, id, when + Math.max(0, late), Math.min(1, STEP_VELOCITY[level] * touch), human, gain, track);
 }
 
 /** Render a beat's sounds ahead of time so the first bar plays without a hiccup. */

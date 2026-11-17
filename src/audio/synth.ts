@@ -12,7 +12,7 @@ import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type Play
 import { dropPulses, listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem } from "./stems";
-import { fader } from "./mix";
+import { fader, levelOf } from "./mix";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
@@ -43,6 +43,8 @@ export class Harp {
   strings: HarpString = SOUND_DEFAULT;
   /** what this harp plays in the song: its notes are reported so the canvas can paint them (not set = not reported) */
   tag?: "chord" | "melody";
+  /** the track it plays, when it is one added on the Track page (its mute and solo decide whether it is painted) */
+  track?: string;
   private buffers = new Map<string, AudioBuffer>();
   private ringing = new Map<number, Ringing>(); // by string
   private all = new Set<Ringing>();
@@ -101,7 +103,7 @@ export class Harp {
     // for the canvas: what sounds, measured from the note itself. `until` = when the next note of this voice comes, if that is sooner than the hand lifts
     // a harder pluck is a brighter one
     const cutoff = Math.min(20000, 700 * Math.pow(2, velocity * 5));
-    if (this.tag && listening()) pulse({ kind: this.tag, time: when, midi: midi + voiceShift((as ?? this.strings).voice), velocity, length: Math.min(8, lengthSec, until ?? Infinity), slot: slot ?? -1, gain: s.level * lift, cutoff, octave: 0.7 * Math.max(0, s.octave), sound: soundOf(src.buffer) });
+    if (this.tag && listening()) pulse({ kind: this.tag, track: this.track, time: when, midi: midi + voiceShift((as ?? this.strings).voice), velocity, length: Math.min(8, lengthSec, until ?? Infinity), slot: slot ?? -1, gain: s.level * lift, cutoff, octave: 0.7 * Math.max(0, s.octave), sound: soundOf(src.buffer) });
     const vcf = c.createBiquadFilter();
     vcf.type = "lowpass";
     vcf.frequency.value = cutoff;
@@ -260,16 +262,23 @@ export function prepareNotes(list: Prep[]) {
 }
 
 /** Play a single note. `slot` = string index. */
+/** While a page edits a track added on the Track page, the notes it plays to be heard go to that track's harp. */
+const heardOn: { chord: { id: string; sound: HarpSound } | null; melody: { id: string; sound: HarpSound } | null } = { chord: null, melody: null };
+export function hearOn(kind: "chord" | "melody", track: { id: string; sound: HarpSound } | null) {
+  heardOn[kind] = track;
+}
+const chordHarp = () => (heardOn.chord ? trackHarp(heardOn.chord.id, heardOn.chord.sound, "chord") : live());
+
 export function playNote(midi: number, when?: number, velocity = 0.8, slot?: number, lengthSec = Infinity) {
   // a melody note is played by the melody's own harp
   const tune = slot === TUNE_SLOT;
-  const h = tune ? liveTune() : live();
+  const h = tune ? (heardOn.melody ? trackHarp(heardOn.melody.id, heardOn.melody.sound, "melody") : liveTune()) : chordHarp();
   h.play(midi, when ?? h.c.currentTime + 0.01, velocity, slot, lengthSec, false, tune ? TUNE_LIFT : 1);
 }
 
 /** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. */
 export function strum(midi: (number | null)[], opts: { when?: number; dir?: "down" | "up"; spread?: number; velocity?: number; length?: number } = {}) {
-  const h = live();
+  const h = chordHarp();
   const strings = midi.map((m, s) => ({ m, s })).filter((x): x is { m: number; s: number } => x.m !== null);
   // the first note sounds as soon as the notes are ready
   for (const x of strings) h.buffer(x.m);
@@ -282,6 +291,30 @@ export function stopAll() {
   if (!audioIfStarted()) return;
   chordsLive.harp?.stopAll();
   tuneLive.harp?.stopAll();
+  for (const e of extraHarps.values()) e.harp.stopAll();
+}
+
+/** The harps of the tracks added on the Track page: one each, through its own fader. */
+const extraHarps = new Map<string, { harp: Harp; sig: string }>();
+function trackHarp(id: string, sound: HarpSound, kind: "chord" | "melody"): Harp {
+  const ctx = audioContext();
+  let e = extraHarps.get(id);
+  if (!e || e.harp.c !== ctx) {
+    const out = ctx.createGain();
+    out.connect(fader(id, ctx));
+    const harp = new Harp(ctx, out);
+    harp.tag = kind;
+    harp.track = id;
+    ducks.push(harp.rack.duck.gain);
+    e = { harp, sig: "" };
+    extraHarps.set(id, e);
+  }
+  const sig = JSON.stringify(sound);
+  if (sig !== e.sig) {
+    e.harp.setSound(sound, tempo);
+    e.sig = sig;
+  }
+  return e.harp;
 }
 
 /** Play a scale / list of notes one after another. */
@@ -388,6 +421,8 @@ export class ProgressionPlayer {
   private tTick = 0;
   /** where recent chords started, to tell how far into its section the music is */
   private spans: Anchor[] = [];
+  /** the drum tracks added on the Track page, each on a grid of its own */
+  private lanes = new Map<string, { anchors: Anchor[]; cur: Anchor | null; step: number; div: number }>();
   onStep: (index: number) => void = () => {};
   /** Called as each drum step sounds (step index inside the bar), or with −1 when playback stops. */
   onDrumStep: (step: number) => void = () => {};
@@ -499,11 +534,23 @@ export class ProgressionPlayer {
       this.spans.push(anchor);
       if (this.spans.length > 24) this.spans.shift();
       playItem(live(), item, t, spb, this.pattern, this.passBeat - this.origin, this.beat);
+      // the extra chords tracks: every chord that starts while this item plays
+      const ex = item.extra;
+      if (ex) {
+        const s0 = this.passBeat - this.origin;
+        const s1 = s0 + item.beats;
+        for (const c of ex.chords)
+          if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
+            playItem(trackHarp(c.track, c.sound, "chord"), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums }, t + (c.at - s0) * spb, spb, this.pattern, c.at, this.beat);
+        for (const d of ex.drums) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div });
+      }
+      for (const lane of this.lanes.values()) lane.anchors.push(anchor);
       this.nextTime += item.beats * spb;
       this.passBeat += item.beats;
       this.nextIndex++;
     }
     this.scheduleDrums(horizon);
+    this.scheduleExtraDrums(horizon);
     this.scheduleTune(horizon);
   }
 
@@ -534,6 +581,16 @@ export class ProgressionPlayer {
         // (for the canvas: a melody note sounds until the next one comes)
         const gap = hits.length ? nextNote(t.m, t.bar, this.tTick / 12) * cur.spb : 0;
         hits.forEach((h, i) => liveTune().play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, t.sound, gap));
+      }
+      // the extra melody tracks, each on its own harp
+      for (const x of this.items[cur.index]?.extra?.tunes ?? []) {
+        const xt = x.tune;
+        if (xt.m.on === false || !xt.m.notes.length) continue;
+        const hits = tuneBetween(xt.m, xt.bar, this.tTick / 12, (this.tTick + 1) / 12, xt.swing);
+        if (!hits.length) continue;
+        const gap = nextNote(xt.m, xt.bar, this.tTick / 12) * cur.spb;
+        const harp = trackHarp(x.track, xt.sound ?? SOUND_DEFAULT, "melody");
+        hits.forEach((h, i) => harp.play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, xt.sound, gap));
       }
       this.tTick++;
     }
@@ -584,6 +641,51 @@ export class ProgressionPlayer {
     }
   }
 
+  /** The drum tracks added on the Track page: the same as the first drums, each on its own grid. */
+  private scheduleExtraDrums(horizon: number) {
+    const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
+    for (const [track, lane] of this.lanes) {
+      const beatAt = (a: Anchor) => this.items[a.index]?.extra?.drums.find((d) => d.track === track)?.beat ?? null;
+      for (let guard = 0; guard < 400; guard++) {
+        if (!lane.cur) {
+          const first = lane.anchors.shift();
+          if (!first) break;
+          lane.cur = first;
+          lane.div = beatAt(first)?.div ?? 4;
+          lane.step = firstStep(first, lane.div);
+        }
+        const cur = lane.cur;
+        const b = beatAt(cur);
+        const div = b?.div ?? lane.div;
+        if (div !== lane.div) {
+          lane.step = Math.ceil((lane.step / lane.div) * div - 1e-6);
+          lane.div = div;
+        }
+        const base = cur.time + (cur.origin + lane.step / div - cur.beat) * cur.spb;
+        const next = lane.anchors[0];
+        if (next && base >= next.time - 1e-4) {
+          lane.cur = lane.anchors.shift()!;
+          lane.div = beatAt(lane.cur)?.div ?? lane.div;
+          lane.step = firstStep(lane.cur, lane.div);
+          continue;
+        }
+        if (this.endAt !== null && base >= this.endAt - 1e-4) break;
+        if (!next && base >= this.nextTime - 1e-4) break;
+        if (base >= horizon) break;
+        const gain = levelOf(track);
+        if (b?.on && gain > 0) {
+          const step = lane.step % lenOf(b);
+          const t = cur.time + (cur.origin + Math.floor(lane.step / div) + stepBeat(lane.step % div, div, b.swing ?? 0) - cur.beat) * cur.spb;
+          for (const id of DRUM_IDS) {
+            const lv = levelAt(b.rows, id, step);
+            if (lv) playStep(b, id, lv, t, gain, track);
+          }
+        }
+        lane.step++;
+      }
+    }
+  }
+
   private tick() {
     const c = getAudio();
     while (this.drumMarks.length && this.drumMarks[0].time <= c.currentTime) this.onDrumStep(this.drumMarks.shift()!.step);
@@ -609,6 +711,7 @@ export class ProgressionPlayer {
     this.tCur = null;
     this.spans = [];
     this.cur = null;
+    this.lanes.clear();
     this.drumMarks = [];
     this.onDrumStep(-1);
     dropPulses();

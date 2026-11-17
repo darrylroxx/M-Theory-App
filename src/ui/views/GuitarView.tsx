@@ -1,9 +1,9 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_BEAT, applyPattern, barBeats, grooveOf, kitOfBeat, type Beat, type BeatPattern } from "../../audio/beats";
 import { progressionToMidi, saveFile } from "../../audio/midi";
-import { reviveFeel, styleBar, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
+import { reviveFeel, styleBar, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, playNote, playSequence, prepFor, prepareNotes, setHarpSound, setTuneSound, strum } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, playNote, playSequence, prepFor, prepareNotes, setHarpSound, setTuneSound, strum } from "../../audio/synth";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
@@ -25,7 +25,9 @@ import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
+import { VocalsPage } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
+import { focusTrack, normalize, tracksOf, type EditKind } from "../../song/tracks";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
@@ -141,11 +143,32 @@ export function GuitarView() {
     const per: SecPlan[] = [];
     /** is there anything in the song to hear? */
     let any = false;
-    // with no song yet, what is on the page is section A
-    const row: Section[] = secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true, chords: prog.chords, melody: prog.melody, bars: prog.bars, style: prog.pattern, feel: prog.feel, sound: prog.sound, tuneSound: prog.tuneSound, groove: grooveOf(beat), kit: kitOfBeat(beat) }];
+    // with no song yet, what is on the page is section A (every track in its place: a page may be editing an added track)
+    const np = normalize(prog);
+    const nBeat = np.beat ?? DEFAULT_BEAT;
+    const row: Section[] = secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true, chords: np.chords, melody: np.melody, bars: np.bars, layers: np.layers, style: np.pattern, feel: np.feel, sound: np.sound, tuneSound: np.tuneSound, groove: grooveOf(nBeat), kit: kitOfBeat(nBeat) }];
+    const editingOther = np !== prog && !!prog.focus?.chords;
+    /** What the tracks added on the Track page play in a section. */
+    const extrasOf = (sec: Section, len: number, secBar: number, style: PatternId, swing: number): ExtraPlay | undefined => {
+      const ex: ExtraPlay = { chords: [], tunes: [], drums: [] };
+      for (const t of np.tracks ?? []) {
+        const l = sec.layers?.[t.id];
+        if (!l) continue;
+        if (t.kind === "chords" && l.chords?.length) {
+          const vs = voicingsOf(l.chords);
+          let at = 0;
+          for (const { item: c, index: i } of inFrame(l.chords, len)) {
+            ex.chords.push({ track: t.id, at, beats: c.beats, midi: c.rest ? [] : vs[i]?.midi ?? [], style: t.style ?? style, feel: t.feel, sound: reviveSound(t.sound) });
+            at += c.beats;
+          }
+        } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound) } });
+        else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
+      }
+      return ex.chords.length || ex.tunes.length || ex.drums.length ? ex : undefined;
+    };
     for (const sec of row) {
-      const vs = sec.current ? voicings : voicingsOf(sec.chords);
-      const drums: Beat = { ...beat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? beat.on };
+      const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords);
+      const drums: Beat = { ...nBeat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? nBeat.on };
       const style = sec.style ?? prog.pattern;
       const feel = sec.feel;
       const harp = reviveSound(sec.sound);
@@ -157,22 +180,23 @@ export function GuitarView() {
       const len = frameBeats(sec.bars, secBar);
       lengths[sec.blockId] = { beats: len, bar: secBar };
       const inside = inFrame(sec.chords, len);
+      const extra = extrasOf(sec, len, secBar, style, drums.on && drums.div === 4 ? drums.swing : 0);
       const own: PlayItem[] = [];
       const idx: number[] = [];
       inside.forEach(({ item: c, index: i }, k) => {
-        own.push({ midi: c.rest ? [] : vs[i]?.midi ?? [], beats: c.beats, drums, style, feel, sound: harp, tune: secTune, section: k === 0 });
+        own.push({ midi: c.rest ? [] : vs[i]?.midi ?? [], beats: c.beats, drums, style, feel, sound: harp, tune: secTune, section: k === 0, extra });
         idx.push(i);
       });
       // after the last chord the section goes on to the end of its last bar: drums and melody carry on, the harp is silent
       const played = inside.reduce((a, x) => a + x.item.beats, 0);
       if (played < len - 1e-6) {
-        own.push({ midi: [], beats: len - played, drums, style, tune: secTune, section: !inside.length, pad: true });
+        own.push({ midi: [], beats: len - played, drums, style, tune: secTune, section: !inside.length, pad: true, extra });
         idx.push(-1);
       }
       per.push({ block: sec.blockId, letter: sec.letter, bars: barsOr(sec.bars), bar: secBar, items: own, idx });
       list.push(...own);
       map.push(...idx.map((i) => ({ block: sec.blockId, idx: i })));
-      if (sec.chords.some((c) => !c.rest) || drums.on || secTune) any = true;
+      if (sec.chords.some((c) => !c.rest) || drums.on || secTune || extra) any = true;
     }
     return { items: list, map, parts: secs.length ? parts : [], lengths, any, per };
   }, [secs, voicings, voicingsOf, beat, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound]);
@@ -215,14 +239,22 @@ export function GuitarView() {
   planRef.current = plan;
 
   // ── the harp's sound ──
+  // (the page's knobs set the track being edited; the first tracks' harps always keep their own sound)
   const sound = useMemo(() => reviveSound(prog.sound), [prog.sound]);
   const hear = useRef(0);
   const voicingsRef = useRef(voicings);
   voicingsRef.current = voicings;
-  useEffect(() => setHarpSound(sound, prog.bpm), [sound, prog.bpm]);
+  const editChords = prog.focus?.chords && prog.focus.chords !== "chords" ? prog.focus.chords : null;
+  const editTune = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : null;
+  const firstSound = editChords ? (prog.layers?.chords?.sound ?? prog.sound) : prog.sound;
+  const firstTune = editTune ? (prog.layers?.melody?.tuneSound ?? prog.tuneSound) : prog.tuneSound;
+  useEffect(() => setHarpSound(reviveSound(firstSound), prog.bpm), [firstSound, prog.bpm]);
   // the melody has a harp of its own, with its own effects
   const tuneSound = useMemo(() => reviveSound(prog.tuneSound), [prog.tuneSound]);
-  useEffect(() => setTuneSound(tuneSound, prog.bpm), [tuneSound, prog.bpm]);
+  useEffect(() => setTuneSound(reviveSound(firstTune), prog.bpm), [firstTune, prog.bpm]);
+  // a track added on the Track page is heard on its own harp while it is being edited
+  useEffect(() => hearOn("chord", editChords ? { id: editChords, sound } : null), [editChords, sound]);
+  useEffect(() => hearOn("melody", editTune ? { id: editTune, sound: tuneSound } : null), [editTune, tuneSound]);
   // every note the section (and the song) will need is made ready ahead of time
   useEffect(() => {
     const t = window.setTimeout(() => prepareNotes([...prepFor(items, prog.pattern, beat, tune), ...prepFor(plan.items, prog.pattern, beat)]), 250);
@@ -248,11 +280,17 @@ export function GuitarView() {
   }, []);
   // what the section on screen has of its own, and which section the rest follows
   const linked = useMemo(() => linkState(prog), [prog]);
-  const link = (g: SettingGroup): Link => ({ source: linked.source, first: linked.first, own: linked.own[g], onReset: () => set((s) => ({ ...s, progression: relink(s.progression, g) })) });
+  const editDrums = prog.focus?.drums && prog.focus.drums !== "drums" ? prog.focus.drums : null;
+  /** (A track added on the Track page sounds the same in every section: it has no "follows A" chip.) */
+  const link = (g: SettingGroup): Link | undefined =>
+    (editChords && (g === "style" || g === "sound")) || (editTune && g === "tuneSound") || (editDrums && (g === "groove" || g === "kit")) ? undefined
+    : { source: linked.source, first: linked.first, own: linked.own[g], onReset: () => set((s) => ({ ...s, progression: relink(s.progression, g) })) };
+  /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
+  const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
 
   useEffect(() => {
-    if (player.current?.playing) player.current.update(playList.items, prog.bpm, prog.pattern, playList.loop, beat, null);
+    if (player.current?.playing) player.current.update(playList.items, prog.bpm, prog.pattern, playList.loop, firstBeat, null);
   });
   useEffect(() => () => player.current?.stop(), []);
   playingRef.current = playing;
@@ -287,7 +325,7 @@ export function GuitarView() {
     // the grids show where the music is only while the section on screen is the one sounding
     p.onDrumStep = (n) => stepSink.current?.(playBlock.current === curRef.current ? n : -1);
     p.onEnd = () => { playBlock.current = null; setPlaying(false); setNowIdx(-1); };
-    p.start(list.items, prog.bpm, prog.pattern, list.loop, beat, from);
+    p.start(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, from);
     setPlaying(true);
   };
   const togglePlay = () => (playing ? stopPlay() : startPlay());
@@ -381,12 +419,13 @@ export function GuitarView() {
   }, []);
   /** The song as the Track page draws it: every section in playing order, with what it holds. */
   const trackSecs = useMemo((): TrackSection[] => {
-    const row: Section[] = secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true, chords: prog.chords, melody: prog.melody, bars: prog.bars, groove: grooveOf(beat), kit: kitOfBeat(beat) }];
+    const np = normalize(prog);
+    const row: Section[] = secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true, chords: np.chords, melody: np.melody, bars: np.bars, layers: np.layers, groove: grooveOf(firstBeat), kit: kitOfBeat(firstBeat) }];
     return row.map((sec, i) => {
       const per = plan.per[i];
-      return { block: sec.blockId, letter: sec.letter, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, drums: { ...beat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? beat.on } };
+      return { block: sec.blockId, letter: sec.letter, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, layers: sec.layers, drums: { ...firstBeat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? firstBeat.on } };
     });
-  }, [secs, plan.per, prog.chords, prog.melody, prog.bars, beat, bar]);
+  }, [secs, plan.per, prog, firstBeat, bar]);
   // the mixer: every track's volume, mute and solo, for the whole song
   useEffect(() => setMix(prog.mix), [prog.mix]);
   const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
@@ -525,6 +564,9 @@ export function GuitarView() {
           <ClipBar kind="melody" letter={curLetter} frame={frame} onPasted={onPasted} />
           <MelodyGrid fresh={`${curBlock}:${pasted}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
+        </div>
+        <div className="pane" hidden={pane !== "vocals"}>
+          <VocalsPage active={pane === "vocals"} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
           <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
@@ -834,7 +876,7 @@ const rowsOf = (secs: Section[]): Row[] => (secs.length ? secs : [{ blockId: "",
 
 // ── Copy and paste between sections ─────────────────────────
 
-const CLIP_NAME: Record<ClipKind, string> = { rhythm: "rhythm", melody: "melody", drums: "drums" };
+const CLIP_NAME: Record<ClipKind, string> = { rhythm: "chords", melody: "melody", drums: "drums" };
 /** The fields of the page that a paste replaces (and an undo puts back). */
 const pageOf = (p: Progression, kind: ClipKind): Partial<Progression> =>
   kind === "rhythm" ? { chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound } : kind === "melody" ? { melody: p.melody, tuneSound: p.tuneSound } : { beat: p.beat };
@@ -891,9 +933,18 @@ function ClipBar({ kind, letter, frame, onPasted }: { kind: ClipKind; letter: st
     toast("Paste undone");
   };
   const has = hasPart(state.progression, kind);
+  // the tracks of this kind: the page edits one of them at a time
+  const ek: EditKind = kind === "rhythm" ? "chords" : kind;
+  const list = tracksOf(normalize(state.progression), ek);
+  const on = state.progression.focus?.[ek] ?? ek;
   return (
     <div className="clip-bar" role="group" aria-label={`Copy and paste the ${what}`}>
-      <span className={`clip-of ${letterClass(letter)}`}><b>{letter}</b>{what[0].toUpperCase() + what.slice(1)}</span>
+      <span className={`clip-of ${letterClass(letter)}`}><b>{letter}</b>{list.length < 2 && what[0].toUpperCase() + what.slice(1)}</span>
+      {list.length > 1 && (
+        <span className="seg clip-tracks" role="radiogroup" aria-label={`Which ${what} track`}>
+          {list.map((t) => <button key={t.id} role="radio" aria-checked={on === t.id} className={on === t.id ? "on" : ""} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, ek, t.id) }))}>{t.name}</button>)}
+        </span>
+      )}
       <span className="spacer" />
       <button className="btn sm" title={`Copy everything on this page of ${letter}${kind === "rhythm" ? ": chords, style and sound" : kind === "melody" ? ": notes and sound" : ": rhythm and drum sound"}`} aria-label={`Copy the ${what} of ${letter}`} onClick={copy}>Copy</button>
       {undo && undo.block === block ? (
@@ -1089,7 +1140,7 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
                   {secs.length > 0 && <button aria-label={`Remove ${x.letter}`} title="Remove" onClick={() => change((p) => removeBlock(p, x.blockId))}>✕</button>}
                 </span>
                 <span className="fr-parts">
-                  <button className={`fr-part${f.rhythm ? " has" : ""}`} title={`${x.letter}: chords and how they are played`} onClick={() => open(x.blockId, "rhythm")}>Rhythm{f.rhythm ? <small>{f.rhythm}</small> : null}</button>
+                  <button className={`fr-part${f.rhythm ? " has" : ""}`} title={`${x.letter}: chords and how they are played`} onClick={() => open(x.blockId, "rhythm")}>Chords{f.rhythm ? <small>{f.rhythm}</small> : null}</button>
                   <button className={`fr-part${f.melody ? " has" : ""}`} title={`${x.letter}: melody`} onClick={() => open(x.blockId, "melody")}>Melody</button>
                   <button className={`fr-part${f.drums ? " has" : ""}`} title={`${x.letter}: drums`} onClick={() => open(x.blockId, "drums")}>Drums</button>
                   {shared && <button className="fr-unlink" title={`This ${x.letter} is the same music as the other ${x.letter}. Give it its own letter so it can differ`} onClick={() => { change((p) => (sharedCount(p, x.blockId) > 1 ? unlinkBlock(p, x.blockId) : p)); toast("Now a section of its own"); }}>Unlink</button>}

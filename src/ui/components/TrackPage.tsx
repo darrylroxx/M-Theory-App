@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { barsOf, levelAt, type Beat } from "../../audio/beats";
 import type { DrumId } from "../../audio/drums";
 import { MAX_DB, MIN_DB, audible, type Mix, type TrackId, type TrackMix } from "../../audio/mix";
+export type { TrackId };
 import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame, inLoop, type LoopSpan } from "../../song/frame";
 import { selectBlock } from "../../song/structure";
+import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { letterClass } from "../letters";
-import { useApp, type Pane, type ProgChord } from "../state";
+import { newId, useApp, type Pane, type ProgChord } from "../state";
 
 /** One section as the Track page draws it. */
 export interface TrackSection {
@@ -20,13 +22,20 @@ export interface TrackSection {
   chords: ProgChord[];
   melody?: Melody;
   drums: Beat;
+  /** what the added tracks hold in it */
+  layers?: Layers;
 }
 
-const TRACKS: { id: TrackId; name: string; page: Pane }[] = [
-  { id: "chords", name: "Chords", page: "rhythm" },
-  { id: "melody", name: "Melody", page: "melody" },
-  { id: "drums", name: "Drums", page: "drums" },
-];
+/** The page that edits each kind of track. */
+const PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drums: "drums", vocals: "vocals" };
+const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
+
+/** What one track holds in one section. */
+function content(t: Track, s: TrackSection): TrackSection {
+  if (isFirst(t.id)) return s;
+  const l = s.layers?.[t.id];
+  return { ...s, chords: l?.chords ?? [], melody: l?.melody, drums: l?.beat ?? { ...s.drums, on: false } };
+}
 /** Drum rows drawn top to bottom: cymbals, then the middle of the kit, then the kick. */
 const LANES: { ids: DrumId[]; y: number }[] = [
   { ids: ["hat", "open", "shaker", "bell"], y: 0.2 },
@@ -50,8 +59,10 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
   /** which section is sounding and how many beats into it (null = stopped) */
   getWhere: () => { block: string; beat: number } | null;
 }) {
-  const { state, set } = useApp();
+  const { state, set, toast } = useApp();
   const mix = state.progression.mix;
+  const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
+  const [adding, setAdding] = useState(false);
   const [zoom, setZoom] = useState(2);
   const bw = ZOOMS[zoom];
   const lineRef = useRef<HTMLDivElement>(null);
@@ -68,7 +79,7 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
   }, [sections, bw]);
   // the melody's notes across the whole song, so every block draws them on the same scale
   const range = useMemo(() => {
-    const all = sections.flatMap((s) => s.melody?.notes.map((n) => n.midi) ?? []);
+    const all = sections.flatMap((s) => [s.melody, ...Object.values(s.layers ?? {}).map((l) => l.melody)].flatMap((m) => m?.notes.map((n) => n.midi) ?? []));
     return all.length ? { lo: Math.min(...all) - 1, hi: Math.max(...all) + 1 } : { lo: 55, hi: 79 };
   }, [sections]);
 
@@ -101,7 +112,27 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
       const next: Mix = { ...s.progression.mix, [id]: t };
       return { ...s, progression: { ...s.progression, mix: next } };
     });
-  const open = (block: string, pane: Pane) => set((s) => ({ ...s, pane, progression: block ? selectBlock(s.progression, block) : s.progression }));
+  /** Open a track's page on a section, with that track ready to edit. */
+  const open = (block: string, t: Track) =>
+    set((s) => {
+      const p = block ? selectBlock(s.progression, block) : s.progression;
+      return { ...s, pane: PAGE[t.kind], progression: t.kind === "vocals" ? p : focusTrack(p, t.kind, t.id) };
+    });
+  const add = (kind: TrackKind) => {
+    const tid = newId();
+    let name = "";
+    set((s) => {
+      const r = addTrack(s.progression, kind, tid);
+      name = r.track.name;
+      return { ...s, pane: PAGE[kind], progression: r.p };
+    });
+    setAdding(false);
+    queueMicrotask(() => name && toast(`${name} added`));
+  };
+  const remove = (t: Track) => {
+    if (!window.confirm(`Remove ${t.name} and everything on it, in every section?`)) return;
+    set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
+  };
   const choose = (block: string) => block && set((s) => ({ ...s, progression: selectBlock(s.progression, block) }));
   const totalBars = sections.reduce((a, s) => a + s.bars, 0);
 
@@ -118,13 +149,13 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
       <div className="tv">
         <div className="tv-heads">
           <div className="tv-corner" />
-          {TRACKS.map((t) => {
+          {tracks.map((t) => {
             const m = mix?.[t.id];
             const on = audible(mix, t.id);
             const db = m?.db ?? 0;
             return (
-              <div key={t.id} className={`tv-head${on ? "" : " quiet"}`} role="group" aria-label={`${t.name} track`}>
-                <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t.page)}>{t.name}</button>
+              <div key={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}`} role="group" aria-label={`${t.name} track`}>
+                <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>{t.name}{!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}</button>
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>
@@ -134,6 +165,14 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
               </div>
             );
           })}
+          <div className="tv-add">
+            {adding ? (
+              <span className="tv-kinds" role="group" aria-label="What kind of track">
+                {KINDS.map((k) => <button key={k} className="chip" onClick={() => add(k)}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
+                <button className="chip" aria-label="Cancel" onClick={() => setAdding(false)}>✕</button>
+              </span>
+            ) : <button className="btn sm" onClick={() => setAdding(true)}>+ Add track</button>}
+          </div>
         </div>
         <div className="tv-scroll" ref={scrollRef}>
           <div className="tv-lanes" style={{ width: starts.width }}>
@@ -147,21 +186,25 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
                 </div>
               ))}
             </div>
-            {TRACKS.map((t) => (
-              <div key={t.id} className={`tv-row${audible(mix, t.id) ? "" : " quiet"}`}>
-                {sections.map((s) => (
-                  <button key={s.block || "a"} className={`tv-block ${letterClass(s.letter)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
-                    aria-label={`${t.name} of section ${s.letter}: open`} onClick={() => open(s.block, t.page)}>
-                    {t.id === "chords" ? <ChordBlock s={s} bw={bw} /> : t.id === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : <DrumBlock s={s} bw={bw} />}
-                  </button>
-                ))}
+            {tracks.map((t) => (
+              <div key={t.id} className={`tv-row k-${t.kind}${audible(mix, t.id) ? "" : " quiet"}`}>
+                {sections.map((s0) => {
+                  const s = content(t, s0);
+                  return (
+                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.letter)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
+                      aria-label={`${t.name} of section ${s.letter}: open`} onClick={() => open(s.block, t)}>
+                      {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <span className="tv-empty">No takes yet</span>}
+                    </button>
+                  );
+                })}
               </div>
             ))}
+            <div className="tv-row tv-row-add" />
             <div className="tv-line" ref={lineRef} />
           </div>
         </div>
       </div>
-      <p className="tiny muted">Tap a block to open that section&rsquo;s page. A track&rsquo;s volume, M (mute) and S (solo) apply to the whole song; double-tap a volume to set it back to 0 dB.</p>
+      <p className="tiny muted">Tap a block to open that section&rsquo;s page for that track. A track&rsquo;s volume, M (mute) and S (solo) apply to the whole song; double-tap a volume to set it back to 0 dB. + Add track adds chords, a melody, drums or vocals.</p>
     </section>
   );
 }
