@@ -15,7 +15,20 @@
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
-import { pulse } from "./pulse";
+import { listening, pulse } from "./pulse";
+import { describe, type Sound } from "./describe";
+import { tapStem } from "./stems";
+
+/** A drum sound, measured (once for each recording). */
+const measured = new WeakMap<AudioBuffer, Sound>();
+function measure(buf: AudioBuffer): Sound {
+  let s = measured.get(buf);
+  if (!s) {
+    s = describe(buf.getChannelData(0), buf.sampleRate);
+    measured.set(buf, s);
+  }
+  return s;
+}
 import { createSaturator, type SatType, type Saturator } from "./saturation";
 import { DRUM_IDS, SHAPE_KEYS, VARIANTS, drumRng, renderDrum, renderNoiseBed, renderSpace, type DrumId, type DrumParams, type SamplerId, type VoiceId } from "./drums";
 
@@ -179,6 +192,8 @@ function getBus(): Bus {
   bed.gain.value = 0;
   bed.connect(mix);
   mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(c.destination);
+  // the canvas hears the drums here, after everything that is done to them
+  tapStem("drums", limiter);
 
   const channels = {} as Record<DrumId, Channel>;
   for (const id of DRUM_IDS) {
@@ -384,9 +399,10 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const c = audioContext();
   const b = getBus();
   const t = when ?? c.currentTime + 0.01;
-  pulse({ kind: "drum", time: t, drum: id, velocity });
   const src = c.createBufferSource();
   src.buffer = takeFor(c, beat, id);
+  // for the canvas: what this hit is made of, measured from the hit itself
+  if (listening()) pulse({ kind: "drum", time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
   const g = c.createGain();
   g.gain.value = velocity * velocity * 1.1;

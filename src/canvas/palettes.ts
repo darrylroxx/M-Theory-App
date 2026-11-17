@@ -117,3 +117,21 @@ export function roles(p: Palette) {
   const second = [...pool].filter((c) => c !== low).sort((a, b) => contrast(b, p.ground) - contrast(a, p.ground))[0] ?? low;
   return { dark, low, high, pop, second };
 }
+
+/**
+ * Three colours that can be told apart at a glance, for the three parts of the mix in the guide:
+ * the ink for the drums, and for the melody and the chords the two paints that are furthest from
+ * the ink, from the ground and from each other.
+ */
+export function trio(p: Palette): { chords: string; melody: string; drums: string } {
+  const apart = (a: string, b: string) => {
+    const x = hexToRgb(a);
+    const y = hexToRgb(b);
+    return Math.hypot(x[0] - y[0], x[1] - y[1], x[2] - y[2]);
+  };
+  const furthest = (from: string[]) => [...p.colors].sort((a, b) => Math.min(...from.map((o) => apart(b, o))) - Math.min(...from.map((o) => apart(a, o))))[0];
+  const drums = p.ink;
+  const melody = furthest([drums, p.ground]);
+  const chords = furthest([drums, p.ground, melody]);
+  return { chords, melody, drums };
+}

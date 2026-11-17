@@ -1,10 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { DRUM_IDS } from "../audio/drums";
 import { dropPulses, due, listen, pulse, waiting } from "../audio/pulse";
 import { contrast, hexToRgb, hslToRgb, isHex, luminance, mix, rgbToHsl, shade, vary } from "./color";
-import { BANDS, DRUM_PLACE, MARGIN, colorIndex, maxBars, noteColors, pageOf, speed, xOf, yOfDrum, yOfMidi, type Spot } from "./layout";
-import { blobPoints, dab, deform, drip, flam, inkLine, speckle, splatter, stroke, wash, type G } from "./marks";
-import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles } from "./palettes";
+import { BANDS, F_HI, F_LO, bandHz, plainTone, type Sound } from "../audio/describe";
+import type { DrumPulse, NotePulse } from "../audio/pulse";
+import { BOTTOM, MARGIN, REGIONS, RULER_HZ, SCALE, TOP, colorIndex, hzLabel, hzOfMidi, hzOfY, maxBars, midiOfHz, noteColors, pageOf, spanPx, speed, upOfHz, xOf, yOfHz, type Spot } from "./layout";
+import { BRUSHES, CLOUDS, TOUCHES, backrun, blobPoints, cloud, dab, deform, drip, flam, later, paintPath, reach, speckle, splatter, straight, stroke, tooth, touch, wash, type G, type Pt } from "./marks";
+import { ANGULAR, FADES, HIGH_DAB, LOW_DAB, MID_DAB, Painter, STEM_IDS, TAPER, TUNE_DAB, habits, left, tilt } from "./painter";
+import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles, trio } from "./palettes";
 import { gauss, hash, noise, noise2, rng } from "./rand";
 import { SURFACES, isSurface, surfaceHeight, surfaceTexture } from "./weave";
 
@@ -133,35 +135,63 @@ describe("where things go on the canvas", () => {
     expect(speed(p, { ...spot(0), spb: 0.25 }, 1000)).toBeCloseTo(speed(p, spot(0), 1000) * 2);
   });
 
-  it("higher notes sit higher: lows at the bottom, highs at the top", () => {
-    for (const band of ["chords", "melody"] as const) {
-      let last = Infinity;
-      for (let m = 30; m <= 96; m++) {
-        const y = yOfMidi(m, band, 600);
-        expect(y).toBeLessThanOrEqual(last);
-        expect(y).toBeGreaterThanOrEqual(BANDS[band][0] * 600 - 1e-6);
-        expect(y).toBeLessThanOrEqual(BANDS[band][1] * 600 + 1e-6);
-        last = y;
-      }
+  it("up is higher in frequency: the bottom of the scale at the bottom, the top at the top", () => {
+    expect(yOfHz(F_LO, 600)).toBeCloseTo(BOTTOM * 600);
+    expect(yOfHz(F_HI, 600)).toBeCloseTo(TOP * 600);
+    // off the scale is kept at its ends
+    expect(yOfHz(5, 600)).toBeCloseTo(BOTTOM * 600);
+    expect(yOfHz(40000, 600)).toBeCloseTo(TOP * 600);
+    let last = Infinity;
+    for (let hz = F_LO; hz <= F_HI; hz *= 1.03) {
+      const y = yOfHz(hz, 600);
+      expect(y).toBeLessThan(last);
+      last = y;
+      // and back again
+      expect(hzOfY(y, 600) / hz).toBeCloseTo(1, 6);
     }
-    // the same note is higher up in the melody than in the chords
-    expect(yOfMidi(67, "melody", 600)).toBeLessThan(yOfMidi(67, "chords", 600));
+    // every note of the instrument is higher than the one below it
+    for (let m = 29; m < 100; m++) expect(yOfHz(hzOfMidi(m + 1), 600)).toBeLessThan(yOfHz(hzOfMidi(m), 600));
+    expect(hzOfMidi(69)).toBeCloseTo(440);
+    expect(hzOfMidi(57)).toBeCloseTo(220);
+    expect(midiOfHz(hzOfMidi(52.4))).toBeCloseTo(52.4);
   });
 
-  it("every drum has its place: kick lowest, snare above it, cymbals along the top", () => {
-    for (const id of DRUM_IDS) {
-      expect(DRUM_PLACE[id]).toBeTruthy();
-      const y = yOfDrum(id, 600);
-      expect(y).toBeGreaterThan(0);
-      expect(y).toBeLessThan(600);
+  it("an octave is a fixed step, and the octaves the notes live in get the biggest steps", () => {
+    // the marks of the scale run upwards in frequency and in height, from one end to the other
+    expect(SCALE[0]).toEqual([F_LO, 0]);
+    expect(SCALE[SCALE.length - 1]).toEqual([F_HI, 1]);
+    for (let i = 1; i < SCALE.length; i++) {
+      expect(SCALE[i][0]).toBeGreaterThan(SCALE[i - 1][0]);
+      expect(SCALE[i][1]).toBeGreaterThan(SCALE[i - 1][1]);
     }
-    expect(yOfDrum("kick", 600)).toBeGreaterThan(yOfDrum("tom", 600));
-    expect(yOfDrum("tom", 600)).toBeGreaterThan(yOfDrum("snare", 600));
-    expect(yOfDrum("snare", 600)).toBeGreaterThan(yOfDrum("hat", 600));
-    expect(yOfDrum("hat", 600)).toBeGreaterThan(yOfDrum("open", 600));
-    // however far it wanders, it stays in its band
-    expect(yOfDrum("kick", 600, 9)).toBeLessThanOrEqual(BANDS.low[1] * 600);
-    expect(yOfDrum("hat", 600, -9)).toBeGreaterThanOrEqual(BANDS.air[0] * 600);
+    // inside the range of the notes every octave is the same height…
+    const oct = (hz: number) => yOfHz(hz, 600) - yOfHz(hz * 2, 600);
+    expect(oct(82.4)).toBeCloseTo(oct(220), 6);
+    expect(oct(220)).toBeCloseTo(oct(640), 6);
+    // …and taller than an octave of rumble or of hiss
+    expect(oct(220)).toBeGreaterThan(oct(35) * 1.3);
+    expect(oct(220)).toBeGreaterThan(oct(6000) * 1.3);
+    // a semitone there is wide enough to see, even on a phone
+    expect(spanPx(220, 1 / 12, 440)).toBeGreaterThan(4);
+    expect(spanPx(220, 1, 600)).toBeCloseTo(oct(220 / Math.SQRT2), 6);
+    expect(upOfHz(80)).toBeCloseTo(0.095);
+    expect(upOfHz(1280)).toBeCloseTo(0.675);
+  });
+
+  it("the ruler and the regions of a mix cover the scale", () => {
+    for (const hz of RULER_HZ) {
+      expect(hz).toBeGreaterThan(F_LO);
+      expect(hz).toBeLessThan(F_HI);
+    }
+    expect(RULER_HZ.map(hzLabel)).toEqual(["50", "100", "200", "500", "1k", "2k", "5k", "10k"]);
+    // the regions follow one another with no gap, from the bottom of the scale to the top
+    expect(REGIONS[0].from).toBe(F_LO);
+    expect(REGIONS[REGIONS.length - 1].to).toBe(F_HI);
+    for (let i = 1; i < REGIONS.length; i++) expect(REGIONS[i].from).toBe(REGIONS[i - 1].to);
+    expect(REGIONS.map((r) => r.name)).toEqual(["Sub", "Bass", "Low mids", "Mids", "High mids", "Air"]);
+    // each is tall enough, even on a phone, for its name to be written in it
+    for (const r of REGIONS) expect(yOfHz(r.from, 420) - yOfHz(r.to, 420), r.name).toBeGreaterThan(r.short.length * 6 + 6);
+    for (const r of REGIONS) expect(r.short.length).toBeLessThanOrEqual(6);
   });
 
   it("the notes of the key share out the whole palette, near relatives side by side", () => {
@@ -308,28 +338,41 @@ describe("the surface under the paint", () => {
   });
 });
 
-// ── the marks, drawn on a canvas that only counts what is asked of it ──
+// ── the marks, drawn on a canvas that only notes what is asked of it, and where ──
 class FakePath {
   moves = 0;
   lines = 0;
-  moveTo() { this.moves++; }
-  lineTo() { this.lines++; }
-  quadraticCurveTo() { this.lines++; }
+  pts: [number, number][] = [];
+  moveTo(x?: number, y?: number) { this.moves++; if (x !== undefined) this.pts.push([x, y ?? 0]); }
+  lineTo(x?: number, y?: number) { this.lines++; if (x !== undefined) this.pts.push([x, y ?? 0]); }
+  quadraticCurveTo(_cx?: number, _cy?: number, x?: number, y?: number) { this.lines++; if (x !== undefined) this.pts.push([x, y ?? 0]); }
   closePath() {}
 }
 function fakeCanvas() {
   const calls: Record<string, number> = {};
   const xs: number[] = [];
+  /** every place something was drawn, as [x, y] */
+  const at: [number, number][] = [];
+  /** how each fill was laid over what was there */
+  const modes: string[] = [];
+  /** every rectangle filled: [x, y, w, h, how, how strongly] */
+  const rects: [number, number, number, number, string, number][] = [];
   const note = (k: string) => (calls[k] = (calls[k] ?? 0) + 1);
+  const put = (x: number, y: number) => { xs.push(x); at.push([x, y]); };
+  const gradient = () => ({ addColorStop: () => {} });
   const g = {
-    globalAlpha: 1, globalCompositeOperation: "source-over", fillStyle: "", strokeStyle: "", lineWidth: 1, lineCap: "butt", lineJoin: "round",
+    globalAlpha: 1, globalCompositeOperation: "source-over", fillStyle: "" as unknown, strokeStyle: "", lineWidth: 1, lineCap: "butt", lineJoin: "round",
     save: () => note("save"), restore: () => note("restore"), beginPath: () => note("beginPath"), closePath: () => {},
-    moveTo: (x: number) => { note("moveTo"); xs.push(x); }, lineTo: (x: number) => { note("lineTo"); xs.push(x); }, quadraticCurveTo: () => note("curve"),
-    arc: (x: number) => { note("arc"); xs.push(x); }, ellipse: (x: number) => { note("ellipse"); xs.push(x); },
-    fill: () => note("fill"), stroke: (p?: FakePath) => { note("stroke"); if (p) note("strokePath"); }, translate: () => {}, fillRect: () => note("fillRect"),
-    createRadialGradient: () => ({ addColorStop: () => {} }),
+    moveTo: (x: number, y: number) => { note("moveTo"); put(x, y); }, lineTo: (x: number, y: number) => { note("lineTo"); put(x, y); },
+    quadraticCurveTo: (_cx: number, _cy: number, x: number, y: number) => { note("curve"); put(x, y); },
+    arc: (x: number, y: number) => { note("arc"); put(x, y); }, ellipse: (x: number, y: number) => { note("ellipse"); put(x, y); },
+    fill: (p?: FakePath) => { note("fill"); modes.push(g.globalCompositeOperation); if (p) for (const q of p.pts) at.push(q); },
+    stroke: (p?: FakePath) => { note("stroke"); if (p) { note("strokePath"); for (const q of p.pts) at.push(q); } },
+    clip: () => note("clip"), translate: () => {}, rotate: () => {}, setTransform: () => {}, clearRect: () => note("clearRect"), drawImage: () => note("drawImage"),
+    fillRect: (x: number, y: number, w: number, h: number) => { note("fillRect"); rects.push([x, y, w, h, g.globalCompositeOperation, g.globalAlpha]); },
+    createRadialGradient: gradient, createLinearGradient: gradient,
   };
-  return { g: g as unknown as G, calls, xs };
+  return { g: g as unknown as G, calls, xs, at, modes, rects };
 }
 (globalThis as { Path2D?: unknown }).Path2D = FakePath;
 /** Run a mark to the end, a frame at a time; says how many frames it took (it must finish). */
@@ -359,11 +402,18 @@ describe("the marks paint makes", () => {
 
   it("a wash soaks in over its time, in exactly as many layers as asked", () => {
     const { g, calls } = fakeCanvas();
-    const frames = run(wash(g, { x: 50, y: 50, rx: 30, ry: 20, color: [20, 40, 120], alpha: 0.04, layers: 24, ms: 500, r: rng(1), mode: "multiply" }));
-    expect(calls.fill).toBe(24);
+    const first = fakeCanvas();
+    const frames = run(wash(first.g, { x: 50, y: 50, rx: 30, ry: 20, color: [20, 40, 120], alpha: 0.04, layers: 24, ms: 500, r: rng(1), mode: "multiply" }));
+    void g;
+    void calls;
+    expect(first.calls.fill).toBe(24);
     expect(frames).toBeGreaterThan(20);
     expect(frames).toBeLessThan(40);
-    expect(g.globalCompositeOperation).toBe("multiply");
+    expect(first.modes.every((m) => m === "multiply")).toBe(true);
+    // when it has dried: a darker line inside its edge, and grains of pigment in the hollows of the surface
+    expect(first.calls.clip).toBe(1);
+    expect(first.calls.strokePath).toBe(2);
+    expect(first.calls.fillRect).toBeGreaterThan(3);
     // a slow machine (long frames) still gets every layer
     const slow = fakeCanvas();
     expect(run(wash(slow.g, { x: 50, y: 50, rx: 30, ry: 20, color: [20, 40, 120], alpha: 0.04, layers: 24, ms: 500, r: rng(1), mode: "screen" }), 120)).toBeLessThan(7);
@@ -403,13 +453,111 @@ describe("the marks paint makes", () => {
     expect(Math.min(...xs)).toBeGreaterThan(90);
   });
 
-  it("a line of ink arrives where it is going", () => {
-    const { g, calls, xs } = fakeCanvas();
-    run(inkLine(g, { x0: 40, y0: 100, x1: 160, y1: 60, w0: 1, w1: 4, ms: 120, color: [10, 10, 10], r: rng(1) }));
-    expect(xs[0]).toBeCloseTo(40);
-    expect(xs[xs.length - 1]).toBeCloseTo(160);
-    // each piece is drawn twice: the wet edge, then the line
-    expect(calls.stroke).toBe(calls.beginPath * 2);
+  it("a hand sets off slowly, is fastest in the middle and slows to a stop", () => {
+    expect(reach(0)).toBe(0);
+    expect(reach(1)).toBe(1);
+    expect(reach(0.5)).toBeCloseTo(0.5);
+    expect(reach(-1)).toBe(0);
+    expect(reach(2)).toBe(1);
+    // the first tenth of the time covers far less than a tenth of the way; the middle tenth covers far more
+    expect(reach(0.1)).toBeLessThan(0.01);
+    expect(reach(0.55) - reach(0.45)).toBeGreaterThan(0.18);
+    for (let t = 0; t < 1; t += 0.05) expect(reach(t + 0.05)).toBeGreaterThan(reach(t));
+  });
+
+  it("there is a big library: every brush, every touch and every way of throwing paint makes a mark", () => {
+    expect(BRUSHES.length).toBeGreaterThanOrEqual(20);
+    expect(TOUCHES.length).toBeGreaterThanOrEqual(28);
+    expect(CLOUDS.length).toBeGreaterThanOrEqual(9);
+    expect(new Set(BRUSHES).size).toBe(BRUSHES.length);
+    expect(new Set(TOUCHES).size).toBe(TOUCHES.length);
+    expect(new Set(CLOUDS).size).toBe(CLOUDS.length);
+    const drawn = (c: ReturnType<typeof fakeCanvas>) => (c.calls.fill ?? 0) + (c.calls.stroke ?? 0) + (c.calls.fillRect ?? 0);
+    const path: Pt[] = Array.from({ length: 120 }, (_, i) => ({ x: 20 + i * 2.5, y: 100 - 20 * Math.sin(i / 40), w: 1, a: 1 - i / 160 }));
+    for (const brush of BRUSHES) {
+      const c = fakeCanvas();
+      const frames = run(paintPath(c.g, path, { brush, width: 12, color: [150, 40, 60], second: [40, 60, 150], r: rng(5), ms: 300 }));
+      // a hand's stroke: done in about the time it was given
+      expect(frames).toBeGreaterThanOrEqual(17);
+      expect(frames).toBeLessThanOrEqual(19);
+      expect(drawn(c), brush).toBeGreaterThan(5);
+      // and it stays on its path: nothing far above or below it, nothing before its start or after its end
+      for (const [x, y] of c.at) {
+        expect(x, brush).toBeGreaterThan(-5);
+        expect(x, brush).toBeLessThan(345);
+        expect(y, brush).toBeGreaterThan(40);
+        expect(y, brush).toBeLessThan(140);
+      }
+    }
+    for (const kind of TOUCHES) {
+      const c = fakeCanvas();
+      touch(c.g, kind, { x: 200, y: 100, r: 8, color: [10, 90, 60], rng: rng(3), long: 1.5 });
+      expect(drawn(c), kind).toBeGreaterThan(0);
+    }
+    for (const kind of CLOUDS) {
+      const c = fakeCanvas();
+      cloud(c.g, kind, { x: 200, y: 100, rx: 10, ry: 30, n: 40, color: [0, 0, 0], rng: rng(3), size: 1.5 });
+      expect(drawn(c), kind).toBeGreaterThan(0);
+      // thrown where it was aimed: nearly all of it within reach of the spot
+      const near = c.at.filter(([x, y]) => Math.abs(x - 200) < 40 && Math.abs(y - 100) < 80).length;
+      expect(near / c.at.length, kind).toBeGreaterThan(0.9);
+    }
+  });
+
+  it("a path is painted once, a piece at a time, and never gone back over", () => {
+    // each point of the path is reached once: the brush is never ahead of where the hand has got to
+    const path = straight(10, 50, 200, 0, rng(1));
+    expect(path[0].x).toBeCloseTo(10);
+    expect(path[path.length - 1].x).toBeCloseTo(210);
+    // pressed down at the start, lifted at the end
+    expect(path[0].w).toBeLessThan(0.5);
+    expect(path[Math.floor(path.length / 2)].w).toBe(1);
+    expect(path[path.length - 1].w).toBeLessThan(0.6);
+    const c = fakeCanvas();
+    const m = paintPath(c.g, path, { brush: "liner", width: 1.2, color: [0, 0, 0], r: rng(2), ms: 400 });
+    let far = -Infinity;
+    for (let i = 0; i < 40; i++) {
+      const before = c.xs.length;
+      const done = m.step(16);
+      const fresh = c.xs.slice(before);
+      if (fresh.length) {
+        // what this moment added starts where the last one stopped
+        expect(Math.min(...fresh)).toBeGreaterThanOrEqual(far - 3);
+        far = Math.max(far, ...fresh);
+      }
+      if (done) break;
+    }
+    expect(far).toBeCloseTo(210, 0);
+    // an empty path is no mark at all
+    expect(paintPath(c.g, [], { brush: "wash", width: 4, color: [0, 0, 0], r: rng(1), ms: 100 }).step(1)).toBe(true);
+  });
+
+  it("the surface has a grain that stays put, so dry strokes that cross break in the same places", () => {
+    for (let i = 0; i < 200; i++) {
+      const x = (i * 37.3) % 500;
+      const y = (i * 91.7) % 400;
+      const t = tooth(x, y);
+      expect(t).toBeGreaterThanOrEqual(0);
+      expect(t).toBeLessThanOrEqual(1);
+      expect(tooth(x, y)).toBe(t);
+    }
+    // it is not flat
+    const some = Array.from({ length: 400 }, (_, i) => tooth(i * 3.1, i * 1.7));
+    expect(Math.max(...some) - Math.min(...some)).toBeGreaterThan(0.6);
+  });
+
+  it("a mark can be made to wait; a backrun takes paint off and leaves a broken line round the place", () => {
+    let made = 0;
+    const m = later(100, () => { made++; });
+    expect(m.step(50)).toBe(false);
+    expect(made).toBe(0);
+    expect(m.step(60)).toBe(true);
+    expect(made).toBe(1);
+    const c = fakeCanvas();
+    const frames = run(backrun(c.g, { x: 100, y: 100, r: 20, color: [80, 40, 20], rng: rng(4) }));
+    expect(frames).toBeGreaterThan(30);
+    expect(c.modes.filter((x) => x === "destination-out").length).toBe(4);
+    expect(c.calls.stroke).toBeGreaterThan(8);
   });
 
   it("a splatter throws every drop it has, the near ones first", () => {
@@ -439,13 +587,18 @@ describe("the marks paint makes", () => {
   });
 });
 
+/** A sound made to measure: one tone (or band of noise), ringing so long. */
+const tone = (hz: number, ring: number, more: Partial<Sound["parts"][number]> = {}): Sound => ({ ...plainTone(hz, ring), attack: 1, parts: [{ hz, width: 0.05, gain: 1, ring, noise: 0, glide: 0, ...more }] });
+const drumHit = (time: number, drum: DrumPulse["drum"], velocity = 1, sound: Sound = tone(80, 0.12)): DrumPulse => ({ kind: "drum", time, drum, velocity, gain: 1, sound });
+const noteHit = (kind: NotePulse["kind"], time: number, midi: number, length: number, more: Partial<NotePulse> = {}): NotePulse => ({ kind, time, midi, velocity: 0.8, length, slot: 0, gain: 0.8, cutoff: 12000, octave: 0, sound: tone(hzOfMidi(midi), 3), ...more });
+
 describe("hearing the song", () => {
   it("nothing is kept unless someone is listening", () => {
     dropPulses();
-    pulse({ kind: "drum", time: 1, drum: "kick", velocity: 1 });
+    pulse(drumHit(1, "kick"));
     expect(waiting()).toBe(0);
     const stop = listen();
-    pulse({ kind: "drum", time: 1, drum: "kick", velocity: 1 });
+    pulse(drumHit(1, "kick"));
     expect(waiting()).toBe(1);
     stop();
     expect(waiting()).toBe(0);
@@ -454,10 +607,10 @@ describe("hearing the song", () => {
 
   it("each sound is handed over once, when its moment has come, the earliest first", () => {
     const stop = listen();
-    pulse({ kind: "chord", time: 2.0, midi: 60, velocity: 0.8, length: 1 });
-    pulse({ kind: "drum", time: 1.0, drum: "snare", velocity: 1 });
-    pulse({ kind: "melody", time: 1.5, midi: 72, velocity: 0.9, length: 8 });
-    pulse({ kind: "drum", time: 3.0, drum: "hat", velocity: 0.5 });
+    pulse(noteHit("chord", 2.0, 60, 1));
+    pulse(drumHit(1.0, "snare"));
+    pulse(noteHit("melody", 1.5, 72, 8));
+    pulse(drumHit(3.0, "hat", 0.5));
     expect(due(0.5)).toEqual([]);
     expect(due(2.0).map((p) => p.time)).toEqual([1.0, 1.5, 2.0]);
     expect(due(2.0)).toEqual([]);
@@ -472,9 +625,376 @@ describe("hearing the song", () => {
     const a = listen();
     const b = listen();
     a();
-    pulse({ kind: "drum", time: 1, drum: "kick", velocity: 1 });
+    pulse(drumHit(1, "kick"));
     expect(waiting()).toBe(1);
     b();
     expect(waiting()).toBe(0);
+  });
+});
+
+// ── the painter, on canvases that only note what is asked of them ──
+/** A painter 1000 by 600, and everything its canvases were asked to draw. */
+function studio(keep = 0.74, seed = 11) {
+  const made: (ReturnType<typeof fakeCanvas> & { className: string })[] = [];
+  (globalThis as { document?: unknown }).document = {
+    createElement: () => {
+      const c = fakeCanvas();
+      const el = { width: 0, height: 0, className: "", style: {} as Record<string, string>, dataset: {} as Record<string, string>, getContext: () => c.g, remove: () => {} };
+      const rec = Object.assign(c, { className: "" });
+      Object.defineProperty(rec, "className", { get: () => el.className });
+      made.push(rec);
+      return el;
+    },
+  };
+  const host = { appendChild: () => {}, insertBefore: () => {} } as unknown as HTMLElement;
+  const p = new Painter(host, getPalette(DEFAULT_PALETTE), keep, seed);
+  p.size(1000, 600, 1);
+  const wet = made[0];
+  /** the canvas that holds the dry paint of a section (made when the section is first seen) */
+  const dry = (n = 1) => made.filter((c) => c.className === "cv-layer")[n - 1];
+  return { p, wet, dry, made };
+}
+/** Four bars of four beats at half a second each: eight seconds across the canvas. */
+const where = (beat: number, key = "A"): Spot => ({ key, index: 0, beat, bar: 4, bars: 4, spb: 0.5 });
+const SPEED = (1000 * (1 - 2 * MARGIN)) / 8;
+/** Let every mark that is being made finish; says how long it took (milliseconds). */
+function settle(p: Painter): number {
+  let ms = 0;
+  for (; ms < 20000 && p.busy(); ms += 16) p.frame(16);
+  return ms;
+}
+
+describe("the painter: what is heard is what is painted", () => {
+  it("how much of a sound is left, and the tilt of the guide", () => {
+    expect(left(0, 2)).toBe(1);
+    // rung out: 30 dB down
+    expect(left(2, 2)).toBeCloseTo(Math.pow(10, -1.5));
+    expect(left(1, 2)).toBeGreaterThan(left(1.5, 2));
+    expect(left(-1, 2)).toBe(1);
+    // the guide is level at 1 kHz and tips up 1.5 dB for every octave above it
+    const at = (hz: number) => tilt(Math.round(Math.log2(hz / F_LO) * 6 - 0.5));
+    expect(Math.abs(at(1000))).toBeLessThan(0.3);
+    expect(at(4000) - at(1000)).toBeCloseTo(3, 0);
+    expect(at(125) - at(1000)).toBeCloseTo(-4.5, 0);
+  });
+
+  it("every section has its own hand, and keeps it", () => {
+    const a = habits("A", 5);
+    expect(habits("A", 5)).toEqual(a);
+    const all = ["A", "B", "C", "D", "E", "F", "G", "H"].map((k) => JSON.stringify(habits(k, 5)));
+    expect(new Set(all).size).toBeGreaterThanOrEqual(7);
+    // a habit is always something with body
+    for (const k of ["A", "B", "C", "D", "E", "F"]) {
+      const h = habits(k, 9);
+      expect(LOW_DAB).toContain(h.dabLow);
+      expect(MID_DAB).toContain(h.dabMid);
+      expect(HIGH_DAB).toContain(h.dabHigh);
+      expect(TUNE_DAB).toContain(h.dabTune);
+      expect(Math.abs(h.lean)).toBeLessThan(0.06);
+    }
+    for (const t of TAPER) expect(TOUCHES).toContain(t);
+    for (const t of ANGULAR) expect(TOUCHES).toContain(t);
+  });
+
+  it("a note is painted at the height of its own frequency: higher notes higher up", () => {
+    const heights = [40, 52, 64, 76, 88].map((midi) => {
+      const { p, wet } = studio();
+      p.at(where(4));
+      p.hit(noteHit("chord", 2, midi, 0.1));
+      settle(p);
+      const ys = wet.at.map(([, y]) => y).filter(Number.isFinite);
+      const mid = ys.sort((a, b) => a - b)[Math.floor(ys.length / 2)];
+      // within a tone or so of where its frequency is on the scale
+      expect(Math.abs(mid - yOfHz(hzOfMidi(midi), 600))).toBeLessThan(spanPx(hzOfMidi(midi), 3 / 12, 600));
+      return mid;
+    });
+    for (let i = 1; i < heights.length; i++) expect(heights[i]).toBeLessThan(heights[i - 1]);
+  });
+
+  it("a short note is a touch, a longer one a shape with a taper, a held one a stroke as long as the note", () => {
+    const paint = (length: number, ring = 3) => {
+      const { p, wet } = studio();
+      p.at(where(4));
+      p.hit(noteHit("chord", 2, 64, length, { sound: tone(hzOfMidi(64), ring) }));
+      const kind = p.last;
+      settle(p);
+      const xs = wet.at.map(([x]) => x);
+      return { kind, from: Math.min(...xs), to: Math.max(...xs) };
+    };
+    const x0 = xOf(0.25, 1000);
+    expect(paint(0.05).kind).toMatch(/^chord touch /);
+    expect(paint(0.3).kind).toMatch(/^chord taper /);
+    const held = paint(1.5);
+    expect(held.kind).toMatch(/^chord stroke /);
+    // it starts where the note starts and is as long as the note is: a second and a half at this speed
+    expect(Math.abs(held.from - x0)).toBeLessThan(14);
+    expect(Math.abs(held.to - (x0 + 1.5 * SPEED))).toBeLessThan(16);
+    // a note left to ring is as long as it can be heard for, not as long as the hand stays down
+    const rung = paint(6, 1);
+    expect(rung.kind).toMatch(/^chord stroke /);
+    expect(Math.abs(rung.to - (x0 + 0.7 * SPEED))).toBeLessThan(16);
+    // a taper is as long as its note, too: longer than a touch, shorter than a held stroke
+    expect(paint(0.3).to - x0).toBeGreaterThan(paint(0.05).to - x0);
+    expect(paint(0.3).to - x0).toBeLessThan(0.3 * SPEED + 30);
+  });
+
+  it("a note that takes over from another on its string carries the stroke on: up to a higher note, down to a lower one", () => {
+    const slur = (from: number, to: number) => {
+      const { p, wet } = studio();
+      p.at(where(4));
+      p.hit(noteHit("melody", 2, from, 0.5, { slot: 48 }));
+      settle(p);
+      const before = wet.at.length;
+      p.at(where(5));
+      p.hit(noteHit("melody", 2.5, to, 0.5, { slot: 48 }));
+      const kind = p.last;
+      settle(p);
+      const pts = wet.at.slice(before).filter(([x, y]) => Number.isFinite(x) && Number.isFinite(y));
+      const first = pts.reduce((a, q) => (q[0] < a[0] ? q : a));
+      const end = pts.reduce((a, q) => (q[0] > a[0] ? q : a));
+      return { kind, first, end };
+    };
+    const up = slur(60, 67);
+    expect(up.kind).toMatch(/^melody slur /);
+    // it sets off at the height of the note before and arrives at its own
+    expect(Math.abs(up.first[1] - yOfHz(hzOfMidi(60), 600))).toBeLessThan(12);
+    expect(Math.abs(up.end[1] - yOfHz(hzOfMidi(67), 600))).toBeLessThan(12);
+    expect(up.end[1]).toBeLessThan(up.first[1]);
+    // and it starts a little before the new note, where the old one was ending
+    expect(up.first[0]).toBeLessThan(xOf(5 / 16, 1000));
+    const down = slur(67, 60);
+    expect(down.kind).toMatch(/^melody slur /);
+    expect(down.end[1]).toBeGreaterThan(down.first[1]);
+    // a note after a silence does not: it is a mark of its own
+    const { p } = studio();
+    p.at(where(4));
+    p.hit(noteHit("melody", 2, 60, 0.2, { slot: 48 }));
+    p.at(where(6));
+    p.hit(noteHit("melody", 3, 67, 1, { slot: 48 }));
+    expect(p.last).toMatch(/^melody stroke /);
+    // nor does the same note played again
+    p.at(where(8));
+    p.hit(noteHit("melody", 4, 67, 1, { slot: 48 }));
+    expect(p.last).not.toMatch(/slur/);
+  });
+
+  it("a stroke is made in one quick movement: nothing creeps across the canvas with the music", () => {
+    const { p, wet } = studio();
+    p.at(where(0));
+    // a note held for three seconds: at the speed of the music its stroke would take three seconds to draw
+    p.hit(noteHit("chord", 0, 64, 3, { sound: tone(hzOfMidi(64), 6) }));
+    let ms = 0;
+    let reached = 0;
+    const end = xOf(0, 1000) + 3 * SPEED;
+    for (; ms < 3000; ms += 16) {
+      p.frame(16);
+      reached = Math.max(reached, ...wet.at.map(([x]) => x).filter(Number.isFinite));
+      if (reached > end - 12) break;
+    }
+    // the whole stroke is there in well under a second
+    expect(ms).toBeLessThan(800);
+    expect(ms).toBeGreaterThan(80);
+  });
+
+  it("a drum is painted from what it is made of: each part at its own height, as tall as it is wide", () => {
+    const { p, wet } = studio();
+    p.at(where(4));
+    // a thump at 60 Hz
+    p.hit(drumHit(2, "kick", 1, tone(60, 0.12)));
+    expect(p.last).toMatch(/^drum kick /);
+    settle(p);
+    const low = wet.at.map(([, y]) => y).filter(Number.isFinite);
+    const lowMid = low.sort((a, b) => a - b)[Math.floor(low.length / 2)];
+    expect(Math.abs(lowMid - yOfHz(60, 600))).toBeLessThan(30);
+    // a burst of hiss round 9 kHz, an octave wide
+    const before = wet.at.length;
+    p.at(where(8));
+    p.hit(drumHit(4, "hat", 0.8, tone(9000, 0.04, { noise: 1, width: 1 })));
+    settle(p);
+    const ys = wet.at.slice(before).map(([, y]) => y).filter(Number.isFinite);
+    const top = yOfHz(9000 * Math.SQRT2, 600);
+    const bottom = yOfHz(9000 / Math.SQRT2, 600);
+    // nearly all of it inside the octave it covers, and spread over most of that octave
+    expect(ys.filter((y) => y > top - 8 && y < bottom + 8).length / ys.length).toBeGreaterThan(0.85);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeGreaterThan((bottom - top) * 0.4);
+    // far above the thump
+    expect(Math.max(...ys)).toBeLessThan(lowMid - 200);
+  });
+
+  it("a noise that lasts is dragged for as long as it lasts; a ringing drum is a stroke", () => {
+    const { p, wet } = studio();
+    p.at(where(4));
+    p.hit(drumHit(2, "open", 0.9, tone(8000, 0.8, { noise: 1, width: 0.8 })));
+    settle(p);
+    const xs = wet.at.map(([x]) => x).filter(Number.isFinite);
+    const x0 = xOf(0.25, 1000);
+    // 0.8 s of ring: about 0.6 s of it is painted
+    expect(Math.max(...xs) - x0).toBeGreaterThan(0.45 * SPEED);
+    expect(Math.max(...xs) - x0).toBeLessThan(0.75 * SPEED);
+    // a long boom
+    const b = studio();
+    b.p.at(where(4));
+    b.p.hit(drumHit(2, "kick", 1, tone(50, 0.9)));
+    settle(b.p);
+    const bx = b.wet.at.map(([x]) => x).filter(Number.isFinite);
+    expect(Math.max(...bx) - x0).toBeGreaterThan(0.5 * SPEED);
+  });
+
+  it("the same strum is made the same way: its notes are one gesture", () => {
+    const { p } = studio();
+    p.at(where(4));
+    const kinds = [60, 64, 67, 71].map((m, i) => {
+      p.hit(noteHit("chord", 2 + i * 0.01, m, 0.05, { slot: i }));
+      return p.last;
+    });
+    expect(new Set(kinds).size).toBe(1);
+    // over a long run the hand does change its mind now and then, but not every time
+    const { p: q } = studio(0.74, 3);
+    const seen: string[] = [];
+    for (let i = 0; i < 80; i++) {
+      q.at(where((i % 16) + 0.01));
+      q.hit(noteHit("chord", 10 + i * 0.5, 64, 0.05));
+      seen.push(q.last);
+    }
+    const changes = seen.filter((k, i) => i > 0 && k !== seen[i - 1]).length;
+    expect(new Set(seen).size).toBeGreaterThan(1);
+    expect(changes).toBeLessThan(30);
+  });
+
+  it("each section, and each of a long section's canvases, is its own painting", () => {
+    const { p } = studio();
+    p.at(where(0, "A"));
+    p.hit(drumHit(0, "kick"));
+    expect(p.keys()).toEqual(["A:0"]);
+    expect(p.showing()).toBe("A:0");
+    p.at(where(0, "B"));
+    expect(p.showing()).toBe("B:0");
+    expect(p.keys()).toEqual(["A:0", "B:0"]);
+    // sixteen bars: two canvases of eight
+    p.at({ key: "C", index: 2, beat: 40, bar: 4, bars: 16, spb: 0.5 });
+    expect(p.showing()).toBe("C:1");
+    p.clear();
+    expect(p.keys()).toEqual([]);
+    expect(p.made).toBe(0);
+  });
+
+  it("when a section comes round again the old paint fades all over at once: nothing sweeps across", () => {
+    const { p, dry } = studio(FADES[1].keep);
+    p.at(where(0));
+    p.hit(noteHit("chord", 0, 60, 1));
+    p.at(where(15.9));
+    settle(p);
+    const layer = dry();
+    expect(layer.rects.filter((r) => r[4] === "destination-out")).toHaveLength(0);
+    // round again
+    p.at(where(0.01));
+    for (let i = 0; i < 80; i++) p.frame(16);
+    const fades = layer.rects.filter((r) => r[4] === "destination-out");
+    expect(fades).toHaveLength(7);
+    // every step covers the whole canvas
+    for (const [x, y, w, h] of fades) expect([x, y, w, h]).toEqual([0, 0, 1000, 600]);
+    // and together they leave just as much as is asked for
+    expect(fades.reduce((a, r) => a * (1 - r[5]), 1)).toBeCloseTo(FADES[1].keep);
+    // the pass's own paint lies on another sheet, so it does not fade with the old
+    expect(layer.calls.drawImage).toBe(1);
+    // old paint that is kept does not fade at all
+    const k = studio(FADES[0].keep);
+    k.p.at(where(0));
+    k.p.hit(noteHit("chord", 0, 60, 1));
+    k.p.at(where(15.9));
+    k.p.at(where(0.01));
+    for (let i = 0; i < 80; i++) k.p.frame(16);
+    expect(k.dry().rects.filter((r) => r[4] === "destination-out")).toHaveLength(0);
+  });
+
+  it("only the bars that are played again fade", () => {
+    const { p, dry } = studio(FADES[2].keep);
+    // the second bar, looped
+    p.at(where(4));
+    p.hit(noteHit("chord", 2, 60, 0.4));
+    p.at(where(7.9));
+    p.at(where(4));
+    for (let i = 0; i < 80; i++) p.frame(16);
+    const fades = dry().rects.filter((r) => r[4] === "destination-out");
+    expect(fades).toHaveLength(7);
+    for (const [x, , w] of fades) {
+      // from about the start of the second bar to about its end (with soft edges), not the whole canvas
+      expect(x).toBeGreaterThan(xOf(0.25, 1000) - 60);
+      expect(x + w).toBeLessThan(xOf(0.5, 1000) + 90);
+    }
+  });
+
+  it("what the mix covers: the band that is sounding shows, and the parts of the mix share it out", () => {
+    const { p } = studio();
+    const levels = { chords: new Float32Array(BANDS), melody: new Float32Array(BANDS), drums: new Float32Array(BANDS) };
+    const at = (hz: number) => Math.round(Math.log2(hz / F_LO) * 6 - 0.5);
+    levels.chords[at(220)] = 0.02;
+    levels.melody[at(880)] = 0.01;
+    levels.drums[at(220)] = 0.02;
+    levels.drums[at(60)] = 0.05;
+    for (let i = 0; i < 400; i++) p.mix(levels, 16);
+    const { level, share } = p.coverage();
+    expect(level).toHaveLength(BANDS);
+    expect(Math.max(...level)).toBeCloseTo(1);
+    for (const hz of [60, 220, 880]) expect(level[at(hz)]).toBeGreaterThan(0.8);
+    // nothing where nothing sounds
+    expect(level[at(3000)]).toBe(0);
+    expect(level[at(120)]).toBe(0);
+    // at 220 Hz the chords and the drums are as strong as each other; at 880 it is all melody
+    expect(share.chords[at(220)]).toBeCloseTo(0.5);
+    expect(share.drums[at(220)]).toBeCloseTo(0.5);
+    expect(share.melody[at(880)]).toBeCloseTo(1);
+    for (let b = 0; b < BANDS; b++) {
+      const sum = STEM_IDS.reduce((a, s) => a + share[s][b], 0);
+      expect(sum === 0 || Math.abs(sum - 1) < 1e-5).toBe(true);
+    }
+    expect(bandHz(at(220))).toBeGreaterThan(190);
+    expect(bandHz(at(220))).toBeLessThan(250);
+  });
+
+  it("what goes on sounding leaves a fine grain where it sounds, behind the music, never along a line", () => {
+    const { p, wet } = studio();
+    p.at(where(8));
+    p.hit(noteHit("chord", 4, 57, 2));
+    settle(p);
+    const before = wet.at.length;
+    const levels = { chords: new Float32Array(BANDS) };
+    const band = Math.round(Math.log2(220 / F_LO) * 6 - 0.5);
+    levels.chords[band] = 0.05;
+    for (let i = 0; i < 300; i++) p.mix(levels, 16);
+    const grains = wet.at.slice(before);
+    expect(grains.length).toBeGreaterThan(40);
+    const x = xOf(0.5, 1000);
+    // all of it at or behind where the music is, spread over a stretch (not on one line)
+    for (const [gx] of grains) expect(gx).toBeLessThan(x + 12);
+    const gxs = grains.map(([gx]) => gx);
+    expect(Math.max(...gxs) - Math.min(...gxs)).toBeGreaterThan(15);
+    // and at the height of the band that is sounding
+    const y = yOfHz(220, 600);
+    expect(grains.filter(([, gy]) => Math.abs(gy - y) < 25).length / grains.length).toBeGreaterThan(0.9);
+    // silence leaves nothing
+    const quiet = studio();
+    quiet.p.at(where(8));
+    quiet.p.hit(noteHit("chord", 4, 57, 0.05));
+    settle(quiet.p);
+    const n = quiet.wet.at.length;
+    for (let i = 0; i < 300; i++) quiet.p.mix({ chords: new Float32Array(BANDS) }, 16);
+    expect(quiet.wet.at.length).toBe(n);
+  });
+});
+
+describe("the guide's three colours", () => {
+  it("chords, melody and drums can be told apart on every colour scheme", () => {
+    const apart = (a: string, b: string) => Math.hypot(...hexToRgb(a).map((v, i) => v - hexToRgb(b)[i]));
+    for (const p of PALETTES) {
+      const t = trio(p);
+      expect(t.drums).toBe(p.ink);
+      expect(p.colors).toContain(t.chords);
+      expect(p.colors).toContain(t.melody);
+      expect(apart(t.chords, t.melody), p.id).toBeGreaterThan(50);
+      expect(apart(t.chords, t.drums), p.id).toBeGreaterThan(50);
+      expect(apart(t.melody, t.drums), p.id).toBeGreaterThan(50);
+      expect(apart(t.melody, p.ground), p.id).toBeGreaterThan(50);
+    }
   });
 });

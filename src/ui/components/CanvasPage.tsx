@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audioIfStarted } from "../../audio/context";
 import { saveFile } from "../../audio/midi";
+import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
 import { due, listen } from "../../audio/pulse";
-import type { Spot } from "../../canvas/layout";
-import { FADES, Painter } from "../../canvas/painter";
-import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles } from "../../canvas/palettes";
+import { STEMS, readStem } from "../../audio/stems";
+import { MARGIN, REGIONS, RULER_HZ, hzLabel, pageOf, yOfHz, type Spot } from "../../canvas/layout";
+import { FADES, Painter, STEM_IDS, type StemId } from "../../canvas/painter";
+import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles, trio } from "../../canvas/palettes";
 import { SURFACES, surfaceRows, type Surface } from "../../canvas/weave";
 import type { Key } from "../../theory/keys";
 import { pc } from "../../theory/notes";
@@ -20,18 +22,25 @@ const MAX_PIXELS = 2_400_000;
  */
 const thread = (surface: Surface, dpr: number) => Math.max(3, Math.round((surface === "paper" ? 3.6 : surface === "linen" ? 2.1 : 2.5) * dpr));
 
+/** How wide the strip down the right edge is that shows what the mix covers, as a part of the canvas (it sits in the margin, clear of the paint). */
+const COVER = MARGIN * 0.9;
+
 /**
  * The canvas: while the song plays, it paints itself.
  *
- * Time runs across, pitch runs up. Every section has its own painting; chords are brush strokes,
- * the melody is a line of ink with a bead on every note, and each drum has a mark of its own.
+ * Time runs across, frequency runs up, an octave to every equal step. Every sound is painted
+ * where it is, as long as it lasts and as heavy as it is loud: short sounds are dabs, sounds
+ * that last are strokes, noise is spray. The guide marks the frequencies, the bars, and what
+ * the mix has lately covered.
  */
-export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }: {
+export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay }: {
   /** the page is on screen */
   active: boolean;
   playing: boolean;
   /** where the music is (null = stopped) */
   getSpot: () => Spot | null;
+  /** where the music would start: the bars are marked for it before anything plays */
+  rest: Spot;
   /** the key of the song: the note colours follow it */
   keyOf: Key;
   onPlay: () => void;
@@ -42,7 +51,15 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
   const pal = getPalette(prefs.palette);
   const surface: Surface = prefs.surface ?? pal.surface;
   const fade = prefs.fade ?? 1;
+  const guide = prefs.guide !== false;
   const stage = useRef<HTMLDivElement>(null);
+  /** the strip that shows what the mix covers */
+  const cover = useRef<HTMLCanvasElement>(null);
+  /** what each part of the mix is sounding right now, band by band (read off the mixer every frame) */
+  const levels = useRef<Record<StemId, Float32Array>>({ chords: new Float32Array(BANDS), melody: new Float32Array(BANDS), drums: new Float32Array(BANDS) });
+  /** the bars the canvas on show holds: the number of its first (0 = bar 1), how many, and how many a full canvas holds */
+  const [bars, setBars] = useState({ first: 0, count: 0, per: 1 });
+  const barsId = useRef("");
   const host = useRef<HTMLDivElement>(null);
   const tex = useRef<HTMLCanvasElement>(null);
   const painter = useRef<Painter | null>(null);
@@ -52,8 +69,11 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
   const [painted, setPainted] = useState(false);
   const tonic = pc(keyOf.tonic);
   const scale = useMemo(() => scalePcs(tonic, getScale(keyOf.scaleId)), [tonic, keyOf.scaleId]);
-  const live = useRef({ playing, getSpot });
-  live.current = { playing, getSpot };
+  const dark = roles(pal).dark;
+  /** the colours of the three parts of the mix in the strip that shows what it covers */
+  const stemColors = useMemo((): Record<StemId, string> => trio(pal), [pal]);
+  const live = useRef({ playing, getSpot, rest, guide, stemColors });
+  live.current = { playing, getSpot, rest, guide, stemColors };
   const setPrefs = (patch: Partial<typeof prefs>) => set((s) => ({ ...s, canvas: { ...(s.canvas ?? { palette: DEFAULT_PALETTE }), ...patch } }));
   /** the family of colour schemes being looked through (it starts on the family of the one in use) */
   const [group, setGroup] = useState(pal.group);
@@ -65,7 +85,7 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
     p.setKey(tonic, scale);
     painter.current = p;
     return () => {
-      p.clear();
+      p.destroy();
       painter.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
@@ -139,24 +159,76 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
     };
   }, [active, fit, full]);
 
+  /** Draw what the mix has lately covered: for every band a bar, as long as the mix is strong there, in the colours of the parts that make it up. */
+  const drawCover = useCallback((p: Painter) => {
+    const cv = cover.current;
+    const el = stage.current;
+    if (!cv || !el) return;
+    const w = Math.max(8, Math.round(el.clientWidth * COVER));
+    const h = el.clientHeight;
+    const dpr = Math.min(2, window.devicePixelRatio || 1);
+    if (cv.width !== Math.round(w * dpr) || cv.height !== Math.round(h * dpr)) {
+      cv.width = Math.round(w * dpr);
+      cv.height = Math.round(h * dpr);
+    }
+    const g = cv.getContext("2d")!;
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, w, h);
+    const { level, share } = p.coverage();
+    for (let b = 0; b < BANDS; b++) {
+      if (level[b] < 0.01) continue;
+      const y1 = yOfHz(F_LO * Math.pow(2, b / PER_OCTAVE), h);
+      const y0 = yOfHz(F_LO * Math.pow(2, (b + 1) / PER_OCTAVE), h);
+      // the bar grows leftwards from the edge
+      let x = w;
+      const len = level[b] * (w - 1);
+      for (const s of STEM_IDS) {
+        const part = len * share[s][b];
+        if (part < 0.2) continue;
+        g.fillStyle = live.current.stemColors[s];
+        g.fillRect(x - part, y0 + 0.5, part, Math.max(1, y1 - y0 - 1));
+        x -= part;
+      }
+    }
+  }, []);
+
   // while the page is on screen: hear what sounds, and paint it
   useEffect(() => {
     if (!active) return;
     const stop = listen();
     let raf = 0;
     let last = performance.now();
+    let drawn = 0;
     const tick = (now: number) => {
       const p = painter.current;
       const c = audioIfStarted();
       if (p) {
-        p.at(live.current.playing ? live.current.getSpot() : null);
+        const spot = live.current.playing ? live.current.getSpot() : null;
+        p.at(spot);
         if (c) {
           // what is heard comes out of the speakers a moment after it is scheduled
           const heard = c.currentTime - (c.outputLatency || 0);
-          for (const hit of due(heard)) p.hit(hit);
+          for (const hit of due(heard)) p.hit(hit, heard - hit.time);
+          if (spot) {
+            // what the mixer is putting out right now, part by part
+            for (const s of STEMS) readStem(s, levels.current[s]);
+            p.mix(levels.current, now - last);
+          }
         }
         p.frame(now - last);
         if (p.made > 0) setPainted(true);
+        // the guide: which bars this canvas holds, and (a few times a second) what the mix covers
+        const where = spot ?? live.current.rest;
+        const pg = pageOf(where, stage.current?.clientWidth ?? 600);
+        const id = `${pg.page}/${pg.perPage}/${where.bars}`;
+        if (id !== barsId.current) {
+          barsId.current = id;
+          setBars({ first: pg.page * pg.perPage, count: Math.max(0, Math.min(pg.perPage, Math.round(where.bars) - pg.page * pg.perPage)), per: pg.perPage });
+        }
+        if (live.current.guide && now - drawn > 110) {
+          drawn = now;
+          drawCover(p);
+        }
       }
       last = now;
       raf = requestAnimationFrame(tick);
@@ -166,7 +238,7 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
       cancelAnimationFrame(raf);
       stop();
     };
-  }, [active]);
+  }, [active, drawCover]);
 
   // Escape leaves the full screen
   useEffect(() => {
@@ -189,7 +261,7 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
       toast(r === "saved" ? "Picture saved" : r === "failed" ? "Can't save files here" : "Cancelled");
     }, "image/png");
   };
-  const dark = roles(pal).dark;
+  const pct = (hz: number) => `${yOfHz(hz, 100)}%`;
 
   return (
     <section className={`card cv${full ? " full" : ""}`} aria-label="Canvas">
@@ -197,13 +269,32 @@ export function CanvasPage({ active, playing, getSpot, keyOf, onPlay, canPlay }:
         <div className="cv-host" ref={host} />
         <canvas className="cv-tex" ref={tex} />
         <div className="cv-edge" />
+        {guide && (
+          <div className="cv-guide" style={{ color: pal.ink, ["--cv-ground" as string]: pal.ground }} aria-hidden="true">
+            {RULER_HZ.map((hz) => <span key={hz} className="cv-hz" style={{ top: pct(hz) }}>{hzLabel(hz)}</span>)}
+            {REGIONS.map((reg) => (
+              <span key={reg.name} className="cv-reg" style={{ top: pct(reg.to), height: `${yOfHz(reg.from, 100) - yOfHz(reg.to, 100)}%`, width: `${COVER * 100}%` }}><i>{reg.short}</i></span>
+            ))}
+            {Array.from({ length: bars.count }, (_, k) => (
+              <span key={k} className="cv-barno" style={{ left: `${(MARGIN + (k / bars.per) * (1 - 2 * MARGIN)) * 100}%` }}>{bars.first + k + 1}</span>
+            ))}
+            <canvas className="cv-cover" ref={cover} style={{ width: `${COVER * 100}%` }} />
+          </div>
+        )}
         {!painted && <p className="cv-hint" style={{ color: pal.ink }}>{playing ? "Listening…" : "Press ▶ and the song paints itself"}</p>}
         <div className="cv-tools">
+          <button className={`icon-btn cv-hzbtn${guide ? " on" : ""}`} aria-pressed={guide} aria-label="Guide: frequencies, bars, and what the mix covers" title="Guide: frequencies, bars, and what the mix covers" onClick={() => setPrefs({ guide: !guide })}>Hz</button>
           {full && <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>}
           <button className="icon-btn" aria-label={full ? "Leave the full screen" : "Fill the screen"} title={full ? "Back" : "Fill the screen"} onClick={() => setFull(!full)}>{full ? "✕" : "⤢"}</button>
         </div>
       </div>
       <div className="cv-bar">
+        {guide && (
+          <p className="cv-key">
+            Up: frequency. Across: the bars. Right edge: what the mix has covered lately
+            {STEM_IDS.map((id) => <span key={id}><i style={{ background: stemColors[id] }} />{id}</span>)}
+          </p>
+        )}
         <div className="cv-pick">
           <Seg value={group} options={PALETTE_GROUPS.map((g) => ({ value: g, label: g }))} onChange={setGroup} label="Families of colour schemes" />
           <div className="cv-pals" role="radiogroup" aria-label={`${group} colour schemes`}>

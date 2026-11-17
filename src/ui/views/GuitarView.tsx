@@ -353,6 +353,12 @@ export function GuitarView() {
     const letters = [...new Set(per.map((x) => x.letter))];
     return { key: sec.letter, index: Math.max(0, letters.indexOf(sec.letter)), beat: pos.beat, bar: sec.bar, bars: sec.bars, spb: 60 / bpmRef.current };
   }, []);
+  /** Where the music would start if it were started now (the canvas marks its bars before anything plays). */
+  const restSpot = useMemo((): Spot => {
+    const sec = plan.per.find((x) => x.block === curBlock) ?? plan.per[0];
+    const letters = [...new Set(plan.per.map((x) => x.letter))];
+    return { key: sec?.letter ?? "A", index: Math.max(0, letters.indexOf(sec?.letter ?? "A")), beat: 0, bar: sec?.bar ?? 4, bars: sec?.bars ?? 4, spb: 60 / prog.bpm };
+  }, [plan, curBlock, prog.bpm]);
   /** The bar of the song that is sounding: its section and which of its bars. */
   const getBar = useCallback((): BarRef | null => {
     // the section and the place in it are read together, so the mark never shows one with the other's bar
@@ -494,7 +500,7 @@ export function GuitarView() {
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
-          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
+          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} stepSink={stepSink} kitLink={link("kit")} grooveLink={link("groove")} frame={nBars} getPos={getPos} />

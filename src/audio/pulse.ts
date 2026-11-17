@@ -4,13 +4,43 @@
  *
  * Nothing is kept unless someone is listening.
  */
+import type { Sound } from "./describe";
 import type { DrumId } from "./drums";
 
-export type Pulse =
-  /** a plucked string: `length` is how long the hand stays on it, in seconds */
-  | { kind: "chord"; time: number; midi: number; velocity: number; length: number }
-  | { kind: "melody"; time: number; midi: number; velocity: number; length: number }
-  | { kind: "drum"; time: number; drum: DrumId; velocity: number };
+/** A plucked string. */
+export interface NotePulse {
+  /** which harp: the one that plays the chords, or the one that plays the melody */
+  kind: "chord" | "melody";
+  /** when it is heard (audio clock, seconds) */
+  time: number;
+  /** the note that sounds (MIDI number; an instrument that sounds an octave up is reported an octave up) */
+  midi: number;
+  /** how hard it is plucked, 0..1: harder is louder and brighter */
+  velocity: number;
+  /** how long it is left to sound, in seconds: until the hand damps it or the same string is plucked again */
+  length: number;
+  /** which string (a new note on the same string takes over from the old one); −1 = no particular string */
+  slot: number;
+  /** the instrument's fader, 0..1 */
+  gain: number;
+  /** a hard pluck is a bright one: overtones above this frequency (hertz) are dulled */
+  cutoff: number;
+  /** a twelve-string's octave string: how strong it is next to the note itself (0 = there is none) */
+  octave: number;
+  /** the note itself, measured */
+  sound: Sound;
+}
+/** A drum hit. */
+export interface DrumPulse {
+  kind: "drum";
+  time: number;
+  drum: DrumId;
+  velocity: number;
+  /** the drum's fader, 1 = as it comes */
+  gain: number;
+  sound: Sound;
+}
+export type Pulse = NotePulse | DrumPulse;
 
 let listeners = 0;
 let queue: Pulse[] = [];
@@ -26,6 +56,9 @@ export function listen(): () => void {
     if (!listeners) queue = [];
   };
 }
+
+/** Is anyone listening? (Measuring a sound takes a moment: it is only done when someone is.) */
+export const listening = () => listeners > 0;
 
 /** Something has been scheduled to sound. */
 export function pulse(p: Pulse) {

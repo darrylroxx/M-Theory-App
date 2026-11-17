@@ -97,18 +97,38 @@ Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels
 
 ## The Canvas: the song paints itself
 
-Open **Canvas** and press ▶. While the song plays, it is painted, live, on a woven surface.
+Open **Canvas** and press ▶. While the song plays it is painted, live, on a woven surface. What is painted is what sounds: the canvas is made to be read as well as looked at.
 
-- **Time runs across, pitch runs up.** The canvas is as wide as the section's bars (long sections take several canvases, eight bars each; four on a narrow phone), so the music crosses it from left to right. The kick and the bass strings are at the bottom, the chords across the middle, the melody above them, cymbals and shakers along the top.
-- **Every sound has its own mark.**
-  - A chord note is a brush stroke that goes on for as long as the string is held, and runs dry as it goes. A bass string leaves a pool of thin paint under its stroke.
-  - The melody is a line of ink from note to note, with a bead of colour on every note.
-  - The kick is a heavy blot, the snare a splatter, the clap three dabs, the hats quick flicks, the shaker a sprinkle, the rim a ring. Now and then thick paint runs.
-- **Colour follows harmony.** The notes of the key share the palette out between them in the order of the circle of fifths, so a chord is a family of neighbouring colours and a change of chord is a change of colour. Each section moves the whole family round, so each has its own cast.
-- **Every section has its own painting.** When the song moves on, the next section's painting comes forward and the last one steps back; when a section comes round again it is painted over what is there. Old paint is first knocked back a little (**Old paint**: Keep, Slow or Fast), so the newest pass is the clearest and earlier ones show through behind it.
+**How to read it**
+
+- **Across is time.** The canvas is as wide as the section's bars, numbered along the bottom (long sections take several canvases, eight bars each; four on a narrow phone).
+- **Up is frequency.** The scale runs from 32 Hz at the bottom to 16 kHz at the top and is marked down the left edge (50, 100, 200, 500, 1k, 2k, 5k, 10k). An octave is a fixed step. The four octaves the notes of a song live in (80 Hz to 1.3 kHz) get the biggest steps, so that notes a tone apart can be told apart. Every sound is painted at the height of the frequencies it is really made of: a kick drum between 50 and 100 Hz, each note of a chord at its own pitch, its overtones as thin lines above it, cymbals at the top.
+- **How long a mark is, is how long the sound lasts.** A string left to ring is painted for as long as it can be heard (until it has died away by about 20 dB). One that is stopped, or plucked again, is painted until then: so a strummed rhythm shows as separate marks, one for every stroke of the hand.
+- **How heavy is how loud. How tall is how much of the scale it covers.** A pure tone is a line. A hiss an octave wide is a cloud an octave tall.
+- **Short sounds are paint put down and lifted:** dabs, dots, prints, spatters. A sound that is gone at once is a dab. One that lasts a little longer is a shape with a head and a taper, as long as the sound.
+- **Sounds that last are paint pulled along:** a stroke that presses hardest where the sound is loudest, at its start, and runs dry as the sound dies away.
+- **A note that takes over from another on the same string, with no silence between, carries the stroke on:** up to a higher note, down to a lower one. A legato melody is one line that rises and falls with the tune. At a chord change, each string that is still ringing bends to its new note.
+- **A tone is a line or a shape, a noise is a spray.** A drum is painted from what it is made of. A snare is a thump low down, a burst of spray high up, and paint thrown from the one to the other. A bell is several lines, one for each of its partials. A rim click is a line straight up and down, because a click is every frequency at once for an instant. A kick drum whose pitch drops has a tail pointing back up to where it came from.
+- **Hard, bright sounds lean to shapes with corners. Soft or dull ones are round.**
+- **Colour follows harmony.** The notes of the key share the palette out between them in the order of the circle of fifths, so a chord is a family of neighbouring colours and a change of chord is a change of colour. Each section moves the whole family round, so each has its own cast. The melody carries a thin line of ink, so it can be told from the chords at a glance.
+- **Down the right edge: what the mix covers.** For every sixth of an octave, a bar as long as the mix has lately been strong there, measured from what really comes out of the mixer (after the echo, the reverb and the saturation) and coloured by how much of it is chords, melody and drums. The regions of a mix are named beside it: Sub, Bass, Lo-mid, Mid, Hi-mid, Air. A gap in the strip is a gap in the mix. A bar shared by two colours is two parts sitting in the same place. Like the analysers in mixing software, the strip is tilted (4.5 dB an octave), so a balanced mix looks level.
+- The **Hz** button puts the guide (the frequencies, the bars, the strip) away and brings it back.
+
+**How it is painted**
+
+- **Every sound is measured first.** Each drum hit and each plucked note is a small recording made by the app's own synthesizers. Before it is painted, the app measures it: which frequencies it is made of, how wide each is, how long each rings, whether each is a tone or a noise, whether its pitch slides, how hard it starts. The mark is made from those numbers, not from the name of the instrument. Change a drum's sound or a string's tone and its mark changes with it.
+- **The mix is listened to as well.** Three taps on the mixer (chords, melody, drums) are read every frame. Whatever goes on sounding (a reverb tail, an echo) leaves a fine grain of colour at the height where it sounds.
+- **A stroke is made the way a hand makes one:** in one quick movement that sets off slowly, is fastest in the middle and slows to a stop, done in about half a second. Nothing creeps across the canvas at the speed of the music.
+- **When a section comes round again it is painted over what is there,** and what is there is first let fade a little, all over at once (**Old paint**: Keep, Slow or Fast). No line sweeps across. If only some bars are looped, only those bars fade.
+- **A big library of marks,** so that no two passages look alike:
+  - 20 brushes to pull along a path: bristle, dry brush, wet-on-dry, watercolour wash, liner, flat ribbon, spray, hatching, a row of dots, fan brush, a brush loaded with two colours, a brush loaded on one side, palette knife, chalk, dashes, scribble, broad nib, reed pen (solid, then two tracks, then scratches as it runs dry), a sketched double line, and the even "bone" line of ink painting with a knot at each end.
+  - 28 ways to put the brush down and lift it: round dab, teardrop, petal, tile, sponge, blot, ring, comma, dot, bead, flick, tally marks, burst, dash, halo, a pair, diamond, wedge, crescent, block, a cluster of seeds, bamboo leaf, nail-head, dagger blade, bristle-end stamp, splash crown, wet bloom, knife-edge line.
+  - 9 ways to throw paint: mist, grit, a flicked arc, fan tap, stipple, rain, shards, a tapped brush, scumble. And washes, splatters, drips and runs.
+- **Every section has its own hand.** Which brush it reaches for first, how it puts the brush down, how it leans, how steady it is: these are settled for each section, so a verse does not look like a chorus. Inside a section they are habits, not rules. A hand keeps making the same mark for a while and then changes, all the notes of one strum are one gesture, and sizes and angles drift from mark to mark instead of jumping about. The brush runs out of paint, leaves drier strokes, and is dipped again.
+- **The paint behaves like paint.** A wash dries with a darker line at its edge and grains of pigment in the hollows of the surface. A touch that lands where the canvas is still wet spreads into a soft bloom, and now and then the water it brings pushes the wash back and leaves a backrun. Dry brushes and chalk skip on the grain of the surface, the same grain everywhere, so strokes that cross break in the same places. Thick paint runs.
 - **36 colour schemes** in five families (below), three **surfaces** (canvas, linen, rough paper), **Save picture** (a PNG with the surface in it) and **⤢** to fill the screen.
 
-Nothing is random noise: every mark is one note or one drum hit, placed where and when it sounded. What is left to chance is what a hand would leave to chance: how the bristles spread, where a drop lands, whether the paint runs.
+**What it does not show.** Where a sound is from left to right in the stereo field. Anything finer than a sixth of an octave in the strip at the right edge (and below about 100 Hz that strip smears neighbouring bars a little, as every analyser of its size does). A note is placed by its pitch and by measurements of its sound on its own, so two notes that beat against each other are painted as two notes, not as the beating.
 
 ### The colour schemes, and where they come from
 
@@ -141,7 +161,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 208 tests: theory (incl. an audit of every key), voicings, shapes, song structure, melody, library, harp, styles, effects, saturation, drums, rhythms, MIDI
+npm test          # 313 tests: theory (incl. an audit of every key), voicings, shapes, song structure, melody, library, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the canvas
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -254,3 +274,38 @@ Seen as search excerpts only:
 - [Working with color in generative art](https://www.tylerxhobbs.com/words/working-with-color-in-generative-art)
 
 The paint itself is drawn the way generative painters draw it: a wash is many see-through layers of one ragged outline, each roughened a little differently; a brush stroke is drawn bristle by bristle, each with its own shade and its own amount of paint. The woven surface is worked out as the height of threads going over and under each other, lit from the top left, and laid over paint and bare canvas alike.
+
+### Where the canvas's marks, and its way of turning sound into paint, come from
+
+Two pieces of research sit behind the canvas: how people match sounds to pictures, and how painters and paint programs make marks. In this session only code and papers hosted on GitHub and npm could be opened and read; everything else was seen as search-result excerpts and is listed as such. The canvas recipes themselves were written for this app.
+
+What was taken from it:
+
+- **Which part of a sound goes to which part of a picture.** Pitch to height (the most robust pairing there is: infants show it), length to length, loudness to size and weight, brightness to lightness, harsh attack to corners and soft to round, noise to grain. One property of the sound for each property of the picture, because people agree less when several run at once. Hue for pitch was avoided as a way to read pitch (studies call it arbitrary); here hue carries harmony instead.
+- **A frequency scale in octaves.** On a straight-line scale the bass gets 1% of the height; on a scale of octaves a semitone is the same step everywhere, as on a piano.
+- **How long a ringing note "is".** Its effective length: the time until it has fallen by about 20 dB. Measured for each note, because a low string rings many times longer than a high one.
+- **Kinds of sound and kinds of mark.** Attack alone: a dot with no tail. Attack and decay: a head and a taper as long as the decay. A harmonic note: a clean line. An inharmonic one: several lines. Granular noise: stipple. Dense noise: a filled band.
+- **Legato and staccato in numbers.** A staccato note sounds for about half its slot, a legato one for all of it; whether two notes are heard as joined depends on there being no gap.
+- **Sight and sound together.** A mark may appear up to about 45 ms after its sound before most people notice, so every mark is begun in the frame its sound is heard.
+- **The tilt of the strip at the right edge.** Number-one singles of sixty years fall off by about 5 dB an octave between 100 Hz and 4 kHz; analysers tilt their displays so that this looks level.
+- **How a hand moves.** The smoothest way from one point to another (minimum jerk): slow, fast, slow, peaking at nearly twice the average speed. A figure drawn twice as large takes only a little longer. Hand tremor is 8 to 12 Hz. Repeated marks vary together, not independently.
+- **How paint behaves.** Edge darkening as a wash dries, granulation, backruns, pooling at the end of a wet stroke, dry-brush gaps that follow the tooth of the paper, a brush whose bristles run out one by one.
+
+Read directly:
+
+- Sound and picture: [Zacharakis, Pastiadis and Reiss, the words people use for timbre](https://raw.githubusercontent.com/joshreiss/joshreiss.github.io/master/documents/2014/Zacharakis%20Pastiadis%20Reiss%20-%20Music%20Perception.pdf); [Smalley, Spectromorphology: explaining sound-shapes](https://raw.githubusercontent.com/tambien/InteractiveMusic/master/pdfs/Spectromorphology%20Explaining%20Sound%20Shapes_%20D.%20Smalley.pdf); [Pestana, Ma and Reiss, the average spectrum of popular music](https://raw.githubusercontent.com/joshreiss/joshreiss.github.io/master/documents/2013/Pestana%20Ma%20Reiss%20-%20AES135.pdf)
+- Measuring sound: [librosa](https://raw.githubusercontent.com/librosa/librosa/main/librosa/feature/spectral.py), [Essentia](https://github.com/MTG/essentia/tree/master/src/algorithms) (attack time, effective duration, decay), [Meyda](https://raw.githubusercontent.com/meyda/meyda/main/docs/audio-features.md), [aubio](https://raw.githubusercontent.com/aubio/aubio/master/src/spectral/specdesc.c), [pyloudnorm](https://raw.githubusercontent.com/csteinmetz1/pyloudnorm/master/pyloudnorm/meter.py)
+- The analyser in the browser: [the Web Audio specification](https://raw.githubusercontent.com/WebAudio/web-audio-api/main/index.bs), [WebKit's analyser](https://raw.githubusercontent.com/WebKit/WebKit/main/Source/WebCore/Modules/webaudio/RealtimeAnalyser.cpp)
+- How other tools draw sound: [Audacity's spectrogram settings](https://raw.githubusercontent.com/audacity/audacity/release-3.2.5/src/prefs/SpectrogramSettings.cpp), [Sonic Visualiser's spectrogram layer](https://raw.githubusercontent.com/sonic-visualiser/svgui/default/layer/SpectrogramLayer.cpp)
+- Articulation: [LilyPond's articulate script](https://raw.githubusercontent.com/lilypond/lilypond/master/ly/articulate.ly), [MuseScore's instrument definitions](https://raw.githubusercontent.com/musescore/MuseScore/3.x/share/instruments/instruments.xml), [music21's articulations](https://raw.githubusercontent.com/cuthbertLab/music21/master/music21/articulations.py)
+- Brushes and paint: [p5.brush](https://registry.npmjs.org/p5.brush), [rough.js](https://registry.npmjs.org/roughjs), [perfect-freehand](https://registry.npmjs.org/perfect-freehand), [MyPaint's brush settings](https://raw.githubusercontent.com/mypaint/libmypaint/master/brushsettings.json) and brushes, [Krita's bristle brush](https://raw.githubusercontent.com/KDE/krita/master/plugins/paintops/hairy/hairy_brush.cpp), [Harmony](https://raw.githubusercontent.com/mrdoob/harmony/master/js/brushes/sketchy.js), [a watercolour simulation in Processing](https://raw.githubusercontent.com/sighack/watercolor-simulation/master/watercolor.pde), [shan-shui-inf](https://raw.githubusercontent.com/LingDong-/shan-shui-inf/master/index.html), [fishdraw](https://raw.githubusercontent.com/LingDong-/fishdraw/main/fishdraw.js)
+
+Seen as search excerpts only:
+
+- Matching sound to sight: [Evans and Treisman on pitch and visual features](https://www.doi.org/10.3758/S13414-010-0073-7), [pitch and height in infants](https://www.babylab.ucla.edu/wp-content/uploads/sites/8/2016/09/Walker_etal2010.pdf), [timbre and shape](https://www.frontiersin.org/articles/10.3389/fnhum.2014.00352/full), [how people draw sound](https://www.frontiersin.org/articles/10.3389/fpsyg.2018.00178/text), [the Music Animation Machine](http://www.musanim.com/mam/rustarticle.html)
+- Mixing: [the regions of the audio spectrum](https://www.teachmeaudio.com/mixing/techniques/audio-spectrum), [where drums sit](https://www.izotope.com/en/learn/how-to-eq-drums.html), [masking and critical bands](https://pressbooks.umn.edu/sensationandperception/chapter/critical-bands-and-masking-draft/)
+- Staccato and legato as measured in performances: [Bresin on articulation rules](https://www.speech.kth.se/publications/pdfs/bresin_r.pdf)
+- Sound and picture in time: [ITU-R BT.1359, relative timing of sound and vision](https://www.itu.int/dms_pubrec/itu-r/rec/bt/R-REC-BT.1359-1-199811-I!!PDF-E.pdf)
+- Simulating paint: [Computer-generated watercolor](https://grail.cs.washington.edu/projects/watercolor/), [a procedural watercolor engine](https://research.adobe.com/publication/a-procedural-watercolor-engine), [a guide to simulating watercolor with generative art](https://www.tylerxhobbs.com/words/a-guide-to-simulating-watercolor-paint-with-generative-art), [painterly rendering with brush strokes of several sizes](https://mrl.cs.nyu.edu/publications/painterly98/), [why a dried drop leaves a ring](https://www.nature.com/articles/39827.pdf)
+- How a hand moves: [the minimum-jerk model](https://nbviewer.jupyter.org/github/demotu/BMC/blob/master/notebooks/MinimumJerkHypothesis.ipynb), [speed and curvature in drawing](https://www.ece.uvic.ca/~bctill/papers/mocap/Lacquaniti_etal_1983.pdf), [noise in movement](https://www.ece.uvic.ca/~bctill/papers/mocap/Harris_Wolpert_1998.pdf), [why human rhythm is not random](https://www.ncbi.nlm.nih.gov/pmc/articles/PMC3202537/)
+- Brushwork: [flat-brush strokes](https://plaidonline.com/articles/how-to-use-a-flat-brush), [brush shapes and the marks they make](https://opusartsupplies.com/blogs/resource-library/a-brush-with-purpose-understanding-brush-shapes-and-the-marks-they-make), [the brush techniques of ink painting](https://oriental-art.github.io/oriental-art/articles/painting/02_brush_techniques.html), [dry brush in watercolour](https://watercolorpainting.com/dry-brush-watercolor-technique/)

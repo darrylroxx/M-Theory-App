@@ -6,10 +6,12 @@ import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
 import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
 import { DRUM_IDS, drumRng } from "./drums";
-import { STRING_KEYS, renderHarp, stringKey, type HarpString } from "./harp";
-import { melodyBeats, tuneBetween } from "../song/melody";
+import { STRING_KEYS, renderHarp, stringKey, voiceShift, type HarpString } from "./harp";
+import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
 import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
-import { dropPulses, pulse } from "./pulse";
+import { dropPulses, listening, pulse } from "./pulse";
+import { describe, type Sound } from "./describe";
+import { tapStem } from "./stems";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
@@ -22,6 +24,17 @@ interface Ringing {
 }
 
 /** A set of strings on one audio context (the live one, or an offline one for measuring and bouncing). */
+/** A note, measured (once for each recording). */
+const measured = new WeakMap<AudioBuffer, Sound>();
+function soundOf(buf: AudioBuffer): Sound {
+  let s = measured.get(buf);
+  if (!s) {
+    s = describe(buf.getChannelData(0), buf.sampleRate);
+    measured.set(buf, s);
+  }
+  return s;
+}
+
 export class Harp {
   readonly rack: Rack;
   sound: HarpSound = SOUND_DEFAULT;
@@ -78,17 +91,19 @@ export class Harp {
    * Pluck one string. `slot` = which string: a new note on the same string stops the old one, as on a real instrument.
    * `lengthSec` = when the hand lifts; how gently the note then fades follows the Ring knob.
    */
-  play(midi: number, when: number, velocity = 0.8, slot?: number, lengthSec = Infinity, cut = false, lift = 1, as?: HarpSound) {
+  play(midi: number, when: number, velocity = 0.8, slot?: number, lengthSec = Infinity, cut = false, lift = 1, as?: HarpSound, until?: number) {
     const c = this.c;
-    if (this.tag) pulse({ kind: this.tag, time: when, midi, velocity, length: Math.min(8, lengthSec) });
     // a note scheduled just before a song section begins is already played the way that section sounds
     const s = as ?? this.sound;
     const src = c.createBufferSource();
     src.buffer = this.buffer(midi, as ?? this.strings);
+    // for the canvas: what sounds, measured from the note itself. `until` = when the next note of this voice comes, if that is sooner than the hand lifts
     // a harder pluck is a brighter one
+    const cutoff = Math.min(20000, 700 * Math.pow(2, velocity * 5));
+    if (this.tag && listening()) pulse({ kind: this.tag, time: when, midi: midi + voiceShift((as ?? this.strings).voice), velocity, length: Math.min(8, lengthSec, until ?? Infinity), slot: slot ?? -1, gain: s.level * lift, cutoff, octave: 0.7 * Math.max(0, s.octave), sound: soundOf(src.buffer) });
     const vcf = c.createBiquadFilter();
     vcf.type = "lowpass";
-    vcf.frequency.value = Math.min(20000, 700 * Math.pow(2, velocity * 5));
+    vcf.frequency.value = cutoff;
     vcf.Q.value = 0.4;
     const g = c.createGain();
     g.gain.value = VOICE_GAIN * Math.pow(velocity, 1.3) * lift;
@@ -163,7 +178,11 @@ let ducking = false;
 function wake(l: Live): Harp {
   const ctx = audioContext();
   if (!l.harp) {
-    l.harp = new Harp(ctx);
+    // each harp goes out through a tap of its own, so the canvas can hear the chords and the melody apart
+    const out = ctx.createGain();
+    out.connect(ctx.destination);
+    tapStem(l === tuneLive ? "melody" : "chords", out);
+    l.harp = new Harp(ctx, out);
     l.harp.tag = l === tuneLive ? "melody" : "chord";
     l.harp.setSound(l.sound, tempo);
     ducks.push(l.harp.rack.duck.gain);
@@ -286,9 +305,20 @@ export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null
 
 /** Pluck everything one chord's style asks for, starting at time `t`. */
 function playItem(h: Harp, item: PlayItem, t: number, spb: number, pattern: PatternId, at: number, beat: Beat | null) {
-  for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat), item.feel)) {
+  const notes = styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat), item.feel);
+  const when = (e: (typeof notes)[number]) => e.beat * spb + e.delay;
+  const watched = listening();
+  for (const e of notes) {
     const held = Math.min(e.length, item.beats - e.beat) * spb - e.delay;
-    h.play(e.midi, t + e.beat * spb + e.delay, e.velocity, e.slot, Math.min(held, e.cut ?? Infinity), e.cut !== undefined, 1, item.sound);
+    // for the canvas: a string that is plucked again stops sounding as it was, so a note lasts only until its string's next pluck
+    let until = Infinity;
+    if (watched) {
+      for (const o of notes) {
+        const gap = when(o) - when(e);
+        if (o.slot === e.slot && gap > 0.02 && gap < until) until = gap;
+      }
+    }
+    h.play(e.midi, t + when(e), e.velocity, e.slot, Math.min(held, e.cut ?? Infinity), e.cut !== undefined, 1, item.sound, until);
   }
 }
 
@@ -498,7 +528,9 @@ export class ProgressionPlayer {
       const t = this.tuneAt(cur);
       if (t && t.m.on !== false && t.m.notes.length) {
         const hits = tuneBetween(t.m, t.bar, this.tTick / 12, (this.tTick + 1) / 12, t.swing);
-        hits.forEach((h, i) => liveTune().play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, t.sound));
+        // (for the canvas: a melody note sounds until the next one comes)
+        const gap = hits.length ? nextNote(t.m, t.bar, this.tTick / 12) * cur.spb : 0;
+        hits.forEach((h, i) => liveTune().play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, t.sound, gap));
       }
       this.tTick++;
     }

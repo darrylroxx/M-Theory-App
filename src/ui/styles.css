@@ -692,8 +692,8 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 
 /* ── Canvas: the song paints itself ── */
 .cv { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
-.cv-stage { position: relative; width: 100%; height: clamp(260px, 52vw, 58vh); border-radius: 10px; overflow: hidden; isolation: isolate; }
-.cv-host, .cv-layer, .cv-tex, .cv-edge { position: absolute; inset: 0; width: 100%; height: 100%; }
+.cv-stage { position: relative; width: 100%; height: clamp(300px, 56vw, 64vh); border-radius: 10px; overflow: hidden; isolation: isolate; }
+.cv-host, .cv-layer, .cv-wet, .cv-tex, .cv-edge { position: absolute; inset: 0; width: 100%; height: 100%; }
 /* one painting gives way to the next as the song moves on */
 .cv-layer { transition: opacity 0.9s ease; }
 /* the cloth: lighter where a thread catches the light, darker in the gaps, over paint and bare canvas alike */
@@ -702,6 +702,19 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 /* on a dark ground the cloth shows mostly as highlights: it is laid on more lightly */
 .cv-stage.dark .cv-tex { opacity: 0.5; }
 .cv-stage.dark .cv-edge { box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+/* the guide: frequencies down the left, the regions of a mix and what it covers down the right, bar numbers along the bottom */
+.cv-guide { position: absolute; inset: 0; z-index: 2; pointer-events: none; font-size: 0.56rem; font-weight: 750; line-height: 1; text-shadow: 0 0 3px var(--cv-ground), 0 0 2px var(--cv-ground); }
+.cv-hz { position: absolute; left: 0; transform: translateY(-50%); padding-left: 8px; opacity: 0.62; }
+.cv-hz::before { content: ""; position: absolute; left: 0; top: 50%; width: 5px; border-top: 1px solid currentColor; }
+.cv-reg { position: absolute; right: 0; display: grid; place-items: center; border-top: 1px solid color-mix(in srgb, currentColor 34%, transparent); }
+.cv-reg i { font-style: normal; writing-mode: vertical-rl; transform: rotate(180deg); white-space: nowrap; padding: 2px 1px; border-radius: 3px; background: color-mix(in srgb, var(--cv-ground) 72%, transparent); text-shadow: none; opacity: 0.85; }
+.cv-barno { position: absolute; bottom: 0; transform: translateX(-50%); padding-bottom: 8px; opacity: 0.62; }
+.cv-barno::after { content: ""; position: absolute; left: 50%; bottom: 0; height: 5px; border-left: 1px solid currentColor; }
+.cv-cover { position: absolute; right: 0; top: 0; height: 100%; opacity: 0.62; }
+.cv-hzbtn { font-size: 0.68rem; letter-spacing: 0.02em; }
+.cv-key { margin: 0; font-size: 0.72rem; color: var(--muted); line-height: 1.5; }
+.cv-key span { display: inline-flex; align-items: center; gap: 4px; margin-left: 8px; font-weight: 750; white-space: nowrap; }
+.cv-key i { width: 9px; height: 9px; border-radius: 2px; border: 1px solid var(--border-2); }
 .cv-hint { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 0 20px; text-align: center; font-weight: 750; opacity: 0.5; pointer-events: none; }
 .cv-tools { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 8px; opacity: 0.85; }
 .cv-tools .icon-btn { background: color-mix(in srgb, var(--card) 80%, transparent); backdrop-filter: blur(6px); }
@@ -729,7 +742,7 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .cv-opts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 @media (max-width: 620px) {
   .cv { padding: 8px; }
-  .cv-stage { height: min(112vw, 60vh); }
+  .cv-stage { height: min(128vw, 64vh); }
   .tab { font-size: 0.84rem; }
   .cv-opts .spacer { flex-basis: 100%; height: 0; }
 }

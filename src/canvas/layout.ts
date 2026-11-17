@@ -2,11 +2,11 @@
  * Where things go on the canvas.
  *
  * Time runs from left to right: the canvas is as wide as the section (long sections take several
- * canvases, one after another). Pitch runs from bottom to top: the kick and the bass strings at
- * the bottom, the chords across the middle, the melody above them, and the cymbals and shakers
- * as a sprinkle along the top.
+ * canvases, one after another). Frequency runs from bottom to top, an octave to every equal step:
+ * the kick and the bass strings at the bottom, the chords and the melody above them at the height
+ * of their own notes, their overtones above those, and the cymbals and shakers at the very top.
  */
-import type { DrumId } from "../audio/drums";
+import { F_HI, F_LO } from "../audio/describe";
 
 /** Where the music is: which section, and how far into it. */
 export interface Spot {
@@ -54,44 +54,73 @@ export const xOf = (frac: number, width: number) => width * (MARGIN + frac * (1 
 /** How many pixels the music moves across the canvas in a second. */
 export const speed = (page: Page, spot: Spot, width: number) => (width * (1 - 2 * MARGIN)) / (page.perPage * spot.bar * spot.spb);
 
-/** The bands of the canvas, top and bottom as parts of its height. */
-export const BANDS = {
-  air: [0.07, 0.19],
-  melody: [0.13, 0.5],
-  chords: [0.36, 0.78],
-  hits: [0.64, 0.8],
-  low: [0.83, 0.93],
-} as const;
-export type Band = keyof typeof BANDS;
+/**
+ * Up and down is frequency: the lowest hum the app can make at the bottom, the top of hearing
+ * that matters in a mix at the top, and every sound painted at the height of the frequencies it
+ * is really made of.
+ *
+ * An octave is a fixed step up the canvas, as on any analyser, but the step is not the same size
+ * everywhere: the four octaves the notes of a song live in (80 Hz to 1.3 kHz) get the biggest
+ * steps, so that notes a tone apart can be told apart; the rumble below them and the hiss and
+ * shimmer far above them get smaller ones. The ruler at the edge of the canvas shows where each
+ * frequency is.
+ */
+export const TOP = 0.045;
+export const BOTTOM = 0.955;
+/** The scale: marks along it, each a frequency (hertz) and how far up the scale it sits (0 = the bottom, 1 = the top). Between two marks, equal steps are equal parts of an octave. */
+export const SCALE: readonly (readonly [number, number])[] = [
+  [F_LO, 0],
+  [80, 0.095],
+  [1280, 0.675],
+  [5120, 0.855],
+  [F_HI, 1],
+];
 
-/** The notes each pitched band spans, lowest and highest (MIDI). Notes outside are kept at the edge. */
-export const RANGE = { chords: [38, 79], melody: [55, 88] } as const;
+/** The frequency of a note (MIDI number; 69 = the A above middle C = 440 Hz), and the note nearest a frequency. */
+export const hzOfMidi = (midi: number) => 440 * Math.pow(2, (midi - 69) / 12);
+export const midiOfHz = (hz: number) => 69 + 12 * Math.log2(Math.max(1e-6, hz) / 440);
 
-/** How high on the canvas a note sits: higher notes higher up. */
-export function yOfMidi(midi: number, band: "chords" | "melody", height: number): number {
-  const [lo, hi] = RANGE[band];
-  const [top, bottom] = BANDS[band];
-  const t = Math.max(0, Math.min(1, (midi - lo) / (hi - lo)));
-  return height * (bottom - t * (bottom - top));
+/** How far up the scale a frequency sits: 0 = the bottom, 1 = the top. Frequencies off the scale are kept at its ends. */
+export function upOfHz(hz: number): number {
+  const f = Math.max(F_LO, Math.min(F_HI, hz));
+  for (let i = 1; i < SCALE.length; i++) {
+    const [f1, u1] = SCALE[i];
+    if (f <= f1) {
+      const [f0, u0] = SCALE[i - 1];
+      return u0 + ((u1 - u0) * Math.log2(f / f0)) / Math.log2(f1 / f0);
+    }
+  }
+  return 1;
 }
-
-/** Where a drum lands: its band, and how far down that band (0 = top, 1 = bottom). */
-export const DRUM_PLACE: Record<DrumId, { band: Band; at: number }> = {
-  kick: { band: "low", at: 0.5 },
-  tom: { band: "hits", at: 0.85 },
-  snare: { band: "hits", at: 0.35 },
-  clap: { band: "hits", at: 0.1 },
-  bell: { band: "air", at: 0.02 },
-  rim: { band: "air", at: 0.95 },
-  hat: { band: "air", at: 0.45 },
-  open: { band: "air", at: 0.2 },
-  shaker: { band: "air", at: 0.7 },
-};
-export function yOfDrum(id: DrumId, height: number, wander = 0): number {
-  const p = DRUM_PLACE[id];
-  const [top, bottom] = BANDS[p.band];
-  return height * (top + (bottom - top) * Math.max(0, Math.min(1, p.at + wander)));
+/** How far down the canvas a frequency sits (pixels from the top): higher sounds higher up. */
+export const yOfHz = (hz: number, height: number) => height * (BOTTOM - upOfHz(hz) * (BOTTOM - TOP));
+/** The frequency at a height on the canvas. */
+export function hzOfY(y: number, height: number): number {
+  const up = Math.max(0, Math.min(1, (BOTTOM - y / height) / (BOTTOM - TOP)));
+  for (let i = 1; i < SCALE.length; i++) {
+    const [f1, u1] = SCALE[i];
+    if (up <= u1) {
+      const [f0, u0] = SCALE[i - 1];
+      return f0 * Math.pow(f1 / f0, (up - u0) / (u1 - u0));
+    }
+  }
+  return F_HI;
 }
+/** How many pixels tall a stretch of the scale is: so many octaves wide, centred on a frequency. */
+export const spanPx = (hz: number, octaves: number, height: number) => Math.abs(yOfHz(hz * Math.pow(2, octaves / 2), height) - yOfHz(hz * Math.pow(2, -octaves / 2), height));
+
+/** The frequencies marked on the ruler. */
+export const RULER_HZ = [50, 100, 200, 500, 1000, 2000, 5000, 10000];
+export const hzLabel = (hz: number) => (hz >= 1000 ? `${hz / 1000}k` : `${hz}`);
+/** The regions of a mix, as people who mix call them, lowest first (hertz). (The high mids take in what is also called presence, 4 to 6 kHz.) */
+export const REGIONS = [
+  { name: "Sub", short: "Sub", from: F_LO, to: 60 },
+  { name: "Bass", short: "Bass", from: 60, to: 250 },
+  { name: "Low mids", short: "Lo-mid", from: 250, to: 500 },
+  { name: "Mids", short: "Mid", from: 500, to: 2000 },
+  { name: "High mids", short: "Hi-mid", from: 2000, to: 6000 },
+  { name: "Air", short: "Air", from: 6000, to: F_HI },
+] as const;
 
 /**
  * Which colour of the palette each of the twelve notes takes, in this key.

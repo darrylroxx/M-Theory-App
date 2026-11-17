@@ -159,6 +159,15 @@ export function tuneBetween(m: Melody, bar: number, from: number, to: number, sw
   return out;
 }
 
+/** How many beats after `beat` the next note of the melody comes (Infinity when there is none left in the section). */
+export function nextNote(m: Melody, bar: number, beat: number): number {
+  const end = melodyBeats(m, bar) * TICKS;
+  const from = Math.round(beat * TICKS);
+  let best = Infinity;
+  for (const n of m.notes) if (n.at > from && n.at < end && n.at < best) best = n.at;
+  return (best - from) / TICKS;
+}
+
 /** A melody loaded from storage, made safe. */
 export function reviveMelody(raw: unknown): Melody | undefined {
   const m = raw as Partial<Melody> | null | undefined;

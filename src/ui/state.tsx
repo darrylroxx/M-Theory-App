@@ -30,6 +30,8 @@ export interface CanvasPrefs {
   palette: string;
   surface?: Surface;
   fade?: 0 | 1 | 2;
+  /** the guide over the canvas (frequencies, bars, what the mix covers): shown unless this is false */
+  guide?: boolean;
 }
 export type LabelMode = "intervals" | "notes" | "fingers";
 
@@ -189,7 +191,7 @@ function load(): AppState {
       ...parsed,
       tab,
       pane: PANES.some((x) => x.id === parsed.pane) ? parsed.pane : "rhythm",
-      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 ? parsed.canvas.fade : 1 } : undefined,
+      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 ? parsed.canvas.fade : 1, guide: parsed.canvas.guide === false ? false : undefined } : undefined,
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},
