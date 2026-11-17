@@ -1,0 +1,72 @@
+name: Windows app
+
+# draft → "M-Theory Draft" (updates after every round of edits)
+# main  → "M-Theory" (updates when you say "publish")
+on:
+  push:
+    branches: [draft, main]
+    paths-ignore: ["research_notes/**", "reports/**", "**.md"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: desktop-${{ github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  windows:
+    runs-on: windows-2025
+    timeout-minutes: 60
+    env:
+      CHANNEL: ${{ github.ref_name == 'main' && 'main' || 'draft' }}
+      VERSION: 0.2.${{ github.run_number }}
+      TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+      TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ""
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - name: Native tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+      - name: Build the installer
+        run: |
+          SIGNED=$([ -n "$TAURI_SIGNING_PRIVATE_KEY" ] && echo yes || echo no)
+          node scripts/desktop-config.mjs "$CHANNEL" "$VERSION" "$SIGNED" > build.conf.json
+          cat build.conf.json
+          npx tauri build --config build.conf.json
+      - name: Name it and describe the update
+        env:
+          NOTES: ${{ github.event.head_commit.message }}
+        run: |
+          TAG=$([ "$CHANNEL" = main ] && echo "v$VERSION" || echo draft)
+          echo "TAG=$TAG" >> "$GITHUB_ENV"
+          node scripts/desktop-release.mjs "$CHANNEL" "$VERSION" "$TAG" out
+      - name: Publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if [ "$CHANNEL" = draft ]; then
+            # the draft always lives at the same address, replaced each time
+            gh release delete draft --cleanup-tag --yes || true
+            gh release create draft out/* --prerelease --title "Draft $VERSION" --notes "Latest draft, built from ${GITHUB_SHA::7}. Install M-Theory-Draft-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
+          else
+            gh release create "$TAG" out/* --latest --title "M-Theory $VERSION" --notes "Install M-Theory-setup.exe; it updates itself after that." --target "$GITHUB_SHA"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: m-theory-${{ env.CHANNEL }}-${{ env.VERSION }}
+          path: out/

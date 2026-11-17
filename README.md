@@ -173,6 +173,37 @@ npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
 
+### The Windows app (M-Theory and M-Theory Draft)
+
+The same app, packaged as a Windows program with a native audio engine for the audio interface
+(through its ASIO driver). There are two of them, installed side by side:
+
+- **M-Theory Draft** is built from the `draft` branch. Every round of edits lands there, and the Draft app updates itself.
+- **M-Theory** is built from the `main` branch. It changes only when the draft is published (the draft is merged into `main`).
+
+Each keeps its own saved ideas, so trying a draft never touches your real work.
+
+Install once from the repository's Releases page: `M-Theory-Draft-setup.exe` (release "draft") or
+`M-Theory-setup.exe` (the latest release). Windows may say "Windows protected your PC" the first
+time, because the installer is not signed with a paid certificate: choose **More info → Run anyway**.
+After that the app checks for a new version when it starts (and every half hour), and a bar at the
+top offers **Update and restart**. Updates are signed with the project's own key, and the app installs
+nothing that is not.
+
+GitHub builds both on its Windows machines (`.github/workflows/desktop.yml`). To build it yourself on
+Windows you need Node.js, Rust and LLVM; then:
+
+```bash
+npm install
+```
+
+```bash
+npx tauri build
+```
+
+The Settings sheet (⚙) in the desktop app shows the audio interfaces the computer can see, so you can
+check that the Scarlett and its ASIO driver are found.
+
 ### Put it on your phone (free, installable, offline)
 
 The repo includes a GitHub Actions workflow (`.github/workflows/deploy.yml`) that tests, builds and publishes the app to **GitHub Pages** on every push to `main`:

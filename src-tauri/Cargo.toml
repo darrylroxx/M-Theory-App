@@ -1,0 +1,31 @@
+[package]
+name = "m-theory"
+version = "0.1.0"
+description = "M-Theory: write songs, record vocals"
+license = "GPL-3.0-or-later"
+edition = "2021"
+rust-version = "1.90"
+
+[lib]
+name = "m_theory_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+cpal = "0.18"
+
+# On Windows the app talks to audio interfaces through their ASIO drivers (Steinberg ASIO SDK, GPLv3 option).
+[target.'cfg(target_os = "windows")'.dependencies]
+cpal = { version = "0.18", features = ["asio"] }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3

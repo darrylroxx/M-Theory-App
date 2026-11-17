@@ -1,6 +1,7 @@
 import { TUNINGS } from "../../guitar/tunings";
 import { useApp } from "../state";
 import { Seg } from "./common";
+import { AudioSetup } from "./Desktop";
 
 export function SettingsPanel({ onClose }: { onClose: () => void }) {
   const { state, set } = useApp();
@@ -34,6 +35,7 @@ export function SettingsPanel({ onClose }: { onClose: () => void }) {
             <Seg value={st.theme} options={[{ value: "auto", label: "Auto" }, { value: "dark", label: "Dark" }, { value: "light", label: "Light" }]} onChange={(v) => upd({ theme: v })} />
           </div>
           <label className="toggle"><input type="checkbox" checked={st.leftHanded} onChange={(e) => upd({ leftHanded: e.target.checked })} /> Left-handed diagrams</label>
+          <AudioSetup />
           <div className="row" style={{ justifyContent: "flex-end" }}>
             <button className="btn primary" onClick={onClose}>Done</button>
           </div>

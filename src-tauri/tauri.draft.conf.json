@@ -1,0 +1,27 @@
+{
+  "productName": "M-Theory Draft",
+  "identifier": "app.mtheory.studio.draft",
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "M-Theory Draft",
+        "width": 1280,
+        "height": 860,
+        "minWidth": 380,
+        "minHeight": 560
+      }
+    ]
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEMxMjRBRTRFRTE0QUJCMDQKUldRRXUwcmhUcTRrd2MwL0xNUFc0K1Y1NHlHTHY1MUFYdHhKNWswVThYSmlTTk82Z2F6ekNOeEMK",
+      "endpoints": [
+        "https://github.com/darrylroxx/M-Theory-App/releases/download/draft/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

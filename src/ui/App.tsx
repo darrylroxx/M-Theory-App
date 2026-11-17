@@ -1,5 +1,6 @@
 import { Component, useState, type ReactNode } from "react";
 import { IdeasPanel } from "./components/IdeasPanel";
+import { DraftBadge, UpdateBar } from "./components/Desktop";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, PANES, useApp, type Pane } from "./state";
 import { GuitarView } from "./views/GuitarView";
@@ -46,7 +47,7 @@ function Shell() {
     <div className="app">
       <header className="topbar">
         <div className="topbar-inner">
-          <div className="brand"><div className="brand-mark">M</div><span>M-Theory</span></div>
+          <div className="brand"><div className="brand-mark">M</div><span>M-Theory</span><DraftBadge /></div>
           <nav className="tabs" aria-label="Pages">
             {PANES.map((t) => (
               <button key={t.id} className={`tab${page === t.id ? " active" : ""}`} aria-current={page === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}</button>
@@ -57,6 +58,7 @@ function Shell() {
           <button className="icon-btn" onClick={() => setSettings(true)} aria-label="Guitar setup" title="Tuning, capo & display">⚙</button>
         </div>
       </header>
+      <UpdateBar />
       <main>
         <ViewBoundary onReset={() => go("frame")}>
           <GuitarView />
