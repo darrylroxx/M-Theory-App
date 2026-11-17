@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ECHO_TIMES } from "../../audio/beats";
-import { HARP_VOICES, STRING_DEFAULT } from "../../audio/harp";
-import { STYLES, STYLE_GROUPS, getStyle, type PatternId, type StyleGroup } from "../../audio/patterns";
+import { HARP_VOICES, STRING_DEFAULT, VOICE_GROUPS } from "../../audio/harp";
+import { FEEL_DEFAULT, STYLES, STYLE_GROUPS, getStyle, type Feel, type PatternId, type StyleGroup } from "../../audio/patterns";
 import { DRIVES, FX_DEFAULT, HARP_VERBS, TREM_SPEEDS, type HarpSound } from "../../audio/rack";
 import { SOUNDS, sameSound, soundName, soundOfPreset } from "../../audio/sounds";
 import { letterClass } from "../letters";
@@ -13,11 +13,14 @@ import { Choice, Knob, Picker, toneText } from "./controls";
  * The harp: how the chords are played (the style), what they sound like (the strings) and the
  * effects after them. Small at first: play, the style and the sound. The knobs open when asked for.
  */
-export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, onHear, letters, onLetter }: {
+export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, playing, onPlay, onHear, letters, onLetter }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   style: PatternId;
   onStyle: (id: PatternId) => void;
+  /** how the style is played in this section */
+  feel: Feel;
+  setFeel: (patch: Partial<Feel>) => void;
   playing: boolean;
   onPlay: () => void;
   /** play the chord on screen once, to hear a change (when nothing is playing) */
@@ -30,7 +33,7 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
   const mine = state.mySounds;
   const st = getStyle(style);
   const [group, setGroup] = useState<StyleGroup>(st.group);
-  const [drawer, setDrawer] = useState<"style" | "sound" | null>(null);
+  const [drawer, setDrawer] = useState<"style" | "harp" | "sound" | null>(null);
   const [panel, setPanel] = useState<"strings" | "fx" | null>(null);
 
   const stepStyle = (dir: -1 | 1) => {
@@ -39,8 +42,13 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
     setGroup(next.group);
     onStyle(next.id);
   };
-  const sounds = [...SOUNDS.map((p) => ({ id: p.id, name: p.name, hint: p.hint, sound: soundOfPreset(p), own: false })), ...mine.map((u) => ({ id: u.id, name: u.name, hint: "Saved by you", sound: u.sound, own: true }))];
-  const at = sounds.findIndex((x) => sameSound(x.sound, sound));
+  const voiceAt = HARP_VOICES.findIndex((v) => v.id === sound.voice);
+  const pickVoice = (i: number) => {
+    setSound({ voice: HARP_VOICES[(i + HARP_VOICES.length) % HARP_VOICES.length].id });
+    onHear();
+  };
+  const sounds = [...SOUNDS.map((p) => ({ id: p.id, name: p.name, hint: p.hint, sound: soundOfPreset(p, sound.voice), own: false })), ...mine.map((u) => ({ id: u.id, name: u.name, hint: "Saved by you", sound: u.sound, own: true }))];
+  const at = sounds.findIndex((x) => sameSound(x.sound, sound, !x.own));
   const pickSound = (x: (typeof sounds)[number]) => {
     setSound({ ...x.sound, level: sound.level });
     onHear();
@@ -64,6 +72,7 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
         <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"}>{playing ? "■" : "▶"}</button>
         <h2>Harp</h2>
         <Picker label="Style" name={st.name} open={drawer === "style"} onOpen={() => { setGroup(st.group); setDrawer(drawer === "style" ? null : "style"); }} onStep={stepStyle} />
+        <Picker label="Harp" name={HARP_VOICES[voiceAt]?.name ?? ""} open={drawer === "harp"} onOpen={() => setDrawer(drawer === "harp" ? null : "harp")} onStep={(dir) => pickVoice(voiceAt + dir)} />
         <Picker label="Sound" name={soundName(sound, mine) ?? "Custom"} open={drawer === "sound"} onOpen={() => setDrawer(drawer === "sound" ? null : "sound")}
           onStep={(dir) => pickSound(sounds[(Math.max(at, 0) + dir + sounds.length) % sounds.length])} />
       </div>
@@ -89,7 +98,35 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
               </span>
             ))}
           </div>
-          <p className="style-hint">{st.group === group ? st.hint : STYLE_GROUPS.find((g) => g.id === group)?.name}</p>
+          <div className="knobs feel" role="group" aria-label="Feel">
+            <div className="knob wide">
+              <span><i>Speed</i></span>
+              <Seg value={feel.speed} options={[{ value: 0.5, label: "½×" }, { value: 1, label: "1×" }, { value: 2, label: "2×" }]} onChange={(v) => setFeel({ speed: v })} label="Speed of the pattern" />
+            </div>
+            <Knob label="Swing" title="How far the off-beats lean back" value={feel.swing} def={FEEL_DEFAULT.swing} onChange={(v) => setFeel({ swing: v })} />
+            <Knob label="Touch" title="Left: a whisper. Right: dug in hard." value={feel.touch} def={FEEL_DEFAULT.touch} onChange={(v) => setFeel({ touch: v })} />
+            <Knob label="Spread" title="How spread out strums and rolls are" value={feel.spread} def={FEEL_DEFAULT.spread} onChange={(v) => setFeel({ spread: v })} />
+            <div className="knob wide">
+              <span><i>Octave</i></span>
+              <Seg value={feel.octave} options={[{ value: -1, label: "Low" }, { value: 0, label: "Mid" }, { value: 1, label: "High" }]} onChange={(v) => setFeel({ octave: v })} label="Octave" />
+            </div>
+          </div>
+        </div>
+      )}
+      {drawer === "harp" && (
+        <div className="dm-drawer" role="radiogroup" aria-label="Instrument">
+          {VOICE_GROUPS.map((g) => (
+            <div key={g} className="voice-group">
+              <span className="kb-label">{g}</span>
+              <div className="dm-tiles">
+                {HARP_VOICES.map((v, i) => v.group === g && (
+                  <span key={v.id} className={`dm-tile${sound.voice === v.id ? " on" : ""}`}>
+                    <button role="radio" aria-checked={sound.voice === v.id} title={v.hint} onClick={() => pickVoice(i)}><b>{v.name}</b></button>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
         </div>
       )}
       {drawer === "sound" && (
@@ -122,7 +159,6 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
       {panel === "strings" && (
         <div className="dm-panel dm-mix" role="group" aria-label="Strings">
           <div className="knobs">
-            <Choice label="Instrument" value={sound.voice} options={HARP_VOICES} onChange={(v) => turn({ voice: v }, true)} />
             <Knob label="Pluck" title="Where the finger plucks. Left: the middle of the string, round and hollow. Right: by the soundboard, thin and bright." value={sound.pluck} def={d.pluck} onChange={(v) => turn({ pluck: v }, true)} />
             <Knob label="Soft" title="Left: nail or pick, sharp. Right: the pad of the finger, mellow." value={sound.soft} def={d.soft} onChange={(v) => turn({ soft: v }, true)} />
             <Knob label="Ring" title="How long the strings ring, and how far one chord runs into the next" value={sound.ring} def={d.ring} onChange={(v) => turn({ ring: v }, true)} />

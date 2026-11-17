@@ -19,6 +19,7 @@
  * Shared by the player and the MIDI exporter, so what you hear is what lands in your DAW.
  */
 import { barBeats, type Beat } from "./beats";
+import { tuneBetween, type Melody, type TuneHit } from "../song/melody";
 import { STYLES, type Style } from "./styles";
 
 export type PatternId = string;
@@ -32,6 +33,28 @@ export interface Meter {
   /** the drums' swing, which the 16th-note styles follow */
   swing?: number;
 }
+
+/** How a style is played: the same pattern, faster or slower, straighter or lazier, gentler or harder. */
+export interface Feel {
+  /** the pattern at half speed, as written, or twice as fast */
+  speed: 0.5 | 1 | 2;
+  /** how far the off-beats lean back, 0…1 (on top of the style's own swing) */
+  swing: number;
+  /** 0 a whisper … 0.5 as written … 1 dug in hard */
+  touch: number;
+  /** how spread out strums and rolls are: 0 almost together … 0.5 as written … 1 slow and wide */
+  spread: number;
+  /** the whole pattern an octave lower or higher */
+  octave: -1 | 0 | 1;
+}
+export const FEEL_DEFAULT: Feel = { speed: 1, swing: 0, touch: 0.5, spread: 0.5, octave: 0 };
+const unit = (v: unknown, d: number) => (typeof v === "number" && Number.isFinite(v) ? Math.min(1, Math.max(0, v)) : d);
+/** A feel loaded from storage, made whole. */
+export function reviveFeel(raw: unknown): Feel {
+  const r = (raw ?? {}) as Partial<Feel>;
+  return { speed: r.speed === 0.5 || r.speed === 2 ? r.speed : 1, swing: unit(r.swing, 0), touch: unit(r.touch, 0.5), spread: unit(r.spread, 0.5), octave: r.octave === -1 || r.octave === 1 ? r.octave : 0 };
+}
+export const sameFeel = (a: Partial<Feel> | undefined, b: Partial<Feel> | undefined) => JSON.stringify(reviveFeel(a)) === JSON.stringify(reviveFeel(b));
 
 export interface NoteEvent {
   /** beats after the start of the chord */
@@ -60,10 +83,10 @@ const STRUMS = "DUXSsHhKRLTGg";
 const hasStrum = (st: Style) => [...(st.four ?? []), ...(st.three ?? [])].some((bar) => [...bar].some((ch) => STRUMS.includes(ch)));
 
 /** Where a step falls inside its beat. */
-function inBeat(k: number, div: number, st: Style, meter: Meter): number {
+function inBeat(k: number, div: number, st: Style, meter: Meter, lean: number): number {
   if (div === 3) return k / 3;
   if (meter.triplet) return div === 2 ? [0, 2 / 3][k] : [0, 1 / 3, 2 / 3, 5 / 6][k];
-  const swing = div === 4 ? Math.max(meter.swing ?? 0, st.swing ?? 0) : (st.swing ?? 0);
+  const swing = Math.max(div === 4 ? (meter.swing ?? 0) : 0, st.swing ?? 0, lean);
   return k / div + (k % 2 === 1 ? swing / (3 * div) : 0);
 }
 
@@ -79,19 +102,30 @@ interface Str {
 }
 
 /** Turn one chord (the note on each string, null = not played) into notes, for a chord that starts `at` beats into its section. */
-export function styleNotes(midi: (number | null)[], beats: number, styleId: PatternId, at = 0, meter: Meter = { bar: 0 }): NoteEvent[] {
-  const strings: Str[] = midi.map((m, s) => ({ m, s })).filter((x): x is Str => x.m !== null);
-  if (!strings.length || beats <= 0) return [];
+export function styleNotes(midi: (number | null)[], beats: number, styleId: PatternId, at = 0, meter: Meter = { bar: 0 }, feel: Partial<Feel> = FEEL_DEFAULT, waltz?: boolean): NoteEvent[] {
   const st = getStyle(styleId);
   const native = st.four ? 4 : 3;
+  const three = waltz ?? (!!st.three && (Math.abs((meter.bar > 0 ? meter.bar : native) - 3) < 1e-6 || !st.four));
+  const speed = feel.speed ?? 1;
+  if (speed !== 1) {
+    // another speed: lay the pattern over time stretched the other way, then put the notes back.
+    // Slowed down, the pattern runs on across the bar lines (four beats of it now take two bars).
+    const bar = speed > 1 && meter.bar > 0 ? meter.bar * speed : 0;
+    return styleNotes(midi, beats * speed, styleId, at * speed, { ...meter, bar }, { ...feel, speed: 1 }, three).map((e) => ({ ...e, beat: e.beat / speed, length: e.length / speed }));
+  }
+  const shift = 12 * (feel.octave ?? 0);
+  const strings: Str[] = midi.map((m, s) => ({ m, s })).filter((x): x is Str => x.m !== null).map((x) => ({ m: x.m + shift, s: x.s }));
+  if (!strings.length || beats <= 0) return [];
+  const touch = 0.55 + 0.9 * (feel.touch ?? 0.5);
+  const wide = Math.pow(2, ((feel.spread ?? 0.5) - 0.5) * 3);
+  const lean = feel.swing ?? 0;
   const L = meter.bar > 0 ? meter.bar : native;
-  const three = !!st.three && (Math.abs(L - 3) < 1e-6 || !st.four);
   const grid = (three ? st.three! : st.four!).map((b) => b.trim().split(/\s+/));
   const P = three ? 3 : 4;
   const div = st.div;
   // a strum crosses six strings in about 20 to 35 ms: quicker when the hand is moving fast
-  const spread = st.spread ?? (div === 2 ? 0.007 : 0.0045);
-  const roll = st.roll ?? 0.03;
+  const spread = (st.spread ?? (div === 2 ? 0.007 : 0.0045)) * wide;
+  const roll = (st.roll ?? 0.03) * wide;
 
   const K = strings.length;
   const bass = strings[0];
@@ -116,7 +150,7 @@ export function styleNotes(midi: (number | null)[], beats: number, styleId: Patt
   const play = (tok: string, beat: number, weight: number): boolean => {
     if (!tok || tok === ".") return false;
     const accent = tok.includes(">") ? 1.2 : tok.includes("<") ? 0.62 : 1;
-    const v = weight * accent;
+    const v = weight * accent * touch;
     const high = strings.slice(-Math.min(4, K));
     const chick = K > 2 ? strings.slice(1) : strings;
     let any = false;
@@ -158,7 +192,7 @@ export function styleNotes(midi: (number | null)[], beats: number, styleId: Patt
   for (let g = Math.ceil(at * div - 1e-6); g / div < at + beats - 1e-6; g++) {
     const whole = Math.floor(g / div + 1e-9);
     const k = g - whole * div;
-    const rel = whole + inBeat(k, div, st, meter) - at;
+    const rel = whole + inBeat(k, div, st, meter, lean) - at;
     if (rel >= beats - 1e-6) continue;
     const straight = g / div;
     const barIdx = Math.floor(straight / L + 1e-6);
@@ -197,10 +231,34 @@ export interface PlayItem {
   beats: number;
   /** the drum rhythm under this chord (missing = the player's own beat) */
   drums?: Beat;
-  /** the playing style of this chord (missing = the player's own) */
+  /** the playing style of this chord (missing = the player's own), and how it is played */
   style?: PatternId;
+  feel?: Partial<Feel>;
   /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
   section?: boolean;
+  /** the melody over this chord's section (missing = the player's own) */
+  tune?: PlayTune | null;
+}
+
+/** A melody ready to play: its notes, the length of a bar under it, and the drums' swing. */
+export interface PlayTune {
+  m: Melody;
+  bar: number;
+  swing: number;
+}
+
+/** Every melody note of a run of chords, with the time (in beats from the start) each one sounds. */
+export function itemTune(items: PlayItem[], tune: PlayTune | null = null): TuneHit[] {
+  const out: TuneHit[] = [];
+  let at = 0;
+  let origin = 0;
+  items.forEach((item, i) => {
+    if (i === 0 || item.section) origin = at;
+    const t = item.tune === undefined ? tune : item.tune;
+    if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats, t.swing)) out.push({ beat: h.beat + origin, midi: h.midi });
+    at += item.beats;
+  });
+  return out;
 }
 
 /** Every note of a run of chords, with the time (in beats from the start) each one sounds. */
@@ -210,7 +268,7 @@ export function itemNotes(items: PlayItem[], pattern: PatternId, beat: Beat | nu
   let origin = 0;
   items.forEach((item, i) => {
     if (i === 0 || item.section) origin = at;
-    for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat))) out.push({ at, item: i, e, beats: item.beats });
+    for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat), item.feel)) out.push({ at, item: i, e, beats: item.beats });
     at += item.beats;
   });
   return out;

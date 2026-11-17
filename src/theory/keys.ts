@@ -166,6 +166,8 @@ export function chordsInScale(key: Key): { degree: number; root: string; token: 
   const scale = keyScale(key);
   const notes = scaleNotes(key.tonic, scale);
   const set = new Set(scalePcs(pc(key.tonic), scale));
+  // a chord tone is called what the key calls that note: in C major the ♭5 of F is B, not C♭
+  const named = new Map(notes.map((n) => [pc(n), n]));
   return notes.map((root, i) => {
     const token = degreeToken(key.tonic, root);
     const chords: KeyChord[] = [];
@@ -177,7 +179,7 @@ export function chordsInScale(key: Key): { degree: number; root: string; token: 
         type,
         roman: romanNumeral(token, type),
         degree: i + 1,
-        notes: type.intervals.map((iv) => intervalNote(root, iv)),
+        notes: type.intervals.map((iv) => named.get(pc(intervalNote(root, iv))) ?? intervalNote(root, iv)),
         source: "In key",
       });
     }

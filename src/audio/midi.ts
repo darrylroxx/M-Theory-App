@@ -4,8 +4,9 @@
  * and rhythm you heard in the app.
  */
 import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
+import { hasTune, melodyBeats } from "../song/melody";
 import type { DrumId } from "./drums";
-import { itemNotes, type PatternId, type PlayItem } from "./patterns";
+import { itemNotes, itemTune, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 
 const TPQ = 480; // ticks per quarter note
 
@@ -29,11 +30,17 @@ export const GM_DRUM: Record<DrumId, number> = { kick: 36, snare: 38, clap: 39, 
 /**
  * The progression as a MIDI file. With a beat switched on, the file has two tracks:
  * harp, and drums on channel 10. Items can carry their own drum rhythm (song sections); a
- * section's pattern starts again from its first bar. With no chords, the beat is exported as
- * four bars, or the whole pattern if it is longer.
+ * section's pattern starts again from its first bar. A melody gets a track of its own. With no
+ * chords, the beat is exported as four bars (or its whole pattern if longer), with the melody.
  */
-export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null): Uint8Array {
+export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null, tune: PlayTune | null = null): Uint8Array {
   type Ev = { tick: number; data: number[]; order: number };
+  const drums = beat?.on ? beat : null;
+  if (!items.length) {
+    // no chords: the drums (four bars, or their whole pattern) and the melody on their own
+    const solo = Math.max(drums ? barBeats(drums) * Math.max(4, barsOf(drums)) : 0, hasTune(tune?.m) ? melodyBeats(tune.m, tune.bar) : 0);
+    items = solo ? [{ midi: [], beats: solo }] : [];
+  }
   const events: Ev[] = [];
   const secPerTick = 60 / bpm / TPQ;
   const chordStart = Math.round(items.reduce((a, x) => a + x.beats, 0) * TPQ);
@@ -61,11 +68,32 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     track.push(...vlq(e.tick - last), ...e.data);
     last = e.tick;
   }
-  const drums = beat?.on ? beat : null;
-  const totalTicks = chordStart || (drums ? Math.round(barBeats(drums) * Math.max(4, barsOf(drums)) * TPQ) : 0);
+  const totalTicks = chordStart;
   track.push(...vlq(Math.max(0, totalTicks - last)), 0xff, 0x2f, 0x00);
   const chunk = (t: number[]) => [...str("MTrk"), ...u32(t.length), ...t];
-  if (!drums) return new Uint8Array([...str("MThd"), ...u32(6), ...u16(0), ...u16(1), ...u16(TPQ), ...chunk(track)]);
+  // the melody: its own track on channel 2, each note held until the next one
+  const tracks = [track];
+  const hits = itemTune(items, tune).filter((h) => Math.round(h.beat * TPQ) < totalTicks);
+  if (hits.length) {
+    const ev: Ev[] = [];
+    hits.forEach((h, i) => {
+      const on = Math.round(h.beat * TPQ);
+      const after = hits.slice(i + 1).find((x) => x.beat > h.beat + 1e-6);
+      const off = Math.max(on + 10, Math.min(totalTicks, after ? Math.round(after.beat * TPQ) : on + TPQ * 2));
+      ev.push({ tick: off, data: [0x81, h.midi, 0], order: 0 });
+      ev.push({ tick: on, data: [0x91, h.midi, 104], order: 1 });
+    });
+    ev.sort((a, b) => a.tick - b.tick || a.order - b.order);
+    const mt: number[] = [0, 0xff, 0x03, ...vlq(6), ...str("Melody"), 0, 0xc1, 46];
+    let ml = 0;
+    for (const e of ev) {
+      mt.push(...vlq(e.tick - ml), ...e.data);
+      ml = e.tick;
+    }
+    mt.push(...vlq(Math.max(0, totalTicks - ml)), 0xff, 0x2f, 0x00);
+    tracks.push(mt);
+  }
+  if (!drums) return new Uint8Array([...str("MThd"), ...u32(6), ...u16(tracks.length > 1 ? 1 : 0), ...u16(tracks.length), ...u16(TPQ), ...tracks.flatMap(chunk)]);
 
   // which rhythm plays when: each item (or the whole export, with no chords) and where its pattern began
   const runs: { from: number; to: number; origin: number; b: Beat }[] = [];
@@ -76,25 +104,25 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     runs.push({ from: at, to: at + item.beats, origin, b: item.drums ?? drums });
     at += item.beats;
   });
-  if (!items.length) runs.push({ from: 0, to: totalTicks / TPQ, origin: 0, b: drums });
-  const hits: Ev[] = [];
+  const dhits: Ev[] = [];
   const all = runs.flatMap((r) => (r.b.on ? beatHitsBetween(r.b, r.from - r.origin, r.to - r.origin).map((h) => ({ ...h, beat: h.beat + r.origin })) : []));
   for (const h of all) {
     const on = Math.round(h.beat * TPQ);
     if (on >= totalTicks) continue;
     const vel = Math.max(1, Math.min(127, Math.round(h.velocity * 118)));
-    hits.push({ tick: on, data: [0x99, GM_DRUM[h.id], vel], order: 1 });
-    hits.push({ tick: Math.min(totalTicks, on + 60), data: [0x89, GM_DRUM[h.id], 0], order: 0 });
+    dhits.push({ tick: on, data: [0x99, GM_DRUM[h.id], vel], order: 1 });
+    dhits.push({ tick: Math.min(totalTicks, on + 60), data: [0x89, GM_DRUM[h.id], 0], order: 0 });
   }
-  hits.sort((a, b) => a.tick - b.tick || a.order - b.order);
+  dhits.sort((a, b) => a.tick - b.tick || a.order - b.order);
   const dtrack: number[] = [0, 0xff, 0x03, ...vlq(5), ...str("Drums")];
   let dl = 0;
-  for (const e of hits) {
+  for (const e of dhits) {
     dtrack.push(...vlq(e.tick - dl), ...e.data);
     dl = e.tick;
   }
   dtrack.push(...vlq(Math.max(0, totalTicks - dl)), 0xff, 0x2f, 0x00);
-  return new Uint8Array([...str("MThd"), ...u32(6), ...u16(1), ...u16(2), ...u16(TPQ), ...chunk(track), ...chunk(dtrack)]);
+  tracks.push(dtrack);
+  return new Uint8Array([...str("MThd"), ...u32(6), ...u16(1), ...u16(tracks.length), ...u16(TPQ), ...tracks.flatMap(chunk)]);
 }
 
 // ── Saving files ─────────────────────────────────────────────

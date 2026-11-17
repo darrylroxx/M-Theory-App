@@ -1,24 +1,26 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { DEFAULT_BEAT, applyPattern, barBeats, barsOf, chordRounds, type Beat, type BeatPattern } from "../../audio/beats";
 import { progressionToMidi, saveFile } from "../../audio/midi";
-import { itemNotes, type PatternId, type PlayItem } from "../../audio/patterns";
+import { itemNotes, itemTune, reviveFeel, styleBar, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
 import { ProgressionPlayer, getAudio, playSequence, prepareNotes, setHarpSound, strum } from "../../audio/synth";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
+import { EMPTY_MELODY, hasTune, melodyBase, melodyBeats, transposeMelody, type Melody } from "../../song/melody";
 import { addNewSection, ensureSong, letters, nextLetter, mapAllChords, moveBlock, moveBlockTo, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
 import { ROLE_INFO, analyzeChord, borrowedChords, chordsInScale, diatonicChords, spiceChords, transposeRef, type KeyChord, type Role } from "../../theory/keys";
 import { displayNote, mod12, pc } from "../../theory/notes";
-import { MOODS, sparkProgression, suggestNext, type Mood, type SuggestionGroup } from "../../theory/progression";
+import { suggestNext, type SuggestionGroup } from "../../theory/progression";
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
 import { BarRuler } from "../components/BarRuler";
 import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel } from "../components/HarpPanel";
+import { MelodyGrid } from "../components/MelodyGrid";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
@@ -38,6 +40,16 @@ export function GuitarView() {
   const [drag, setDrag] = useState<(Payload & { index: number | null }) | null>(null);
   const player = useRef<ProgressionPlayer | null>(null);
   const dockRef = useRef<HTMLDivElement>(null);
+  /** the slim bar that stands in for the tray while the tray itself is off screen */
+  const miniRef = useRef<HTMLDivElement>(null);
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setAway(!e.isIntersecting), { threshold: 0.15 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
   const ghostRef = useRef<HTMLDivElement>(null);
   const lastDrag = useRef(0);
   /** the tray's height, so the page keeps its shape while the tray is lifted up next to the shape finder */
@@ -89,8 +101,13 @@ export function GuitarView() {
   const setArrange = (a: ArrangeSettings | null) =>
     set((s) => ({ ...s, progression: { ...s.progression, arrange: a, chords: s.progression.chords.map((c) => ({ ...c, voicingId: undefined })) } }));
   // the section on screen, played until its drum pattern has finished (the chords repeat if the beat is longer)
-  const once = prog.chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
-  const rounds = chordRounds(once.reduce((a, x) => a + x.beats, 0), beat);
+  const bar = barOf(prog);
+  const swing = beat.on && beat.div === 4 ? beat.swing : 0;
+  // the melody of the section on screen (its notes are read as it plays, so a note tapped in is heard next time round)
+  const tune: PlayTune | null = useMemo(() => (hasTune(prog.melody) ? { m: prog.melody, bar, swing } : null), [prog.melody, bar, swing]);
+  const tuneBeats = tune ? melodyBeats(tune.m, bar) : 0;
+  const once: PlayItem[] = prog.chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats, feel: prog.feel }));
+  const rounds = chordRounds(once.reduce((a, x) => a + x.beats, 0), beat, tuneBeats);
   const items = Array.from({ length: rounds }, () => once).flat();
 
   // The whole song, section after section. A section with no chords is one bar of the beat on its own.
@@ -104,20 +121,27 @@ export function GuitarView() {
       const vs = sec.current ? voicings : voicingsOf(sec.chords);
       const drums = sec.current || !sec.groove ? beat : { ...beat, ...sec.groove };
       const style = sec.current ? prog.pattern : (sec.style ?? prog.pattern);
+      const feel = sec.current ? prog.feel : sec.feel;
+      // each section has its own melody, over bars as long as its own drums (or its style) make them
+      const secBar = drums.on ? barBeats(drums) : styleBar(style);
+      const mel = sec.current ? prog.melody : sec.melody;
+      const secTune: PlayTune | null = hasTune(mel) ? { m: mel, bar: secBar, swing: drums.on && drums.div === 4 ? drums.swing : 0 } : null;
+      const tb = secTune ? melodyBeats(secTune.m, secBar) : 0;
       parts.push({ sec, voicings: vs });
-      const rounds = chordRounds(sec.chords.reduce((a, c) => a + c.beats, 0), drums);
+      const rounds = chordRounds(sec.chords.reduce((a, c) => a + c.beats, 0), drums, tb);
       for (let r = 0; r < rounds; r++)
         sec.chords.forEach((c, i) => {
-          list.push({ midi: vs[i]?.midi ?? [], beats: c.beats, drums, style, section: r === 0 && i === 0 });
+          list.push({ midi: vs[i]?.midi ?? [], beats: c.beats, drums, style, feel, tune: secTune, section: r === 0 && i === 0 });
           map.push({ block: sec.blockId, idx: i });
         });
-      if (!sec.chords.length && beat.on) {
-        list.push({ midi: [], beats: barBeats(drums) * barsOf(drums), drums, section: true });
+      if (!sec.chords.length && (beat.on || secTune)) {
+        const db = beat.on ? barBeats(drums) * barsOf(drums) : 0;
+        list.push({ midi: [], beats: tb && db ? Math.ceil(tb / db - 1e-6) * db : Math.max(db, tb), drums, tune: secTune, section: true });
         map.push({ block: sec.blockId, idx: -1 });
       }
     }
     return { items: list, map, parts };
-  }, [secs, voicings, voicingsOf, beat, prog.pattern]);
+  }, [secs, voicings, voicingsOf, beat, prog.pattern, prog.feel, prog.melody]);
   const planRef = useRef(plan);
   planRef.current = plan;
 
@@ -129,7 +153,7 @@ export function GuitarView() {
   useEffect(() => setHarpSound(sound, prog.bpm), [sound, prog.bpm]);
   // every note the section (and the song) will need is made ready ahead of time
   useEffect(() => {
-    const t = window.setTimeout(() => prepareNotes([...itemNotes(items, prog.pattern, beat), ...itemNotes(plan.items, prog.pattern, beat)].map((n) => n.e.midi)), 250);
+    const t = window.setTimeout(() => prepareNotes([...[...itemNotes(items, prog.pattern, beat), ...itemNotes(plan.items, prog.pattern, beat)].map((n) => n.e.midi), ...itemTune(items, tune).map((h) => h.midi), ...itemTune(plan.items).map((h) => h.midi)]), 250);
     return () => window.clearTimeout(t);
   }); // eslint-disable-line react-hooks/exhaustive-deps
   const playingRef = useRef(false);
@@ -144,19 +168,19 @@ export function GuitarView() {
   const setSound = useCallback((patch: Partial<HarpSound>) => set((s) => ({ ...s, progression: { ...s.progression, sound: { ...reviveSound(s.progression.sound), ...patch } } })), [set]);
 
   useEffect(() => {
-    if (player.current?.playing) player.current.update(songMode ? plan.items : items, prog.bpm, prog.pattern, songMode ? false : prog.loop, beat);
+    if (player.current?.playing) player.current.update(songMode ? plan.items : items, prog.bpm, prog.pattern, songMode ? false : prog.loop, beat, songMode ? null : tune);
   });
   useEffect(() => () => player.current?.stop(), []);
   playingRef.current = playing;
 
   const startPlay = (list: PlayItem[], b: Beat, style: PatternId = prog.pattern) => {
-    if (!list.length && !b.on) return;
+    if (!list.length && !b.on && !tune) return;
     getAudio();
     const p = (player.current ??= new ProgressionPlayer());
     p.onStep = (i) => setNowIdx(list.length ? i % Math.max(1, prog.chords.length) : -1);
     p.onDrumStep = (n) => stepSink.current?.(n);
     p.onEnd = () => { setPlaying(false); setNowIdx(-1); };
-    p.start(list, prog.bpm, style, prog.loop, b);
+    p.start(list, prog.bpm, style, prog.loop, b, 0, tune);
     setSongMode(false);
     setPlaying(true);
   };
@@ -200,8 +224,8 @@ export function GuitarView() {
     if (resize && chords.some((c, i) => c.beats !== prog.chords[i].beats)) toast(`Chords: ${to} beats each`);
     // hear it straight away
     if (!playing) {
-      const one = chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
-      startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), next) }, () => one).flat(), next);
+      const one = chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats, feel: prog.feel }));
+      startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), next, tuneBeats) }, () => one).flat(), next);
     }
   };
   /** Choose how the section on screen is played. With the drums off, a waltz style makes the bars three beats long. */
@@ -214,10 +238,13 @@ export function GuitarView() {
     if (from !== to && chords.some((c, i) => c.beats !== prog.chords[i].beats)) toast(`Chords: ${to} beats each`);
     // hear it straight away
     if (!playing && chords.length) {
-      const one = chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats }));
-      startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), beat) }, () => one).flat(), beat, id);
+      const one = chords.map((c, i) => ({ midi: voicings[i]?.midi ?? [], beats: c.beats, feel: prog.feel }));
+      startPlay(Array.from({ length: chordRounds(one.reduce((a, x) => a + x.beats, 0), beat, tuneBeats) }, () => one).flat(), beat, id);
     }
   };
+  const setMelody = useCallback((fn: (m: Melody) => Melody) => set((s) => ({ ...s, progression: { ...s.progression, melody: fn(s.progression.melody ?? EMPTY_MELODY) } })), [set]);
+  const setFeel = useCallback((patch: Partial<Feel>) => set((s) => ({ ...s, progression: { ...s.progression, feel: { ...reviveFeel(s.progression.feel), ...patch } } })), [set]);
+  const getPos = useCallback(() => player.current?.sectionBeat() ?? null, []);
   const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
@@ -236,7 +263,7 @@ export function GuitarView() {
 
   const api = useMemo<DragApi>(() => {
     const indexAt = (x: number, y: number, exclude?: string): number | null => {
-      const dock = dockRef.current;
+      const dock = miniRef.current ?? dockRef.current;
       if (!dock) return null;
       const r = dock.getBoundingClientRect();
       if (y < r.top - 28 || y > r.bottom + 28 || x < r.left - 28 || x > r.right + 28) return null;
@@ -339,15 +366,21 @@ export function GuitarView() {
         <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
           {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
           <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-          <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} bar={barOf(prog)} onLengths={setLengths} />
+          <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} secs={secs} songPlaying={playing && songMode} onSong={toggleSong} onMenu={() => setMenu(true)} onStep={stepSlot} onArrange={setArrange} beatOn={beat.on} canPlay={!!tune} bar={bar} onLengths={setLengths} />
         </div>
-        <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} playing={playing} onPlay={togglePlay} onHear={hearSoon}
+        <MelodyGrid melody={prog.melody ?? EMPTY_MELODY} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} onPlay={togglePlay} getPos={getPos}
+          letters={letters(prog)} onLetter={(blockId: string) => set((s) => ({ ...s, progression: selectBlock(s.progression, blockId) }))} />
+        <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} playing={playing} onPlay={togglePlay} onHear={hearSoon}
           letters={letters(prog)} onLetter={(blockId: string) => set((s) => ({ ...s, progression: selectBlock(s.progression, blockId) }))} />
         <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onPlay={togglePlay} stepSink={stepSink}
           letters={letters(prog)} onLetter={(blockId: string) => set((s) => ({ ...s, progression: selectBlock(s.progression, blockId) }))} />
       </div>
+      {away && !sheet && (
+        <MiniTray ref={miniRef} chords={prog.chords} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
+          letter={secs.length > 1 ? secs.find((x) => x.current)?.letter : undefined} onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
+      )}
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
-      {menu && <SongMenu voicings={voicings} items={items} beat={beat} plan={secs.length ? plan : null} onClose={() => setMenu(false)} />}
+      {menu && <SongMenu voicings={voicings} items={items} beat={beat} tune={tune} plan={secs.length ? plan : null} onClose={() => setMenu(false)} />}
     </DragCtx.Provider>
   );
 }
@@ -419,7 +452,7 @@ const KeyBar = memo(function KeyBar() {
           })}
           <button className="mini-play" aria-label="Play scale" title="Play scale" onClick={() => playSequence([...scale.intervals.map((iv) => tonicMidi + semitonesOf(iv)), tonicMidi + 12])}>▶</button>
         </div>
-        <span className="mood-line">{scale.mood}</span>
+        <span className="spacer" />
         <label className="capo">
           Capo
           <select value={capo} onChange={(e) => set((s) => ({ ...s, settings: { ...s.settings, capo: Number(e.target.value) } }))}>
@@ -433,13 +466,21 @@ const KeyBar = memo(function KeyBar() {
 
 // ── Chords ───────────────────────────────────────────────────
 
-type View = "triads" | "sevenths" | "more" | "outside" | "next";
+type View = "key" | "outside" | "next";
 const GROUP_LABEL: Record<SuggestionGroup["id"], string> = { natural: "Safe", smooth: "Smooth", color: "Colorful", bold: "Bold" };
+/** Short names for the kinds of chord. */
+const KIND: Record<string, string> = { Triads: "Triads", "Power & Sus": "Sus", Sixths: "6ths", Sevenths: "7ths", "Added tones": "Added", "Extended (9, 11, 13)": "Extended", "Altered dominants": "Altered" };
+/** The plainest chord a note offers, for its card. */
+const PLAIN = ["maj", "min", "dim", "aug", "5", "sus2", "sus4", "majb5"];
 
 /** The chord last tapped in one of the chord lists: it gets the Shapes and + buttons. */
 const PickCtx = createContext<{ sel: ChordRef | null; setSel: (r: ChordRef) => void }>({ sel: null, setSel: () => {} });
 const sameRef = (a: ChordRef | null, b: ChordRef) => !!a && a.root === b.root && a.typeId === b.typeId && a.bass === b.bass;
 
+/**
+ * The chords of the key. One card per note of the scale; tap a card and everything the key
+ * offers on that note is listed under it (sus, sixths, sevenths, ninths …).
+ */
 const ChordBoard = memo(function ChordBoard() {
   const { state, openSheet, addChord, toast } = useApp();
   const [sel, setSel] = useState<ChordRef | null>(null);
@@ -447,17 +488,24 @@ const ChordBoard = memo(function ChordBoard() {
   const key = state.key;
   const scale = getScale(key.scaleId);
   const hepta = isHeptatonic(scale);
-  const [picked, setView] = useState<View>("triads");
-  const view: View = hepta ? (picked === "more" ? "triads" : picked) : picked === "next" ? "next" : "more";
-  const options: { value: View; label: string }[] = hepta
-    ? [{ value: "triads", label: "Chords" }, { value: "sevenths", label: "7ths" }, { value: "outside", label: "Outside" }, { value: "next", label: "Next ✨" }]
-    : [{ value: "more", label: "Chords" }, { value: "next", label: "Next ✨" }];
+  const [view, setView] = useState<View>("key");
+  const [size, setSize] = useState<3 | 4>(3);
+  const [deg, setDeg] = useState(1);
+  const all = useMemo(() => chordsInScale(key), [key]);
+  // each note's card: its triad (or seventh chord) built from the scale; in other scales, the plainest chord that fits
+  const cards = useMemo(() => {
+    const stacked = hepta ? diatonicChords(key, size).filter((c) => !c.type.synthetic) : [];
+    return all.map((d) => stacked.find((c) => c.degree === d.degree) ?? [...d.chords].sort((x, y) => (PLAIN.indexOf(x.type.id) + 99) % 99 - (PLAIN.indexOf(y.type.id) + 99) % 99)[0] ?? null);
+  }, [all, key, size, hepta]);
+  const degree = all.find((d) => d.degree === deg) ?? all[0];
+  const picked = sel && view === "key" ? degree?.chords.some((c) => sameRef(sel, c.ref)) : !!sel;
 
   return (
     <section className="card board">
       <div className="board-head">
-        <Seg value={view} options={options} onChange={setView} label="Which chords" />
-        {sel && view !== "triads" && view !== "sevenths" && (
+        <Seg value={view} options={[{ value: "key", label: "In key" }, { value: "outside", label: "Outside" }, { value: "next", label: "Next" }]} onChange={setView} label="Which chords" />
+        {view === "key" && hepta && <Seg value={size} options={[{ value: 3, label: "Triads" }, { value: 4, label: "7ths" }]} onChange={setSize} label="Cards show" />}
+        {sel && picked && (
           <div className="pick-bar">
             <b>{chordSymbol(sel)}</b>
             <button className="shapes-btn" onClick={() => openSheet({ ref: sel })}><ShapesIcon />Shapes</button>
@@ -466,8 +514,33 @@ const ChordBoard = memo(function ChordBoard() {
         )}
       </div>
       <PickCtx.Provider value={pickCtx}>
-        {(view === "triads" || view === "sevenths") && <KeyChords size={view === "triads" ? 3 : 4} />}
-        {view === "more" && <MoreChords />}
+        {view === "key" && (
+          <>
+            <div className="key-chords">
+              {cards.map((c, i) =>
+                c ? <ChordCard key={`${all[i].degree}-${c.type.id}`} c={c} on={degree?.degree === all[i].degree} onPick={() => setDeg(all[i].degree)} />
+                  : <button key={all[i].degree} className={`kc bare${degree?.degree === all[i].degree ? " on" : ""}`} onClick={() => setDeg(all[i].degree)}><span className="kc-name">{displayNote(all[i].root)}</span></button>,
+              )}
+            </div>
+            {degree && (
+              <div className="deg-all" role="group" aria-label={`Every chord in the key on ${displayNote(degree.root)}`}>
+                {CHORD_CATEGORIES.filter((cat) => degree.chords.some((c) => c.type.category === cat)).map((cat) => (
+                  <div key={cat} className="degree-row wide">
+                    <div className="degree-label">{KIND[cat] ?? cat}</div>
+                    <div className="row tight">{degree.chords.filter((c) => c.type.category === cat).map((c) => <Pill key={c.type.id} chord={c.ref} title={c.type.name} />)}</div>
+                  </div>
+                ))}
+                {!degree.chords.length && <span className="faint tiny">No chord fits on {displayNote(degree.root)} in this scale</span>}
+              </div>
+            )}
+            {hepta && (
+              <div className="role-legend">
+                {(Object.keys(ROLE_INFO) as Role[]).map((r) => <span key={r} title={ROLE_INFO[r].blurb}><i className={`dot ${ROLE_CLASS[r]}`} />{ROLE_INFO[r].label}</span>)}
+                <span title="Contains the mode's signature note"><b style={{ color: "var(--ext)" }}>★</b> Signature</span>
+              </div>
+            )}
+          </>
+        )}
         {view === "outside" && <OutsideChords />}
         {view === "next" && <NextChords />}
       </PickCtx.Provider>
@@ -475,29 +548,16 @@ const ChordBoard = memo(function ChordBoard() {
   );
 });
 
-function KeyChords({ size }: { size: 3 | 4 }) {
-  const { state } = useApp();
-  const chords = useMemo(() => diatonicChords(state.key, size).filter((c) => !c.type.synthetic), [state.key, size]);
-  return (
-    <>
-      <div className="key-chords">{chords.map((c) => <ChordCard key={`${c.degree}-${size}`} c={c} />)}</div>
-      <div className="role-legend">
-        {(Object.keys(ROLE_INFO) as Role[]).map((r) => <span key={r} title={ROLE_INFO[r].blurb}><i className={`dot ${ROLE_CLASS[r]}`} />{ROLE_INFO[r].label}</span>)}
-        <span title="Contains the mode's signature note"><b style={{ color: "var(--ext)" }}>★</b> Signature</span>
-      </div>
-    </>
-  );
-}
-
-function ChordCard({ c }: { c: KeyChord }) {
+function ChordCard({ c, on, onPick }: { c: KeyChord; on: boolean; onPick: () => void }) {
   const { state, openSheet, audition, addChord, shapeOf } = useApp();
   const { capo, labels, leftHanded } = state.settings;
   const v = shapeOf(c.ref);
-  const d = useDraggable({ ref: c.ref }, () => audition(c.ref));
+  const tap = () => { audition(c.ref); onPick(); };
+  const d = useDraggable({ ref: c.ref }, tap);
   const name = chordSymbol(c.ref);
   return (
-    <div className={`kc draggable role-${c.role}`} role="button" tabIndex={0} aria-label={`Play ${name}`} {...d}
-      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) audition(c.ref); }}>
+    <div className={`kc draggable role-${c.role}${on ? " on" : ""}`} role="button" tabIndex={0} aria-pressed={on} aria-label={`${name}${c.role ? `, ${ROLE_INFO[c.role].label}` : ""}. Play, and list its other chords`} title={c.role ? ROLE_INFO[c.role].label : undefined} {...d}
+      onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) tap(); }}>
       <span className="kc-head">
         <span className="kc-roman">{displayRoman(c.roman)}</span>
         {c.signature && <span className="kc-star">★</span>}
@@ -518,25 +578,6 @@ function Pill({ chord, tone, title }: { chord: ChordRef; tone?: string; title?: 
   const { sel, setSel } = useContext(PickCtx);
   const d = useDraggable({ ref: chord }, () => { audition(chord); setSel(chord); });
   return <button className={`chip draggable${tone ? ` ${tone}` : ""}${sameRef(sel, chord) ? " sel" : ""}`} title={title} aria-pressed={sameRef(sel, chord)} {...d}>{chordSymbol(chord)}</button>;
-}
-
-function MoreChords() {
-  const { state } = useApp();
-  const all = useMemo(() => chordsInScale(state.key), [state.key]);
-  return (
-    <div>
-      {all.map((d) => (
-        <div key={d.degree} className="degree-row">
-          <div className="degree-label">{displayNote(d.root)}</div>
-          <div className="row tight">
-            {[...d.chords]
-              .sort((a, b) => CHORD_CATEGORIES.indexOf(a.type.category) - CHORD_CATEGORIES.indexOf(b.type.category))
-              .map((c) => <Pill key={c.type.id} chord={c.ref} title={c.type.name} />)}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
 }
 
 function OutsideChords() {
@@ -575,7 +616,6 @@ function NextChords() {
   const groups = useMemo(() => suggestNext(last, state.key, chords.map((c) => c.ref), 8), [refsKey, state.key]); // eslint-disable-line react-hooks/exhaustive-deps
   return (
     <div>
-      <p className="tiny faint next-after">{last ? `After ${chordSymbol(last)}` : "To start"}</p>
       {groups.map((g) => (
         <div key={g.id} className="degree-row wide">
           <div className={`degree-label g-${g.id}`} title={g.blurb}><i className="gdot" />{GROUP_LABEL[g.id]}</div>
@@ -778,7 +818,7 @@ function SongBar({ secs, playing, onPlay }: { secs: Section[]; playing: boolean;
   );
 }
 
-function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beatOn, secs, songPlaying, onSong, bar, onLengths }: {
+function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, onArrange, beatOn, secs, songPlaying, onSong, bar, onLengths, canPlay }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -795,17 +835,13 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
   /** beats in a bar */
   bar: number;
   onLengths: (beats: Record<string, number>) => void;
+  /** there is a melody to play, even with no chords */
+  canPlay: boolean;
 }) {
-  const { state, set, toast } = useApp();
+  const { state } = useApp();
   const chords = state.progression.chords;
   const arr = state.progression.arrange ?? null;
   const span = fretSpan(voicings);
-  const [undo, setUndo] = useState<ProgChord[] | null>(null);
-  const idea = () => {
-    if (chords.length) setUndo(chords);
-    const refs = sparkProgression(state.key, { length: 4, mood: "any", adventure: 0.3, startHome: true });
-    set((s) => ({ ...s, progression: { ...s.progression, chords: refs.map((r) => ({ id: newId(), ref: r, beats: chordBeats(s.progression) })) } }));
-  };
   const marker = <span key="marker" className="drop-marker" />;
   const els: React.ReactNode[] = [];
   let k = 0;
@@ -848,19 +884,53 @@ function Dock({ ref, voicings, nowIdx, playing, onPlay, drag, onMenu, onStep, on
           </div>
         )}
         <div className="dock-main">
-        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : secs.length ? "Play this section" : "Play"} disabled={!chords.length && !beatOn}>{playing ? "■" : "▶"}</button>
+        <button className={`play-btn${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : secs.length ? "Play this section" : "Play"} disabled={!chords.length && !beatOn && !canPlay}>{playing ? "■" : "▶"}</button>
         <div className="dock-slots">
           {chords.length === 0 && !drag ? <span className="dock-empty">Drag chords here</span> : els}
           {chords.length === 0 && drag && drag.index === null && <span className="dock-empty">Drop here</span>}
         </div>
         <div className="dock-tools">
-          <button className="icon-btn" aria-label="Generate an idea" title="Generate an idea" onClick={idea}>✨</button>
-          {undo && <button className="icon-btn" aria-label="Undo" title="Undo" onClick={() => { set((s) => ({ ...s, progression: { ...s.progression, chords: undo } })); setUndo(null); toast("Restored"); }}>↶</button>}
           <button className="icon-btn" aria-label="Song options" title="Tempo, export" onClick={onMenu}>⋯</button>
         </div>
         </div>
         {chords.length > 0 && <BarRuler chords={chords} bar={bar} nowIdx={nowIdx} onChange={onLengths} />}
       </div>
+    </div>
+  );
+}
+
+/**
+ * The tray in one line, shown while the tray itself is off screen: play, the chords by name, and a way back.
+ * Chords can be dropped on it; tap a name to hear it.
+ */
+function MiniTray({ ref, chords, voicings, nowIdx, playing, onPlay, drag, canPlay, letter, onOpen }: {
+  ref: React.Ref<HTMLDivElement>;
+  chords: ProgChord[];
+  voicings: (Voicing | undefined)[];
+  nowIdx: number;
+  playing: boolean;
+  onPlay: () => void;
+  drag: (Payload & { index: number | null }) | null;
+  canPlay: boolean;
+  /** the section on screen, when the song has more than one */
+  letter?: string;
+  onOpen: () => void;
+}) {
+  const { state } = useApp();
+  const marker = <span key="marker" className="drop-marker" />;
+  const els: React.ReactNode[] = [];
+  chords.forEach((c, i) => {
+    if (drag && drag.index === i) els.push(marker);
+    const st = analyzeChord(c.ref, state.key).status;
+    els.push(<button key={c.id} data-slot={c.id} className={`mini-chip st-${st}${nowIdx === i ? " now" : ""}`} onClick={() => { const v = voicings[i]; if (v) strum(v.midi); }}>{chordSymbol(c.ref)}</button>);
+  });
+  if (drag && drag.index !== null && drag.index >= chords.length) els.push(marker);
+  return (
+    <div className={`mini-tray${drag ? " armed" : ""}`} ref={ref} role="group" aria-label="Your chords">
+      <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!canPlay}>{playing ? "■" : "▶"}</button>
+      {letter && <span className={`sec-chip on ${letterClass(letter)}`}>{letter}</span>}
+      <div className="dock-slots mini-slots">{els.length ? els : <span className="dock-empty">{drag ? "Drop here" : "Tap + on a chord"}</span>}</div>
+      <button className="icon-btn" aria-label="Open the tray" title="Shapes, lengths and sections" onClick={onOpen}>⌃</button>
     </div>
   );
 }
@@ -905,15 +975,12 @@ function tabText(vs: (Voicing | undefined)[], names: string[], stringNames: stri
 
 type SongPlan = { items: PlayItem[]; parts: { sec: Section; voicings: (Voicing | undefined)[] }[] };
 
-function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing | undefined)[]; items: PlayItem[]; beat: Beat; plan: SongPlan | null; onClose: () => void }) {
+function SongMenu({ voicings, items, beat, tune, plan, onClose }: { voicings: (Voicing | undefined)[]; items: PlayItem[]; beat: Beat; tune: PlayTune | null; plan: SongPlan | null; onClose: () => void }) {
   const { state, set, tuning, toast, idea } = useApp();
   const prog = state.progression;
   const has = prog.chords.length > 0;
   const hasAny = has || !!plan?.items.length;
   const name = idea?.name ?? "";
-  const [length, setLength] = useState(4);
-  const [mood, setMood] = useState<Mood>("any");
-  const [adventure, setAdventure] = useState(0.3);
   const setProg = (fn: (p: Progression) => Progression) => set((s) => ({ ...s, progression: fn(s.progression) }));
   const scale = getScale(state.key.scaleId);
 
@@ -953,20 +1020,19 @@ function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing
     }
   };
   const midi = async () => {
-    const r = await saveFile(progressionToMidi(plan ? plan.items : items, prog.bpm, prog.pattern, name || "M-Theory idea", beat), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
+    const r = await saveFile(progressionToMidi(plan ? plan.items : items, prog.bpm, prog.pattern, name || "M-Theory idea", beat, plan ? null : tune), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
     toast(r === "saved" ? "MIDI saved" : r === "failed" ? "Can't save files here" : "Cancelled");
   };
   const transpose = (n: number) =>
     set((s) => {
       const tonic = bestTonicSpelling(pc(s.key.tonic) + n, getScale(s.key.scaleId));
       const newKey = { ...s.key, tonic };
-      return { ...s, key: newKey, progression: mapAllChords(s.progression, (c) => ({ ...c, ref: transposeRef(c.ref, n, newKey), voicingId: undefined })) };
+      // the melody moves with the key, by as much as its grid does (so it stays on the same rows)
+      const by = melodyBase(newKey) - melodyBase(s.key);
+      const p = mapAllChords(s.progression, (c) => ({ ...c, ref: transposeRef(c.ref, n, newKey), voicingId: undefined }));
+      const move = (m: Melody | undefined) => (m ? transposeMelody(m, by) : m);
+      return { ...s, key: newKey, progression: { ...p, melody: move(p.melody), song: p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, melody: move(x.melody) })) } : p.song } };
     });
-  const generate = () => {
-    const refs = sparkProgression(state.key, { length, mood, adventure, startHome: true });
-    setProg((p) => ({ ...p, chords: refs.map((r) => ({ id: newId(), ref: r, beats: chordBeats(p) })) }));
-  };
-
   return (
     <div className="sheet-backdrop" onClick={onClose}>
       <div className="sheet" style={{ maxWidth: 520 }} role="dialog" aria-modal="true" aria-label="Song options" onClick={(e) => e.stopPropagation()}>
@@ -982,13 +1048,6 @@ function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing
             <label className="toggle"><input type="checkbox" checked={prog.loop} onChange={(e) => setProg((p) => ({ ...p, loop: e.target.checked }))} /> Loop</label>
           </div>
           <div className="menu-row">
-            <span className="kb-label">Idea</span>
-            <select value={length} aria-label="Chords" onChange={(e) => setLength(Number(e.target.value))}>{[3, 4, 5, 6, 8].map((n) => <option key={n} value={n}>{n}</option>)}</select>
-            <select value={mood} aria-label="Mood" onChange={(e) => setMood(e.target.value as Mood)}>{MOODS.map((m) => <option key={m.id} value={m.id}>{m.id === "any" ? "Any mood" : m.label}</option>)}</select>
-            <label className="adventure"><span>Safe</span><input type="range" min={0} max={1} step={0.05} value={adventure} aria-label="Adventure" onChange={(e) => setAdventure(Number(e.target.value))} /><span>Wild</span></label>
-            <button className="btn sm primary" onClick={generate}>✨</button>
-          </div>
-          <div className="menu-row">
             <span className="kb-label">Move</span>
             <button className="btn sm" disabled={!hasAny} onClick={() => transpose(-1)}>− ½</button>
             <button className="btn sm" disabled={!hasAny} onClick={() => transpose(1)}>+ ½</button>
@@ -997,7 +1056,7 @@ function SongMenu({ voicings, items, beat, plan, onClose }: { voicings: (Voicing
           </div>
           <div className="menu-row">
             <span className="kb-label">Export</span>
-            <button className="btn sm" disabled={!hasAny && !beat.on} onClick={midi}>MIDI</button>
+            <button className="btn sm" disabled={!hasAny && !beat.on && !tune} onClick={midi}>MIDI</button>
             <button className="btn sm" disabled={!hasAny} onClick={copy}>Copy tab</button>
           </div>
         </div>

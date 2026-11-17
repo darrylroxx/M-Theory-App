@@ -4,7 +4,8 @@
  * devices disagree) can be tested without a browser.
  */
 import { GROOVE_KEYS, reviveBeat } from "../audio/beats";
-import { hasStyle } from "../audio/patterns";
+import { hasStyle, reviveFeel } from "../audio/patterns";
+import { reviveMelody } from "./melody";
 import { reviveSound } from "../audio/rack";
 import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
@@ -32,11 +33,11 @@ export function fingerprint(s: Snapshot): string {
   const beat = p.beat && song ? Object.fromEntries(Object.entries(p.beat).filter(([k]) => !(GROOVE_KEYS as readonly string[]).includes(k))) : (p.beat ?? null);
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
   const sound = reviveSound(p.sound);
-  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: song ? null : p.pattern, loop: p.loop, arrange: p.arrange ?? null, beat, sound, song, chords: song ? null : p.chords });
+  return JSON.stringify({ key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, pattern: song ? null : p.pattern, feel: song ? null : reviveFeel(p.feel), melody: song ? null : (p.melody?.notes.length ? p.melody : null), loop: p.loop, arrange: p.arrange ?? null, beat, sound, song, chords: song ? null : p.chords });
 }
 
 /** Nothing worth saving yet. */
-export const isBlank = (p: Progression) => !p.chords.length && !p.song && !p.beat?.on;
+export const isBlank = (p: Progression) => !p.chords.length && !p.song && !p.beat?.on && !p.melody?.notes.length;
 
 export const ideaTime = (i: SavedProgression) => i.updatedAt ?? i.savedAt;
 
@@ -59,12 +60,14 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   if (!i || typeof i.id !== "string" || !i.key || typeof i.key.tonic !== "string" || !i.progression || !Array.isArray(i.progression.chords)) return null;
   const p = i.progression;
   const song = reviveSong(p.song);
-  const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song, ...(p.sound ? { sound: reviveSound(p.sound) } : {}) };
+  const progression: Progression = { chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song, ...(p.sound ? { sound: reviveSound(p.sound) } : {}), ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(reviveMelody(p.melody) ? { melody: reviveMelody(p.melody) } : {}) };
   if (song) {
     const part = song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId);
     progression.chords = part?.chords ?? [];
     if (progression.beat && part?.groove) progression.beat = { ...progression.beat, ...part.groove };
     if (part?.style) progression.pattern = part.style;
+    progression.feel = part?.feel;
+    progression.melody = part?.melody;
   }
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }

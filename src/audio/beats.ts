@@ -359,12 +359,13 @@ export function applyPattern(beat: Beat, p: BeatPattern): Beat {
 export const barBeats = (b: { steps: number; div: number }) => b.steps / b.div;
 /**
  * How many times a section's chords play so the drum pattern can finish: a 4-bar beat under
- * 2 bars of chords plays the chords twice. With the drums off, or a pattern no longer than the
- * chords, once.
+ * 2 bars of chords plays the chords twice. The same goes for a melody longer than the chords.
+ * With the drums off, or nothing longer than the chords, once.
  */
-export function chordRounds(chordBeats: number, b: Beat | undefined | null): number {
-  if (!b?.on || chordBeats <= 0) return 1;
-  return Math.max(1, Math.ceil((barBeats(b) * barsOf(b)) / chordBeats - 1e-6));
+export function chordRounds(chordBeats: number, b: Beat | undefined | null, tuneBeats = 0): number {
+  if (chordBeats <= 0) return 1;
+  const drums = b?.on ? barBeats(b) * barsOf(b) : 0;
+  return Math.max(1, Math.ceil(Math.max(drums, tuneBeats) / chordBeats - 1e-6));
 }
 
 /** Bars in the pattern. */

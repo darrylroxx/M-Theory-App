@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
 import { barBeats } from "../audio/beats";
-import { hasStyle, styleBar, type PatternId } from "../audio/patterns";
+import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
+import { reviveMelody, type Melody } from "../song/melody";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
@@ -37,6 +38,10 @@ export interface Progression {
   arrange?: ArrangeSettings | null;
   /** The drum beat under the chords (undefined = never touched). */
   beat?: Beat;
+  /** How the style is played in the section on screen: speed, swing, touch … */
+  feel?: Partial<Feel>;
+  /** The melody of the section on screen. */
+  melody?: Melody;
   /** The harp's sound and effects (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
   /** Song structure: sections in order. `chords` above are then the selected section's chords. */
@@ -146,6 +151,8 @@ function load(): AppState {
         pattern: hasStyle(parsed.progression?.pattern) ? parsed.progression.pattern : "ring",
         chords: (parsed.progression?.chords ?? []).map(reviveChord),
         beat: reviveBeat(parsed.progression?.beat), song: reviveSong(parsed.progression?.song),
+        ...(parsed.progression?.feel ? { feel: reviveFeel(parsed.progression.feel) } : {}),
+        melody: reviveMelody(parsed.progression?.melody),
       },
     };
   } catch {

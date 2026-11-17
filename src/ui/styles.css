@@ -475,3 +475,70 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .ruler-edit .beats button { width: 30px; height: 30px; font-size: 1.05rem; }
 .ruler-edit .icon-btn { margin-left: auto; }
 @media (max-width: 620px), (pointer: coarse) { .ruler { height: 36px; min-width: calc(var(--beats) * 14px); } .ruler-name { margin: 3px 1px; } .ruler-grip { width: 24px; right: -12px; } .ruler-grip::after { left: 10px; top: 8px; bottom: 8px; } }
+
+/* ── Chord menu: a card per scale note, then everything the key offers on the chosen one ── */
+.kc.on { border-color: var(--accent); border-top-color: var(--role, var(--accent)); box-shadow: 0 0 0 1px var(--accent); background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
+.kc.bare { justify-content: center; min-height: 84px; font: inherit; color: inherit; }
+.deg-all { margin-top: 10px; padding: 2px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
+.deg-all .degree-row.wide { grid-template-columns: 70px minmax(0, 1fr); padding: 7px 0; }
+.deg-all .degree-label { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); padding-top: 9px; }
+@media (max-width: 720px) {
+  /* one row of cards to swipe through, instead of three rows to scroll past */
+  .key-chords { display: flex; grid-template-columns: none; overflow-x: auto; scroll-snap-type: x proximity; gap: 8px; margin-inline: -6px; padding: 2px 6px 8px; scrollbar-width: none; }
+  .key-chords::-webkit-scrollbar { display: none; }
+  .key-chords > .kc { flex: 0 0 29%; min-width: 104px; scroll-snap-align: start; }
+  .role-legend { display: none; }
+  .deg-all { padding: 0 10px; }
+  .deg-all .degree-row.wide { grid-template-columns: 70px minmax(0, 1fr); gap: 6px; }
+  .board-head .pick-bar { margin-left: 0; }
+}
+
+/* ── The tray lives in the page; a slim bar stands in for it while it is off screen ── */
+.bottom-layer:not(.open) { position: static; }
+.page { padding-bottom: 76px; }
+.mini-tray { position: fixed; z-index: 25; left: max(8px, calc(50% - 550px)); right: max(8px, calc(50% - 550px)); bottom: calc(8px + env(safe-area-inset-bottom, 0px)); display: flex; align-items: center; gap: 8px; padding: 7px 8px; border-radius: 16px;
+  background: color-mix(in srgb, var(--card) 94%, transparent); backdrop-filter: blur(12px); border: 1px solid var(--border-2); box-shadow: var(--shadow); }
+.mini-tray.armed { border-style: dashed; border-color: var(--accent); }
+.mini-slots { align-items: center; gap: 6px; padding: 2px; scrollbar-width: none; }
+.mini-slots::-webkit-scrollbar { display: none; }
+.mini-chip { flex: 0 0 auto; min-width: 44px; height: 38px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border-2); border-top: 3px solid var(--border-2); background: var(--card-2); color: var(--text); font-weight: 800; font-size: 0.92rem; }
+.mini-chip.st-diatonic { border-top-color: var(--home); }
+.mini-chip.st-borrowed { border-top-color: var(--borrowed); }
+.mini-chip.st-chromatic { border-top-color: var(--chromatic); }
+.mini-chip.now { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.mini-tray .dock-empty { font-size: 0.85rem; }
+.mini-tray .sec-chip { flex: 0 0 auto; }
+@media (max-width: 720px) {
+  .topbar-inner { padding-block: 5px; }
+  /* with the shape finder open the tray shrinks to names, so the shapes get the screen */
+  .bottom-layer.open .dock-top, .bottom-layer.open .dock .arrange, .bottom-layer.open .ruler-wrap, .bottom-layer.open .slot svg, .bottom-layer.open .slot-step, .bottom-layer.open .dock-tools { display: none; }
+  .bottom-layer.open .dock-inner { min-height: 0; padding: 6px 8px; }
+  .bottom-layer.open .slot { flex: 0 0 auto; min-width: 64px; padding: 8px 4px; }
+  .bottom-layer.open .play-btn { width: 38px; height: 38px; }
+}
+
+/* ── Melody: a grid of notes ── */
+.melody { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 66px; }
+.mg { --rh: 24px; display: flex; gap: 6px; user-select: none; }
+.mg-labels { flex: 0 0 44px; display: flex; flex-direction: column; gap: 2px; }
+.mg-label { height: var(--rh); padding: 0; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--faint); font-size: 0.7rem; font-weight: 700; }
+.mg-label.in { background: color-mix(in srgb, var(--accent) 22%, var(--card)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--text); font-weight: 800; }
+.mg-label.home { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.mg-steps { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; --now: -1; }
+.mg-row { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 2px; height: var(--rh); }
+.mg-cell { position: relative; padding: 0; border: none; border-radius: 5px; background: var(--bg-2); min-width: 0; cursor: pointer; }
+.mg-row.in .mg-cell { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
+.mg-row.home .mg-cell { background: color-mix(in srgb, var(--accent) 14%, var(--card-2)); }
+.mg-cell.beat { box-shadow: inset 2px 0 0 var(--border-2); }
+.mg-cell.fit::after { content: ""; position: absolute; left: 50%; top: 50%; width: 5px; height: 5px; margin: -2.5px; border-radius: 50%; background: var(--fifth); opacity: 0.55; }
+.mg-cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
+.mg-cell.on { background: var(--accent) !important; box-shadow: none; }
+.mg-cell.on.fit::after { background: var(--accent-ink); opacity: 0.8; }
+.mg-now { position: absolute; top: 0; bottom: 0; left: calc(var(--now) * 100% / var(--steps)); width: calc(100% / var(--steps)); border-radius: 5px; background: var(--text); opacity: 0.13; pointer-events: none; display: block; }
+.melody .dm-head .seg button { min-width: 34px; }
+@media (max-width: 620px) { .melody { padding: 10px; } .mg { --rh: 28px; gap: 4px; } .mg-labels { flex-basis: 36px; } .mg-row, .mg-steps, .mg-labels { gap: 2px; } }
+.voice-group { display: flex; flex-direction: column; gap: 6px; }
+.knobs.feel { padding-top: 8px; border-top: 1px solid var(--border); }
+.mg-chords { height: 16px; }
+.mg-chords span { font-size: 0.66rem; font-weight: 800; color: var(--muted); white-space: nowrap; overflow: visible; padding-left: 2px; line-height: 16px; }
+.mg-corner { height: 16px; border: none; background: none; }

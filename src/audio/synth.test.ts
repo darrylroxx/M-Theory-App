@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { seededRng } from "../theory/progression";
-import { HARP_VOICES, STRING_DEFAULT, harpSeconds, renderHarp, type HarpString } from "./harp";
+import { HARP_VOICES, STRING_DEFAULT, VOICE_GROUPS, harpSeconds, renderHarp, voiceShift, type HarpString } from "./harp";
 
 const SR = 44100;
 
@@ -59,16 +59,43 @@ function peakNear(x: Float32Array, f: number): number {
   }
   return best;
 }
+/** The centre of the energy within 20 cents of `f`. */
+function centreNear(x: Float32Array, f: number): number {
+  let sum = 0;
+  let weight = 0;
+  for (let c = -20; c <= 20; c++) {
+    const l = level(x, f * Math.pow(2, c / 1200), Math.min(32768, x.length - 2000), 1000) ** 2;
+    sum += c * l;
+    weight += l;
+  }
+  return f * Math.pow(2, sum / weight / 1200);
+}
 const note = (midi: number, s: Partial<HarpString> = {}) => renderHarp(SR, midi, { ...STRING_DEFAULT, ...s }, seededRng(midi));
 
 describe("harp", () => {
+  it("is a library: ten harps, their plucked relatives, and bells", () => {
+    expect(HARP_VOICES.length).toBeGreaterThanOrEqual(22);
+    expect(new Set(HARP_VOICES.map((v) => v.id)).size).toBe(HARP_VOICES.length);
+    expect(new Set(HARP_VOICES.map((v) => v.name)).size).toBe(HARP_VOICES.length);
+    expect(HARP_VOICES.filter((v) => v.group === "Harps").length).toBeGreaterThanOrEqual(10);
+    for (const g of VOICE_GROUPS) expect(HARP_VOICES.some((v) => v.group === g), g).toBe(true);
+    // no two instruments are the same sound
+    const sig = (id: HarpString["voice"]) => Array.from(note(57, { voice: id }).subarray(2000, 2064)).map((x) => x.toFixed(4)).join();
+    expect(new Set(HARP_VOICES.map((v) => sig(v.id))).size).toBe(HARP_VOICES.length);
+  });
+
   it("every instrument is in tune across the guitar's range (within 4 cents)", () => {
     for (const v of HARP_VOICES)
       for (const midi of [40, 45, 50, 55, 59, 64, 69, 76, 81]) {
         const d = note(midi, { voice: v.id });
         // a music box's overtones are not whole multiples of its note, which fools a pitch detector: find its fundamental directly
-        const f = v.id === "box" ? peakNear(d, hz(midi)) : detectPitch(d, SR);
-        expect(Math.abs(cents(f, hz(midi))), `${v.id} ${midi}`).toBeLessThan(4);
+        // harmonics sound an octave above the string that is touched
+        const want = hz(midi + voiceShift(v.id));
+        // bars fool a pitch detector (their overtones are not whole multiples), so they are measured at the note itself;
+        // paired strings sit either side of the note on purpose, so it is their centre that must be in tune
+        const paired = ["dulcimer", "mandolin"].includes(v.id);
+        const f = paired ? centreNear(d, want) : v.group === "Bells" ? peakNear(d, want) : detectPitch(d, SR, 60, 3000);
+        expect(Math.abs(cents(f, want)), `${v.id} ${midi}`).toBeLessThan(4);
       }
   }, 20000);
 

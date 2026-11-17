@@ -11,7 +11,7 @@ describe("harp sounds", () => {
     for (const k of ["drive", "chorus", "phaser", "trem", "wobble", "echo", "shimmer", "octave"] as const) expect(FX_DEFAULT[k], k).toBe(0);
   });
   it("there are plenty of presets, all valid, all different, none named after an artist", () => {
-    expect(SOUNDS.length).toBeGreaterThanOrEqual(20);
+    expect(SOUNDS.length).toBeGreaterThanOrEqual(18);
     expect(new Set(SOUNDS.map((p) => p.id)).size).toBe(SOUNDS.length);
     expect(new Set(SOUNDS.map((p) => p.name)).size).toBe(SOUNDS.length);
     SOUNDS.forEach((p, i) => {
@@ -20,7 +20,9 @@ describe("harp sounds", () => {
       expect(reviveSound(s), p.id).toEqual(s);
       expect(HARP_VOICES.some((v) => v.id === s.voice) && HARP_VERBS.some((v) => v.id === s.verb) && DRIVES.some((v) => v.id === s.driveType), p.id).toBe(true);
       expect(TREM_SPEEDS.some((v) => v.id === s.tremSpeed) && ECHO_TIMES.some((v) => v.id === s.echoTime), p.id).toBe(true);
-      expect(Object.keys(p.sound).every((k) => k in SOUND_DEFAULT), p.id).toBe(true);
+      expect(Object.keys(p.sound).every((k) => k in SOUND_DEFAULT && k !== "voice"), p.id).toBe(true);
+      // a preset is the same preset on any instrument
+      expect(soundName(soundOfPreset(p, "kora"))).toBe(p.name);
       SOUNDS.slice(i + 1).forEach((q) => expect(sameSound(s, soundOfPreset(q)), `${p.id} = ${q.id}`).toBe(false));
       expect(soundName(s)).toBe(p.name);
     });
@@ -31,6 +33,8 @@ describe("harp sounds", () => {
     expect(soundName({ ...s, level: 0.3 })).toBe(SOUNDS[4].name);
     expect(soundName({ ...s, chorus: 0.123 })).toBe(null);
     expect(soundName({ ...s, chorus: 0.123 }, [{ id: "u", name: "Mine", sound: { ...s, chorus: 0.123 } }])).toBe("Mine");
+    // a saved sound includes its instrument
+    expect(soundName({ ...s, chorus: 0.123, voice: "koto" }, [{ id: "u", name: "Mine", sound: { ...s, chorus: 0.123 } }])).toBe(null);
   });
   it("a damaged or old sound is made whole", () => {
     expect(reviveSound(undefined)).toEqual(SOUND_DEFAULT);

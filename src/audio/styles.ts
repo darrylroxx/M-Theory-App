@@ -55,6 +55,10 @@ export const STYLES: Style[] = [
   { id: "half", name: "Half notes", group: "simple", hint: "Two slow strums a bar.", div: 2, spread: 0.012, four: ["D . . . D< . . ."], three: ["D . . . D< ."] },
   { id: "quarters", name: "On the beat", group: "simple", hint: "A down-strum on every beat.", div: 2, spread: 0.01, four: ["D . D< . D . D< ."], three: ["D . D< . D< ."] },
   { id: "eighths", name: "Down-up", group: "simple", hint: "Straight eighth notes, down and up.", div: 2, four: ["D U D U D U D U"], three: ["D U D U D U"] },
+  { id: "pulse4", name: "Plucked beats", group: "simple", hint: "The whole chord plucked on every beat.", div: 2, four: ["T . T< . T . T< ."], three: ["T . T< . T< ."], entry: "T" },
+  { id: "pulse8", name: "Plucked eighths", group: "simple", hint: "The whole chord plucked eight times a bar.", div: 2, four: ["T T< T T< T T< T T<"], three: ["T T< T T< T T<"], entry: "T" },
+  { id: "pushed", name: "Pushed chords", group: "simple", hint: "Three plucked chords a bar, leaning ahead of the beat.", div: 2, four: ["T . . T . . T ."], entry: "T" },
+  { id: "rolledbeats", name: "Rolled beats", group: "simple", hint: "A quick roll on one and three.", div: 2, four: ["R . . . R< . . ."], three: ["R . . . R< ."], entry: "R" },
 
   // ── Strumming ──
   { id: "strum", name: "Island strum", group: "strum", hint: "Down, down-up, up-down-up. The most played strum there is.", div: 2, four: ["D . D U . U D U"], three: ["D . D U D U"] },
@@ -70,6 +74,12 @@ export const STYLES: Style[] = [
   { id: "chuck", name: "Backbeat chuck", group: "strum", hint: "A muted slap on beats two and four, like a snare.", div: 2, four: ["D . X . D U X ."] },
   { id: "islandchuck", name: "Island with chucks", group: "strum", hint: "The island strum with a slap on two and four.", div: 2, four: ["D . X U . U X U"] },
   { id: "chuck8", name: "Chucked eighths", group: "strum", hint: "Steady down-ups, slapped on two and four.", div: 2, four: ["D U X U D U X U"] },
+  { id: "strum16", name: "Sixteenth strum", group: "strum", hint: "Down-up four times to the beat: a shimmering wall.", div: 4, four: [x("D U D< U", 4)], three: [x("D U D< U", 3)] },
+  { id: "reverse", name: "Reverse island", group: "strum", hint: "The island strum turned round: busy first, open after.", div: 2, four: ["D U . U D . D U"] },
+  { id: "balladstrum", name: "Ballad strum", group: "strum", hint: "One long strum, then a gentle push into the next bar.", div: 2, four: ["D . . . D< . D U"], three: ["D . . . D U"] },
+  { id: "pushstrum", name: "Push strum", group: "strum", hint: "The last up-stroke hangs over the bar line.", div: 2, four: ["D . D U . U . U"] },
+  { id: "ghost", name: "Ghost strum", group: "strum", hint: "Every stroke is there, but half of them are muted.", div: 2, four: ["D X U X D X U X"] },
+  { id: "spanish", name: "Spanish strum", group: "strum", hint: "Down, down-up in threes, ending with a flourish.", div: 2, four: ["D D< U D D< U D U"] },
 
   // ── Bass and strum ──
   { id: "boomchick", name: "Boom-chick", group: "bass", hint: "Bass note, strum, other bass note, strum. Country and folk.", div: 2, four: ["p . H . q . H ."], three: ["p . H . H .", "q . H . H ."] },
@@ -94,6 +104,12 @@ export const STYLES: Style[] = [
   { id: "frail", name: "Frailing", group: "pick", hint: "A note, a brush and the thumb: bum-ditty.", div: 2, four: ["a . h p a . h p"] },
   { id: "pairs", name: "Pairs", group: "pick", hint: "Two notes at a time, low pair then high pair.", div: 2, four: ["pi . ma . pi . ma ."], three: ["pi . ma . ma ."] },
   { id: "bassblock", name: "Bass and chord", group: "pick", hint: "A bass note answered by the three top notes together.", div: 2, four: ["p . ima . q . ima ."], three: ["p . ima . ima ."] },
+  { id: "lullaby", name: "Lullaby", group: "pick", hint: "One soft note at a time, rocking up and back.", div: 2, four: ["p . i . m . i ."], three: ["p . i . m ."] },
+  { id: "bassrun", name: "Thumb run", group: "pick", hint: "The thumb alone, walking over the three bass strings.", div: 2, four: ["p q r q p q r q"], three: ["p q r q r q"] },
+  { id: "thirds", name: "Pairs climbing", group: "pick", hint: "Two notes together, the upper one climbing.", div: 2, four: ["pi . pm . pa . pm ."], three: ["pi . pm . pa ."] },
+  { id: "drone", name: "High drone", group: "pick", hint: "The top string rings on every other note.", div: 2, four: ["pa i a m a i a m"], three: ["pa i a m a i"] },
+  { id: "pedal", name: "Pedal bass", group: "pick", hint: "The bass note returns between every melody note.", div: 2, four: ["p i p m p a p m"], three: ["p i p m p a"] },
+  { id: "tumble", name: "Tumbling", group: "pick", hint: "Falling from the top string to the bass, twice a bar.", div: 2, four: ["a m i p a m i p"], three: ["a m i p m i"], entry: "p" },
 
   // ── Arpeggios ──
   { id: "arpeggio", name: "Up and down", group: "arp", hint: "Every note of the chord, low to high and back. Dreamy.", div: 2, four: ["1 2 3 4 5 6 5 4"], three: ["1 2 3 4 3 2"] },
@@ -106,6 +122,14 @@ export const STYLES: Style[] = [
   { id: "triplets", name: "Triplets", group: "arp", hint: "Thumb, index, middle on every beat.", div: 3, four: [x("p i m", 4)], three: [x("p i m", 3)] },
   { id: "tripletsdown", name: "Triplets, falling", group: "arp", hint: "Thumb, then the top notes falling, on every beat.", div: 3, four: [x("p a m", 4)], three: [x("p a m", 3)] },
   { id: "slowarp", name: "Slow arpeggio", group: "arp", hint: "One note at a time, rising, with room to breathe.", div: 2, four: ["p i m a m i m a"], three: ["p i m a m i"] },
+  { id: "rising", name: "Rising", group: "arp", hint: "Four notes up, again and again.", div: 2, four: ["1 2 3 4 1 2 3 4"], three: ["1 2 3 1 2 3"] },
+  { id: "quickrise", name: "Quick rise", group: "arp", hint: "The same climb in sixteenths.", div: 4, four: [x("1 2 3 4", 4)], three: [x("1 2 3 4", 3)] },
+  { id: "updown16", name: "Rise and fall", group: "arp", hint: "Up five notes and back, twice a bar.", div: 4, four: [x("1 2 3 4 5 4 3 2", 2)], three: ["1 2 3 4 5 4 3 2 1 2 3 2"] },
+  { id: "stepping", name: "Stepping thirds", group: "arp", hint: "Up the chord in overlapping pairs: skip one, step back.", div: 2, four: ["1 3 2 4 3 5 4 6"], three: ["1 3 2 4 3 5"] },
+  { id: "zigzag", name: "Zigzag", group: "arp", hint: "Low, high, low, high, each pair a step further up.", div: 2, four: ["1 4 2 5 3 6 2 5"], three: ["1 4 2 5 3 6"] },
+  { id: "highripple", name: "High ripple", group: "arp", hint: "Only the top three strings, shimmering.", div: 4, four: [x("a i m i", 4)], three: [x("a i m i", 3)], entry: "p" },
+  { id: "risingtriplets", name: "Rising triplets", group: "arp", hint: "Triplets climbing through two octaves and back.", div: 3, four: ["1 2 3 4 5 6 7 8 9 8 7 6"], three: ["1 2 3 4 5 6 7 6 5"] },
+  { id: "musicbox", name: "Music box", group: "arp", hint: "High notes first, tumbling to the bass: wind it up.", div: 2, four: ["5 3 4 2 5 3 4 1"], three: ["5 3 4 2 3 1"], entry: "1" },
 
   // ── Harp ──
   { id: "slowroll", name: "Slow roll", group: "harp", hint: "The chord spread out leisurely from the bottom.", div: 2, roll: 0.08, four: ["R . . . . . . ."], three: ["R . . . . ."], entry: "R" },
@@ -118,6 +142,12 @@ export const STYLES: Style[] = [
   { id: "gliss", name: "Glissando", group: "harp", hint: "A sweep across the strings into every bar.", div: 2, four: ["G . . . . . . ."], three: ["G . . . . ."], entry: "R" },
   { id: "glisstwice", name: "Sweep and return", group: "harp", hint: "A sweep up, then a sweep back down.", div: 2, four: ["G . . . g< . . ."], three: ["G . . . g< ."], entry: "R" },
   { id: "whisper", name: "Whisper", group: "harp", hint: "A soft, quick murmur on the upper notes over a held bass.", div: 4, four: [x("p m< a< m< i< m< a< m<", 2)], three: ["p m< a< m< i< m< a< m< i< m< a< m<"] },
+  { id: "harpballad", name: "Harp ballad", group: "harp", hint: "A low note, then a slow curve over the top of the chord.", div: 2, four: ["1 . 3 4 5 . 4 3"], three: ["1 . 3 4 5 4"] },
+  { id: "harplullaby", name: "Cradle", group: "harp", hint: "Rocking between the inner notes and the top.", div: 2, four: ["1 3 5 3 4 3 5 3"], three: ["1 3 5 3 4 3"] },
+  { id: "belltones", name: "Bell tones", group: "harp", hint: "Four slow notes falling from the top, each left to ring.", div: 2, four: ["5 . 4 . 3 . 2 ."], three: ["5 . 3 . 2 ."], entry: "1" },
+  { id: "rollfall", name: "Roll, then fall", group: "harp", hint: "A rolled chord, answered by three falling notes.", div: 2, four: ["R . . . a m i ."], three: ["R . . a m i"], entry: "R" },
+  { id: "tremolo", name: "Shimmering chord", group: "harp", hint: "The whole chord repeated very softly and fast.", div: 4, four: [x("T< T< T< T<", 4)], three: [x("T< T< T< T<", 3)], entry: "T" },
+  { id: "rollup8", name: "Rolling eighths", group: "harp", hint: "A small roll on every beat, over a steady bass.", div: 2, four: ["R . H< . R< . H< ."], three: ["R . H< . H< ."], entry: "R" },
 
   // ── Rock ──
   { id: "pulse", name: "Muted eighths", group: "drive", hint: "Palm-muted eighth notes on the low strings. Driving.", div: 2, four: ["K> K K K K> K K K"], three: ["K> K K K K K"], entry: "K" },
@@ -162,6 +192,8 @@ export const STYLES: Style[] = [
   { id: "six8full", name: "6/8 down-up-up", group: "swing", hint: "Down, up, up: a rolling six.", div: 3, four: [x("D U U", 4)], three: [x("D U U", 3)] },
   { id: "jig", name: "Jig", group: "swing", hint: "Down, down, up: a dancing six.", div: 3, four: [x("D D< U", 4)], three: [x("D D< U", 3)] },
   { id: "ballad68", name: "6/8 ballad", group: "swing", hint: "The classic slow broken chord: six notes up and back.", div: 3, four: [x("p> i m a> m i", 2)], three: ["p> i m a> m i p i m"] },
+  { id: "charleston", name: "Charleston", group: "swing", hint: "Two short chords a bar: on one, and just before three.", div: 3, four: ["S . . . . S . . . . . ."], entry: "S" },
+  { id: "fourbar", name: "Four to the bar", group: "swing", hint: "A short chord on every beat, two and four leaned on: swing rhythm guitar.", div: 2, four: ["S . S> . S . S> ."], three: ["S . S> . S> ."], entry: "S" },
 
   // ── Waltz ──
   { id: "waltz", name: "Waltz", group: "waltz", hint: "Three down-strums, the first the strongest.", div: 2, three: ["D . D< . D< ."] },
@@ -172,4 +204,6 @@ export const STYLES: Style[] = [
   { id: "waltzarp", name: "Waltz arpeggio", group: "waltz", hint: "Six picked notes with the thumb on one and the middle of the bar.", div: 2, three: ["p i m q i a"] },
   { id: "waltzsix", name: "Up and back", group: "waltz", hint: "Thumb and three fingers up, two back.", div: 2, three: ["p i m a m i"] },
   { id: "waltzpluck", name: "Waltz pluck", group: "waltz", hint: "A bass note, then the chord plucked twice.", div: 2, three: ["p . ima . ima ."] },
+  { id: "waltzroll", name: "Waltz roll", group: "waltz", hint: "A rolled chord on one, a soft brush on three.", div: 2, three: ["R . . . H< ."], entry: "R" },
+  { id: "waltzharp", name: "Harp waltz", group: "waltz", hint: "Bass, middle, top: one note to a beat.", div: 2, three: ["1 . 3 . 5 ."] },
 ];
