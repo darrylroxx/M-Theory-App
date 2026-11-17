@@ -76,7 +76,7 @@ export async function meterStop(): Promise<void> {
 }
 
 // ── the recording engine ──
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean }
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string }
 
 async function core() {

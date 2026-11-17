@@ -76,6 +76,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const barsRef = useRef<HTMLDivElement>(null);
   const countRef = useRef<HTMLSpanElement>(null);
   const grRef = useRef<HTMLSpanElement>(null);
+  const dropRef = useRef<HTMLSpanElement>(null);
+  const slowRef = useRef<HTMLSpanElement>(null);
+  const drops = useRef({ n: 0, at: 0 });
   const hold = useRef<number[]>([]);
   const planRef = useRef<RecordPlan | null>(null);
   const trackRef = useRef<Track | null>(null);
@@ -119,6 +122,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
         if (label) label.textContent = Number.isFinite(hold.current[c]) && hold.current[c] > -60 ? `${hold.current[c].toFixed(0)} dB` : "—";
       });
       if (grRef.current) grRef.current.textContent = st.reduction > 0.5 ? `−${st.reduction.toFixed(1)} dB` : "";
+      // dropouts: the computer could not keep up at this buffer size
+      if (st.xruns !== drops.current.n) drops.current = { n: st.xruns, at: performance.now() };
+      if (dropRef.current) dropRef.current.textContent = st.xruns ? `${st.xruns} dropout${st.xruns === 1 ? "" : "s"}` : "no dropouts";
+      if (slowRef.current) slowRef.current.hidden = !(st.xruns && performance.now() - drops.current.at < 6000);
       if (countRef.current) {
         const p = planRef.current;
         if (!st.running || !p) countRef.current.textContent = "";
@@ -296,7 +303,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                   {devices.map((d) => <option key={`${d.host}|${d.name}`} value={`${d.host}|${d.name}`}>{d.name} ({d.host})</option>)}
                 </select>
               )}
-              {opened && <span className="tiny muted">{opened.inputs} in · {opened.outputs} out · {opened.rate / 1000} kHz</span>}
+              {opened && <span className="tiny muted">{opened.inputs} in · {opened.outputs} out · {opened.rate / 1000} kHz · <span ref={dropRef} title="Each dropout is a moment the computer could not keep up: a click or crackle">no dropouts</span></span>}
+              <span ref={slowRef} className="small vc-err" hidden>Dropouts right now: the computer is not keeping up at this buffer size. In the Focusrite Notifier, choose a bigger buffer (128), or turn Safe Mode on.</span>
               {error && <span className="small vc-err">{error}</span>}
               <div className="vc-meters" ref={barsRef}>
                 {Array.from({ length: channels }, (_, c) => (

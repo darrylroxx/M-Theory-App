@@ -37,6 +37,8 @@ pub struct Stats {
     /// counts every stop, so a waiting command knows its stop has happened
     pub stops: AtomicU64,
     pub dropped: AtomicU64,
+    /// the driver said the computer could not keep up (each one is a little dropout you may hear)
+    pub xruns: AtomicU64,
     /// the driver asked to be reset (its buffer size or sample rate was changed)
     pub invalid: AtomicBool,
     /// when the first frame was heard and the first sample captured, at the last stop
@@ -349,6 +351,8 @@ pub struct Status {
     pub reduction: f32,
     /// the driver was reset (its buffer size or rate changed): the interface must be opened again
     pub invalid: bool,
+    /// dropouts since the interface was opened (the computer could not keep up at this buffer size)
+    pub xruns: u64,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
@@ -378,10 +382,7 @@ where
                 c.on_input(&buf, at);
             }
         },
-        move |e| {
-            eprintln!("input: {e}");
-            bad.stats.invalid.store(true, Ordering::Relaxed);
-        },
+        move |e| report(&bad, e),
         None,
     )
     .map_err(|e| e.to_string())
@@ -412,13 +413,22 @@ where
                 *o = T::from_sample(*v);
             }
         },
-        move |e| {
-            eprintln!("output: {e}");
-            bad.stats.invalid.store(true, Ordering::Relaxed);
-        },
+        move |e| report(&bad, e),
         None,
     )
     .map_err(|e| e.to_string())
+}
+
+/// What the driver reports. A dropout (the computer did not keep up) is only counted: the
+/// stream carries on. Only a reset or a lost device means the interface must be opened again.
+fn report(link: &Link, e: cpal::Error) {
+    match e.kind() {
+        cpal::ErrorKind::Xrun => {
+            link.stats.xruns.fetch_add(1, Ordering::Relaxed);
+        }
+        cpal::ErrorKind::StreamInvalidated | cpal::ErrorKind::DeviceNotAvailable => link.stats.invalid.store(true, Ordering::Relaxed),
+        _ => eprintln!("audio: {e}"),
+    }
 }
 
 fn device(host: &str, name: &str) -> Result<(cpal::Host, cpal::Device), String> {
@@ -503,6 +513,7 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
                         running: st.running.load(Ordering::Relaxed),
                         reduction: f32::from_bits(st.reduction.load(Ordering::Relaxed)),
                         invalid: st.invalid.load(Ordering::Relaxed),
+                        xruns: st.xruns.load(Ordering::Relaxed),
                     };
                     if status.send(msg).is_err() {
                         break;
@@ -808,6 +819,17 @@ mod tests {
             c.on_output(&mut out, 0.0);
             assert!(out.chunks(2).all(|f| (f[0] - 0.5).abs() < 1e-6), "a steady voice, no dropouts");
         }
+    }
+
+    #[test]
+    fn a_dropout_is_counted_and_the_stream_carries_on_a_reset_reopens() {
+        let link = Link { cmds: Mutex::new(VecDeque::new()), stats: Arc::new(Stats::default()), base: OnceLock::new() };
+        report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
+        report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
+        assert_eq!(link.stats.xruns.load(Ordering::Relaxed), 2);
+        assert!(!link.stats.invalid.load(Ordering::Relaxed), "a dropout never closes the interface");
+        report(&link, cpal::Error::new(cpal::ErrorKind::StreamInvalidated));
+        assert!(link.stats.invalid.load(Ordering::Relaxed));
     }
 
     #[test]
