@@ -15,13 +15,10 @@
 import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
 import { renderSpace, drumRng } from "./drums";
 import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
+import { SAT_TYPES, createSaturator, type SatType } from "./saturation";
 
-export type DriveType = "tape" | "tube" | "fuzz";
-export const DRIVES: { id: DriveType; name: string; hint: string }[] = [
-  { id: "tape", name: "Tape", hint: "Soft and even: thickens the sound, rounds the peaks" },
-  { id: "tube", name: "Tube", hint: "Lopsided like a valve amp: warm, with an edge when pushed" },
-  { id: "fuzz", name: "Fuzz", hint: "Hard clipping: buzzy and aggressive" },
-];
+export type DriveType = SatType;
+export const DRIVES = SAT_TYPES;
 export type TremSpeed = "1/4" | "1/8" | "1/8t" | "1/16";
 export const TREM_SPEEDS: { id: TremSpeed; name: string; hint: string; perBeat: number }[] = [
   { id: "1/4", name: "Beat", hint: "One swell per beat", perBeat: 1 },
@@ -41,9 +38,10 @@ export const HARP_VERBS: { id: HarpVerb; name: string; hint: string }[] = [
 export interface HarpFx {
   /** overall volume */
   level: number;
-  /** saturation: how hard, and which kind */
+  /** saturation: how hard, which colour, and how much of the sound goes through it (1 = all of it) */
   drive: number;
   driveType: DriveType;
+  driveMix: number;
   /** compressor: evens out loud and quiet notes, lengthens the ring */
   squeeze: number;
   /** −1 dark … +1 bright */
@@ -71,7 +69,7 @@ export interface HarpFx {
 export type HarpSound = HarpString & HarpFx;
 
 export const FX_DEFAULT: HarpFx = {
-  level: 0.8, drive: 0, driveType: "tape", squeeze: 0.2, tone: 0, chorus: 0, phaser: 0, trem: 0, tremSpeed: "1/8", wobble: 0,
+  level: 0.8, drive: 0, driveType: "tape", driveMix: 1, squeeze: 0.2, tone: 0, chorus: 0, phaser: 0, trem: 0, tremSpeed: "1/8", wobble: 0,
   echo: 0, echoTime: "1/8.", space: 0.3, verb: "hall", size: 0.4, shimmer: 0, octave: 0, wide: 0.5,
 };
 export const SOUND_DEFAULT: HarpSound = { ...STRING_DEFAULT, ...FX_DEFAULT };
@@ -85,37 +83,15 @@ export function reviveSound(raw: unknown): HarpSound {
   const pick = <T extends string>(v: unknown, list: { id: T }[], def: T): T => (list.some((x) => x.id === v) ? (v as T) : def);
   return {
     voice: pick(r.voice, HARP_VOICES, d.voice), pluck: unit(r.pluck, d.pluck), soft: unit(r.soft, d.soft), ring: unit(r.ring, d.ring), body: unit(r.body, d.body),
-    level: unit(r.level, d.level), drive: unit(r.drive, d.drive), driveType: pick(r.driveType, DRIVES, d.driveType), squeeze: unit(r.squeeze, d.squeeze), tone: unit(r.tone, d.tone, -1),
+    level: unit(r.level, d.level), drive: unit(r.drive, d.drive), driveType: pick(r.driveType, DRIVES, d.driveType), driveMix: unit(r.driveMix, d.driveMix), squeeze: unit(r.squeeze, d.squeeze), tone: unit(r.tone, d.tone, -1),
     chorus: unit(r.chorus, d.chorus), phaser: unit(r.phaser, d.phaser), trem: unit(r.trem, d.trem), tremSpeed: pick(r.tremSpeed, TREM_SPEEDS, d.tremSpeed), wobble: unit(r.wobble, d.wobble),
     echo: unit(r.echo, d.echo), echoTime: pick(r.echoTime, ECHO_TIMES, d.echoTime), space: unit(r.space, d.space), verb: pick(r.verb, HARP_VERBS, d.verb), size: unit(r.size, d.size),
     shimmer: unit(r.shimmer, d.shimmer), octave: unit(r.octave, d.octave), wide: unit(r.wide, d.wide),
   };
 }
 
-/** The level a strummed chord arrives at; saturation leaves a sound of this size about as loud as it was. */
+/** The level a strummed chord arrives at: what the saturation is told to expect. */
 const DRIVE_REF = 0.2;
-/** How much gain each kind of saturation adds at full: warm tape, crunchy tube, fuzz. */
-const DRIVE_DB: Record<DriveType, number> = { tape: 16, tube: 24, fuzz: 40 };
-
-/**
- * The saturation curve. Tape bends both halves of the wave the same way (odd overtones only);
- * a tube bends one half sooner than the other, which adds the even overtones that sound warm;
- * fuzz clips hard. A sound at the usual level comes out about as loud as it went in.
- */
-export function saturationCurve(type: DriveType, amount: number): Float32Array<ArrayBuffer> {
-  const k = Math.pow(10, (DRIVE_DB[type] * Math.min(1, Math.max(0, amount))) / 20);
-  const f = (x: number) => {
-    if (type === "tape") return Math.tanh(k * x);
-    if (type === "tube") return x >= 0 ? Math.tanh(k * x) : Math.tanh(k * 0.62 * x) / 0.8;
-    // fuzz: almost straight, then flat. The top is shaved a little sooner than the bottom, as a transistor does it
-    const y = k * x;
-    return y >= 0 ? Math.min(0.85, y) + 0.1 * Math.tanh(y) : Math.max(-1, y);
-  };
-  const ref = (f(DRIVE_REF) - f(-DRIVE_REF)) / 2 / DRIVE_REF;
-  const curve = new Float32Array(4097);
-  for (let i = 0; i < curve.length; i++) curve[i] = f((i / (curve.length - 1)) * 2 - 1) / ref;
-  return curve;
-}
 
 /** Straight up to 0.75, then bending over so nothing can leave louder than about 0.94. */
 function ceiling(): Float32Array<ArrayBuffer> {
@@ -146,8 +122,8 @@ export interface Rack {
 const QUARTERS = [0, 0.25, 0.5, 0.75, 1];
 /** the compressor has automatic make-up gain */
 export const SQUEEZE_DB = [0, -0.9, -4.3, -6, -5];
-const DRIVE_AT = [0, 0.1, 0.25, 0.5, 0.75, 1];
-export const DRIVE_TRIM: Record<DriveType, number[]> = { tape: [0, 1.6, -2.5, -2.6, -2.9, -3.5], tube: [0, 1.6, -2.6, -2.8, -3.5, -5.1], fuzz: [0, 0.9, -2.3, -5, -7.7, -8.6] };
+/** per colour of saturation, at 0, ¼, ½, ¾ and 1 */
+export const DRIVE_TRIM: Record<DriveType, number[]> = { tape: [0, -0.1, -0.8, -2.4, -4.7], tube: [0, 0.2, 0.1, -0.5, -3.6], console: [0, -0.1, -0.4, -0.9, -2.7], crunch: [0, -0.1, -1.3, -4.2, -6.9], fuzz: [0, -1.4, -5.8, -7.9, -8.8], clip: [0, 0.3, -1.5, -4.3, -6.2] };
 /** each kind of reverb returns a different amount of what it is sent, once its lows are cut */
 const VERB_SEND: Record<HarpVerb, number> = { hall: 1, room: 1.13, plate: 1.35, spring: 0.87, dark: 0.75 };
 /** Read a value off a curve given as points. */
@@ -192,20 +168,11 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const compTrim = gain();
   input.connect(comp).connect(compTrim);
 
-  // ── saturation: the lows go round it, so chords stay clear instead of turning to mud ──
-  const clean = gain(1);
-  const dirtIn = filter("highpass", 190);
-  const shaper = c.createWaveShaper();
-  shaper.oversample = "4x";
-  const dc = filter("highpass", 20);
-  const dirtLp = filter("lowpass", 6500);
-  const dirt = gain(0);
-  const lowsLp = filter("lowpass", 190);
-  const lows = gain(0);
+  // ── saturation: the lowest notes go round it, so chords stay clear instead of turning to mud ──
+  const sat = createSaturator(c, DRIVE_REF, true);
   const driven = gain();
-  compTrim.connect(clean).connect(driven);
-  compTrim.connect(dirtIn).connect(shaper).connect(dc).connect(dirtLp).connect(dirt).connect(driven);
-  compTrim.connect(lowsLp).connect(lows).connect(driven);
+  compTrim.connect(sat.input);
+  sat.output.connect(driven);
 
   // ── tone ──
   const hp = filter("highpass", 60);
@@ -320,26 +287,13 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
         to(comp.threshold, -34 * s.squeeze);
         to(comp.ratio, 1 + 4 * s.squeeze);
       }
-      if (s.drive !== was.drive || s.driveType !== was.driveType || s.squeeze !== was.squeeze) {
-        if (s.drive !== was.drive || s.driveType !== was.driveType) {
-          shaper.curve = s.drive > 0 ? saturationCurve(s.driveType, s.drive) : null;
-          to(dirtIn.frequency, s.driveType === "fuzz" ? 260 : 190);
-          to(lowsLp.frequency, s.driveType === "fuzz" ? 260 : 190);
-          to(dirtLp.frequency, s.driveType === "fuzz" ? 4800 : s.driveType === "tube" ? 6000 : 7000);
-        }
-        // the first fifth of the knob fades the saturation in; after that it only gets harder
-        const wet = Math.min(1, s.drive * 5);
-        to(clean.gain, 1 - wet);
-        to(dirt.gain, wet);
-        to(lows.gain, wet);
-        to(compTrim.gain, db(table(QUARTERS, SQUEEZE_DB, s.squeeze)));
-      }
+      if (s.squeeze !== was.squeeze) to(compTrim.gain, db(table(QUARTERS, SQUEEZE_DB, s.squeeze)));
+      if (s.drive !== was.drive || s.driveType !== was.driveType || s.driveMix !== was.driveMix) sat.set(s.driveType, s.drive, s.driveMix, table(QUARTERS, DRIVE_TRIM[s.driveType], s.drive));
       if (s.tone !== was.tone) {
         to(lowShelf.gain, s.tone < 0 ? -2 * s.tone : -3 * s.tone);
         to(highShelf.gain, s.tone < 0 ? 14 * s.tone : 8 * s.tone);
       }
-      if (s.drive !== was.drive || s.driveType !== was.driveType || s.tone !== was.tone)
-        to(driven.gain, db(table(DRIVE_AT, DRIVE_TRIM[s.driveType], s.drive) + (s.tone < 0 ? 1.2 * s.tone : 1.5 * s.tone)));
+      if (s.tone !== was.tone) to(driven.gain, db(s.tone < 0 ? 1.2 * s.tone : 1.5 * s.tone));
       if (s.phaser !== was.phaser) {
         to(phaseWet.gain, s.phaser);
         to(phased.gain, 1 - 0.26 * s.phaser);

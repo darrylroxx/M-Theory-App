@@ -1,7 +1,7 @@
 /**
  * The live half of the drum machine: a small mixing desk built from Web Audio nodes.
  *
- *   each drum ─ level ─ pan ─┬──────────────► grit ─┐
+ *   each drum ─ level ─ pan ─┬────────► saturation ─┐
  *                            ├─ reverb send ─► room ─┤
  *                            └─ echo send ──► echo ──┤
  *                                                    ▼
@@ -15,6 +15,7 @@
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
+import { createSaturator, type SatType, type Saturator } from "./saturation";
 import { DRUM_IDS, SHAPE_KEYS, VARIANTS, drumRng, renderDrum, renderNoiseBed, renderSpace, type DrumId, type DrumParams, type SamplerId, type VoiceId } from "./drums";
 
 interface Channel {
@@ -26,7 +27,7 @@ interface Channel {
 
 interface Bus {
   dry: GainNode;
-  shaper: WaveShaperNode;
+  sat: Saturator;
   verb: ConvolverNode;
   verbWet: GainNode;
   echo: DelayNode;
@@ -54,10 +55,14 @@ interface Ringing {
  * on the finished output). These take that back, so each knob changes the character, not the volume.
  */
 const GLUE_DB = [0, -1.9, -4.6, -5.6, -4.6]; // at glue 0, ¼, ½, ¾, 1
+/** per colour of saturation, at 0, ¼, ½, ¾ and 1 */
+export const SAT_DB: Record<SatType, number[]> = { tape: [0, -0.3, -0.5, -1.4, -2.9], tube: [0, -0.1, 0, 0, -1.6], console: [0, 0, 0.8, 2.1, 1.9], crunch: [0, 0.2, 0.2, -0.1, -1.3], fuzz: [0, 0.4, -1.1, -3.3, -4.9], clip: [0, 0.5, -0.1, -1.8, -3.2] };
+const quarter = (t: number[], x: number) => {
+  const g = Math.min(0.9999, Math.max(0, x)) * 4;
+  return t[Math.floor(g)] + (t[Math.floor(g) + 1] - t[Math.floor(g)]) * (g % 1);
+};
 function trim(fx: BeatFx): number {
-  const g = Math.min(0.9999, Math.max(0, fx.glue)) * 4;
-  const glue = GLUE_DB[Math.floor(g)] + (GLUE_DB[Math.floor(g) + 1] - GLUE_DB[Math.floor(g)]) * (g % 1);
-  const db = glue - 4 * fx.grit + (fx.tone < 0 ? 3 * fx.tone : fx.tone);
+  const db = quarter(GLUE_DB, fx.glue) + (fx.tone < 0 ? 3 * fx.tone : fx.tone);
   return Math.pow(10, db / 20);
 }
 
@@ -79,22 +84,8 @@ export function setDrumSolo(id: DrumId | null) {
   solo = id;
 }
 
-/** The level a typical drum arrives at; grit leaves a sound of this size as loud as it was. */
+/** The level a typical drum arrives at: what the saturation is told to expect. */
 const GRIT_REF = 0.25;
-
-/**
- * Saturation curve for the whole kit. More grit bends the curve harder, but a sound at the
- * usual level comes out just as loud: quiet hits are lifted, loud ones are flattened.
- */
-export function driveCurve(grit: number): Float32Array<ArrayBuffer> {
-  const k = 1 + grit * 11;
-  const curve = new Float32Array(2049);
-  for (let i = 0; i < curve.length; i++) {
-    const x = (i / (curve.length - 1)) * 2 - 1;
-    curve[i] = (Math.tanh(k * x) / Math.tanh(k * GRIT_REF)) * GRIT_REF;
-  }
-  return curve;
-}
 
 /** Straight up to 0.75, then bending over so nothing can leave louder than about 0.94. */
 export function softCeiling(): Float32Array<ArrayBuffer> {
@@ -119,10 +110,10 @@ function getBus(): Bus {
   if (bus) return bus;
   const dry = c.createGain();
   dry.gain.value = IN;
-  const shaper = c.createWaveShaper();
-  shaper.oversample = "2x";
+  const sat = createSaturator(c, GRIT_REF);
   const mix = c.createGain();
-  dry.connect(shaper).connect(mix);
+  dry.connect(sat.input);
+  sat.output.connect(mix);
 
   // reverb
   const verbIn = c.createGain();
@@ -200,7 +191,7 @@ function getBus(): Bus {
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  bus = { dry, shaper, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
+  bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
   applied = {};
   mixed.clear();
   return bus;
@@ -235,7 +226,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
     const beats = ECHO_TIMES.find((e) => e.id === fx.echoTime)?.beats ?? 0.75;
     to(b.echo.delayTime, Math.min(1.9, (beats * 60) / bpm), 0.05);
   }
-  if (fx.grit !== was.grit) b.shaper.curve = driveCurve(fx.grit);
+  if (fx.grit !== was.grit || fx.color !== was.color || fx.blend !== was.blend) b.sat.set(fx.color, fx.grit, fx.blend, quarter(SAT_DB[fx.color], fx.grit));
   if (fx.tape !== was.tape) {
     // at full, the pitch drifts by about a quarter of a semitone and shivers a little on top
     const depth = fx.tape * fx.tape * 0.004;
@@ -243,7 +234,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
     to(b.wow.gain, depth, 0.05);
     to(b.flutter.gain, fx.tape * 0.0001, 0.05);
   }
-  if (fx.tape !== was.tape || fx.grit !== was.grit) to(b.air.frequency, 18000 * (1 - 0.5 * fx.grit) * (1 - 0.6 * fx.tape));
+  if (fx.tape !== was.tape) to(b.air.frequency, 18000 * (1 - 0.6 * fx.tape));
   if (fx.tone !== was.tone) {
     to(b.low.gain, -fx.tone * 5);
     to(b.high.gain, fx.tone * 9);
@@ -253,7 +244,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
     to(b.comp.ratio, 1.5 + fx.glue * 6.5);
     to(b.comp.attack, 0.02 - fx.glue * 0.012);
   }
-  if (fx.level !== was.level || fx.glue !== was.glue || fx.tone !== was.tone || fx.grit !== was.grit) to(b.makeup.gain, (fx.level / 0.8) * OUT * trim(fx), 0.02);
+  if (fx.level !== was.level || fx.glue !== was.glue || fx.tone !== was.tone) to(b.makeup.gain, (fx.level / 0.8) * OUT * trim(fx), 0.02);
   applied = { ...fx, bpm };
 }
 

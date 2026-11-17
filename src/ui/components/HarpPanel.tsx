@@ -139,8 +139,9 @@ export function HarpPanel({ sound, setSound, style, onStyle, playing, onPlay, on
       {panel === "fx" && (
         <div className="dm-panel dm-mix" role="group" aria-label="Harp effects">
           <div className="knobs">
-            <Knob label="Saturation" title="Warmth at first, then grit, then distortion" value={sound.drive} def={0} onChange={(v) => turn({ drive: v })} />
-            <Choice label="Kind" value={sound.driveType} options={DRIVES} onChange={(v) => turn({ driveType: v, drive: sound.drive || 0.3 }, true)} />
+            <Knob label="Saturation" title="The colour of analogue gear pushed hard: a little is warmth, a lot is distortion" value={sound.drive} def={0} onChange={(v) => turn({ drive: v })} />
+            <Choice label="Colour" value={sound.driveType} options={DRIVES} onChange={(v) => turn({ driveType: v, drive: sound.drive || 0.5 }, true)} />
+            {sound.drive > 0 && <Knob label="Blend" title="How much of the sound goes through the saturation. Half keeps the clean pluck underneath." value={sound.driveMix} def={1} onChange={(v) => turn({ driveMix: v })} />}
             <Knob label="Squeeze" title="A compressor: evens out loud and quiet notes and lengthens the ring" value={sound.squeeze} def={d.squeeze} onChange={(v) => turn({ squeeze: v })} />
             <Knob label="Tone" min={-1} max={1} value={sound.tone} def={0} fmt={toneText} onChange={(v) => turn({ tone: v })} />
           </div>

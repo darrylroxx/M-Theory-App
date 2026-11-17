@@ -2,6 +2,7 @@ import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "
 import { BEAT_GROUPS, BEAT_LIBRARY, ECHO_TIMES, FX_DEFAULTS, MAX_BARS, STEP_VELOCITY, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, applyKit, applyUserKit, barsOf, clearBeat, copyBar, findPattern, fxOf, kitFrom, levelAt, removeBar, setBars, setStep, soundOf, varyBeat, vibeOf, voiceOf, type Beat, type BeatFx, type BeatGroupId, type BeatPattern, type StepLevel, type UserKit } from "../../audio/beats";
 import { playDrum, setDrumSolo, syncDrums } from "../../audio/drumbus";
 import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LABEL, defaultParams, getKit, isMachine, renderDrum, type DrumId, type DrumParams, type KitId, type VoiceId } from "../../audio/drums";
+import { SAT_TYPES } from "../../audio/saturation";
 import { RECIPES, getRecipe } from "../../audio/voices";
 import { newId, useApp } from "../state";
 import { letterClass } from "../letters";
@@ -275,7 +276,8 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
   };
   const toggleMute = (id: DrumId) => setBeat((b) => ({ ...b, mutes: b.mutes?.includes(id) ? b.mutes.filter((x) => x !== id) : [...(b.mutes ?? []), id] }));
 
-  const meter = beat.div === 3 ? (beat.steps === 6 ? "6/8" : "12/8") : `${beat.steps / beat.div}/4`;
+  // triplet grids: two or four beats are 6/8 and 12/8; three or five are a swung 3/4 or 5/4
+  const meter = beat.div === 3 ? (beat.steps % 6 === 0 ? `${beat.steps}/8` : `${beat.steps / 3}/4 swing`) : `${beat.steps / beat.div}/4`;
   const voice = voiceOf(beat, sel);
   const muted = (id: DrumId) => (solo ? solo !== id : !!beat.mutes?.includes(id));
   const vibe = vibeOf(beat);
@@ -457,6 +459,11 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
             <Knob label="Human" title="Looser timing and touch, like a player" value={fx.human} def={0} onChange={(v) => setFx({ human: v })} />
           </div>
           <div className="knobs">
+            <Knob label="Saturation" title="The colour of analogue gear pushed hard: a little is warmth, a lot is distortion" value={fx.grit} def={FX_DEFAULTS.grit} onChange={(v) => setFx({ grit: v })} />
+            <Choice label="Colour" value={fx.color} options={SAT_TYPES} onChange={(v) => { setFx({ color: v, grit: fx.grit || 0.5 }); if (!playing) hit("snare", { ...beat, color: v }); }} />
+            {fx.grit > 0 && <Knob label="Blend" title="How much of the kit goes through the saturation. Half keeps the clean punch underneath." value={fx.blend} def={1} onChange={(v) => setFx({ blend: v })} />}
+          </div>
+          <div className="knobs">
             <Choice label="Reverb type" value={fx.verb} options={VERBS} onChange={(v) => { setFx({ verb: v }); if (!playing) window.setTimeout(() => hit("snare"), 180); }} />
             <Knob label="Reverb" value={fx.space} def={FX_DEFAULTS.space} onChange={(v) => setFx({ space: v })} />
             <Knob label="Size" title="Small and short … big and long" value={fx.size} def={FX_DEFAULTS.size} onChange={(v) => setFx({ size: v })} />
@@ -470,7 +477,6 @@ export function DrumMachine({ beat, setBeat, onPick, playing, onPlay, stepSink, 
             <Choice label="Sampler" value={fx.sampler} options={SAMPLERS} onChange={(v) => { setFx({ sampler: v }); if (!playing) hit("snare", { ...beat, sampler: v }); }} />
             <Choice label="Noise" value={fx.noise} options={NOISE_BEDS} onChange={(v) => setFx({ noise: v })} />
             {fx.noise !== "off" && <Knob label="Noise level" value={fx.noiseAmt} def={FX_DEFAULTS.noiseAmt} onChange={(v) => setFx({ noiseAmt: v })} />}
-            <Knob label="Grit" title="Distortion on the whole kit" value={fx.grit} def={FX_DEFAULTS.grit} onChange={(v) => setFx({ grit: v })} />
             <Knob label="Tape" title="Wobbly and dull, like an old cassette" value={fx.tape} def={0} onChange={(v) => setFx({ tape: v })} />
           </div>
           <div className="knobs">

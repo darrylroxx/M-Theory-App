@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, knownVoice, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
-import { driveCurve, softCeiling } from "./drumbus";
+import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, knownVoice, oldGrit, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
+import { softCeiling } from "./drumbus";
+import { isSatType } from "./saturation";
 import { DRUM_IDS, KITS, SAMPLERS, VARIANTS, defaultParams, drumRng, renderDrum, renderNoiseBed, renderSpace } from "./drums";
 import { ALL_RECIPES, RECIPES } from "./voices";
 import { GM_DRUM, progressionToMidi } from "./midi";
@@ -320,6 +321,44 @@ describe("sound design", () => {
     expect(new Set(BUILTIN_KITS.map((k) => JSON.stringify([k.voices, k.sounds, k.fx]))).size).toBe(BUILTIN_KITS.length);
   });
 
+  it("saturation: every kit and vibe names a real colour, and old settings are moved to today's knob", () => {
+    for (const k of [...BUILTIN_KITS, ...VIBES]) {
+      expect(isSatType(k.fx.color), k.name).toBe(true);
+      expect(k.fx.blend).toBeGreaterThan(0);
+      expect(k.fx.blend).toBeLessThanOrEqual(1);
+    }
+    // all six colours are used somewhere, so each can be heard without touching a knob
+    expect(new Set([...BUILTIN_KITS, ...VIBES].map((k) => k.fx.color)).size).toBe(6);
+    expect(BUILTIN_KITS.length).toBe(24);
+    // the old knob was far coarser: a tenth of a turn then is four tenths now
+    expect(oldGrit(0)).toBe(0);
+    expect(oldGrit(0.1)).toBeCloseTo(0.4);
+    expect(oldGrit(0.5)).toBeCloseTo(0.95);
+    expect(oldGrit(1)).toBe(1);
+    for (let g = 0; g < 1; g += 0.05) expect(oldGrit(g + 0.05)).toBeGreaterThanOrEqual(oldGrit(g));
+    // a beat saved before colours existed is moved once, and then left alone
+    const { color: _c, blend: _b, ...old } = { ...DEFAULT_BEAT, grit: 0.25 };
+    const moved = reviveBeat(JSON.parse(JSON.stringify(old)))!;
+    expect(moved.grit).toBeCloseTo(0.67);
+    expect(moved.color).toBe("tape");
+    expect(reviveBeat(JSON.parse(JSON.stringify(moved)))!.grit).toBeCloseTo(0.67);
+    expect(reviveBeat({ ...moved, color: "sparkle" })!.color).toBe("tape");
+    const kits = reviveUserKits([{ id: "k", name: "Mine", kit: "808", sounds: {}, fx: { grit: 0.1 } }, { id: "n", name: "New", kit: "808", sounds: {}, fx: { grit: 0.1, color: "fuzz" } }]);
+    expect(kits[0].fx.grit).toBeCloseTo(0.4);
+    expect(kits[1].fx).toMatchObject({ grit: 0.1, color: "fuzz" });
+  });
+
+  it("every drum of every kit makes a sound, wherever in the library it was borrowed from", () => {
+    for (const k of BUILTIN_KITS)
+      for (const id of DRUM_IDS) {
+        const d = renderDrum(SR, k.voices[id] ?? k.kit, id, k.sounds[id] ?? {});
+        let peak = 0;
+        for (let i = 0; i < d.length; i++) peak = Math.max(peak, Math.abs(d[i]));
+        expect(peak, `${k.name} ${id}`).toBeGreaterThan(0.01);
+        expect(peak).toBeLessThanOrEqual(1);
+      }
+  });
+
   it("names nothing after artists", () => {
     const text = JSON.stringify([BUILTIN_KITS, KITS, VIBES, ALL_RECIPES.map((r) => r.name), BEAT_LIBRARY.map((p) => p.name)]).toLowerCase();
     for (const name of ["radiohead", "kid a", "beach house", "current joys", "florence", "boy harsher", "molchat", "her's", "joy division", "cure"]) expect(text, name).not.toContain(name);
@@ -376,7 +415,7 @@ describe("sound design", () => {
     }
   });
 
-  it("the output ceiling is transparent until it is needed, and grit keeps its level", () => {
+  it("the output ceiling is transparent until it is needed", () => {
     const c = softCeiling();
     const at = (x: number) => c[Math.round(((x + 1) / 2) * (c.length - 1))];
     expect(at(0)).toBeCloseTo(0);
@@ -384,35 +423,73 @@ describe("sound design", () => {
     expect(at(-0.7)).toBeCloseTo(-0.7, 3);
     expect(at(1)).toBeLessThan(0.95);
     expect(at(1)).toBeGreaterThan(at(0.9));
-    for (const g of [0, 0.5, 1]) {
-      const d = driveCurve(g);
-      expect(d[0]).toBeCloseTo(-d[d.length - 1]);
-      expect(Math.abs(d[d.length - 1])).toBeLessThanOrEqual(1);
-    }
   });
 });
 
 describe("rhythm library", () => {
   it("has a big, well-formed library", () => {
-    expect(BEAT_LIBRARY.length).toBeGreaterThanOrEqual(80);
+    expect(BEAT_LIBRARY.length).toBeGreaterThanOrEqual(270);
+    expect(BEAT_GROUPS.length).toBe(15);
     expect(new Set(BEAT_LIBRARY.map((p) => p.id)).size).toBe(BEAT_LIBRARY.length);
-    for (const g of BEAT_GROUPS) expect(BEAT_LIBRARY.filter((p) => p.group === g.id).length, g.name).toBeGreaterThanOrEqual(8);
+    for (const g of BEAT_GROUPS) expect(BEAT_LIBRARY.filter((p) => p.group === g.id).length, g.name).toBeGreaterThanOrEqual(14);
     for (const p of BEAT_LIBRARY) {
       expect(Number.isInteger(barBeats(p)), p.name).toBe(true);
       expect(p.bpm).toBeGreaterThanOrEqual(40);
       expect(p.bpm).toBeLessThanOrEqual(200);
       let hits = 0;
       for (const id of DRUM_IDS) {
-        expect(p.rows[id], `${p.name} ${id}`).toMatch(new RegExp(`^[0-3]{${p.steps}}$`));
+        expect(p.rows[id], `${p.name} ${id}`).toMatch(new RegExp(`^[0-3]{${p.steps * (p.bars ?? 1)}}$`));
         hits += p.rows[id].replace(/0/g, "").length;
       }
       expect(hits, p.name).toBeGreaterThanOrEqual(3);
     }
   });
 
+  it("covers the styles songwriters ask for, with longer rhythms and odd metres among them", () => {
+    const names = BEAT_GROUPS.map((g) => g.name.toLowerCase()).join(" | ");
+    for (const want of ["pop", "rock", "indie", "alternative", "dark wave", "electronic", "hip hop", "funk", "jazz", "punk", "latin"]) expect(names, want).toContain(want);
+    // two-bar rhythms: a fill, or a second bar that answers the first
+    const long = BEAT_LIBRARY.filter((p) => (p.bars ?? 1) > 1);
+    expect(long.length).toBeGreaterThanOrEqual(12);
+    for (const p of long) expect(DRUM_IDS.map((id) => p.rows[id].slice(0, p.steps)).join(), p.name).not.toBe(DRUM_IDS.map((id) => p.rows[id].slice(p.steps)).join());
+    // metres: 4/4, 3/4, 5/4, 6/8, 12/8 and the swung 3/4 and 5/4 of jazz
+    const metres = new Set(BEAT_LIBRARY.map((p) => `${p.steps}/${p.div}`));
+    for (const m of ["16/4", "12/4", "20/4", "6/3", "12/3", "9/3", "15/3"]) expect(metres.has(m), m).toBe(true);
+    // a library rhythm with several bars loads whole
+    const fill = BEAT_LIBRARY.find((p) => p.name === "Rock with a fill")!;
+    const b = applyPattern(DEFAULT_BEAT, fill);
+    expect(barsOf(b)).toBe(2);
+    expect(lenOf(b)).toBe(32);
+    expect(levelAt(b.rows, "snare", 31)).toBeGreaterThan(0);
+  });
+
+  it("a new idea still starts with the slow heartbeat, and old ideas still find their rhythms", () => {
+    expect(DEFAULT_BEAT.name).toBe("Heartbeat");
+    expect(DEFAULT_BEAT.patternId).toBe("dream-heartbeat");
+    // ids saved in older ideas
+    for (const id of ["dream-heartbeat", "indie-motorik", "dark-cold-disco", "box-bossa-nova", "808-boom-bap", "rock-backbeat", "slow-12-8-ballad", "world-one-drop"]) expect(BEAT_LIBRARY.some((p) => p.id === id), id).toBe(true);
+  });
+
+  it("almost every rhythm is one of a kind across the whole library", () => {
+    const sigs = BEAT_LIBRARY.map((p) => JSON.stringify([p.steps, p.div, p.bars ?? 1, p.rows]));
+    // a few standards rightly live in two places (a disco beat is also the organ's Disco button)
+    expect(sigs.length - new Set(sigs).size).toBeLessThanOrEqual(4);
+  });
+
+  it("every rhythm has a pulse: something on the first beat or a deliberate hole there, and never a wall of noise", () => {
+    for (const p of BEAT_LIBRARY) {
+      const len = p.steps * (p.bars ?? 1);
+      let filled = 0;
+      for (let i = 0; i < len; i++) if (DRUM_IDS.some((id) => p.rows[id][i] !== "0")) filled++;
+      expect(filled / len, p.name).toBeGreaterThan(0.12);
+      // no more than five drums at once
+      for (let i = 0; i < len; i++) expect(DRUM_IDS.filter((id) => p.rows[id][i] !== "0").length, `${p.name} step ${i}`).toBeLessThanOrEqual(5);
+    }
+  });
+
   it("no two rhythms in a style are identical", () => {
     for (const g of BEAT_GROUPS) {
-      const sigs = BEAT_LIBRARY.filter((p) => p.group === g.id).map((p) => JSON.stringify([p.steps, p.div, p.swing, p.rows]));
+      const sigs = BEAT_LIBRARY.filter((p) => p.group === g.id).map((p) => JSON.stringify([p.steps, p.div, p.bars ?? 1, p.swing, p.rows]));
       expect(new Set(sigs).size, g.name).toBe(sigs.length);
     }
   });
