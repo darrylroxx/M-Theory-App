@@ -9,6 +9,7 @@ import { DRUM_IDS, drumRng } from "./drums";
 import { STRING_KEYS, renderHarp, stringKey, type HarpString } from "./harp";
 import { melodyBeats, tuneBetween } from "../song/melody";
 import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { dropPulses, pulse } from "./pulse";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
@@ -26,6 +27,8 @@ export class Harp {
   sound: HarpSound = SOUND_DEFAULT;
   /** the strings the notes are rendered with (they can lag behind `sound` while a knob is moving) */
   strings: HarpString = SOUND_DEFAULT;
+  /** what this harp plays in the song: its notes are reported so the canvas can paint them (not set = not reported) */
+  tag?: "chord" | "melody";
   private buffers = new Map<string, AudioBuffer>();
   private ringing = new Map<number, Ringing>(); // by string
   private all = new Set<Ringing>();
@@ -77,6 +80,7 @@ export class Harp {
    */
   play(midi: number, when: number, velocity = 0.8, slot?: number, lengthSec = Infinity, cut = false, lift = 1, as?: HarpSound) {
     const c = this.c;
+    if (this.tag) pulse({ kind: this.tag, time: when, midi, velocity, length: Math.min(8, lengthSec) });
     // a note scheduled just before a song section begins is already played the way that section sounds
     const s = as ?? this.sound;
     const src = c.createBufferSource();
@@ -160,6 +164,7 @@ function wake(l: Live): Harp {
   const ctx = audioContext();
   if (!l.harp) {
     l.harp = new Harp(ctx);
+    l.harp.tag = l === tuneLive ? "melody" : "chord";
     l.harp.setSound(l.sound, tempo);
     ducks.push(l.harp.rack.duck.gain);
     if (!ducking) {
@@ -571,6 +576,7 @@ export class ProgressionPlayer {
     this.cur = null;
     this.drumMarks = [];
     this.onDrumStep(-1);
+    dropPulses();
     setBedPlaying(false, null);
     for (const duck of ducks) {
       duck.cancelScheduledValues(0);

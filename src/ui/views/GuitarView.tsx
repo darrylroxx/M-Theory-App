@@ -19,6 +19,8 @@ import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scal
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
 import { BarRuler } from "../components/BarRuler";
+import { CanvasPage } from "../components/CanvasPage";
+import type { Spot } from "../../canvas/layout";
 import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
@@ -337,6 +339,20 @@ export function GuitarView() {
   const curLetter = secs.find((x) => x.current)?.letter ?? "A";
   /** How far into its section the music is, while the section on screen is the one sounding. */
   const getPos = useCallback(() => (playBlock.current === curRef.current ? player.current?.sectionBeat() ?? null : null), []);
+  /** Where the music is, for the canvas: which section, and how far into it. */
+  const bpmRef = useRef(prog.bpm);
+  bpmRef.current = prog.bpm;
+  const getSpot = useCallback((): Spot | null => {
+    const pos = player.current?.position();
+    const block = pos ? listRef.current.map[pos.index]?.block : undefined;
+    const per = planRef.current.per;
+    const i = block === undefined ? -1 : per.findIndex((x) => x.block === block);
+    if (!pos || i < 0) return null;
+    const sec = per[i];
+    // each letter has its own place in the alphabet of the song, so each section has its own colours
+    const letters = [...new Set(per.map((x) => x.letter))];
+    return { key: sec.letter, index: Math.max(0, letters.indexOf(sec.letter)), beat: pos.beat, bar: sec.bar, bars: sec.bars, spb: 60 / bpmRef.current };
+  }, []);
   /** The bar of the song that is sounding: its section and which of its bars. */
   const getBar = useCallback((): BarRef | null => {
     // the section and the place in it are read together, so the mark never shows one with the other's bar
@@ -476,6 +492,9 @@ export function GuitarView() {
         <div className="pane" hidden={pane !== "melody"}>
           <MelodyGrid melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
+        </div>
+        <div className="pane" hidden={pane !== "canvas"}>
+          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} stepSink={stepSink} kitLink={link("kit")} grooveLink={link("groove")} frame={nBars} getPos={getPos} />

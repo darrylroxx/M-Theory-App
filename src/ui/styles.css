@@ -689,3 +689,47 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .lb-bar.now::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: 3px; height: 4px; border-radius: 2px; background: var(--text); }
 .lb-bar.in.now::after { background: var(--accent); }
 @media (max-width: 620px) { .loop-btn { width: 36px; height: 36px; } .lb-bar { min-width: 30px; } }
+
+/* ── Canvas: the song paints itself ── */
+.cv { padding: 10px; display: flex; flex-direction: column; gap: 10px; }
+.cv-stage { position: relative; width: 100%; height: clamp(260px, 52vw, 58vh); border-radius: 10px; overflow: hidden; isolation: isolate; }
+.cv-host, .cv-layer, .cv-tex, .cv-edge { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* one painting gives way to the next as the song moves on */
+.cv-layer { transition: opacity 0.9s ease; }
+/* the cloth: lighter where a thread catches the light, darker in the gaps, over paint and bare canvas alike */
+.cv-tex { mix-blend-mode: hard-light; pointer-events: none; }
+.cv-edge { pointer-events: none; box-shadow: inset 0 0 70px rgba(60, 40, 20, 0.12), inset 0 0 0 1px rgba(0, 0, 0, 0.16); border-radius: inherit; }
+/* on a dark ground the cloth shows mostly as highlights: it is laid on more lightly */
+.cv-stage.dark .cv-tex { opacity: 0.5; }
+.cv-stage.dark .cv-edge { box-shadow: inset 0 0 90px rgba(0, 0, 0, 0.55), inset 0 0 0 1px rgba(255, 255, 255, 0.08); }
+.cv-hint { position: absolute; inset: 0; display: grid; place-items: center; margin: 0; padding: 0 20px; text-align: center; font-weight: 750; opacity: 0.5; pointer-events: none; }
+.cv-tools { position: absolute; top: 8px; right: 8px; z-index: 3; display: flex; align-items: center; gap: 8px; opacity: 0.85; }
+.cv-tools .icon-btn { background: color-mix(in srgb, var(--card) 80%, transparent); backdrop-filter: blur(6px); }
+.cv.full { position: fixed; inset: 0; z-index: 80; margin: 0; padding: 0; border: none; border-radius: 0; background: #000; }
+.cv.full .cv-stage { height: 100vh; height: 100dvh; border-radius: 0; }
+.cv.full .cv-bar { display: none; }
+.cv.full .cv-tools { top: max(10px, env(safe-area-inset-top, 0px)); right: max(10px, env(safe-area-inset-right, 0px)); }
+.cv-bar { display: flex; flex-direction: column; gap: 10px; }
+.cv-pick { display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.cv-pick > .seg { align-self: flex-start; flex-wrap: nowrap; max-width: 100%; overflow-x: auto; scrollbar-width: none; }
+.cv-pick > .seg::-webkit-scrollbar { display: none; }
+.cv-pick > .seg button { flex: 0 0 auto; }
+.cv-pals { display: flex; align-items: flex-end; gap: 6px; overflow-x: auto; scrollbar-width: none; padding: 1px 1px 3px; }
+.cv-pals::-webkit-scrollbar { display: none; }
+.cv-pal-wrap { flex: 0 0 auto; display: inline-flex; align-items: flex-end; gap: 6px; }
+.cv-pal-wrap > .kb-label { align-self: center; margin: 0 2px 0 8px; }
+.cv-pal-wrap:first-child > .kb-label { margin-left: 0; }
+.cv-pal { display: flex; flex-direction: column; align-items: center; gap: 3px; padding: 4px 4px 3px; border-radius: 11px; border: 1.5px solid transparent; background: none; }
+.cv-pal:hover { border-color: var(--border-2); }
+.cv-pal.on { border-color: var(--accent); background: color-mix(in srgb, var(--accent) 8%, transparent); }
+.cv-sw { display: flex; align-items: stretch; gap: 2px; width: 68px; height: 36px; padding: 6px; border-radius: 7px; border: 1px solid var(--border-2); }
+.cv-sw i { flex: 1 1 0; border-radius: 3px; }
+.cv-pal-name { font-size: 0.68rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
+.cv-pal.on .cv-pal-name { color: var(--text); }
+.cv-opts { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+@media (max-width: 620px) {
+  .cv { padding: 8px; }
+  .cv-stage { height: min(112vw, 60vh); }
+  .tab { font-size: 0.84rem; }
+  .cv-opts .spacer { flex-basis: 100%; height: 0; }
+}

@@ -14,7 +14,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 
 ## What's inside
 
-**How the app is laid out.** Four pages, chosen at the top: **Frame**, **Rhythm**, **Melody** and **Drums**. The frame directs: it sets the sections, how many bars each has, the key and the tempo. The other three pages are what plays inside the section you are working on. Under the page tabs is the play bar, the same on every page. **▶** plays the song straight through, in order, from the section you are on to the end, and the page follows along. Nothing loops unless you ask. Beside it is the **loop bar**: the whole song drawn bar by bar, section after section, which scrolls sideways. Tap a section's letter to go to it. **Tap bars to loop them: every tap adds a bar** (tap 1, 2, 3 and three bars loop), and a bar further off brings everything in between with it, in the same section or across several. Tapping the bar at either end of the loop takes it off again; a bar in the middle becomes the whole loop. **↻** loops the whole section you are on, or switches looping off. Looped bars are drawn dark, and a line marks the bar that is sounding. A loop can be changed while the music plays. Both stay put as you scroll.
+**How the app is laid out.** Five pages, chosen at the top: **Frame**, **Rhythm**, **Melody**, **Drums** and **Canvas**. The frame directs: it sets the sections, how many bars each has, the key and the tempo. Rhythm, Melody and Drums are what plays inside the section you are working on. Canvas is the song as a painting, made while it plays. Under the page tabs is the play bar, the same on every page. **▶** plays the song straight through, in order, from the section you are on to the end, and the page follows along. Nothing loops unless you ask. Beside it is the **loop bar**: the whole song drawn bar by bar, section after section, which scrolls sideways. Tap a section's letter to go to it. **Tap bars to loop them: every tap adds a bar** (tap 1, 2, 3 and three bars loop), and a bar further off brings everything in between with it, in the same section or across several. Tapping the bar at either end of the loop takes it off again; a bar in the middle becomes the whole loop. **↻** loops the whole section you are on, or switches looping off. Looped bars are drawn dark, and a line marks the bar that is sounding. A loop can be changed while the music plays. Both stay put as you scroll.
 
 **The Frame page.** A row for every section in playing order: its letter (tap to work on it), its length (**−**, **+**, or tap the number for 1, 2, 4, 8, 12, 16, 24, 32 bars), three chips that show whether it has chords, a melody and drums and open that page for that section, and **↑ ↓ ✕** to move or remove it. **+ New section** adds one; **A again** plays a section a second time (the same music; **Unlink** gives a repeat its own letter so it can differ). Below: the **key** and mode of the whole song, **Move song** (key, chords and melodies up or down a semitone together), the **tempo**, and **Export** (MIDI file; chords and tab as text).
 
@@ -94,6 +94,35 @@ A **Capo** menu sits at the top of the Rhythm page, next to the key; ★ marks t
 Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels, left-handed diagrams, light/dark theme.
 
 ---
+
+## The Canvas: the song paints itself
+
+Open **Canvas** and press ▶. While the song plays, it is painted, live, on a woven surface.
+
+- **Time runs across, pitch runs up.** The canvas is as wide as the section's bars (long sections take several canvases, eight bars each; four on a narrow phone), so the music crosses it from left to right. The kick and the bass strings are at the bottom, the chords across the middle, the melody above them, cymbals and shakers along the top.
+- **Every sound has its own mark.**
+  - A chord note is a brush stroke that goes on for as long as the string is held, and runs dry as it goes. A bass string leaves a pool of thin paint under its stroke.
+  - The melody is a line of ink from note to note, with a bead of colour on every note.
+  - The kick is a heavy blot, the snare a splatter, the clap three dabs, the hats quick flicks, the shaker a sprinkle, the rim a ring. Now and then thick paint runs.
+- **Colour follows harmony.** The notes of the key share the palette out between them in the order of the circle of fifths, so a chord is a family of neighbouring colours and a change of chord is a change of colour. Each section moves the whole family round, so each has its own cast.
+- **Every section has its own painting.** When the song moves on, the next section's painting comes forward and the last one steps back; when a section comes round again it is painted over what is there. Old paint is first knocked back a little (**Old paint**: Keep, Slow or Fast), so the newest pass is the clearest and earlier ones show through behind it.
+- **36 colour schemes** in five families (below), three **surfaces** (canvas, linen, rough paper), **Save picture** (a PNG with the surface in it) and **⤢** to fill the screen.
+
+Nothing is random noise: every mark is one note or one drum hit, placed where and when it sounded. What is left to chance is what a hand would leave to chance: how the bristles spread, where a drop lands, whether the paint runs.
+
+### The colour schemes, and where they come from
+
+| Family | Schemes | Source |
+|---|---|---|
+| **Paint** | Primaries, Earth, Four tubes, Lily pond, Ink | Published screen approximations of real artists' pigments (cadmium red, yellow ochre, French ultramarine, viridian, burnt sienna, Prussian blue …). *Four tubes* is the classic limited portrait palette of yellow ochre, vermilion, ivory black and white, with three mixtures of them. *Lily pond* was sampled from a painting of a lily pond. *Ink* is sumi in four strengths with a seal red. |
+| **Prints** | Woodblock, Wave, Dusk, Kasane, Riso, Blocks, Mid-century, Seventies, Memphis, Deco | *Woodblock*, *Wave* and *Dusk* were sampled from Japanese woodblock prints. *Kasane* is eight traditional Japanese colours (kurenai, yamabuki, moegi, asagi, ruri, ai, fuji, sakura) with sumi on shironeri. *Riso* is seven Risograph inks on warm white paper. *Seventies* uses the named colours of the decade (harvest gold, avocado, burnt orange, rust). *Blocks*, *Mid-century*, *Memphis* and *Deco* have no official colour chart; they are designers' approximations. |
+| **Loved** | Goldfish, Coral, Plum, Sherbet, Cocoa, Tidewater, Saffron, Reef, Sundown, Shore | The most-loved palettes of all time on COLOURlovers, by its own ranking (ranks 1, 2, 3, 5, 6, 7, 9 and 11, plus one more from the same top list). *Shore* is quoted from memory and its source was not checked. |
+| **Screens** | Solarized, Nord, Gruvbox, Dracula, Catppuccin, Rosé Pine, Tokyo Night, Kanagawa | The colour schemes programmers choose to look at all day, each with its project's own published values. |
+| **Glow** | Synthwave, Outrun, Vapor | Schemes made for black: paint glows on these. |
+
+How they are put together follows what working generative artists do: a ground, a line colour, and four to eight paints. In a library of 172 palettes used for generative art, the middle palette has four paints, two thirds of the grounds are light, and almost none are pure white or pure black; the schemes here keep to that (off-white or tinted near-black grounds, never `#fff` or `#000`). Where a source palette has no colour that works as a ground or a line, the nearest neutral is used: sumi black `#1c1c1c` or the off-white shironeri `#fcfaf2`.
+
+**Credits.** The *Loved* palettes were made by members of COLOURlovers and are credited here as that site asks: "Giant Goldfish" by manekineko, "(◕〝◕)" and "(◕ ” ◕)" by sugar!, "Thought Provoking" by Miss_Anthropy, "cheer up emo kid" by electrikmonk, "let them eat cake" by lunalein, "Terra?" by GlueStudio, "Ocean Five" by DESIGNJUNKEE. Some of those palettes are shared for non-commercial use only: fine for a personal app, worth a second look if the app is ever sold. Two top-ranked palettes whose maker asks to be contacted first were left out. *Lily pond*, *Woodblock*, *Wave* and *Dusk* are from the MetBrewer palettes; *Kasane* from the Nippon Colors list; *Riso* from the riso-colors list; the Screens and Glow schemes from their own projects.
 
 ## Run it
 
@@ -199,3 +228,29 @@ The numbers and patterns were collected from published acoustics research, teach
 - Harp acoustics: Chadefaux, Le Carrou et al., *Experimentally based description of harp plucking* (JASA 2012); Le Carrou, Gautier et al. on the concert harp's soundboard and sound-hole modes and on sympathetic strings; Woodhouse, *Euphonics* (string damping, plucked-string synthesis); Waltham's harp chapters and ASA papers; UNSW Music Acoustics (harp); the Vienna Symphonic Library's harp notes; Sound On Sound, *Synthesizing plucked strings*.
 - Playing styles: Wikipedia (Strum, Carter Family picking, Tresillo, Clave, Ska stroke, Banjo roll); guitar lesson sites (rhythmguitar.org, justinguitar, andyguitar, Fender, MusicRadar, Guitar World, Premier Guitar, Classical Guitar Magazine, jazzguitar.be); the Giuliani right-hand studies; harp accompaniment guides (myharpsdelight.com, harpmastery, Harp Column).
 - Effects: J. O. Smith, *Physical Audio Signal Processing* (flanging and phasing); Valhalla DSP's notes on reverb types, shimmer and echo; Sound On Sound technique articles; the Web Audio API documentation (MDN); circuit analyses of classic overdrive, chorus and phaser pedals.
+
+### Where the canvas's colours come from
+
+Hex values were read from each project's own files where the session could reach them (the first list), and from search-result excerpts of the pages otherwise (the second). Pigments have no single correct screen colour: the values used are the commonly published approximations.
+
+Read directly:
+
+- [nice-color-palettes](https://raw.githubusercontent.com/Jam3/nice-color-palettes/master/100.json): the top-loved COLOURlovers palettes
+- [MetBrewer](https://raw.githubusercontent.com/BlakeRMills/MetBrewer/main/R/PaletteCode.R): palettes sampled from works in a museum collection
+- [nippon-colors](https://registry.npmjs.org/nippon-colors/-/nippon-colors-1.0.0.tgz): 250 traditional Japanese colours
+- [riso-colors](https://raw.githubusercontent.com/mattdesl/riso-colors/master/riso-colors.json): Risograph inks
+- [color-names](https://raw.githubusercontent.com/codebrainz/color-names/master/output/colors.csv): the named colours (pigments, harvest gold, avocado …)
+- [chromotome](https://raw.githubusercontent.com/kgolid/chromotome/master/readme.md): how palettes for generative art are built
+- [Nord](https://raw.githubusercontent.com/nordtheme/nord/develop/src/nord.css), [Solarized](https://raw.githubusercontent.com/altercation/solarized/master/README.md), [Dracula](https://raw.githubusercontent.com/dracula/dracula-theme/master/README.md), [Gruvbox](https://raw.githubusercontent.com/morhetz/gruvbox/master/colors/gruvbox.vim), [Catppuccin](https://raw.githubusercontent.com/catppuccin/palette/main/palette.json), [Rosé Pine](https://raw.githubusercontent.com/rose-pine/palette/main/palette.json), [Tokyo Night](https://raw.githubusercontent.com/folke/tokyonight.nvim/main/lua/tokyonight/colors/storm.lua), [Kanagawa](https://raw.githubusercontent.com/rebelot/kanagawa.nvim/master/lua/kanagawa/colors.lua)
+- [SynthWave '84](https://raw.githubusercontent.com/robb0wen/synthwave-vscode/master/themes/synthwave-color-theme.json), [Outrun](https://raw.githubusercontent.com/tinted-theming/schemes/spec-0.11/base16/outrun-dark.yaml)
+
+Seen as search excerpts only:
+
+- [COLOURlovers, most loved of all time](https://www.colourlovers.com/palettes) and its palette pages (ranks, love counts, makers)
+- [Winsor & Newton oil colours as screen colours](https://color-term.com/winsornewton-colors) (a third party's conversion, not the maker's)
+- [The four-colour portrait palette](https://www.naturalpigments.com/zorn-palette.html)
+- [Vaporwave palette](https://www.color-hex.com/color-palette/10221)
+- [Bauhaus](https://digitalheroes.co.in/styles/bauhaus-revival/), [Art Deco](https://www.eggradients.com/palette/art-deco), [mid-century](https://madegooddesigns.com/retro-color-palettes/) and [Memphis](https://newretro.net/blogs/main/80s-color-palette-hex-codes) approximations
+- [Working with color in generative art](https://www.tylerxhobbs.com/words/working-with-color-in-generative-art)
+
+The paint itself is drawn the way generative painters draw it: a wash is many see-through layers of one ragged outline, each roughened a little differently; a brush stroke is drawn bristle by bristle, each with its own shade and its own amount of paint. The woven surface is worked out as the height of threads going over and under each other, lit from the top left, and laid over paint and bare canvas alike.

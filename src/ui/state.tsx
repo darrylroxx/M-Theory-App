@@ -4,6 +4,7 @@ import { barBeats } from "../audio/beats";
 import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
 import { reviveMelody, type Melody } from "../song/melody";
 import { DEFAULT_BARS, fitBars } from "../song/frame";
+import { isSurface, type Surface } from "../canvas/weave";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
@@ -22,8 +23,14 @@ import type { Key } from "../theory/keys";
 export type Tab = "guitar" | "piano";
 /** The three parts of a song section. */
 /** The four pages: the frame (sections, lengths, key, tempo) and the three parts that play inside it. */
-export type Pane = "frame" | "rhythm" | "melody" | "drums";
-export const PANES: { id: Pane; label: string }[] = [{ id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }];
+export type Pane = "frame" | "rhythm" | "melody" | "drums" | "canvas";
+export const PANES: { id: Pane; label: string }[] = [{ id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "canvas", label: "Canvas" }];
+/** How the canvas is set: its colours, its surface, and how fast old paint fades (0 = it stays, 2 = fast). */
+export interface CanvasPrefs {
+  palette: string;
+  surface?: Surface;
+  fade?: 0 | 1 | 2;
+}
 export type LabelMode = "intervals" | "notes" | "fingers";
 
 export interface ProgChord {
@@ -110,6 +117,8 @@ export interface AppState {
   mySounds: UserSound[];
   /** Which part of the section is on screen */
   pane?: Pane;
+  /** The canvas: colours, surface, fading */
+  canvas?: CanvasPrefs;
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
@@ -180,6 +189,7 @@ function load(): AppState {
       ...parsed,
       tab,
       pane: PANES.some((x) => x.id === parsed.pane) ? parsed.pane : "rhythm",
+      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 ? parsed.canvas.fade : 1 } : undefined,
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},

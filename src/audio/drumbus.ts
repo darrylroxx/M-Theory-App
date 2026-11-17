@@ -15,6 +15,7 @@
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { audioContext, audioIfStarted } from "./context";
+import { pulse } from "./pulse";
 import { createSaturator, type SatType, type Saturator } from "./saturation";
 import { DRUM_IDS, SHAPE_KEYS, VARIANTS, drumRng, renderDrum, renderNoiseBed, renderSpace, type DrumId, type DrumParams, type SamplerId, type VoiceId } from "./drums";
 
@@ -383,6 +384,7 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const c = audioContext();
   const b = getBus();
   const t = when ?? c.currentTime + 0.01;
+  pulse({ kind: "drum", time: t, drum: id, velocity });
   const src = c.createBufferSource();
   src.buffer = takeFor(c, beat, id);
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
