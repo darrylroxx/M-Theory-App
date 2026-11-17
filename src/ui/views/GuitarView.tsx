@@ -24,6 +24,8 @@ import type { Spot } from "../../canvas/layout";
 import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
+import { TrackPage, type TrackSection } from "../components/TrackPage";
+import { setMix } from "../../audio/mix";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
@@ -371,6 +373,22 @@ export function GuitarView() {
     const sec = block === undefined ? undefined : planRef.current.per.find((x) => x.block === block);
     return !pos || !sec ? null : { block: sec.block, bar: Math.max(0, Math.min(sec.bars - 1, Math.floor(pos.beat / sec.bar + 1e-6))) };
   }, []);
+  /** Which section is sounding and how far into it, for the Track page's playhead. */
+  const getWhere = useCallback((): { block: string; beat: number } | null => {
+    const pos = player.current?.position();
+    const block = pos ? listRef.current.map[pos.index]?.block : undefined;
+    return !pos || block === undefined ? null : { block, beat: pos.beat };
+  }, []);
+  /** The song as the Track page draws it: every section in playing order, with what it holds. */
+  const trackSecs = useMemo((): TrackSection[] => {
+    const row: Section[] = secs.length ? secs : [{ blockId: "", partId: "", letter: "A", current: true, chords: prog.chords, melody: prog.melody, bars: prog.bars, groove: grooveOf(beat), kit: kitOfBeat(beat) }];
+    return row.map((sec, i) => {
+      const per = plan.per[i];
+      return { block: sec.blockId, letter: sec.letter, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, drums: { ...beat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? beat.on } };
+    });
+  }, [secs, plan.per, prog.chords, prog.melody, prog.bars, beat, bar]);
+  // the mixer: every track's volume, mute and solo, for the whole song
+  useEffect(() => setMix(prog.mix), [prog.mix]);
   const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
@@ -485,6 +503,9 @@ export function GuitarView() {
     <DragCtx.Provider value={api}>
       <div className={`page write${drag ? " dragging" : ""}`}>
         <Transport per={plan.per} current={curBlock} loop={loop} layout={layout} onBar={onLoopBar} onLoop={toggleLoop} getBar={getBar} playing={playing} onPlay={togglePlay} canPlay={plan.any} />
+        <div className="pane" hidden={pane !== "track"}>
+          <TrackPage sections={trackSecs} current={curBlock} loop={loop} layout={layout} playing={playing} getWhere={getWhere} />
+        </div>
         <div className="pane" hidden={pane !== "frame"}>
           <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} items={items} beat={beat} tune={tune} plan={secs.length ? plan : null} />
         </div>

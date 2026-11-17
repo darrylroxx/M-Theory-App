@@ -6,6 +6,7 @@
  */
 import type { Sound } from "./describe";
 import type { DrumId } from "./drums";
+import { heard } from "./mix";
 
 /** A plucked string. */
 export interface NotePulse {
@@ -63,6 +64,8 @@ export const listening = () => listeners > 0;
 /** Something has been scheduled to sound. */
 export function pulse(p: Pulse) {
   if (!listeners) return;
+  // a muted track is not painted
+  if (!heard(p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody")) return;
   queue.push(p);
   // nobody collected for a long while: let the oldest go
   if (queue.length > 6000) queue.splice(0, 2000);

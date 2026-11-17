@@ -17,6 +17,7 @@ import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { reviveMix, type Mix } from "../audio/mix";
 import { reviveSound } from "../audio/rack";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
@@ -24,8 +25,8 @@ import type { Key } from "../theory/keys";
 export type Tab = "guitar" | "piano";
 /** The three parts of a song section. */
 /** The four pages: the frame (sections, lengths, key, tempo) and the three parts that play inside it. */
-export type Pane = "frame" | "rhythm" | "melody" | "drums" | "canvas";
-export const PANES: { id: Pane; label: string }[] = [{ id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "canvas", label: "Canvas" }];
+export type Pane = "track" | "frame" | "rhythm" | "melody" | "drums" | "canvas";
+export const PANES: { id: Pane; label: string }[] = [{ id: "track", label: "Track" }, { id: "frame", label: "Frame" }, { id: "rhythm", label: "Rhythm" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "canvas", label: "Canvas" }];
 /** How the canvas is set: its colours, its surface, and how fast old paint fades (0 = it stays, 2 = fast). */
 export interface CanvasPrefs {
   palette: string;
@@ -70,6 +71,8 @@ export interface Progression {
   play?: "section" | "song";
   /** Song structure: sections in order. `chords` above are then the selected section's chords. */
   song?: Song | null;
+  /** The mixer: each track's volume, mute and solo, for the whole song (set on the Track page) */
+  mix?: Mix;
 }
 
 export interface ArrangeSettings {
@@ -177,6 +180,7 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     // the melody used to share the chords' harp: one written back then keeps the sound it had
     tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
+    mix: reviveMix(raw?.mix),
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
   // Songs from before sections had lengths get them here.

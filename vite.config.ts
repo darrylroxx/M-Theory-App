@@ -9,5 +9,7 @@ export default defineConfig({
   test: {
     environment: "node",
     include: ["src/**/*.test.ts"],
+    // the full-sweep tests take a few seconds; slower machines (the Windows builder) need room
+    testTimeout: 60_000,
   },
 });

@@ -12,6 +12,7 @@ import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type Play
 import { dropPulses, listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem } from "./stems";
+import { fader } from "./mix";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 
@@ -179,9 +180,11 @@ function wake(l: Live): Harp {
   const ctx = audioContext();
   if (!l.harp) {
     // each harp goes out through a tap of its own, so the canvas can hear the chords and the melody apart
+    // …through its track's fader (volume, mute and solo for the whole song)
     const out = ctx.createGain();
-    out.connect(ctx.destination);
-    tapStem(l === tuneLive ? "melody" : "chords", out);
+    const f = fader(l === tuneLive ? "melody" : "chords", ctx);
+    out.connect(f);
+    tapStem(l === tuneLive ? "melody" : "chords", f);
     l.harp = new Harp(ctx, out);
     l.harp.tag = l === tuneLive ? "melody" : "chord";
     l.harp.setSound(l.sound, tempo);

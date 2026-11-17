@@ -3,6 +3,7 @@
  * Pure functions, so the rules (what counts as "changed", who wins when two
  * devices disagree) can be tested without a browser.
  */
+import { reviveMix } from "../audio/mix";
 import { reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
@@ -29,7 +30,7 @@ export function snapshot(key: Key, progression: Progression, capo: number, tunin
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
   const p = commit(s.progression);
-  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section" };
+  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}) };
   // with a song, everything on the page is a copy of one section: the song itself is what counts
   if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
@@ -71,6 +72,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : (melody?.notes.length || anyTune(p.song)) && p.sound ? { tuneSound: reviveSound(p.sound) } : {}),
     ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),
     play: p.play === "song" ? "song" : "section",
+    ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
   }));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression, savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }

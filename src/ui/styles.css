@@ -763,3 +763,48 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .audio-setup { border-top: 1px solid var(--border); padding-top: 12px; display: flex; flex-direction: column; gap: 6px; }
 .audio-list { margin: 6px 0 0; padding-left: 18px; }
 .audio-list ul { padding-left: 16px; }
+
+/* ── Track page: the whole song, left to right ── */
+.track-page { display: flex; flex-direction: column; gap: 10px; }
+.tv { display: flex; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card-2); }
+.tv-heads { flex: none; width: 168px; border-right: 1px solid var(--border); background: var(--card); z-index: 1; }
+.tv-corner { height: 34px; border-bottom: 1px solid var(--border); }
+.tv-head { height: 52px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; align-items: center; gap: 2px 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
+.tv-head.quiet .tv-name { opacity: 0.45; }
+.tv-name { text-align: left; font-weight: 800; font-size: 0.86rem; background: none; border: none; padding: 0; color: var(--text); }
+.tv-btns { display: inline-flex; gap: 3px; }
+.tv-ms { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--card-2); font-size: 0.7rem; font-weight: 900; color: var(--muted); padding: 0; }
+.tv-ms.on { background: var(--tension, #c0392b); border-color: transparent; color: #fff; }
+.tv-ms.solo.on { background: var(--fifth, #e2b33c); color: #14161a; }
+.tv-vol { width: 100%; height: 16px; margin: 0; }
+.tv-db { font-size: 0.68rem; color: var(--muted); min-width: 34px; text-align: right; }
+.tv-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; }
+.tv-lanes { position: relative; }
+.tv-row { display: flex; height: 52px; border-bottom: 1px solid var(--border); }
+.tv-row.quiet .tv-block { opacity: 0.35; }
+.tv-ruler { height: 34px; }
+.tv-sec { flex: none; position: relative; border-right: 2px solid var(--border-2); background: color-mix(in srgb, var(--kc) 22%, var(--card)); }
+.tv-sec.on { background: color-mix(in srgb, var(--kc) 45%, var(--card)); }
+.tv-letter { position: absolute; left: 3px; top: 3px; width: 22px; height: 18px; border: none; border-radius: 5px; background: var(--kc); color: #14161a; font-weight: 900; font-size: 0.75rem; padding: 0; z-index: 1; }
+.tv-bars { display: flex; height: 100%; }
+.tv-bars i { flex: none; font-style: normal; font-size: 0.62rem; color: var(--muted); border-left: 1px solid color-mix(in srgb, var(--border-2) 60%, transparent); padding: 20px 0 0 3px; }
+.tv-bars i:first-child { border-left: none; padding-left: 28px; }
+.tv-bars i.in { background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tv-block { flex: none; height: 100%; padding: 4px 0; border: none; border-right: 2px solid var(--border-2); border-radius: 0; background: color-mix(in srgb, var(--kc) 10%, transparent); color: var(--text); display: flex; align-items: center; overflow: hidden; text-align: left; }
+.tv-block.on { background: color-mix(in srgb, var(--kc) 24%, transparent); }
+.tv-block:hover { background: color-mix(in srgb, var(--kc) 30%, transparent); }
+.tv-empty { padding-left: 8px; color: var(--muted); font-size: 0.75rem; }
+.tv-chords { display: flex; height: 100%; }
+.tv-chord { flex: none; height: 100%; display: flex; align-items: center; padding-left: 5px; font-weight: 800; font-size: 0.78rem; white-space: nowrap; overflow: hidden; border-left: 2px solid color-mix(in srgb, var(--kc) 70%, var(--text)); background: color-mix(in srgb, var(--kc) 18%, transparent); }
+.tv-chord.rest { background: transparent; border-left-style: dashed; }
+.tv-svg rect { fill: color-mix(in srgb, var(--kc) 60%, var(--text)); }
+.tv-svg.off { opacity: 0.4; }
+.tv-line { display: none; position: absolute; top: 0; bottom: 0; left: 0; width: 2px; background: var(--accent); pointer-events: none; z-index: 2; }
+@media (max-width: 520px) {
+  .tv-heads { width: 116px; }
+  .tv-head { grid-template-columns: auto 1fr; grid-template-areas: "name name" "btns vol"; padding: 4px 6px; }
+  .tv-name { grid-area: name; }
+  .tv-btns { grid-area: btns; }
+  .tv-vol { grid-area: vol; min-width: 0; }
+  .tv-db, .track-page .dm-head .kb-label { display: none; }
+}

@@ -18,6 +18,7 @@ import { audioContext, audioIfStarted } from "./context";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem } from "./stems";
+import { fader } from "./mix";
 
 /** A drum sound, measured (once for each recording). */
 const measured = new WeakMap<AudioBuffer, Sound>();
@@ -191,9 +192,10 @@ function getBus(): Bus {
   const bed = c.createGain();
   bed.gain.value = 0;
   bed.connect(mix);
-  mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(c.destination);
-  // the canvas hears the drums here, after everything that is done to them
-  tapStem("drums", limiter);
+  const out = fader("drums", c);
+  mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(out);
+  // the canvas hears the drums here, after everything that is done to them (the fader too)
+  tapStem("drums", out);
 
   const channels = {} as Record<DrumId, Channel>;
   for (const id of DRUM_IDS) {
