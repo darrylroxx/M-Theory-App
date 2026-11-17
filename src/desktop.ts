@@ -76,7 +76,7 @@ export async function meterStop(): Promise<void> {
 }
 
 // ── the recording engine ──
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number }
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string }
 
 async function core() {
@@ -108,8 +108,9 @@ export async function engineBacking(left: Float32Array, right: Float32Array): Pr
 export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; record: boolean; name: string }): Promise<string | null> {
   return (await core()).invoke<string | null>("engine_start", o);
 }
-export async function engineStop(): Promise<import("./song/takes").Recorded | null> {
-  return (await core()).invoke("engine_stop");
+/** Stop; a recording is closed and comes back with its version through the vocal chain `fx`. */
+export async function engineStop(fx: import("./audio/vocalfx").VocalFx): Promise<import("./song/takes").Recorded | null> {
+  return (await core()).invoke("engine_stop", { fx });
 }
 /** The vocal chain over a whole recording again (after its settings changed): the new file. */
 export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalFx): Promise<string> {

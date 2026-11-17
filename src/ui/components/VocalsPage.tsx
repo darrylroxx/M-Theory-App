@@ -93,12 +93,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
 
   // the interface is open while this page is on screen (and while recording)
   const keepOpen = active || recording;
+  /** bumped when the driver resets (its buffer size or rate was changed in the Focusrite Notifier): the interface is opened again */
+  const [reopen, setReopen] = useState(0);
   useEffect(() => {
     if (!desktop || !keepOpen || !chosen) return;
     let live = true;
     setError(null);
     engineOpen(chosen.host, chosen.name, (st: EngineStatus) => {
       if (!live) return;
+      if (st.invalid) {
+        live = false;
+        toast("The interface's settings changed: opening it again");
+        window.setTimeout(() => setReopen((n) => n + 1), 300);
+        return;
+      }
       const el = barsRef.current;
       el?.querySelectorAll<HTMLElement>("[data-ch]").forEach((bar) => {
         const c = Number(bar.dataset.ch);
@@ -121,7 +129,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       }
     }).then((o) => live && setOpened(o)).catch((e) => live && (setOpened(null), setError(String(e))));
     return () => { live = false; void engineClose(); setOpened(null); };
-  }, [desktop, keepOpen, chosen?.host, chosen?.name]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // what the singer hears follows the page at once
   const monitor = (studio.monitor ?? "hardware") === "effects";
@@ -170,7 +178,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     const wasRecording = phase === "recording";
     setPhase("saving");
     try {
-      const r = await engineStop();
+      const r = await engineStop(fx);
       const plan = planRef.current;
       const t = trackRef.current;
       if (wasRecording && r && plan && t) {

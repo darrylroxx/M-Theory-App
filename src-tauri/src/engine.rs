@@ -11,8 +11,8 @@ use std::collections::VecDeque;
 use std::fs::File;
 use std::io::BufWriter;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
 use std::time::Duration;
 
@@ -23,6 +23,45 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 
 use crate::fx::{Chain, VocalFx};
 use crate::meter::Shared;
+
+/// What the audio thread reports. Only the audio thread writes it, and nobody ever has to lock
+/// anything the audio thread needs, so the screen can never make the sound drop out.
+#[derive(Default)]
+pub struct Stats {
+    pub pos: AtomicU64,
+    pub count_in: AtomicU64,
+    pub length: AtomicU64,
+    pub running: AtomicBool,
+    /// dB of compression, as f32 bits
+    pub reduction: AtomicU32,
+    /// counts every stop, so a waiting command knows its stop has happened
+    pub stops: AtomicU64,
+    pub dropped: AtomicU64,
+    /// the driver asked to be reset (its buffer size or sample rate was changed)
+    pub invalid: AtomicBool,
+    /// when the first frame was heard and the first sample captured, at the last stop
+    pub times: Mutex<(Option<f64>, Option<f64>)>,
+}
+
+/// What the singer hears and how (see `engine_set`).
+#[derive(Clone)]
+pub struct Settings {
+    pub monitor: bool,
+    pub input: usize,
+    pub fx: VocalFx,
+    pub backing_gain: f32,
+    pub click_gain: f32,
+    pub click_on: bool,
+}
+
+/// Messages to the audio thread. It picks them up at the start of a block, if it can do so
+/// without waiting; otherwise at the next one.
+pub enum Cmd {
+    Set(Box<Settings>),
+    Backing(Vec<f32>),
+    Start { bpm: f64, count_in_beats: u32, per_bar: u32, rec: Option<rtrb::Producer<f32>> },
+    Stop,
+}
 
 /// The part of the engine that runs on the audio thread. It knows nothing of the driver, so it
 /// can be tested without an interface.
@@ -57,6 +96,7 @@ pub struct Core {
     cap0: Option<f64>,
     pub dropped: u64,
     levels: Arc<Shared>,
+    pub stats: Arc<Stats>,
 }
 
 impl Core {
@@ -88,6 +128,27 @@ impl Core {
             cap0: None,
             dropped: 0,
             levels,
+            stats: Arc::new(Stats::default()),
+        }
+    }
+    /// A message from the app.
+    pub fn apply(&mut self, cmd: Cmd) {
+        match cmd {
+            Cmd::Set(s) => {
+                self.monitor = s.monitor;
+                self.input = s.input;
+                if self.fx != s.fx {
+                    self.set_fx(&s.fx);
+                }
+                self.backing_gain = s.backing_gain;
+                self.click_gain = s.click_gain;
+                self.click_on = s.click_on;
+            }
+            Cmd::Backing(b) => self.set_backing(b),
+            Cmd::Start { bpm, count_in_beats, per_bar, rec } => self.start(bpm, count_in_beats, per_bar, rec),
+            Cmd::Stop => {
+                self.stop();
+            }
         }
     }
     pub fn set_fx(&mut self, fx: &VocalFx) {
@@ -121,19 +182,14 @@ impl Core {
         self.armed = false;
         self.recording = false;
         self.rec = None;
+        if let Ok(mut t) = self.stats.times.lock() {
+            *t = (self.play0, self.cap0);
+        }
+        self.stats.dropped.store(self.dropped, Ordering::Relaxed);
+        self.stats.running.store(false, Ordering::Relaxed);
+        self.stats.stops.fetch_add(1, Ordering::Release);
         (self.play0, self.cap0)
     }
-    pub fn running(&self) -> bool {
-        self.running || self.pending
-    }
-    /// Frames since the first click (for the take counter).
-    pub fn position(&self) -> (u64, u64, u64) {
-        (self.pos, self.count_in, self.backing_frames())
-    }
-    pub fn reduction(&self) -> f32 {
-        self.chain.reduction()
-    }
-
     /// A block from the interface's inputs (interleaved).
     pub fn on_input(&mut self, data: &[f32], captured: f64) {
         self.levels.feed(data);
@@ -186,10 +242,17 @@ impl Core {
         }
         let ch = self.out_ch;
         let len = self.backing_frames();
-        // keep the monitor from falling behind (never more than a few blocks of delay)
+        // keep the monitor from falling behind (never more than a few blocks of delay), and never
+        // let it run dry in the middle of a block: if the voice has not arrived yet, it is held
+        // back by what is missing (a cushion of at most one block), instead of a gap that pops
         let frames = out.len() / ch;
         while self.mon.len() > frames * 3 + 64 {
             self.mon.pop_front();
+        }
+        if self.monitor && self.mon.len() < frames {
+            for _ in self.mon.len()..frames {
+                self.mon.push_front(0.0);
+            }
         }
         for frame in out.chunks_mut(ch) {
             let (mut l, mut r) = (0.0f32, 0.0f32);
@@ -218,13 +281,38 @@ impl Core {
                 *x = 0.0;
             }
         }
+        self.publish();
+    }
+
+    fn publish(&self) {
+        let st = &self.stats;
+        st.pos.store(self.pos, Ordering::Relaxed);
+        st.count_in.store(self.count_in, Ordering::Relaxed);
+        st.length.store(self.backing_frames(), Ordering::Relaxed);
+        st.running.store(self.running || self.pending, Ordering::Relaxed);
+        st.reduction.store(self.chain.reduction().to_bits(), Ordering::Relaxed);
     }
 }
 
 // ── The engine as the app uses it ──────────────────────────────
 
+/// What the app and the audio thread share: messages in, reports out. The audio thread never
+/// waits on either.
+pub struct Link {
+    cmds: Mutex<VecDeque<Cmd>>,
+    stats: Arc<Stats>,
+    base: OnceLock<StreamInstant>,
+}
+impl Link {
+    fn send(&self, c: Cmd) {
+        if let Ok(mut q) = self.cmds.lock() {
+            q.push_back(c);
+        }
+    }
+}
+
 struct Live {
-    core: Arc<Mutex<Core>>,
+    link: Arc<Link>,
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     rate: u32,
@@ -259,59 +347,75 @@ pub struct Status {
     pub running: bool,
     /// dB the compressors are turning the voice down
     pub reduction: f32,
+    /// the driver was reset (its buffer size or rate changed): the interface must be opened again
+    pub invalid: bool,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
-fn secs(t: StreamInstant, base: &Mutex<Option<StreamInstant>>) -> f64 {
-    let mut b = base.lock().unwrap();
-    let b0 = *b.get_or_insert(t);
+fn secs(t: StreamInstant, base: &OnceLock<StreamInstant>) -> f64 {
+    let b0 = *base.get_or_init(|| t);
     match t.checked_duration_since(b0) {
         Some(d) => d.as_secs_f64(),
         None => -b0.duration_since(t).as_secs_f64(),
     }
 }
 
-fn input_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, base: Arc<Mutex<Option<StreamInstant>>>) -> Result<cpal::Stream, String>
+fn input_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, link: Arc<Link>) -> Result<cpal::Stream, String>
 where
     T: SizedSample + Send + 'static,
     f32: FromSample<T>,
 {
-    let mut buf: Vec<f32> = Vec::with_capacity(8192);
+    let mut buf: Vec<f32> = Vec::with_capacity(16384);
+    let bad = link.clone();
     d.build_input_stream::<T, _, _>(
         cfg,
         move |data: &[T], info| {
             buf.clear();
             buf.extend(data.iter().map(|s| f32::from_sample(*s)));
-            let at = secs(info.timestamp().capture, &base);
+            let at = secs(info.timestamp().capture, &link.base);
+            // only the two audio callbacks ever touch the core, one after the other: this never waits
             if let Ok(mut c) = core.try_lock() {
                 c.on_input(&buf, at);
             }
         },
-        |e| eprintln!("input: {e}"),
+        move |e| {
+            eprintln!("input: {e}");
+            bad.stats.invalid.store(true, Ordering::Relaxed);
+        },
         None,
     )
     .map_err(|e| e.to_string())
 }
 
-fn output_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, base: Arc<Mutex<Option<StreamInstant>>>) -> Result<cpal::Stream, String>
+fn output_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, link: Arc<Link>) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
-    let mut buf: Vec<f32> = Vec::with_capacity(8192);
+    let mut buf: Vec<f32> = Vec::with_capacity(16384);
+    let bad = link.clone();
     d.build_output_stream::<T, _, _>(
         cfg,
         move |data: &mut [T], info| {
             buf.clear();
             buf.resize(data.len(), 0.0);
-            let at = secs(info.timestamp().playback, &base);
+            let at = secs(info.timestamp().playback, &link.base);
             if let Ok(mut c) = core.try_lock() {
+                // messages from the app, if they can be had without waiting
+                if let Ok(mut q) = link.cmds.try_lock() {
+                    while let Some(cmd) = q.pop_front() {
+                        c.apply(cmd);
+                    }
+                }
                 c.on_output(&mut buf, at);
             }
             for (o, v) in data.iter_mut().zip(buf.iter()) {
                 *o = T::from_sample(*v);
             }
         },
-        |e| eprintln!("output: {e}"),
+        move |e| {
+            eprintln!("output: {e}");
+            bad.stats.invalid.store(true, Ordering::Relaxed);
+        },
         None,
     )
     .map_err(|e| e.to_string())
@@ -334,11 +438,10 @@ fn close_engine() {
     }
 }
 
-fn with_core<R>(f: impl FnOnce(&mut Core) -> R) -> Result<R, String> {
+fn link() -> Result<(Arc<Link>, u32), String> {
     let g = LIVE.lock().map_err(|_| "engine busy")?;
     let l = g.as_ref().ok_or("The interface is not open")?;
-    let mut c = l.core.lock().map_err(|_| "engine busy")?;
-    Ok(f(&mut c))
+    Ok((l.link.clone(), l.rate))
 }
 
 /// Open the interface (input and output together) and start reporting levels.
@@ -347,10 +450,10 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
     crate::meter::stop();
     close_engine();
     let stop = Arc::new(AtomicBool::new(false));
-    let (tx, rx) = std::sync::mpsc::channel::<Result<(Opened, Arc<Mutex<Core>>), String>>();
+    let (tx, rx) = std::sync::mpsc::channel::<Result<(Opened, Arc<Link>), String>>();
     let flag = stop.clone();
     let thread = std::thread::spawn(move || {
-        let made = (|| -> Result<(Vec<cpal::Stream>, Arc<Mutex<Core>>, Arc<Shared>, Opened), String> {
+        let made = (|| -> Result<(Vec<cpal::Stream>, Arc<Link>, Arc<Shared>, Opened), String> {
             let (h, d) = device(&host, &device_name)?;
             let oc = d.default_output_config().map_err(|e| format!("No outputs: {e}"))?;
             let ic = d.default_input_config().map_err(|e| format!("No inputs: {e}"))?;
@@ -359,43 +462,49 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
             icfg.sample_rate = rate;
             let ocfg = oc.config();
             let shared = Arc::new(Shared::new(icfg.channels as usize));
-            let core = Arc::new(Mutex::new(Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone())));
-            let base = Arc::new(Mutex::new(None));
+            let c = Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone());
+            let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new() });
+            let core = Arc::new(Mutex::new(c));
             let input = match ic.sample_format() {
-                SampleFormat::F32 => input_stream::<f32>(&d, icfg.clone(), core.clone(), base.clone()),
-                SampleFormat::I32 => input_stream::<i32>(&d, icfg.clone(), core.clone(), base.clone()),
-                SampleFormat::I16 => input_stream::<i16>(&d, icfg.clone(), core.clone(), base.clone()),
+                SampleFormat::F32 => input_stream::<f32>(&d, icfg.clone(), core.clone(), link.clone()),
+                SampleFormat::I32 => input_stream::<i32>(&d, icfg.clone(), core.clone(), link.clone()),
+                SampleFormat::I16 => input_stream::<i16>(&d, icfg.clone(), core.clone(), link.clone()),
                 other => Err(format!("Inputs send {other} samples, which the engine cannot read yet")),
             }?;
             let output = match oc.sample_format() {
-                SampleFormat::F32 => output_stream::<f32>(&d, ocfg.clone(), core.clone(), base.clone()),
-                SampleFormat::I32 => output_stream::<i32>(&d, ocfg.clone(), core.clone(), base.clone()),
-                SampleFormat::I16 => output_stream::<i16>(&d, ocfg.clone(), core.clone(), base.clone()),
+                SampleFormat::F32 => output_stream::<f32>(&d, ocfg.clone(), core.clone(), link.clone()),
+                SampleFormat::I32 => output_stream::<i32>(&d, ocfg.clone(), core.clone(), link.clone()),
+                SampleFormat::I16 => output_stream::<i16>(&d, ocfg.clone(), core.clone(), link.clone()),
                 other => Err(format!("Outputs take {other} samples, which the engine cannot write yet")),
             }?;
             // input first, so each block of voice is in hand before the block of sound that follows it
             input.play().map_err(|e| e.to_string())?;
             output.play().map_err(|e| e.to_string())?;
             let opened = Opened { host: h.id().name().to_string(), device: d.to_string(), rate, inputs: icfg.channels, outputs: ocfg.channels, format: oc.sample_format().to_string() };
-            Ok((vec![input, output], core, shared, opened))
+            Ok((vec![input, output], link, shared, opened))
         })();
         match made {
             Err(e) => {
                 let _ = tx.send(Err(e));
             }
-            Ok((streams, core, shared, opened)) => {
-                let _ = tx.send(Ok((opened, core.clone())));
+            Ok((streams, link, shared, opened)) => {
+                let _ = tx.send(Ok((opened, link.clone())));
+                let st = &link.stats;
                 while !flag.load(Ordering::Relaxed) {
                     std::thread::sleep(Duration::from_millis(33));
+                    // reports are read from atomics: the audio thread is never kept waiting
                     let l = shared.take();
-                    let (pos, count_in, length, running, reduction) = match core.lock() {
-                        Ok(c) => {
-                            let (p, ci, len) = c.position();
-                            (p, ci, len, c.running(), c.reduction())
-                        }
-                        Err(_) => (0, 0, 0, false, 0.0),
+                    let msg = Status {
+                        peak: l.peak,
+                        rms: l.rms,
+                        pos: st.pos.load(Ordering::Relaxed),
+                        count_in: st.count_in.load(Ordering::Relaxed),
+                        length: st.length.load(Ordering::Relaxed),
+                        running: st.running.load(Ordering::Relaxed),
+                        reduction: f32::from_bits(st.reduction.load(Ordering::Relaxed)),
+                        invalid: st.invalid.load(Ordering::Relaxed),
                     };
-                    if status.send(Status { peak: l.peak, rms: l.rms, pos, count_in, length, running, reduction }).is_err() {
+                    if status.send(msg).is_err() {
                         break;
                     }
                 }
@@ -408,9 +517,9 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
             stop.store(true, Ordering::Relaxed);
             Err(e)
         }
-        Ok((opened, core)) => {
+        Ok((opened, link)) => {
             if let Ok(mut g) = LIVE.lock() {
-                *g = Some(Live { core, stop, thread: Some(thread), rate: opened.rate });
+                *g = Some(Live { link, stop, thread: Some(thread), rate: opened.rate });
             }
             Ok(opened)
         }
@@ -426,16 +535,9 @@ pub fn engine_close() {
 /// What the singer hears and how: monitoring through the chain, which input, the chain's settings, levels.
 #[tauri::command]
 pub fn engine_set(monitor: bool, input: usize, fx: VocalFx, backing_gain: f32, click_gain: f32, click_on: bool) -> Result<(), String> {
-    with_core(|c| {
-        c.monitor = monitor;
-        c.input = input;
-        if c.fx != fx {
-            c.set_fx(&fx);
-        }
-        c.backing_gain = backing_gain.clamp(0.0, 2.0);
-        c.click_gain = click_gain.clamp(0.0, 1.5);
-        c.click_on = click_on;
-    })
+    let (l, _) = link()?;
+    l.send(Cmd::Set(Box::new(Settings { monitor, input, fx, backing_gain: backing_gain.clamp(0.0, 2.0), click_gain: click_gain.clamp(0.0, 1.5), click_on })));
+    Ok(())
 }
 
 /// The song to sing over, as raw little-endian 32-bit floats, stereo, at the engine's rate.
@@ -443,10 +545,10 @@ pub fn engine_set(monitor: bool, input: usize, fx: VocalFx, backing_gain: f32, c
 pub fn engine_backing(request: Request) -> Result<u64, String> {
     let InvokeBody::Raw(bytes) = request.body() else { return Err("expected raw audio".into()) };
     let samples: Vec<f32> = bytes.chunks_exact(4).map(|b| f32::from_le_bytes([b[0], b[1], b[2], b[3]])).collect();
-    with_core(|c| {
-        c.set_backing(samples);
-        c.backing_frames()
-    })
+    let frames = (samples.len() / 2) as u64;
+    let (l, _) = link()?;
+    l.send(Cmd::Backing(samples));
+    Ok(frames)
 }
 
 /// The folder takes are written to: Music\M-Theory\Recordings.
@@ -462,7 +564,7 @@ fn recordings_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 pub fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
     let _ = engine_stop_inner();
-    let rate = LIVE.lock().ok().and_then(|g| g.as_ref().map(|l| l.rate)).ok_or("The interface is not open")?;
+    let (l, rate) = link()?;
     let mut producer = None;
     let mut path = None;
     if record {
@@ -510,7 +612,7 @@ pub fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_
             *g = Some(Recording { dry, stop, thread: Some(thread) });
         }
     }
-    with_core(|c| c.start(bpm, count_in_beats, beats_per_bar, producer))?;
+    l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, rec: producer });
     Ok(path)
 }
 
@@ -529,14 +631,21 @@ pub struct Recorded {
 }
 
 fn engine_stop_inner() -> Result<Option<Recorded>, String> {
-    let (times, count_in, loop_frames, dropped, fx, rate) = match with_core(|c| {
-        let t = c.stop();
-        let (_, ci, len) = c.position();
-        (t, ci, len, c.dropped, c.fx.clone(), c.sr as u32)
-    }) {
-        Ok(v) => v,
-        Err(_) => return Ok(None),
-    };
+    let Ok((l, rate)) = link() else { return Ok(None) };
+    let st = l.stats.clone();
+    let before = st.stops.load(Ordering::Acquire);
+    l.send(Cmd::Stop);
+    // the audio thread stops at its next block; wait for it (a second at most, in case the device is gone)
+    for _ in 0..500 {
+        if st.stops.load(Ordering::Acquire) != before {
+            break;
+        }
+        std::thread::sleep(Duration::from_millis(2));
+    }
+    let times = st.times.lock().map(|t| *t).unwrap_or((None, None));
+    let count_in = st.count_in.load(Ordering::Relaxed);
+    let loop_frames = st.length.load(Ordering::Relaxed);
+    let dropped = st.dropped.load(Ordering::Relaxed);
     let rec = REC.lock().ok().and_then(|mut g| g.take());
     let Some(mut rec) = rec else { return Ok(None) };
     rec.stop.store(true, Ordering::Relaxed);
@@ -545,14 +654,19 @@ fn engine_stop_inner() -> Result<Option<Recorded>, String> {
         (Some(heard), Some(captured)) => ((heard - captured) * rate as f64).round() as i64,
         _ => 0,
     };
-    let wet = render_wet(&rec.dry, &fx)?;
-    Ok(Some(Recorded { dry: rec.dry.to_string_lossy().to_string(), wet, rate, frames, offset, count_in, loop_frames, dropped }))
+    Ok(Some(Recorded { dry: rec.dry.to_string_lossy().to_string(), wet: String::new(), rate, frames, offset, count_in, loop_frames, dropped }))
 }
 
 /// Stop playing; if recording, close the file and make the version with the vocal chain on it.
 #[tauri::command]
-pub fn engine_stop() -> Result<Option<Recorded>, String> {
-    engine_stop_inner()
+pub async fn engine_stop(fx: VocalFx) -> Result<Option<Recorded>, String> {
+    tauri::async_runtime::spawn_blocking(move || -> Result<Option<Recorded>, String> {
+        let Some(mut r) = engine_stop_inner()? else { return Ok(None) };
+        r.wet = render_wet(&PathBuf::from(&r.dry), &fx)?;
+        Ok(Some(r))
+    })
+    .await
+    .map_err(|e| e.to_string())?
 }
 
 /// The take through the vocal chain, written next to it (`…-wet-N.wav`, stereo).
@@ -661,6 +775,39 @@ mod tests {
         c.on_input(&block, 0.0);
         c.on_output(&mut out, 0.0);
         assert!(out.iter().all(|v| *v == 0.0), "no monitoring: silence");
+    }
+
+    #[test]
+    fn messages_reach_the_audio_thread_and_stops_are_reported() {
+        let mut c = core();
+        c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 1, fx: VocalFx::default(), backing_gain: 0.5, click_gain: 0.2, click_on: true })));
+        assert!(c.monitor && c.input == 1 && c.backing_gain == 0.5 && c.click_on);
+        c.apply(Cmd::Backing(vec![0.1; 400]));
+        assert_eq!(c.backing_frames(), 200);
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, rec: None });
+        let mut out = vec![0.0f32; 512];
+        c.on_output(&mut out, 0.0);
+        assert!(c.stats.running.load(Ordering::Relaxed));
+        assert_eq!(c.stats.pos.load(Ordering::Relaxed), 256);
+        c.apply(Cmd::Stop);
+        assert_eq!(c.stats.stops.load(Ordering::Relaxed), 1);
+        assert!(!c.stats.running.load(Ordering::Relaxed));
+    }
+
+    #[test]
+    fn a_late_voice_is_held_back_a_little_instead_of_breaking_up() {
+        let mut c = core();
+        c.monitor = true;
+        c.set_fx(&VocalFx { on: false, ..VocalFx::default() });
+        let block: Vec<f32> = (0..256).flat_map(|_| [0.5, 0.0]).collect();
+        // the output asks before the input has arrived: silence, then the voice, without a gap after
+        let mut out = vec![0.0f32; 512];
+        c.on_output(&mut out, 0.0);
+        for _ in 0..20 {
+            c.on_input(&block, 0.0);
+            c.on_output(&mut out, 0.0);
+            assert!(out.chunks(2).all(|f| (f[0] - 0.5).abs() < 1e-6), "a steady voice, no dropouts");
+        }
     }
 
     #[test]
