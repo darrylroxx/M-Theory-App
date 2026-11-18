@@ -143,7 +143,7 @@ export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalF
 export async function readTake(path: string): Promise<ArrayBuffer> {
   return (await core()).invoke<ArrayBuffer>("read_take", { path });
 }
-/** One take of a recording: `frames` frames from `start`, as a small WAV of its own. */
+/** One take of a recording: `frames` frames from `start`, as a small WAV of its own (a part before the file's start comes back as silence). */
 export async function readTakeRange(path: string, start: number, frames: number): Promise<ArrayBuffer> {
-  return (await core()).invoke<ArrayBuffer>("read_take_range", { path, start: Math.max(0, Math.round(start)), frames: Math.max(0, Math.round(frames)) });
+  return (await core()).invoke<ArrayBuffer>("read_take_range", { path, start: Math.round(start), frames: Math.max(0, Math.round(frames)) });
 }

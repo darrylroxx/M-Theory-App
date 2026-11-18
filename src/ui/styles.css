@@ -908,10 +908,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 .rec-btn.on { animation: rec-pulse 1.2s ease-in-out infinite; }
 @keyframes rec-pulse { 50% { box-shadow: 0 0 0 8px color-mix(in srgb, #e5483b 25%, transparent); } }
 .rec-btn:disabled { opacity: 0.35; }
-/* the pass number and the notes under it keep their size as they change, so nothing around them moves */
-.vc-state { display: flex; flex-direction: column; gap: 2px; min-width: 7.5em; }
+/* the pass number and the notes under it keep their size as they change (a note coming at half an hour too), so nothing around them moves */
+.vc-state { display: flex; flex-direction: column; gap: 2px; width: 15em; max-width: 100%; flex: none; }
 .vc-count { font-size: 1.7rem; line-height: 1.1; font-weight: 900; min-height: 1.1em; font-variant-numeric: tabular-nums; white-space: nowrap; }
-.vc-sub { display: block; height: 1.25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 16em; font-variant-numeric: tabular-nums; }
+.vc-sub { display: block; height: 1.25em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 100%; font-variant-numeric: tabular-nums; }
 .vc-warn.warn { color: var(--tension, #c0392b); font-weight: 650; }
 .vc-star { width: 52px; height: 52px; border-radius: 50%; flex: none; border: 2px solid var(--border-2); background: var(--card); color: var(--muted); font-size: 1.5rem; line-height: 1; }
 .vc-star.on { border-color: var(--star); background: color-mix(in srgb, var(--star) 22%, var(--card)); color: var(--star); }
@@ -930,8 +930,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tl-bar { flex: 1 1 0; min-width: 0; border-left: 1px solid var(--border); position: relative; }
 .tl-bar:first-child { border-left: none; }
 .tl-bar.sec { border-left-color: var(--border-2); }
-.tl-bar i { position: absolute; top: 5px; left: 4px; display: flex; gap: 3px; max-width: calc(100% - 6px); font-style: normal; font-size: 0.66rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
-.tl-bar i b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 900; color: var(--text); }
+.tl-bar i { position: absolute; top: 5px; left: 4px; overflow: hidden; text-overflow: ellipsis; font-style: normal; font-size: 0.66rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
 .tl-takes { position: absolute; left: 0; right: 0; top: 22px; bottom: 2px; }
 .tl-take { position: absolute; height: 16px; padding: 0 5px; border: none; border-radius: 5px; text-align: left; overflow: hidden; white-space: nowrap; font-size: 0.66rem; font-weight: 800; color: var(--text); background: color-mix(in srgb, var(--third, #3d8bfd) 30%, transparent); box-shadow: inset 2px 0 0 var(--third, #3d8bfd); }
 .tl-take.keep { background: color-mix(in srgb, var(--star) 30%, transparent); box-shadow: inset 2px 0 0 var(--star); }
@@ -977,6 +976,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 .vc-knob small { font-weight: 500; color: var(--muted); }
 .vc-takes { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; }
 .vc-group { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; }
+.vc-group-acts { display: inline-flex; align-items: center; gap: 8px; }
 .vc-takelist button { min-width: 34px; font-variant-numeric: tabular-nums; }
 .vc-takelist button.keep { color: var(--star); }
 .vc-takelist button.keep.on { color: var(--text); box-shadow: inset 0 -2px 0 var(--star), 0 1px 3px rgba(0, 0, 0, 0.25); }

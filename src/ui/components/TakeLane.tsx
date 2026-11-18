@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { takeBars, type Take } from "../../song/takes";
 
-/** One bar of what a recording goes round: its section, which of its bars, what the section is called (its name or letter), its beats. */
+/** One bar of what a recording goes round: its section, which of its bars, its letter, its beats. */
 export interface LaneBar {
   block: string;
   bar: number;
@@ -65,6 +65,13 @@ export function TakeLane({ bars, takes, bpm, where, live, onPick }: {
   const rows = Math.max(1, drawn.length);
   // on a narrow lane, only every so many bars is numbered (and each section's first)
   const step = Math.max(1, Math.ceil(bars.length / 16));
+  const labelled = (i: number) => i === 0 || bars[i - 1].block !== bars[i].block || i % step === 0;
+  /** how many bars a label has before the next one (a long section name is cut short there, never written over it) */
+  const room = (i: number) => {
+    let j = i + 1;
+    while (j < bars.length && !labelled(j)) j++;
+    return j - i;
+  };
   return (
     <div className="take-lane" role="group" aria-label="Takes in the bars recorded over" style={{ ["--rows" as string]: rows }}>
       <div className="tl-fill" ref={fillRef} />
@@ -73,8 +80,8 @@ export function TakeLane({ bars, takes, bpm, where, live, onPick }: {
           const starts = i === 0 || bars[i - 1].block !== b.block;
           return (
             <span key={`${b.block}:${b.bar}`} className={`tl-bar${starts ? " sec" : ""}`}>
-              {/* the section's name apart from the bar's number (a name can end in a number too) */}
-              {(starts || i % step === 0) && <i>{starts && <b>{b.letter}</b>}{b.bar + 1}</i>}
+              {/* "A1", or for a section with a name of its own, "Chorus 1" */}
+              {labelled(i) && <i style={{ maxWidth: `calc(${room(i) * 100}% - 6px)` }}>{starts ? `${b.letter}${b.letter.length > 1 ? " " : ""}${b.bar + 1}` : b.bar + 1}</i>}
             </span>
           );
         })}
