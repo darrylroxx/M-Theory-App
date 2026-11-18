@@ -94,3 +94,69 @@ describe("midi export of added tracks", () => {
     expect(six).toContain("255,81,3,7,161,32");
   });
 });
+
+/** The events of a MIDI file, track by track, each at its tick from the start (the writer never uses running status). */
+function readMidi(b: Uint8Array): { tick: number; data: number[] }[][] {
+  const tracks: { tick: number; data: number[] }[][] = [];
+  let i = 14;
+  while (i < b.length) {
+    const len = (b[i + 4] << 24) | (b[i + 5] << 16) | (b[i + 6] << 8) | b[i + 7];
+    const end = i + 8 + len;
+    let at = i + 8;
+    let tick = 0;
+    const ev: { tick: number; data: number[] }[] = [];
+    while (at < end) {
+      let d = 0;
+      for (;;) {
+        const x = b[at++];
+        d = (d << 7) | (x & 0x7f);
+        if (!(x & 0x80)) break;
+      }
+      tick += d;
+      const s = b[at];
+      const size = s === 0xff ? 3 + b[at + 2] : (s & 0xf0) === 0xc0 ? 2 : 3;
+      ev.push({ tick, data: [...b.slice(at, at + size)] });
+      at += size;
+    }
+    tracks.push(ev);
+    i = end;
+  }
+  return tracks;
+}
+
+describe("midi export with a time signature for each section", () => {
+  const sec = (beats: number, num: number, den: 4 | 8, tune?: PlayItem["tune"]): PlayItem => ({ midi: [null, 48, 52, 55, 60, 64], beats, section: true, tune, meter: { bar: den === 8 ? num / 3 : num, triplet: den === 8, sig: { num, den } } });
+  // a bar of 4/4, a bar of 6/8 (two dotted-quarter beats) with a note on its second beat, a bar of 3/4
+  const items = [sec(4, 4, 4, null), sec(2, 6, 8, { m: { div: 3, bars: 1, notes: [{ at: 12, midi: 72 }] }, bar: 2, swing: 0 }), sec(3, 3, 4, null)];
+
+  it("writes each signature where its section starts, and the tempo where a beat changes between a quarter and a dotted quarter", () => {
+    const [first, melody] = readMidi(progressionToMidi(items, 120, "ring", "x", null, null, {}, { num: 4, den: 4 }));
+    const meta = first.filter((e) => e.data[0] === 0xff && (e.data[1] === 0x58 || e.data[1] === 0x51)).map((e) => [e.tick, ...e.data]);
+    expect(meta).toEqual([
+      [0, 255, 81, 3, 7, 161, 32], // 120 quarters a minute
+      [0, 255, 88, 4, 4, 2, 24, 8],
+      [1920, 255, 81, 3, 5, 22, 21], // 120 dotted quarters a minute: 333333 µs to a quarter
+      [1920, 255, 88, 4, 6, 3, 36, 8],
+      [3360, 255, 81, 3, 7, 161, 32],
+      [3360, 255, 88, 4, 3, 2, 24, 8],
+    ]);
+    // 4/4 to 3/4: the beat stays a quarter, so the tempo is not written again
+    const plain = readMidi(progressionToMidi([sec(4, 4, 4), sec(3, 3, 4)], 120, "ring"))[0];
+    expect(plain.filter((e) => e.data[1] === 0x51)).toHaveLength(1);
+    expect(plain.filter((e) => e.data[1] === 0x58).map((e) => [e.tick, e.data[3]])).toEqual([[0, 4], [1920, 3]]);
+    // every note of each section lands inside it; the song ends with the 3/4 bar
+    const ons = first.filter((e) => (e.data[0] & 0xf0) === 0x90 && e.data[2] > 0).map((e) => e.tick);
+    expect(ons.some((t) => t >= 1920 && t < 3360)).toBe(true);
+    expect(ons.some((t) => t >= 3360 && t < 4800)).toBe(true);
+    expect(first[first.length - 1]).toEqual({ tick: 4800, data: [0xff, 0x2f, 0] });
+    // the 6/8 bar's second beat is a dotted quarter after it starts: 720 ticks
+    expect(melody.find((e) => (e.data[0] & 0xf0) === 0x90)!.tick).toBe(2640);
+  });
+
+  it("a song in one signature is written as it always was", () => {
+    const one = [sec(4, 4, 4), sec(4, 4, 4)];
+    const a = progressionToMidi(one, 100, "strum", "x", null, null, {}, { num: 4, den: 4 });
+    const b = progressionToMidi(one.map(({ meter: _m, ...x }) => x), 100, "strum", "x");
+    expect([...a]).toEqual([...b]);
+  });
+});

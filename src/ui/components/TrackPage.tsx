@@ -16,7 +16,9 @@ import { newId, useApp, type Pane, type ProgChord } from "../state";
 /** One section as the Track page draws it. */
 export interface TrackSection {
   block: string;
-  letter: string;
+  /** what the section is called, and its colour */
+  label: string;
+  color: number;
   bars: number;
   /** beats in a bar */
   bar: number;
@@ -178,8 +180,8 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
           <div className="tv-lanes" style={{ width: starts.width }}>
             <div className="tv-row tv-ruler">
               {sections.map((s) => (
-                <div key={s.block || "a"} className={`tv-sec ${letterClass(s.letter)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}>
-                  <button className="tv-letter" aria-pressed={s.block === current} aria-label={`Section ${s.letter}`} onClick={() => choose(s.block)}>{s.letter}</button>
+                <div key={s.block || "a"} className={`tv-sec ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}>
+                  <button className="tv-letter" aria-pressed={s.block === current} aria-label={`Section ${s.label}`} title={s.label} style={{ maxWidth: s.bars * bw - 6 }} onClick={() => choose(s.block)}>{s.label}</button>
                   <span className="tv-bars" aria-hidden="true">
                     {Array.from({ length: s.bars }, (_, k) => <i key={k} className={inLoop(layout, loop, { block: s.block, bar: k }) ? "in" : ""} style={{ width: bw }}>{bw >= 40 || k % 2 === 0 ? k + 1 : ""}</i>)}
                   </span>
@@ -191,8 +193,8 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
                 {sections.map((s0) => {
                   const s = content(t, s0);
                   return (
-                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.letter)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
-                      aria-label={`${t.name} of section ${s.letter}: open`} onClick={() => open(s.block, t)}>
+                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
+                      aria-label={`${t.name} of section ${s.label}: open`} onClick={() => open(s.block, t)}>
                       {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} bpm={state.progression.bpm} />}
                     </button>
                   );

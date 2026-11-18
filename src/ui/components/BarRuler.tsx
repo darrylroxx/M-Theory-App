@@ -16,14 +16,14 @@ export function lengthText(beats: number, bar: number): string {
  * The ruler is as long as the section: bars with no chord in them are drawn empty (they are silent),
  * and whatever lies past the end of the section is struck out.
  */
-export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange }: {
+export function BarRuler({ chords, bar, length, label, onFit, nowIdx, onChange }: {
   chords: ProgChord[];
   /** beats in a bar */
   bar: number;
   /** how long the section lasts, in beats */
   length: number;
-  /** the section's letter */
-  letter: string;
+  /** what the section is called: its name, or its letter */
+  label: string;
   /** make the section this many bars long (offered when the chords run past its end) */
   onFit: (bars: number) => void;
   /** the chord that is sounding (−1 = none) */
@@ -93,12 +93,12 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
           ))}
           {rest > 0 && <span className="ruler-rest" style={{ flexGrow: rest }} title="Empty: nothing plays here" />}
           {Array.from({ length: bars - 1 }, (_, k) => <i key={k} className="ruler-line" style={{ left: `${((k + 1) / bars) * 100}%` }} />)}
-          {over && <i className="ruler-cut" style={{ left: `${(length / span) * 100}%`, right: `${(rest / span) * 100}%` }} title={`${letter} ends here`} />}
+          {over && <i className="ruler-cut" style={{ left: `${(length / span) * 100}%`, right: `${(rest / span) * 100}%` }} title={`${label} ends here`} />}
         </div>
       </div>
       {over && (
         <button className="ruler-fit" onClick={() => onFit(Math.ceil(total / bar - 1e-6))}>
-          {letter} ends before these chords do · make it {Math.ceil(total / bar - 1e-6)} bars
+          {label} ends before these chords do · make it {Math.ceil(total / bar - 1e-6)} bars
         </button>
       )}
       {picked && (

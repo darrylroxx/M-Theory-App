@@ -7,6 +7,10 @@ export const CopyIcon = () => (
 export const PasteIcon = () => (
   <svg {...base}><rect x="3" y="3.5" width="10" height="10.5" rx="1.6" /><rect x="5.8" y="1.8" width="4.4" height="3" rx="1" fill="currentColor" stroke="none" /><path d="M8 7.2v4M6.2 9.6 8 11.4l1.8-1.8" /></svg>
 );
+/** Six dots: something to take hold of and drag. */
+export const GripIcon = () => (
+  <svg {...base} fill="currentColor" stroke="none"><circle cx="5.5" cy="3.5" r="1.4" /><circle cx="10.5" cy="3.5" r="1.4" /><circle cx="5.5" cy="8" r="1.4" /><circle cx="10.5" cy="8" r="1.4" /><circle cx="5.5" cy="12.5" r="1.4" /><circle cx="10.5" cy="12.5" r="1.4" /></svg>
+);
 export const MicIcon = () => (
   <svg {...base}><rect x="6" y="1.8" width="4" height="7.4" rx="2" /><path d="M3.6 7.6a4.4 4.4 0 0 0 8.8 0M8 12v2.2" /></svg>
 );

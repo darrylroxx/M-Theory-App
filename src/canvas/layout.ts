@@ -10,9 +10,9 @@ import { F_HI, F_LO } from "../audio/describe";
 
 /** Where the music is: which section, and how far into it. */
 export interface Spot {
-  /** the section's letter: the same letter is the same painting */
+  /** which section it is (every block of one section is the same painting) */
   key: string;
-  /** how many sections come before this one in the alphabet of the song (A = 0): shifts its colours */
+  /** the section's own colour number (0–7): shifts its colours, and goes with it wherever it is moved */
   index: number;
   /** beats into the section */
   beat: number;
@@ -27,7 +27,7 @@ export interface Spot {
 export const maxBars = (width: number) => (width < 520 ? 4 : 8);
 
 export interface Page {
-  /** the section's letter and which of its canvases this is: the name of the painting */
+  /** the section and which of its canvases this is: the name of the painting */
   key: string;
   page: number;
   pages: number;
