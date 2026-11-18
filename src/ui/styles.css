@@ -983,3 +983,63 @@ button.dm-strip-name:hover { color: var(--accent); }
 .transport.locked .loopbar, .transport.locked .loop-btn { pointer-events: none; opacity: 0.7; }
 .tv-takes { position: relative; display: block; width: 100%; height: 100%; }
 .tv-take { position: absolute; top: 6px; bottom: 6px; border-radius: 6px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--kc) 55%, var(--text)) 0 2px, transparent 2px 5px), color-mix(in srgb, var(--kc) 30%, transparent); font-size: 0.7rem; font-weight: 800; padding: 2px 6px; overflow: hidden; white-space: nowrap; }
+
+/* ── Synth (SynthPanel.tsx) ───────────────────────────────────────────────────────────────── */
+.synth { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.syn-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; }
+.syn-head h2 { font-size: 1.35rem; letter-spacing: -0.02em; margin-right: 4px; }
+.syn-name { flex: 0 1 auto; min-width: 0; max-width: 100%; }
+.syn-name .beat-name { flex: 1 1 auto; min-width: 0; width: 170px; }
+.syn-name .beat-name b, .syn-name .beat-name span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.syn-browser { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
+.syn-cats { display: flex; flex-wrap: wrap; gap: 5px; }
+.syn-cats .chip { padding: 4px 11px; font-size: 0.82rem; }
+.syn-browser .dm-tile button { min-height: 36px; }
+
+.syn-macros { display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 6px; padding: 10px 6px 8px; border-radius: 14px; background: linear-gradient(180deg, var(--card-2), var(--bg-2)); border: 1px solid var(--border); }
+.syn-macro { display: flex; flex-direction: column; align-items: center; gap: 1px; min-width: 0; padding: 2px 0 4px; border-radius: 12px; cursor: ns-resize; touch-action: none; user-select: none; -webkit-user-select: none; }
+.syn-macro:focus-visible { outline: 2px solid var(--accent); outline-offset: 0; }
+.syn-macro svg { width: 68px; height: 68px; max-width: 100%; overflow: visible; }
+.syn-macro .syn-track { fill: none; stroke: var(--border-2); stroke-width: 5; stroke-linecap: round; }
+.syn-macro .syn-arc { fill: none; stroke: var(--accent); stroke-width: 5; stroke-linecap: round; }
+.syn-macro .syn-cap { fill: var(--card); stroke: var(--border-2); stroke-width: 1.5; filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35)); }
+.syn-macro .syn-tick { stroke: var(--text); stroke-width: 3; stroke-linecap: round; }
+.syn-macro text { font-size: 15px; fill: var(--muted); pointer-events: none; }
+.syn-macro.moved text { fill: var(--accent); }
+.syn-mname { font-size: 0.68rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); white-space: nowrap; }
+.syn-macro.moved .syn-mname { color: var(--text); }
+.syn-mval { font-size: 0.7rem; font-weight: 700; color: var(--faint); font-variant-numeric: tabular-nums; min-height: 1em; line-height: 1; }
+.syn-macro.moved .syn-mval { color: var(--accent); }
+
+.syn-play { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 10px; }
+.syn-play .seg button { padding: 5px 10px; }
+.syn-mini { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
+.syn-mini i { font-style: normal; font-size: 0.66rem; font-weight: 850; letter-spacing: 0.08em; text-transform: uppercase; color: var(--faint); }
+.syn-mini input[type="range"] { width: 96px; margin: 0; }
+
+.syn-panel { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr)); gap: 10px; }
+.syn-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; padding: 8px 10px 10px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); border-top: 3px solid var(--sc); }
+.syn-sec h3 { font-size: 0.7rem; font-weight: 900; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sc); }
+.syn-pick { display: flex; flex-wrap: wrap; gap: 6px; }
+.syn-pick .seg button { padding: 4px 8px; font-size: 0.78rem; display: inline-flex; align-items: center; }
+.syn-pick .seg button.on { color: var(--sc); }
+.syn-icon { width: 24px; height: 14px; display: block; }
+.syn-icon path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linejoin: round; stroke-linecap: round; }
+.syn-faders { display: flex; justify-content: space-around; gap: 2px; min-width: 0; }
+.syn-fader { flex: 1 1 0; min-width: 0; display: flex; flex-direction: column; align-items: center; gap: 4px; }
+.syn-fader b { font-size: 0.66rem; font-weight: 700; color: var(--faint); font-variant-numeric: tabular-nums; white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.syn-fader i { font-style: normal; font-size: 0.66rem; font-weight: 850; letter-spacing: 0.04em; text-transform: uppercase; color: var(--muted); white-space: nowrap; max-width: 100%; overflow: hidden; text-overflow: ellipsis; }
+.syn-fader input[type="range"] { writing-mode: vertical-lr; direction: rtl; width: 30px; height: 112px; margin: 0; accent-color: var(--sc); cursor: ns-resize; }
+.syn-fader.pushed b { color: var(--accent); }
+.syn-fader.pushed i { color: var(--text); }
+@media (max-width: 520px) {
+  .syn-head { flex-wrap: nowrap; }
+  .syn-head h2 { font-size: 1.15rem; }
+  .syn-name .beat-name { width: auto; }
+  .syn-play .seg { flex-wrap: nowrap; }
+  .syn-play .seg button { padding: 5px 7px; font-size: 0.8rem; }
+  .syn-macros { grid-template-columns: repeat(3, minmax(0, 1fr)); row-gap: 8px; }
+  .syn-fader input[type="range"] { height: 100px; }
+  .syn-mini input[type="range"] { width: 80px; }
+}
+@media (pointer: coarse) { .syn-fader input[type="range"] { width: 36px; } }
