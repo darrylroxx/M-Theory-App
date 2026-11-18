@@ -25,6 +25,8 @@ export interface Take {
   /** the tempo and key the song was in when it was sung (a recording does not follow later changes) */
   bpm?: number;
   key?: string;
+  /** "4/4" */
+  sig?: string;
 }
 
 /** What the engine reports when a recording stops. */

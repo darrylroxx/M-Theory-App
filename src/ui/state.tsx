@@ -1,7 +1,8 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
-import { barBeats } from "../audio/beats";
-import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
+import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
+import { reviveSig, sigBeats, type TimeSig } from "../song/meter";
+import { conform, sigOf } from "../song/unity";
 import { reviveMelody, type Melody } from "../song/melody";
 import { DEFAULT_BARS, fitBars } from "../song/frame";
 import { isSurface, type Surface } from "../canvas/weave";
@@ -80,6 +81,8 @@ export interface Progression {
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
   focus?: Focus;
+  /** The time signature of the whole song, set on the Frame page: how long every bar is, on every page */
+  meter?: TimeSig;
 }
 
 export interface ArrangeSettings {
@@ -216,10 +219,18 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
+    meter: reviveSig(raw?.meter),
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
   // Songs from before sections had lengths get them here.
-  return settle(commit(p));
+  // Songs from before the time signature could be chosen get the one their first section played in.
+  return conform(settle(commit(p)));
+}
+
+/** After any change, the whole song is in the bars of its time signature (see song/unity). */
+function unify(s: AppState): AppState {
+  const p = conform(s.progression);
+  return p === s.progression ? s : { ...s, progression: p };
 }
 
 function load(): AppState {
@@ -287,10 +298,9 @@ interface Ctx {
 
 const AppCtx = createContext<Ctx | null>(null);
 
-/** Beats in a bar: the drums' when they are on, otherwise the playing style's (3 for a waltz, else 4). */
+/** Beats in a bar: what the song's time signature says, on every page. */
 export function barOf(p: Progression): number {
-  const n = p.beat?.on ? barBeats(p.beat) : styleBar(p.pattern);
-  return n >= 1 && n <= 16 ? n : 4;
+  return sigBeats(sigOf(p));
 }
 
 /** How long a new chord lasts: one bar. */
@@ -305,7 +315,9 @@ const reviveChord = (c: ProgChord): ProgChord => (Number.isFinite(c?.beats) && c
 export const newId = () => Math.random().toString(36).slice(2, 10);
 
 export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<AppState>(load);
+  const [state, setRaw] = useState<AppState>(load);
+  // every change goes through here, so the song can never disagree with its own time signature
+  const setState = useCallback((fn: (s: AppState) => AppState) => setRaw((s) => unify(fn(s))), []);
   const [sheet, openSheet] = useState<SheetState | null>(null);
   const [toastMsg, setToast] = useState<string | null>(null);
   const toastTimer = useRef<number | null>(null);

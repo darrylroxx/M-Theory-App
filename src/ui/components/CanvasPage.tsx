@@ -281,7 +281,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
             <canvas className="cv-cover" ref={cover} style={{ width: `${COVER * 100}%` }} />
           </div>
         )}
-        {!painted && <p className="cv-hint" style={{ color: pal.ink }}>{playing ? "Listening…" : "Press ▶ and the song paints itself"}</p>}
+        {!painted && !playing && <p className="cv-hint" style={{ color: pal.ink }} aria-hidden="true">▶</p>}
         <div className="cv-tools">
           <button className={`icon-btn cv-hzbtn${guide ? " on" : ""}`} aria-pressed={guide} aria-label="Guide: frequencies, bars, and what the mix covers" title="Guide: frequencies, bars, and what the mix covers" onClick={() => setPrefs({ guide: !guide })}>Hz</button>
           {full && <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>}
@@ -291,7 +291,6 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
       <div className="cv-bar">
         {guide && (
           <p className="cv-key">
-            Up: frequency. Across: the bars. Right edge: what the mix has covered lately
             {STEM_IDS.map((id) => <span key={id}><i style={{ background: stemColors[id] }} />{id}</span>)}
           </p>
         )}

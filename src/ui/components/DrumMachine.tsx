@@ -56,7 +56,7 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   /** one of the two pickers under the header */
   const [drawer, setDrawer] = useState<"kit" | "rhythm" | null>(null);
   /** one of the two deep panels under the grid */
-  const [panel, setPanel] = useState<"sound" | "fx" | null>(null);
+  const [panel, setPanel] = useState<"mix" | "sound" | "fx" | null>(null);
   /** an edit in progress: where it started, and every step since */
   const [edit, setEdit] = useState<{ start: Snap; past: Snap[] } | null>(null);
   const [nudge, setNudge] = useState(false);
@@ -282,10 +282,10 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
     audition(id, { ...beat, sounds: strip(beat.sounds), voices: strip(beat.voices) });
     setBeat((b) => ({ ...b, sounds: strip(b.sounds), voices: strip(b.voices) }));
   };
+  /** The mixer: one drum's volume. It is heard when the fader is let go (or at once, while the beat plays). */
+  const setLevel = (id: DrumId, level: number) => setBeat((b) => ({ ...b, sounds: { ...b.sounds, [id]: { ...b.sounds[id], level } } }));
   const toggleMute = (id: DrumId) => setBeat((b) => ({ ...b, mutes: b.mutes?.includes(id) ? b.mutes.filter((x) => x !== id) : [...(b.mutes ?? []), id] }));
 
-  // triplet grids: two or four beats are 6/8 and 12/8; three or five are a swung 3/4 or 5/4
-  const meter = beat.div === 3 ? (beat.steps % 6 === 0 ? `${beat.steps}/8` : `${beat.steps / 3}/4 swing`) : `${beat.steps / beat.div}/4`;
   const voice = voiceOf(beat, sel);
   const muted = (id: DrumId) => (solo ? solo !== id : !!beat.mutes?.includes(id));
   const vibe = vibeOf(beat);
@@ -302,7 +302,6 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   return (
     <section className={`card drums${editing ? " editing" : ""}`} aria-label="Drums">
       <div className="dm-head">
-        <h2>Drums</h2>
         <button className={`chip${beat.on ? " on" : ""}`} role="switch" aria-checked={beat.on} title="Play the drums under the chords" onClick={() => setBeat((b) => ({ ...b, on: !b.on }))}>{beat.on ? "On" : "Off"}</button>
         <span className="pick-wrap">
           <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
@@ -362,9 +361,7 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
         ) : (
           <>
             <button className={`btn sm dm-edit${nudge ? " nudge" : ""}`} onClick={startEdit}>✎ Edit</button>
-            {nudge && <span className="tiny muted">Tap Edit to change the beat</span>}
             <span className="spacer" />
-            <span className="pill dm-meter">{meter} · {bpm} bpm</span>
           </>
         )}
       </div>
@@ -404,9 +401,38 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
       </div>
 
       <div className="dm-tabs">
+        <button className={`chip${panel === "mix" ? " on" : ""}`} aria-expanded={panel === "mix"} onClick={() => setPanel(panel === "mix" ? null : "mix")}>Mixer</button>
         <button className={`chip${panel === "sound" ? " on" : ""}`} aria-expanded={panel === "sound"} onClick={() => setPanel(panel === "sound" ? null : "sound")}>Sound</button>
         <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
       </div>
+
+      {panel === "mix" && (
+        <div className="dm-panel dm-mixer" role="group" aria-label="Drum mixer">
+          {DRUM_IDS.map((id) => {
+            const lv = soundOf(beat, id).level;
+            const quiet = muted(id);
+            return (
+              <div key={id} className={`dm-strip d-${id}${quiet ? " quiet" : ""}`} role="group" aria-label={DRUM_LABEL[id]}>
+                <span className="dm-val mono">{Math.round(lv * 100)}</span>
+                <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={lv} aria-label={`${DRUM_LABEL[id]} volume`}
+                  onChange={(e) => setLevel(id, Number(e.target.value))} onDoubleClick={() => setLevel(id, defaultParams(id).level)}
+                  onPointerUp={() => { if (!playing) hit(id); }} onKeyUp={() => { if (!playing) hit(id); }} />
+                <span className="dm-ms">
+                  <button className={`tv-ms${beat.mutes?.includes(id) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(id)} aria-label={`Mute ${DRUM_LABEL[id]}`} onClick={() => toggleMute(id)}>M</button>
+                  <button className={`tv-ms solo${solo === id ? " on" : ""}`} aria-pressed={solo === id} aria-label={`Solo ${DRUM_LABEL[id]}`} onClick={() => setSolo(solo === id ? null : id)}>S</button>
+                </span>
+                <button className="dm-strip-name" aria-label={`Hear the ${DRUM_LABEL[id].toLowerCase()}`} onClick={() => hit(id)}>{DRUM_LABEL[id]}</button>
+              </div>
+            );
+          })}
+          <div className="dm-strip kit" role="group" aria-label="Whole kit">
+            <span className="dm-val mono">{Math.round(fx.level * 100)}</span>
+            <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={fx.level} aria-label="Whole kit volume" onChange={(e) => setFx({ level: Number(e.target.value) })} onDoubleClick={() => setFx({ level: FX_DEFAULTS.level })} />
+            <span className="dm-ms" />
+            <span className="dm-strip-name">Kit</span>
+          </div>
+        </div>
+      )}
 
       {panel === "sound" && (
         <div className={`dm-panel d-${sel}`} role="group" aria-label={`${DRUM_LABEL[sel]} sound`}>
@@ -452,12 +478,6 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
             {VIBES.map((v) => <button key={v.id} role="radio" aria-checked={vibe === v.id} className={`chip${vibe === v.id ? " on" : ""}`} title={v.hint} onClick={() => { setFx(v.fx); if (!playing) hit("snare", { ...beat, ...v.fx }); }}>{v.name}</button>)}
           </div>
           <div className="knobs">
-            <Knob wide label="Tempo" min={40} max={200} step={1} value={bpm} fmt={String} onChange={(v) => set((s) => ({ ...s, progression: { ...s.progression, bpm: v } }))}>
-              {current && current.bpm !== bpm && (
-                <button className="btn sm" title={`${current.name} usually sits around ${current.bpm} bpm`} onClick={() => set((s) => ({ ...s, progression: { ...s.progression, bpm: current.bpm } }))}>Try {current.bpm}</button>
-              )}
-            </Knob>
-            <Knob label="Volume" value={fx.level} def={FX_DEFAULTS.level} onChange={(v) => setFx({ level: v })} />
             {beat.div % 2 === 0 && <Knob label="Swing" title="Delays every second step" value={beat.swing} def={0} onChange={(v) => setFx({ swing: v })} />}
             <Knob label="Human" title="Looser timing and touch, like a player" value={fx.human} def={0} onChange={(v) => setFx({ human: v })} />
           </div>

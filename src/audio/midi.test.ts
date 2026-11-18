@@ -81,4 +81,16 @@ describe("midi export of added tracks", () => {
     expect(own.map((x) => [x.beats, x.midi.length])).toEqual([[4, 0], [4, 6]]);
     expect(own[0].section).toBe(true);
   });
+
+  it("writes the song's time signature, and counts dotted quarters in 6/8", () => {
+    const four = [...progressionToMidi(items, 120, "ring")].join(",");
+    expect(four).toContain("255,88,4,4,2,24,8");
+    const three = [...progressionToMidi(items, 120, "ring", "x", null, null, {}, { num: 3, den: 4 })].join(",");
+    expect(three).toContain("255,88,4,3,2,24,8");
+    const b = progressionToMidi([{ midi: [null, 48, 52, 55, 60, 64], beats: 2 }], 80, "ring", "x", null, null, {}, { num: 6, den: 8 });
+    const six = [...b].join(",");
+    expect(six).toContain("255,88,4,6,3,36,8");
+    // 80 dotted quarters a minute are 120 quarter notes a minute: 500000 microseconds each
+    expect(six).toContain("255,81,3,7,161,32");
+  });
 });

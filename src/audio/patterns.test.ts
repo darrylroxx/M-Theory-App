@@ -163,11 +163,21 @@ describe("styles follow the bar, not the chord", () => {
     expect([...new Set(styleNotes(C, 1, "lightswing").map((e) => +e.beat.toFixed(2)))]).toEqual([0]);
     expect([...new Set(styleNotes(C, 2, "lightswing").map((e) => +e.beat.toFixed(2)))]).toEqual([0, 1, 1.6]);
   });
-  it("takes its bar from the drums when they are on", () => {
-    expect(meterOf(null)).toEqual({ bar: 0 });
-    expect(meterOf({ ...DEFAULT_BEAT, on: false })).toEqual({ bar: 0 });
+  it("takes its bar from the song's time signature; the drums add their swing and their shuffle", () => {
+    // on its own (no song around it), a style falls back on its own bar, or the drums' when they are on
+    expect(meterOf(null)).toMatchObject({ bar: 0, triplet: false });
+    expect(meterOf({ ...DEFAULT_BEAT, on: false })).toMatchObject({ bar: 0 });
     expect(meterOf({ ...DEFAULT_BEAT, on: true, steps: 12, div: 4, swing: 0.5 })).toEqual({ bar: 3, triplet: false, swing: 0.5 });
     expect(meterOf({ ...DEFAULT_BEAT, on: true, steps: 6, div: 3 })).toMatchObject({ bar: 2, triplet: true });
+    // in a song, the time signature decides, drums on or off
+    expect(meterOf({ ...DEFAULT_BEAT, on: false }, { bar: 3 })).toMatchObject({ bar: 3, triplet: false });
+    expect(meterOf(null, { bar: 2, triplet: true })).toMatchObject({ bar: 2, triplet: true });
+    // a triplet drum grid in 4/4 is a shuffle: the styles lean with it
+    expect(meterOf({ ...DEFAULT_BEAT, on: true, steps: 12, div: 3 }, { bar: 4 })).toMatchObject({ bar: 4, triplet: true });
+    // a style restarts on the song's bar lines even with the drums off (a 4-beat pattern in 3/4)
+    const three = itemNotes([{ midi: C, beats: 6, meter: { bar: 3 } }], "strum");
+    const starts = (from: number) => three.filter((n) => n.e.beat >= from && n.e.beat < from + 3).map((n) => +(n.e.beat - from).toFixed(3));
+    expect(starts(0)).toEqual(starts(3));
   });
   it("a song gives each section its own style, and each section starts its pattern afresh", () => {
     const items = [

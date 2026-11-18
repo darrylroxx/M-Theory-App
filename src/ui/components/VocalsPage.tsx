@@ -12,6 +12,9 @@ import { activeTake, cutTakes, groupsOf, type Take } from "../../song/takes";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
+import { EarIcon } from "../icons";
+import { sigName } from "../../song/meter";
+import { sigOf } from "../../song/unity";
 
 /** What a recording goes round, and the song to play under it. */
 export interface RecordPlan {
@@ -135,7 +138,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (grRef.current) grRef.current.textContent = st.reduction > 0.5 ? `−${st.reduction.toFixed(1)} dB` : "";
       // dropouts: the computer could not keep up at this buffer size
       if (st.xruns !== drops.current.n) drops.current = { n: st.xruns, at: performance.now() };
-      if (blockRef.current && st.block) blockRef.current.textContent = `${st.block} samples · ${st.latency > 0 ? `${st.latency.toFixed(1)} ms` : `about ${roundTrip(st.block, opened?.rate ?? 48000)} ms`} round trip`;
+      if (blockRef.current && st.block) blockRef.current.textContent = st.latency > 0 ? `${st.latency.toFixed(1)} ms` : `~${roundTrip(st.block, opened?.rate ?? 48000)} ms`;
       if (dropRef.current) dropRef.current.textContent = st.xruns ? `${st.xruns} dropout${st.xruns === 1 ? "" : "s"}` : "no dropouts";
       if (slowRef.current) slowRef.current.hidden = !(st.xruns && performance.now() - drops.current.at < 6000);
       if (countRef.current) {
@@ -205,7 +208,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (wasRecording && r && plan && t) {
         const group = newId();
         const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
-        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}` }));
+        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sigOf(state.progression)) }));
         if (!takes.length) toast("Stopped before the first take");
         else {
           set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
@@ -244,7 +247,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const stale = (track?.takes ?? []).some((t) => t.sound !== sig(fx));
   const applySound = async () => {
     if (!track?.takes?.length) return;
-    setBusy("Putting the new sound on the takes…");
+    setBusy("…");
     try {
       const drys = [...new Set(track.takes.filter((t) => t.sound !== sig(fx)).map((t) => t.dry))];
       const made: Record<string, string> = {};
@@ -277,26 +280,22 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   return (
     <section className="card vocals" aria-label="Vocals">
       <div className="dm-head">
-        <h2>Vocals</h2>
-        {vocals.length > 0 && (
-          <span className="seg" role="radiogroup" aria-label="Vocal track">
-            {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
-          </span>
-        )}
-        <span className="spacer" />
-        <button className="btn sm" onClick={add} disabled={running}>+ Vocal track</button>
+        <span className="seg clip-tracks" role="radiogroup" aria-label="Vocal track">
+          {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
+          <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
+        </span>
       </div>
 
-      {!desktop && <p className="small vc-note">Recording works in the Windows app (M-Theory for Windows), which talks to the audio interface directly. This version can plan the song around the vocals.</p>}
+      {!desktop && <p className="small vc-note">Recording: in the Windows app.</p>}
 
       {desktop && (
         <>
           <div className="vc-rec">
             <button className={`rec-btn${phase === "recording" ? " on" : ""}`} aria-label={phase === "recording" ? "Stop recording" : "Record"} title={phase === "recording" ? "Stop" : "Record take after take over the loop, after a count-in"} disabled={!opened || phase === "preparing" || phase === "saving" || phase === "rehearsing"} onClick={() => (phase === "recording" ? void stop() : void go(true))}>{phase === "recording" ? "■" : "●"}</button>
-            <button className="btn sm" disabled={!opened || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording">{phase === "rehearsing" ? "■ Stop" : "▶ Rehearse"}</button>
+            <button className="btn sm" disabled={!opened || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
             <span className="vc-state">
               <b ref={countRef} className="vc-count" />
-              <span className="small muted">{phase === "preparing" ? "Getting the song ready…" : phase === "saving" ? "Saving…" : phase === "idle" ? `Loop: ${plan?.label ?? "—"} · set it with the bar strip above` : "The loop is locked while recording"}</span>
+              <span className="small muted">{phase === "preparing" || phase === "saving" ? "…" : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : ""}</span>
             </span>
             <span className="spacer" />
             <label className="vc-mini">Count-in
@@ -304,14 +303,14 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 <option value={0}>None</option><option value={1}>1 bar</option><option value={2}>2 bars</option>
               </select>
             </label>
-            <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click while recording</label>
+            <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click</label>
           </div>
 
           <div className="vc-grid">
             <div className="vc-box">
               <b className="vc-title">Interface</b>
               {!hosts && <span className="small muted">Looking…</span>}
-              {hosts && !devices.length && <span className="small">No interface found. Plug it in and install the Focusrite USB ASIO driver from focusrite.com.</span>}
+              {hosts && !devices.length && <span className="small vc-err">No interface found</span>}
               {devices.length > 0 && (
                 <select aria-label="Record from" disabled={running} value={chosen ? `${chosen.host}|${chosen.name}` : ""} onChange={(e) => { const [host, ...rest] = e.target.value.split("|"); setStudio({ host, device: rest.join("|") }); }}>
                   {devices.map((d) => <option key={`${d.host}|${d.name}`} value={`${d.host}|${d.name}`}>{d.name} ({d.host})</option>)}
@@ -325,7 +324,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 </select>
                 <span ref={blockRef} className="tiny muted" title="Measured from the driver: from your voice reaching the interface to hearing it in your headphones" />
               </label>
-              <span ref={slowRef} className="small vc-err" hidden>Dropouts right now: the computer is not keeping up at this buffer size. Choose a bigger buffer (128 is safe for most computers).</span>
+              <span ref={slowRef} className="small vc-err" hidden>Dropouts: raise the buffer</span>
               {error && <span className="small vc-err">{error}</span>}
               <div className="vc-meters" ref={barsRef}>
                 {Array.from({ length: channels }, (_, c) => (
@@ -336,22 +335,18 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                   </div>
                 ))}
               </div>
-              <span className="tiny muted">Sing your loudest and set the interface's gain so the meter stays green and only touches amber. Red is clipping.</span>
-              <b className="vc-title">Hearing yourself</b>
+              <b className="vc-title">Monitor</b>
               <span className="seg" role="radiogroup" aria-label="Hearing yourself">
-                <button role="radio" aria-checked={!monitor} className={!monitor ? "on" : ""} onClick={() => setStudio({ monitor: "hardware" })}>Direct Monitor</button>
-                <button role="radio" aria-checked={monitor} className={monitor ? "on" : ""} onClick={() => setStudio({ monitor: "effects" })}>Through my effects</button>
+                <button role="radio" aria-checked={!monitor} className={!monitor ? "on" : ""} onClick={() => setStudio({ monitor: "hardware" })}>Direct</button>
+                <button role="radio" aria-checked={monitor} className={monitor ? "on" : ""} onClick={() => setStudio({ monitor: "effects" })}>Effects</button>
               </span>
-              {monitor && checks.direct && <span className="small vc-err">Turn Direct Monitor off on the interface (and untick it below), or you will hear yourself twice.</span>}
-              {monitor && !checks.direct && <span className="tiny muted">You hear yourself through the vocal sound below, on every page, a few milliseconds late: the buffer size above sets how many (64 is a good start; go up if there are dropouts).</span>}
-              {!monitor && <span className="tiny muted">Press Direct Monitor on the interface to hear yourself, dry and with no delay.</span>}
+              {monitor && checks.direct && <span className="small vc-err">Direct Monitor is on too: you hear yourself twice</span>}
               <div className="vc-mix">
                 <label className="vc-mini">Song <input type="range" min={0} max={1.5} step={0.05} value={studio.backing ?? 1} onChange={(e) => setStudio({ backing: Number(e.target.value) })} /></label>
                 <label className="vc-mini">Click <input type="range" min={0} max={1.5} step={0.05} value={studio.click ?? 0.5} onChange={(e) => setStudio({ click: Number(e.target.value) })} /></label>
               </div>
               <details className="small">
                 <summary>On the interface</summary>
-                <span className="tiny muted">No software can read these switches. Tick them as you have them.</span>
                 {CHECKS.map((c) => <label key={c.id} className="toggle" title={c.hint}><input type="checkbox" checked={!!checks[c.id]} onChange={(e) => setStudio({ checks: { ...checks, [c.id]: e.target.checked } })} /> {c.label}</label>)}
                 <label className="vc-mini" title="Takes are lined up using the delay the driver reports. If they sound early or late, move them here">Timing nudge <input type="number" step={0.5} value={studio.nudge ?? 0} onChange={(e) => setStudio({ nudge: Number(e.target.value) || 0 })} /> ms</label>
               </details>
@@ -359,7 +354,6 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
 
             <div className="vc-box">
               <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" /><label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
-              {!track && <span className="tiny muted">Add a vocal track (or press record) to shape its sound.</span>}
               <div className="vc-presets" role="group" aria-label="Starting points">
                 {PRESETS.map((p) => <button key={p.id} className="chip" title={p.hint} disabled={!track} onClick={() => setTrack((t) => ({ ...t, fx: presetFx(p.id, bpm) }))}>{p.name}</button>)}
               </div>
@@ -382,21 +376,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
         </>
       )}
 
-      {track && (
+      {track && groups.length > 0 && (
         <div className="vc-takes">
           <div className="row">
-            <b className="vc-title">Takes · {track.name}</b>
+            <b className="vc-title">Takes</b>
             <span className="spacer" />
-            {stale && <button className="btn sm" disabled={!!busy} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound above on them">{busy ?? "Use this sound on the takes"}</button>}
-            {(track.takes ?? []).some((t) => t.short) && <label className="toggle vc-mini"><input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} /> Show cut-off takes</label>}
+            {stale && <button className="btn sm" disabled={!!busy} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound above on them">{busy ? "…" : "↻ Apply sound"}</button>}
+            {(track.takes ?? []).some((t) => t.short) && <label className="toggle vc-mini"><input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} /> Short takes</label>}
           </div>
-          {!groups.length && <span className="small muted">No takes yet. Press ● : after the count-in, sing; every time the loop comes round is a new take, until you press ■.</span>}
           {groups.map((g, gi) => {
             const takes = (track.takes ?? []).filter((t) => t.group === g && (shorts || !t.short));
             const on = activeTake(track.takes ?? [], g, track.active?.[g]);
             return (
               <div key={g} className="vc-group">
-                <span className="small"><b>Recording {groups.length - gi}</b></span>
+                <span className="small"><b>● {groups.length - gi}</b></span>
                 <span className="seg" role="radiogroup" aria-label="Which take plays">
                   {takes.map((t) => <button key={t.id} role="radio" aria-checked={on?.id === t.id} className={on?.id === t.id ? "on" : ""} title="Play this take with the song; double-click to hear it alone" onClick={() => choose(g, t.id)} onDoubleClick={() => void preview(t)}>Take {t.n}{t.short ? "·" : ""}</button>)}
                 </span>

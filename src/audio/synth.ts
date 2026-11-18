@@ -341,7 +341,7 @@ export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null
 
 /** Pluck everything one chord's style asks for, starting at time `t`. */
 function playItem(h: Harp, item: PlayItem, t: number, spb: number, pattern: PatternId, at: number, beat: Beat | null) {
-  const notes = styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat), item.feel);
+  const notes = styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat, item.meter), item.feel);
   const when = (e: (typeof notes)[number]) => e.beat * spb + e.delay;
   const watched = listening();
   for (const e of notes) {
@@ -546,7 +546,7 @@ export class ProgressionPlayer {
         const s1 = s0 + item.beats;
         for (const c of ex.chords)
           if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
-            playItem(trackHarp(c.track, c.sound, "chord"), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums }, t + (c.at - s0) * spb, spb, this.pattern, c.at, this.beat);
+            playItem(trackHarp(c.track, c.sound, "chord"), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums, meter: item.meter }, t + (c.at - s0) * spb, spb, this.pattern, c.at, this.beat);
         for (const d of ex.drums) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div });
         // recorded takes: from their start, or part-way in when playing starts in the middle of one
         for (const tk of ex.takes ?? []) {
@@ -795,7 +795,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       if (tn && tn.m.on !== false) for (const h of tuneBetween(tn.m, tn.bar, s0, s1, tn.swing)) tune.play(h.midi, t + (h.beat - s0) * spb, 0.9, TUNE_SLOT, Infinity, false, TUNE_LIFT, tn.sound);
       const ex = item.extra;
       for (const c of ex?.chords ?? [])
-        if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6) playItem(extraHarp(c.track, c.sound), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums }, t + (c.at - s0) * spb, spb, o.pattern, c.at, o.beat);
+        if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6) playItem(extraHarp(c.track, c.sound), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums, meter: item.meter }, t + (c.at - s0) * spb, spb, o.pattern, c.at, o.beat);
       for (const x of ex?.tunes ?? []) {
         const xt = x.tune;
         if (xt.m.on === false) continue;

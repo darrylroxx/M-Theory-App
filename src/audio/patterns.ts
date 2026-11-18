@@ -222,9 +222,10 @@ const hasStrumChar = (tok: string) => [...tok].some((ch) => STRUMS.includes(ch))
 
 
 /** The bar a style is laid over: the drums' when they are on, otherwise the style's own. */
-export function meterOf(b: Beat | null | undefined): Meter {
-  if (!b?.on) return { bar: 0 };
-  return { bar: barBeats(b), triplet: b.div === 3, swing: b.div === 4 ? b.swing : 0 };
+export function meterOf(b: Beat | null | undefined, own?: { bar: number; triplet?: boolean }): Meter {
+  const on = !!b?.on;
+  // the song's time signature says how long the bar is; the drums add their swing (and a triplet grid, their shuffle)
+  return { bar: own?.bar ?? (on ? barBeats(b!) : 0), triplet: !!own?.triplet || (on && b!.div === 3), swing: on && b!.div === 4 ? b!.swing : 0 };
 }
 
 export interface PlayItem {
@@ -235,6 +236,8 @@ export interface PlayItem {
   /** the playing style of this chord (missing = the player's own), and how it is played */
   style?: PatternId;
   feel?: Partial<Feel>;
+  /** the bars this chord is played in: their length in beats (the time signature's), and whether each beat divides in three */
+  meter?: { bar: number; triplet?: boolean };
   /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
   section?: boolean;
   /** the melody over this chord's section (missing = the player's own) */
@@ -297,7 +300,7 @@ export function itemNotes(items: PlayItem[], pattern: PatternId, beat: Beat | nu
   let origin = 0;
   items.forEach((item, i) => {
     origin = sectionStart(item, i, at, origin);
-    for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat), item.feel)) out.push({ at, item: i, e, beats: item.beats });
+    for (const e of styleNotes(item.midi, item.beats, item.style ?? pattern, at - origin, meterOf(item.drums ?? beat, item.meter), item.feel)) out.push({ at, item: i, e, beats: item.beats });
     at += item.beats;
   });
   return out;

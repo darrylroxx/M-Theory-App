@@ -21,6 +21,8 @@ import { transposeRef, type Key } from "../theory/keys";
 import { pc } from "../theory/notes";
 import { TICKS, melodyBase, reviveMelody, transposeMelody, type Melody } from "./melody";
 import type { ProgChord, Progression } from "../ui/state";
+import { fitChordBeats, fitMelody, isCompound, sigBeats } from "./meter";
+import { sigOf } from "./unity";
 
 export type ClipKind = "rhythm" | "melody" | "drums";
 
@@ -29,6 +31,8 @@ interface ClipBase {
   from: string;
   /** the key it was written in */
   key: Key;
+  /** beats in a bar where it was written (the song's time signature then) */
+  bar?: number;
 }
 export interface RhythmClip extends ClipBase {
   chords: ProgChord[];
@@ -59,19 +63,21 @@ export function keyShift(from: Key, to: Key): number {
 }
 
 export function copyRhythm(p: Progression, key: Key, from: string): RhythmClip {
-  return clone({ from, key, chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound });
+  return clone({ from, key, bar: sigBeats(sigOf(p)), chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound });
 }
 export function copyMelody(p: Progression, key: Key, from: string): MelodyClip {
-  return clone({ from, key, melody: p.melody ?? null, tuneSound: p.tuneSound });
+  return clone({ from, key, bar: sigBeats(sigOf(p)), melody: p.melody ?? null, tuneSound: p.tuneSound });
 }
 export function copyDrums(p: Progression, key: Key, from: string): DrumClip {
-  return clone({ from, key, beat: p.beat ?? DEFAULT_BEAT });
+  return clone({ from, key, bar: sigBeats(sigOf(p)), beat: p.beat ?? DEFAULT_BEAT });
 }
 
 /** The section on screen gets the copied rhythm: chords (each a new slot), style, feel and harp sound. */
 export function pasteRhythm(p: Progression, c: RhythmClip, key: Key, id: () => string = uid): Progression {
   const n = keyShift(c.key, key);
-  const chords = clone(c.chords).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
+  // copied in another time signature: chords that lasted whole bars there last whole bars here
+  const to = sigBeats(sigOf(p));
+  const chords = clone(c.chords).map((x) => ({ ...x, beats: fitChordBeats(x.beats, c.bar ?? to, to) })).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
   return { ...p, chords, pattern: c.pattern, feel: clone(c.feel), sound: clone(c.sound) };
 }
 /**
@@ -87,11 +93,14 @@ export function melodyShift(m: Melody, from: Key, to: Key): number {
 }
 /** The section on screen gets the copied melody and the melody harp's sound. */
 export function pasteMelody(p: Progression, c: MelodyClip, key: Key): Progression {
-  const m = c.melody ? clone(c.melody) : undefined;
+  const sig = sigOf(p);
+  const to = sigBeats(sig);
+  // copied in another time signature: every note stays in its bar
+  const m = c.melody ? fitMelody(clone(c.melody), c.bar ?? to, to, isCompound(sig)) : undefined;
   const by = m ? melodyShift(m, c.key, key) : 0;
   return { ...p, melody: m && by ? transposeMelody(m, by) : m, tuneSound: clone(c.tuneSound) };
 }
-/** The section on screen gets the copied drums: rhythm, on/off and sound. */
+/** The section on screen gets the copied drums: rhythm, on/off and sound. (A rhythm from other bars is fitted to the song's: see song/unity.) */
 export function pasteDrums(p: Progression, c: DrumClip): Progression {
   return { ...p, beat: clone(c.beat) };
 }
@@ -122,7 +131,7 @@ export function reviveClips(raw: unknown): Clips {
   const r = (raw ?? {}) as Record<string, Record<string, unknown> | undefined>;
   const base = (x: Record<string, unknown> | undefined): ClipBase | null => {
     const k = x?.key as Key | undefined;
-    return x && typeof x.from === "string" && k && typeof k.tonic === "string" && typeof k.scaleId === "string" ? { from: x.from, key: { tonic: k.tonic, scaleId: k.scaleId } } : null;
+    return x && typeof x.from === "string" && k && typeof k.tonic === "string" && typeof k.scaleId === "string" ? { from: x.from, key: { tonic: k.tonic, scaleId: k.scaleId }, ...(typeof x.bar === "number" && x.bar > 0 ? { bar: x.bar } : {}) } : null;
   };
   const out: Clips = {};
   const rh = r.rhythm;

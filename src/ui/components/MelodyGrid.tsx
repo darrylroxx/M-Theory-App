@@ -125,7 +125,6 @@ export function MelodyGrid({ fresh, melody, setMelody, keyOf, bar, chords, playi
   return (
     <section className="card melody" aria-label="Melody">
       <div className="dm-head">
-        <h2>Melody</h2>
         {count > 0 && <button className={`chip${on ? " on" : ""}`} role="switch" aria-checked={on} title="Play the melody with the chords" onClick={() => setMelody((m) => ({ ...m, on: !on }))}>{on ? "On" : "Off"}</button>}
         <span className="spacer" />
         <span className="kb-label" title="How many steps there are to a beat">Grid</span>

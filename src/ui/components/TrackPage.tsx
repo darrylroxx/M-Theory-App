@@ -141,10 +141,8 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
   return (
     <section className="card track-page" aria-label="Track view: the whole song">
       <div className="dm-head">
-        <h2>Track</h2>
-        <span className="pill">{totalBars} bars · {sections.length} section{sections.length === 1 ? "" : "s"}</span>
+        <span className="pill">{totalBars} bars</span>
         <span className="spacer" />
-        <span className="kb-label">Zoom</span>
         <button className="btn sm" aria-label="Zoom out" disabled={zoom === 0} onClick={() => setZoom(zoom - 1)}>−</button>
         <button className="btn sm" aria-label="Zoom in" disabled={zoom === ZOOMS.length - 1} onClick={() => setZoom(zoom + 1)}>+</button>
       </div>
@@ -173,7 +171,7 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
                 {KINDS.map((k) => <button key={k} className="chip" onClick={() => add(k)}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
                 <button className="chip" aria-label="Cancel" onClick={() => setAdding(false)}>✕</button>
               </span>
-            ) : <button className="btn sm" onClick={() => setAdding(true)}>+ Add track</button>}
+            ) : <button className="btn sm tv-plus" aria-label="Add a track" title="Add a track" onClick={() => setAdding(true)}>+</button>}
           </div>
         </div>
         <div className="tv-scroll" ref={scrollRef}>
@@ -206,7 +204,6 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
           </div>
         </div>
       </div>
-      <p className="tiny muted">Tap a block to open that section&rsquo;s page for that track. A track&rsquo;s volume, M (mute) and S (solo) apply to the whole song; double-tap a volume to set it back to 0 dB. + Add track adds chords, a melody, drums or vocals.</p>
     </section>
   );
 }

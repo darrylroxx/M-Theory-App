@@ -410,6 +410,15 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .dm-phead select { padding: 6px 8px; font-weight: 650; font-size: 0.88rem; }
 .dm-sound select { border: none; border-inline: 1px solid var(--border-2); border-radius: 0; background: none; max-width: 160px; font-weight: 800; }
 .knob.choice select { width: 100%; padding: 4px 8px; font-size: 0.85rem; font-weight: 650; }
+.dm-mixer { flex-direction: row; gap: 4px; overflow-x: auto; align-items: stretch; padding-block: 12px; }
+.dm-strip { flex: 1 0 46px; display: flex; flex-direction: column; align-items: center; gap: 6px; padding: 6px 2px; border-radius: 10px; border-top: 3px solid var(--dc, var(--border-2)); background: var(--card); }
+.dm-strip.quiet { opacity: 0.45; }
+.dm-strip.kit { border-top-color: var(--accent); margin-left: 6px; }
+.dm-val { font-size: 0.72rem; font-weight: 750; color: var(--muted); }
+.dm-fader { writing-mode: vertical-lr; direction: rtl; width: 22px; height: 132px; margin: 0; accent-color: var(--dc, var(--accent)); }
+.dm-ms { display: flex; gap: 3px; min-height: 24px; }
+.dm-strip-name { font: inherit; font-size: 0.72rem; font-weight: 800; background: none; border: none; color: var(--text); padding: 2px 4px; white-space: nowrap; }
+button.dm-strip-name:hover { color: var(--accent); }
 .dm-mix .knobs + .knobs { border-top: 1px solid var(--border); padding-top: 10px; }
 .dm-phead .dm-drum { font-weight: 800; }
 .dm-phead > .chip { min-width: 34px; justify-content: center; padding: 5px 8px; }
@@ -624,6 +633,12 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .fr-len .fr-len-n { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 76px; padding: 0 8px; font-size: 1.15rem; font-weight: 850; font-variant-numeric: tabular-nums; border-inline: 1px solid var(--border); }
 .fr-len .fr-len-n small { font-size: 0.72rem; font-weight: 750; color: var(--muted); }
 .fr-parts { grid-area: parts; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.fr-sigs { gap: 6px; margin-top: 12px; flex-wrap: wrap; }
+.sig { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; width: 44px; height: 48px; border-radius: 10px; border: 1.5px solid var(--border-2); background: var(--card-2); color: var(--text); font: inherit; line-height: 1; gap: 3px; }
+.sig b { font-size: 1.02rem; font-weight: 850; font-variant-numeric: tabular-nums; }
+.sig b + b { border-top: 1.5px solid currentColor; padding-top: 3px; min-width: 18px; text-align: center; }
+.sig:hover { border-color: var(--accent); }
+.sig.on { background: var(--accent); border-color: var(--accent); color: #fff; }
 .fr-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, #e0a020 55%, var(--border)); background: color-mix(in srgb, #e0a020 12%, var(--card)); }
 .keybar + .fr-note { margin: -4px 0 12px; }
 .fr-part { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 11px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--muted); font-size: 0.82rem; font-weight: 750; white-space: nowrap; }
@@ -819,6 +834,11 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .tv-x:hover { color: var(--tension, #c0392b); }
 .tv-head.k-vocals .tv-name::before { content: "🎤 "; }
 .clip-tracks { flex: 0 1 auto; overflow-x: auto; }
+.clip-tracks .clip-add { font-weight: 850; padding-inline: 12px; }
+.clip-x { font-style: normal; font-size: 0.7rem; margin-left: 7px; opacity: 0.6; }
+.clip-x:hover { opacity: 1; }
+.clip-paste { width: auto; padding-inline: 8px; gap: 3px; display: inline-flex; align-items: center; }
+.icon-btn svg { display: block; }
 .clip-tracks button { white-space: nowrap; }
 
 /* ── Vocals page ── */
