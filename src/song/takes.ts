@@ -14,14 +14,15 @@ export interface Take {
   dry: string;
   wet: string;
   rate: number;
-  /** where the take starts in the file, and how long it is (frames) */
+  /** where the take starts in the file, and how long it is (frames). A first take can start a
+   * moment before the file does (read as silence), so that every pass after it keeps its time. */
   start: number;
   frames: number;
   /** where it plays in the song: the section and the bar it starts on */
   at: { block: string; bar: number };
   /** a last pass stopped before half-way: kept, but not offered unless asked for */
   short?: boolean;
-  /** the vocal chain settings the wet file was made with */
+  /** the vocal chain settings the wet file was made with (`soundTag`; "" when it has none) */
   sound?: string;
   /** the tempo and key the song was in when it was sung (a recording does not follow later changes) */
   bpm?: number;
@@ -56,7 +57,8 @@ export interface Recorded {
  */
 export function cutTakes(r: Recorded, o: { group: string; at: { block: string; bar: number }; nudge?: number; id: () => string; kept?: Iterable<number> }): Take[] {
   const loop = Math.max(1, r.loop_frames);
-  const first = Math.max(0, r.offset + (o.nudge ?? 0) + r.count_in);
+  // never moved up to the file's start: that would move every pass after it too
+  const first = r.offset + (o.nudge ?? 0) + r.count_in;
   const kept = new Set(o.kept ?? []);
   const out: Take[] = [];
   for (let k = 0, start = first; start < r.frames; k++, start += loop) {
@@ -113,6 +115,21 @@ export function shownTakes(takes: Take[], group: string, o: { active?: string; n
 
 /** How many bars a take lasts at a tempo (the Track page and the Vocals lane draw it this long). */
 export const takeBars = (t: Take, bpm: number, beatsPerBar: number): number => t.frames / t.rate / (60 / bpm) / Math.max(1, beatsPerBar);
+
+/**
+ * A short name for a vocal sound, kept on each take to tell whether its file was made with the
+ * sound now set. A long session leaves hundreds of takes and the song is saved whole on every
+ * change, so not the whole sound on each. (Takes saved before held the whole sound; `sameSound`
+ * knows them too.)
+ */
+export function soundTag(fx: unknown): string {
+  const s = JSON.stringify(fx);
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) h = Math.imul(h ^ s.charCodeAt(i), 0x01000193);
+  return `#${(h >>> 0).toString(36)}${s.length.toString(36)}`;
+}
+/** Was this take's file made with the sound `fx`? */
+export const sameSound = (t: Take, fx: unknown): boolean => t.sound === soundTag(fx) || t.sound === JSON.stringify(fx);
 
 /** Every recording on a track, newest last. */
 export const groupsOf = (takes: Take[] | undefined): string[] => [...new Set((takes ?? []).map((t) => t.group))];

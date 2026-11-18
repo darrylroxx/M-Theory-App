@@ -526,7 +526,10 @@ struct Recording {
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 static REC: Mutex<Option<Recording>> = Mutex::new(None);
 /// A recording that was closed without anyone to hand it to (the interface was opened again
-/// over it): the next stop or close hands it back, so a session is never left behind on disk.
+/// over it): the next close hands it back, so a session is never left behind. Only a close:
+/// a stop belongs to whatever was started last (a rehearsal's stop must never find an old
+/// recording and spend minutes putting the vocal sound on it), and the page checks that a
+/// recording handed back is the one it started before it keeps it.
 static LAST: Mutex<Option<Recorded>> = Mutex::new(None);
 
 fn stash(r: Recorded) {
@@ -715,7 +718,7 @@ pub async fn engine_open(host: String, device_name: String, buffer: Option<u32>,
 fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
     let _driver = driver_lock();
     crate::meter::stop();
-    // a recording still going is closed properly first, and kept for whoever stops next
+    // a recording still going is closed properly first, and kept for whoever closes next
     if REC.lock().map(|g| g.is_some()).unwrap_or(false) {
         if let Ok(Some(r)) = engine_stop_inner() {
             stash(r);
@@ -832,13 +835,19 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
 pub async fn engine_close() -> Option<Recorded> {
     tauri::async_runtime::spawn_blocking(|| {
         let _driver = driver_lock();
-        let r = engine_stop_inner().ok().flatten();
+        let r = close_inner();
         close_engine();
         r
     })
     .await
     .ok()
     .flatten()
+}
+
+/// The recording to hand back on a close: the one still going, else one closed earlier with
+/// nobody to hand it to.
+fn close_inner() -> Option<Recorded> {
+    engine_stop_inner().ok().flatten().or_else(unstash)
 }
 
 /// What the singer hears and how: monitoring through the chain, which input, the chain's settings, levels.
@@ -932,8 +941,7 @@ pub struct Recorded {
 
 /// Stop the music and close the recording, if there is one. The music is stopped on the
 /// interface if it is still there; the recording is closed whether or not it is, from what was
-/// kept as it happened. With no recording going, one that was closed earlier with nobody to
-/// hand it to comes back instead.
+/// kept as it happened.
 fn engine_stop_inner() -> Result<Option<Recorded>, String> {
     if let Ok((l, _)) = link() {
         let st = &l.stats;
@@ -948,7 +956,7 @@ fn engine_stop_inner() -> Result<Option<Recorded>, String> {
         }
     }
     let rec = REC.lock().ok().and_then(|mut g| g.take());
-    let Some(mut rec) = rec else { return Ok(unstash()) };
+    let Some(mut rec) = rec else { return Ok(None) };
     let st = rec.stats.clone();
     let rate = rec.rate;
     rec.stop.store(true, Ordering::Relaxed);
@@ -1013,9 +1021,11 @@ pub async fn read_take(path: String) -> Result<Response, String> {
 }
 
 /// One take of a recording, as a small WAV of its own: `frames` frames from `start`. Only
-/// that part of the file is read, so a take from an hour-long session costs no more than any other.
+/// that part of the file is read, so a take from an hour-long session costs no more than any
+/// other. A first take can begin a moment before the file does (a timing nudge earlier than the
+/// driver's round trip, with no count-in): that moment comes back as silence.
 #[tauri::command]
-pub async fn read_take_range(path: String, start: u64, frames: u64) -> Result<Response, String> {
+pub async fn read_take_range(path: String, start: i64, frames: u64) -> Result<Response, String> {
     let p = PathBuf::from(&path);
     if !recfile::is_recording(&p) {
         return Err("only recordings can be read".into());
@@ -1328,6 +1338,17 @@ mod tests {
         c.on_input(&[0.1; 512], 2.49);
         assert_eq!(moment(&c.stats.play0), Some(2.5));
         assert_eq!(moment(&c.stats.cap0), Some(2.49));
+    }
+
+    #[test]
+    fn a_recording_closed_with_nobody_to_take_it_comes_back_on_a_close_never_on_a_stop() {
+        // (the only test that touches the engine's recording slots)
+        let r = Recorded { dry: "old.wav".into(), wet: String::new(), rate: 48000, frames: 9, offset: 0, count_in: 0, loop_frames: 4, dropped: 0, padded: 0, note: None };
+        stash(r);
+        // a rehearsal's stop finds nothing: it must not be handed an old recording to render
+        assert!(engine_stop_inner().unwrap().is_none());
+        assert_eq!(close_inner().map(|r| r.dry), Some("old.wav".to_string()));
+        assert!(close_inner().is_none(), "handed back once");
     }
 
     #[test]

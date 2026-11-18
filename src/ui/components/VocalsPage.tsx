@@ -8,7 +8,7 @@ import { audioContext } from "../../audio/context";
 import { fader } from "../../audio/mix";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { activeTake, cutTakes, groupsOf, passAt, passToMark, shownTakes, toggled, type Recorded, type Take } from "../../song/takes";
+import { activeTake, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
 import { TakeLane, type LaneBar } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
@@ -70,7 +70,9 @@ const LOW_DISK = 2e9;
 const ROOM_MIN = 10;
 /** The first moments of a pass in which K marks the pass that has just ended: at most this long (s), and at most an eighth of the pass. */
 const GRACE_S = 2;
-const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.isContentEditable);
+/** Only a box that takes words keeps K to itself: a slider, a tick box or a list touched mid-session must not stop K from keeping a pass. */
+const TEXT_INPUTS = new Set(["text", "number", "search", "email", "url", "password", "tel"]);
+const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el instanceof HTMLInputElement && TEXT_INPUTS.has(el.type)) || el.tagName === "TEXTAREA" || el.isContentEditable);
 
 /**
  * Vocals: the vocal tracks, the interface, the live vocal sound, and recording take after take
@@ -141,6 +143,12 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const fullRef = useRef(false);
   /** the recording begun last has been cut into takes (it is never saved twice, nor lost between a stop and a reset) */
   const savedRef = useRef(true);
+  /** its file, as the engine named it: a recording handed back is kept only if it is this one */
+  const pathRef = useRef<string | null>(null);
+  /** counts every start: work left over from an earlier recording never touches a later one */
+  const session = useRef(0);
+  /** the key and the section's own time signature when it began: its takes keep them */
+  const sungIn = useRef({ key: "", sig: "" });
   const stopRef = useRef<() => Promise<void>>(async () => {});
   const salvageRef = useRef<(r: Recorded) => void>(() => {});
   const fxRef = useRef<VocalFx>(fx);
@@ -177,6 +185,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
       if (st.invalid) {
         live = false;
         toast("The interface's settings changed: opening it again");
+        // a rehearsal simply ends (a recording comes back as the interface closes, and is kept)
+        if (phaseRef.current === "rehearsing") {
+          setPhase("idle");
+          onRecording(false);
+        }
         window.setTimeout(() => setReopen((n) => n + 1), 300);
         return;
       }
@@ -205,8 +218,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         const p = planRef.current;
         if (!st.running || !p) countRef.current.textContent = "";
         else if (st.pos < st.count_in) {
-          // the count-in, once, at the very start
-          const beatLen = st.count_in / Math.max(1, (studio.countIn ?? 1) * p.beatsPerBar);
+          // the count-in, once, at the very start: one number a beat
+          const beatLen = (rate.current * 60) / Math.max(1, p.bpm);
           countRef.current.textContent = `${Math.ceil((st.count_in - st.pos) / beatLen)}`;
         } else if (at) countRef.current.textContent = `Pass ${at.n}`;
       }
@@ -217,13 +230,15 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         // small notes for a long session: how long it has run, and what room is left
         const r = rate.current;
         const min = st.running && phaseRef.current === "recording" ? st.pos / r / 60 : 0;
-        const notes: string[] = [];
+        // the most pressing first (the line is short, and its end may not show)
+        const warns: string[] = [];
+        if (phaseRef.current === "recording" && st.room != null && st.recorded && st.room / r < ROOM_MIN * 60) warns.push(`${Math.max(0, Math.floor(st.room / r / 60))} min left`);
+        if (phaseRef.current === "recording" && st.free != null && st.free < LOW_DISK) warns.push(`${(st.free / 1e9).toFixed(1)} GB free`);
+        const notes = warns.length ? [`⚠ ${warns.join(" · ")}`] : [];
         if (min >= LONG_MIN) notes.push(`${Math.floor(min)} min`);
-        if (phaseRef.current === "recording" && st.free != null && st.free < LOW_DISK) notes.push(`⚠ ${(st.free / 1e9).toFixed(1)} GB free`);
-        if (phaseRef.current === "recording" && st.room != null && st.recorded && st.room / r < ROOM_MIN * 60) notes.push(`⚠ ${Math.max(0, Math.floor(st.room / r / 60))} min left`);
         const text = notes.join(" · ");
         if (warnRef.current.textContent !== text) warnRef.current.textContent = text;
-        warnRef.current.classList.toggle("warn", notes.some((x) => x.startsWith("⚠")));
+        warnRef.current.classList.toggle("warn", warns.length > 0);
       }
       if (renderRef.current) renderRef.current.textContent = st.render ? `${Math.round(st.render * 100)}%` : "";
       // the file cannot take any more (it is as big as a WAV can be, or the disk is full): stop and keep what there is
@@ -269,6 +284,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     trackRef.current = t ?? null;
     fullRef.current = false;
     savedRef.current = !record;
+    pathRef.current = null;
+    session.current += 1;
+    sungIn.current = { key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sectionSig(state.progression, plan.at.block)) };
     atEnd.current = true;
     setMarks(new Set());
     setPass(0);
@@ -277,7 +295,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     try {
       const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: opened.rate, skip: record ? t?.id : undefined });
       await engineBacking(l, r);
-      await engineStart({ bpm: plan.bpm, countInBeats: (studio.countIn ?? 1) * plan.beatsPerBar, beatsPerBar: plan.beatsPerBar, record, name: t?.name ?? "Vocal" });
+      const path = await engineStart({ bpm: plan.bpm, countInBeats: (studio.countIn ?? 1) * plan.beatsPerBar, beatsPerBar: plan.beatsPerBar, record, name: t?.name ?? "Vocal" });
+      pathRef.current = record ? path : null;
       setPhase(record ? "recording" : "rehearsing");
     } catch (e) {
       setPhase("idle");
@@ -287,24 +306,32 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   };
 
   /**
-   * A recording that has ended, cut into one take per pass. The passes marked ★ are the
-   * keepers, and the last of them is the one that plays (else the last full pass).
+   * The recording begun last, claimed by whichever hands it over first (a stop, or a close after
+   * the driver reset): what it went round, on which track, and the passes marked ★. Only that
+   * recording, and only once; an older one handed back stays on disk, untouched.
    */
-  const save = (r: Recorded, lead = "") => {
+  const claim = (r: Recorded) => {
     const plan = planRef.current;
-    const t = trackRef.current;
-    const kept = marksRef.current;
-    setMarks(new Set());
-    setPass(0);
-    if (!plan || !t || savedRef.current) return;
+    const track = trackRef.current;
+    if (savedRef.current || !plan || !track || r.dry !== pathRef.current) return null;
     savedRef.current = true;
+    return { plan, track, kept: marksRef.current, session: session.current, ...sungIn.current };
+  };
+
+  /**
+   * A recording that has ended, cut into one take per pass. The passes marked ★ are the
+   * keepers, and the last of them is the one that plays (else the last full pass). `used`: the
+   * vocal sound its file was made with (the knobs may have moved while it was being made).
+   */
+  const save = (r: Recorded, c: NonNullable<ReturnType<typeof claim>>, used: VocalFx, lead = "") => {
     const group = newId();
     const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
     // with no vocal sound on it (no room for that file), a take plays dry and "Apply sound" is offered
-    const sound = r.wet === r.dry ? "" : sig(fxRef.current);
-    const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId, kept }).map((x) => ({ ...x, sound, bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sectionSig(state.progression, plan.at.block)) }));
+    const sound = r.wet === r.dry ? "" : soundTag(used);
+    // the tempo, key and time signature it was sung in
+    const takes = cutTakes(r, { group, at: c.plan.at, nudge, id: newId, kept: c.kept }).map((x) => ({ ...x, sound, bpm: c.plan.bpm, key: c.key, sig: c.sig }));
     if (!takes.length) return toast("Stopped before the first take");
-    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
+    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === c.track.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
     const full = takes.filter((x) => !x.short).length || takes.length;
     const stars = takes.filter((x) => x.keep).length;
     const filled = (r.padded ?? 0) / r.rate;
@@ -313,16 +340,18 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   };
 
   const stop = async () => {
-    const wasRecording = phase === "recording";
+    const used = fx;
     setPhase("saving");
     try {
-      const r = await engineStop(fx);
-      if (wasRecording && r) save(r);
+      const r = await engineStop(used);
+      const c = r && claim(r);
+      if (r && c) save(r, c, used);
     } catch (e) {
       toast(String(e));
     } finally {
       setPhase("idle");
       onRecording(false);
+      setMarks(new Set());
     }
   };
   stopRef.current = stop;
@@ -333,18 +362,25 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
    * the interface opens again.
    */
   const salvage = async (r: Recorded) => {
-    if (!planRef.current || !trackRef.current || savedRef.current) return;
+    // claimed at once: a new recording begun while this one is being made is never mixed up with it
+    const c = claim(r);
+    if (!c) return;
+    const mine = () => session.current === c.session;
+    const used = fxRef.current;
     setPhase("saving");
     let wet = r.dry;
     let note = r.note ?? null;
     try {
-      wet = await fxRender(r.dry, fxRef.current);
+      wet = await fxRender(r.dry, used);
     } catch (e) {
       note = `no vocal sound (${String(e)})`;
     }
-    save({ ...r, wet, note }, "The interface reset; the recording is kept: ");
-    setPhase("idle");
-    onRecording(false);
+    save({ ...r, wet, note }, c, used, "The interface reset; the recording is kept: ");
+    if (mine()) {
+      setPhase("idle");
+      onRecording(false);
+      setMarks(new Set());
+    }
   };
   salvageRef.current = (r) => void salvage(r);
 
@@ -406,16 +442,16 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     src.start(c.currentTime + 0.02, 0, tk.frames / tk.rate);
     listen.current = src;
   };
-  const stale = (track?.takes ?? []).some((t) => t.sound !== sig(fx));
+  const stale = (track?.takes ?? []).some((t) => !sameSound(t, fx));
   const applySound = async () => {
     if (!track?.takes?.length) return;
     setBusy("…");
     try {
-      const drys = [...new Set(track.takes.filter((t) => t.sound !== sig(fx)).map((t) => t.dry))];
+      const drys = [...new Set(track.takes.filter((t) => !sameSound(t, fx)).map((t) => t.dry))];
       const made: Record<string, string> = {};
       for (const d of drys) made[d] = await fxRender(d, fx);
       // the takes that play are read again (just them) once the song sees their new files
-      setTrack((t) => ({ ...t, takes: (t.takes ?? []).map((x) => (made[x.dry] ? { ...x, wet: made[x.dry], sound: sig(fx) } : x)) }));
+      setTrack((t) => ({ ...t, takes: (t.takes ?? []).map((x) => (made[x.dry] ? { ...x, wet: made[x.dry], sound: soundTag(fx) } : x)) }));
       toast("Takes updated");
     } catch (e) {
       toast(String(e));
@@ -507,7 +543,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
               <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>… <span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>
             </span>
             {/* always in its place (hidden until recording), so nothing shifts when recording starts */}
-            <button className={`vc-star${marks.has(pass) ? " on" : ""}`} style={phase === "recording" ? undefined : { visibility: "hidden" }} disabled={phase !== "recording" || !pass} aria-pressed={marks.has(pass)} aria-label={`Keep pass ${pass || ""} (K)`} title="Keep this pass ★ (K; in the first moments of a pass, K keeps the one just sung)" onClick={() => mark(pass)}>★</button>
+            {/* the same as K (on a phone there is no K): a tap a moment after a seam keeps the pass just sung; a pass is let go from the row below */}
+            <button className={`vc-star${marks.has(pass) ? " on" : ""}`} style={phase === "recording" ? undefined : { visibility: "hidden" }} disabled={phase !== "recording" || !pass} aria-pressed={marks.has(pass)} aria-label="Keep this pass (K)" title="Keep this pass ★ (K). In the first moments of a pass, the one just sung" onClick={markNow}>★</button>
             <span className="spacer" />
             <label className="vc-mini">Count-in
               <select value={studio.countIn ?? 1} disabled={running} onChange={(e) => setStudio({ countIn: Number(e.target.value) as 0 | 1 | 2 })}>
@@ -647,9 +684,12 @@ function TakeList({ track, groups, running, stale, busy, shorts, setShorts, open
               {shown.map((t) => <button key={t.id} role="radio" aria-checked={on?.id === t.id} aria-label={`Take ${t.n}${t.keep ? ", kept" : ""}${t.short ? ", short" : ""}`} className={`${on?.id === t.id ? "on" : ""}${t.keep ? " keep" : ""}`} title="Play this take with the song; double-click to hear it alone" onClick={() => choose(g, t.id)} onDoubleClick={() => preview(t)}>{t.keep ? "★" : ""}{t.n}{t.short ? "·" : ""}</button>)}
               {(more > 0 || all) && <button className="vc-more" aria-label={all ? "Show fewer takes" : `Show ${more} more takes`} onClick={() => setOpen((o) => { const n = new Set(o); if (all) n.delete(g); else n.add(g); return n; })}>{all ? "−" : `+${more}`}</button>}
             </span>
-            <button className={`icon-btn vc-keep${on?.keep ? " on" : ""}`} aria-pressed={!!on?.keep} aria-label="Keep the chosen take ★" title="Keep ★" disabled={!on} onClick={() => on && setKeep(on.id, !on.keep)}>★</button>
-            <button className="icon-btn" aria-label="Hear the chosen take alone" title="Hear the chosen take alone" onClick={() => on && preview(on)}>▶</button>
-            <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
+            {/* kept together, so on a phone they never break apart onto lines of their own */}
+            <span className="vc-group-acts">
+              <button className={`icon-btn vc-keep${on?.keep ? " on" : ""}`} aria-pressed={!!on?.keep} aria-label="Keep the chosen take ★" title="Keep ★" disabled={!on} onClick={() => on && setKeep(on.id, !on.keep)}>★</button>
+              <button className="icon-btn" aria-label="Hear the chosen take alone" title="Hear the chosen take alone" onClick={() => on && preview(on)}>▶</button>
+              <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
+            </span>
           </div>
         );
       })}
