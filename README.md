@@ -133,6 +133,14 @@ A **Capo** menu sits at the top of the Chords page, next to the key; ★ marks t
 
 Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels, left-handed diagrams, light/dark theme.
 
+**The synth** (built, being wired into the tracks). A virtual-analogue synthesizer modelled on a small, much-loved analogue-style keyboard whose whole sound is one flat panel of sliders, with what that keyboard leaves out for someone starting out: ready-made sounds, big macro knobs and ways of playing.
+- **The panel** is the original's, section by section. **Osc**: five ways of making sound, each with two sliders, **Texture** and **Mod**, that mean something different for each: *Multi Saw* (Texture adds a sub an octave down, Mod spreads up to seven detuned saws into a supersaw), *Pulse* (Texture detunes and then retunes a second square to a fifth, an octave and so on; Mod narrows the pulse), *Sync* (a second oscillator locked to the first: Texture sets its pitch, Mod sweeps it with the envelope), *Ring* (two oscillators multiplied: bells and metal) and *FM* (one sine bending another: Texture is how much, Mod the ratio, resting on whole ratios with the clangy ones between). Plus noise. **LFO**: to the loudness, the filter, the pitch or the oscillator (on Pulse that is pulse-width modulation), with depth, speed, a shape and a fade-in for delayed vibrato. **Filter**: a resonant four-pole low-pass that sings on its own at the top, with drive and **key tracking** (high notes stay bright). **EG**: one envelope, with a balance slider choosing whether it shapes the loudness, the filter or both. **Effect**: distortion, chorus/flanger, phaser or delay, plus a **reverb** of its own. **Voice**: poly, mono or legato, glide, **velocity** (harder is louder and brighter), drift (the slow wander of old circuits), width and volume.
+- **56 ready-made sounds** in Bass, Lead, Pad, Keys, Pluck, Brass, Strings, Bells, Drone, FX and Arp (and a plain start for each oscillator), all brought to the same loudness. **‹ ›** steps through a kind, **⚄** picks another of the same kind, a dot after the name says the sound has been changed.
+- **Six macros**, big knobs that reshape any sound from where it was made: **Bright**, **Motion**, **Space**, **Grit**, **Width** and **Shape** (tight and short ↔ soft and long). Each moves several sliders at once, and the sliders move with it, so you can see what it did. Double-click a knob (or a slider) to put it back.
+- **Ways of playing** the chords and notes already written: **Hold** (as written), **Arp** (up, down, up-down, random, the whole chord, crawl; ¼ to 1/32 with triplets; 1 to 3 octaves; gate), **Strum** (down, up or alternating, with a spread), **Pulse** (the chord struck again on the beat), **Drone** (the key's home note, its fifth and octave held under everything, with a softer voice moving to each chord) and **Glide** (one line, sliding from note to note). **Loose** humanises any of them.
+- It sounds the same live and in an exported WAV: the same engine plays the same notes, sample for sample. It sounds the same at 44.1, 48 and 96 kHz too, and switching the oscillator keeps the loudness within about a decibel.
+- No clicks when notes start, stop or are struck again harder, or when a whole new chord takes over every voice at once. Choosing **Drone** on a sound that dies away (a pluck, a bell) keeps it sounding under the passage.
+
 ---
 
 ## The Canvas: music paints itself
@@ -274,6 +282,16 @@ src/
     rhythms.ts     the rhythm library: 286 rhythms in fifteen styles, in shorthand
     beats.ts       step-grid format (multi-bar), swing, variation, vibes, kits
     midi.ts        Standard MIDI File writer
+    instrument.ts  what every instrument a track can play offers the player (play, stop, load)
+  synth/         the synthesizer (pure modules, tested in node, plus one AudioWorklet)
+    params.ts      the sound as a flat set of knobs, their curves (Hz, seconds), reviving stored sounds
+    kernel.ts      the engine: band-limited oscillators, 2x-oversampled ladder filter, envelopes, voices, effects, reverb
+    synth.worklet.ts  the engine on the audio thread, notes on the exact sample
+    instrument.ts  SynthInstrument (live and offline) and renderSynth (a WAV-ready render)
+    presets.ts     the 56 ready-made sounds, level-matched
+    macros.ts      the six macro knobs
+    play.ts        the ways of playing: arpeggio, strum, pulse, drone, glide, humanise
+    render.ts, measure.ts  rendering without Web Audio, and measuring pitch, aliasing, loudness and clicks
   ui/            React app: the guitar page, shape finder, tray, drag & drop
 ```
 
@@ -311,6 +329,10 @@ The numbers and patterns were collected from published acoustics research, teach
 - Harp acoustics: Chadefaux, Le Carrou et al., *Experimentally based description of harp plucking* (JASA 2012); Le Carrou, Gautier et al. on the concert harp's soundboard and sound-hole modes and on sympathetic strings; Woodhouse, *Euphonics* (string damping, plucked-string synthesis); Waltham's harp chapters and ASA papers; UNSW Music Acoustics (harp); the Vienna Symphonic Library's harp notes; Sound On Sound, *Synthesizing plucked strings*.
 - Playing styles: Wikipedia (Strum, Carter Family picking, Tresillo, Clave, Ska stroke, Banjo roll); guitar lesson sites (rhythmguitar.org, justinguitar, andyguitar, Fender, MusicRadar, Guitar World, Premier Guitar, Classical Guitar Magazine, jazzguitar.be); the Giuliani right-hand studies; harp accompaniment guides (myharpsdelight.com, harpmastery, Harp Column).
 - Effects: J. O. Smith, *Physical Audio Signal Processing* (flanging and phasing); Valhalla DSP's notes on reverb types, shimmer and echo; Sound On Sound technique articles; the Web Audio API documentation (MDN); circuit analyses of classic overdrive, chorus and phaser pedals.
+
+### Where the synth comes from
+
+The panel's layout and the meaning of its sliders follow the parameter tables of the hardware it is modelled on, as transcribed in open-source editors for it; the curves (hertz, seconds), the effects' details and the preset recipes are this app's own, grounded in decoded factory sounds of open-source synths. The engine follows published algorithms and open-source code, credited with their licences in `NOTICE.md`: band-limited steps after the PolyBLEP idea; the supersaw after Adam Szabo's measurements of the original; a zero-delay-feedback ladder filter run at twice the sample rate with half-band filters of HIIR's design; analogue-style envelopes, glide and voice stealing after OB-Xf; drift after Surge; FM as phase modulation as in Dexed; antiderivative anti-aliased distortion; a small feedback-delay-network reverb. Every knob glides, nothing clicks, and every preset is checked for pitch, folded-back noise, loudness and clipping by the tests.
 
 ### Where the canvas's colours come from
 

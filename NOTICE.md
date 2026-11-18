@@ -86,6 +86,44 @@ where numbers or methods were taken they are used under their licences, with tha
   McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
 - Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
 
+The synth (`src/synth/`) is written for this project. It is modelled on the Yamaha reface CS,
+and these informed it; where numbers or methods were taken they are used under their licences,
+with thanks to their authors:
+
+- The reface CS's controls, their ranges and what Texture and Mod do for each oscillator, as
+  transcribed from Yamaha's data list in **reface-cs-live** by harpomaxx (MIT), **cs-control** by
+  cfenell (GPL-3.0) and the **pencilresearch/midi** tables (facts only) (`params.ts`).
+- Band-limited oscillators after the PolyBLEP idea of Välimäki and Huovilainen ("Antialiasing
+  oscillators in subtractive synthesis", 2007) and **PolyBLEP** by Tale, ported by Martin Finke
+  (zlib); here with a four-point kernel from the cubic B-spline (`kernel.ts`).
+- The supersaw: Adam Szabo, "How to Emulate the Super Saw" (KTH, 2010): the detune curve, the
+  seven saws' offsets and the mix curves, as published in a SuperCollider transcription (numbers
+  only) and in the supersaw of the **Deluge firmware** by Synthstrom Audible (GPL-3.0-or-later).
+- **VCV Rack**'s Fundamental VCO by Andrew Belt (GPL-3.0-or-later): the 9th-order polynomial sine.
+- Vadim Zavalishin, *The Art of VA Filter Design*: the zero-delay-feedback (topology-preserving)
+  ladder; **Vital** by Matt Tytel (GPL-3.0): where the ladder's input saturation sits, and running
+  the filter at twice the sample rate; **HIIR** by Laurent de Soras (WTFPL): the half-band
+  filters (the same coefficients as the vocal chain's `os.rs`).
+- **OB-Xf** by the Surge Synth Team, the successor of OB-Xd (GPL-3.0-or-later): the
+  analogue envelope that aims past the top, glide as an RC circuit on pitch, last-note priority
+  and stealing the oldest voice; **Surge XT** and its **sst-basic-blocks** (GPL-3.0-or-later):
+  the slow random drift of pitch.
+- **Dexed** and its engine **MSFA** (GPL-3.0 / Apache-2.0): FM as phase modulation (method only).
+- Parker, Zavalishin and Le Bivic, "Reducing the aliasing of nonlinear waveshaping using
+  continuous-time convolution" (DAFx 2016), as used in **chowdsp_utils** by Jatin Chowdhury
+  (GPL-3.0): the first-order anti-aliased distortion.
+- **Odin 2** by TheWaveWarden (GPL-3.0) and the **Faust** libraries (STK and LGPL with
+  exception): the ranges of the chorus, flanger, phaser and delay (numbers as reference), and
+  Odin 2's crawl arpeggio.
+- Jot and Chaigne, and Stautner and Puckette: the feedback-delay-network reverb.
+- **Drone Machine π** by Kalitragus (GPL-3.0): the idea of a drone as a few slightly detuned layers
+  that slowly wander (`play.ts`).
+- The preset recipes are this project's own, informed by decoded factory sounds of **Surge XT**
+  (GPL-3.0) and **Helm** by Matt Tytel (presets CC BY 4.0); no preset was copied value for value.
+- The idea of one knob moving many (the macros) after the "SuperKnob" of the refaceCS web editor
+  by sterudo (idea only; no code) and the macro sources of Surge XT and Vital.
+- ITU-R BS.1770: the loudness measure the presets were levelled with (`measure.ts`).
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 
