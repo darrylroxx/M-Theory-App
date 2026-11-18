@@ -22,6 +22,7 @@ import { barBeats, type Beat } from "./beats";
 import { tuneBetween, type Melody, type TuneHit } from "../song/melody";
 import type { HarpSound } from "./rack";
 import { STYLES, type Style } from "./styles";
+import type { TimeSig } from "../song/meter";
 
 export type PatternId = string;
 
@@ -236,8 +237,8 @@ export interface PlayItem {
   /** the playing style of this chord (missing = the player's own), and how it is played */
   style?: PatternId;
   feel?: Partial<Feel>;
-  /** the bars this chord is played in: their length in beats (the time signature's), and whether each beat divides in three */
-  meter?: { bar: number; triplet?: boolean };
+  /** the bars this chord is played in: their length in beats (its section's time signature), whether each beat divides in three, and the signature itself (for MIDI files) */
+  meter?: { bar: number; triplet?: boolean; sig?: TimeSig };
   /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
   section?: boolean;
   /** the melody over this chord's section (missing = the player's own) */

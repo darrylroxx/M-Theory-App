@@ -25,7 +25,7 @@ export interface Take {
   /** the tempo and key the song was in when it was sung (a recording does not follow later changes) */
   bpm?: number;
   key?: string;
-  /** "4/4" */
+  /** "4/4": the time signature of the section it was sung in */
   sig?: string;
 }
 
