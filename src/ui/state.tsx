@@ -2,7 +2,7 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSig, sigBeats, type TimeSig } from "../song/meter";
-import { conform, sigOf } from "../song/unity";
+import { conform, sectionSig } from "../song/unity";
 import { reviveMelody, type Melody } from "../song/melody";
 import { DEFAULT_BARS, fitBars } from "../song/frame";
 import { isSurface, type Surface } from "../canvas/weave";
@@ -16,7 +16,7 @@ import { getChordType } from "../theory/chords";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { commit, reviveSong, settle, type Song } from "../song/structure";
+import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
@@ -88,7 +88,7 @@ export interface Progression {
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
   focus?: Focus;
-  /** The time signature of the whole song, set on the Frame page: how long every bar is, on every page */
+  /** The song's time signature, set on the Frame page: how long every bar is, on every page, in every section that has no signature of its own */
   meter?: TimeSig;
 }
 
@@ -146,7 +146,7 @@ export interface AppState {
   ideaId?: string | null;
   /** Ideas that were deleted, and when, so other devices delete them too */
   tombs?: Record<string, number>;
-  /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each) */
+  /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each), and the last whole section copied on the Frame page */
   clip?: Clips;
   /** The recording setup on this computer: which interface, the switches on it, how you listen */
   studio?: Studio;
@@ -231,9 +231,10 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     meter: reviveSig(raw?.meter),
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
+  // Songs where a section other than the first one led (moved before that changed) are led by the first.
   // Songs from before sections had lengths get them here.
   // Songs from before the time signature could be chosen get the one their first section played in.
-  return conform(settle(commit(p)));
+  return conform(settle(leadFirst(commit(p))));
 }
 
 /** After any change, the whole song is in the bars of its time signature (see song/unity). */
@@ -278,7 +279,8 @@ interface Ctx {
   tuning: Tuning;
   sheet: SheetState | null;
   openSheet: (s: SheetState | null) => void;
-  toast: (msg: string) => void;
+  /** A short message. With an action (an undo), it stays for a while, with a button that does it. */
+  toast: (msg: string, action?: ToastAction) => void;
   /** Strum a chord the way you've chosen to play it */
   audition: (ref: ChordRef) => void;
   /** The shape used for a chord: a slot's own shape, else your chosen shape, else the easiest one */
@@ -306,11 +308,20 @@ interface Ctx {
   syncNow: () => void;
 }
 
+/** What a message's button does, and what it says ("↶"), for how long it is offered. */
+export interface ToastAction {
+  label: string;
+  aria: string;
+  run: () => void;
+  /** milliseconds (20 seconds if not given) */
+  ms?: number;
+}
+
 const AppCtx = createContext<Ctx | null>(null);
 
-/** Beats in a bar: what the song's time signature says, on every page. */
+/** Beats in a bar: what the time signature of the section on screen says, on every page. */
 export function barOf(p: Progression): number {
-  return sigBeats(sigOf(p));
+  return sigBeats(sectionSig(p));
 }
 
 /** How long a new chord lasts: one bar. */
@@ -329,7 +340,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   // every change goes through here, so the song can never disagree with its own time signature
   const setState = useCallback((fn: (s: AppState) => AppState) => setRaw((s) => unify(fn(s))), []);
   const [sheet, openSheet] = useState<SheetState | null>(null);
-  const [toastMsg, setToast] = useState<string | null>(null);
+  const [toastMsg, setToast] = useState<{ msg: string; action?: ToastAction } | null>(null);
   const toastTimer = useRef<number | null>(null);
 
   useEffect(() => {
@@ -353,10 +364,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const set = useCallback((fn: (s: AppState) => AppState) => setState(fn), []);
   const tuning = useMemo(() => getTuning(state.settings.tuningId), [state.settings.tuningId]);
 
-  const toast = useCallback((msg: string) => {
-    setToast(msg);
+  const toast = useCallback((msg: string, action?: ToastAction) => {
+    setToast({ msg, action });
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), 1800);
+    toastTimer.current = window.setTimeout(() => setToast(null), action ? action.ms ?? 20000 : 1800);
   }, []);
 
   const { capo, avoidBarre, tuningId } = state.settings;
@@ -515,7 +526,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   return (
     <AppCtx.Provider value={value}>
       {children}
-      {toastMsg && <div className="toast" role="status">{toastMsg}</div>}
+      {toastMsg && (
+        <div className={`toast${toastMsg.action ? " act" : ""}`} role="status">
+          <span>{toastMsg.msg}</span>
+          {toastMsg.action && <button aria-label={toastMsg.action.aria} title={toastMsg.action.aria} onClick={() => { toastMsg.action!.run(); setToast(null); }}>{toastMsg.action.label}</button>}
+        </div>
+      )}
     </AppCtx.Provider>
   );
 }

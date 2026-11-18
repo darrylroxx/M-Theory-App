@@ -92,6 +92,38 @@ describe("backups", () => {
     expect(importIdeas('{"ideas":[{"id":1}]}')).toEqual([]);
     expect(reviveIdea(null)).toBeNull();
   });
+  it("an idea saved by an older version opens with letters in playing order, the first section leading, sounding as it did", () => {
+    // stored letters, no colours, and the leader (A, with the song's settings) moved to the back with ↑ ↓
+    const stored = {
+      ...idea("old", 1),
+      progression: {
+        chords: [chord("F")], bpm: 90, pattern: "pinch", loop: true, bars: 4,
+        song: {
+          parts: [{ id: "a", letter: "A", chords: [chord("C")], bars: 4 }, { id: "b", letter: "B", chords: [chord("F")], bars: 4, style: "pinch" }],
+          blocks: [{ id: "2", partId: "b" }, { id: "1", partId: "a" }],
+          shared: { style: "strum" },
+          current: "2",
+        },
+      },
+    };
+    const back = reviveIdea(JSON.parse(JSON.stringify(stored)))!;
+    expect(describeIdea(back)).toBe("A B");
+    const s = sections(back.progression);
+    expect(s.map((x) => [x.chords[0].ref.root, x.style, x.color])).toEqual([["F", "pinch", 1], ["C", "strum", 0]]);
+    expect(back.progression.song!.parts[0].id).toBe("b");
+    // opened again, nothing moves
+    const again = reviveIdea(JSON.parse(JSON.stringify(back)))!;
+    expect(sections(again.progression).map((x) => [x.chords[0].ref.root, x.style, x.color, x.label])).toEqual([["F", "pinch", 1, "A"], ["C", "strum", 0, "B"]]);
+    expect(again.progression.song!.parts.map((x) => x.id)).toEqual(["b", "a"]);
+  });
+  it("a section's name and signature are part of the idea", () => {
+    const song = ensureSong(prog(["C"]));
+    const named = { ...song, song: { ...song.song!, parts: song.song!.parts.map((x) => ({ ...x, name: "Hook" })) } };
+    expect(fp(named)).not.toBe(fp(song));
+    expect(describeIdea({ ...idea("a", 1), progression: named })).toBe("Hook");
+    const three = { ...song, song: { ...song.song!, parts: song.song!.parts.map((x) => ({ ...x, meter: { num: 3, den: 4 as const } })) } };
+    expect(fp(three)).not.toBe(fp(song));
+  });
   it("a revived song shows the selected section's chords", () => {
     const song = addNewSection(prog(["C"])); // B selected, empty
     const stored = { ...idea("a", 1), progression: { ...song, chords: [chord("X")] } }; // stale tray chords in the file

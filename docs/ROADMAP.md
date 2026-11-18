@@ -60,8 +60,10 @@ Monitoring modes: **Hardware** (Direct Monitor on, dry) or **Hear my effects** (
 - Record → a count-in (1 bar by default; none, 1, 2 or 4) with an accented click → the loop
   goes round; every pass is a new take, until Stop.
 - One continuous file from the start of the count-in; sliced into Take 1, 2, 3 … after the
-  latency shift. The last full take plays; tap through the others to pick; a short last pass is
-  hidden but kept.
+  latency shift. Passes marked ★ while singing (tap, or K) are the keepers and the last of them
+  plays (else the last full take); tap through the others to pick; a short last pass is hidden
+  but kept. Built for long flow sessions: the file keeps time sample for sample (lost audio
+  becomes silence), takes are read back one at a time, and a driver reset keeps the recording.
 - You hear the song, the click and your live voice, never the old takes.
 
 ## 6. Projects on disk

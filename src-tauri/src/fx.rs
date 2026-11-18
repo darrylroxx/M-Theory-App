@@ -373,7 +373,9 @@ impl Chain {
         (l * g, r * g)
     }
 
-    /// A whole take through the chain at once (for the version that plays back with the song).
+    /// A whole take through the chain at once. (The app streams a recording through `run`
+    /// instead, a block at a time; this is what that must match, sample for sample.)
+    #[cfg(test)]
     pub fn render(&mut self, dry: &[f32]) -> Vec<f32> {
         let mut out = Vec::with_capacity(dry.len() * 2);
         for &x in dry {
