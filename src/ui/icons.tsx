@@ -13,3 +13,6 @@ export const MicIcon = () => (
 export const EarIcon = () => (
   <svg {...base}><path d="M3 8a5 5 0 0 1 10 0v3.2a1.6 1.6 0 0 1-1.6 1.6h-.6V8.6H13M3 8.6h2.2v4.2h-.6A1.6 1.6 0 0 1 3 11.2Z" /></svg>
 );
+export const OpenIcon = () => (
+  <svg {...base}><path d="M2 5a1.4 1.4 0 0 1 1.4-1.4h2.7l1.4 1.7h5.1A1.4 1.4 0 0 1 14 6.7v4.9a1.4 1.4 0 0 1-1.4 1.4H3.4A1.4 1.4 0 0 1 2 11.6Z" /></svg>
+);

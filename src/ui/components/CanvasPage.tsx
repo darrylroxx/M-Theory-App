@@ -1,21 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { audioIfStarted } from "../../audio/context";
+import { audioContext, audioIfStarted } from "../../audio/context";
 import { saveFile } from "../../audio/midi";
 import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
-import { due, listen } from "../../audio/pulse";
 import { STEMS, readStem } from "../../audio/stems";
+import { Cover, STEM_IDS, type StemId } from "../../canvas/cover";
 import { MARGIN, REGIONS, RULER_HZ, hzLabel, pageOf, yOfHz, type Spot } from "../../canvas/layout";
-import { FADES, Painter, STEM_IDS, type StemId } from "../../canvas/painter";
+import { FADES, Painting, STYLES } from "../../canvas/painting";
+import { Sim } from "../../canvas/sim";
+import type { Frame } from "../../listen/ear";
+import { listenLive, type Listening } from "../../listen/live";
+import { Player, Reader, openSong, type Song } from "../../listen/songfile";
 import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles, trio } from "../../canvas/palettes";
 import { SURFACES, surfaceRows, type Surface } from "../../canvas/weave";
 import type { Key } from "../../theory/keys";
 import { pc } from "../../theory/notes";
 import { getScale, scalePcs } from "../../theory/scales";
 import { useApp } from "../state";
+import { OpenIcon } from "../icons";
 import { Seg } from "./common";
 
 /** No more real pixels than this, however sharp the screen: paint has to keep up with the music. */
-const MAX_PIXELS = 2_400_000;
+const MAX_PIXELS = 1_500_000;
 /**
  * How wide one thread of the cloth is, in real pixels. Whole numbers only: a weave whose threads
  * do not fall on whole pixels shimmers with bands that are not there.
@@ -25,13 +30,16 @@ const thread = (surface: Surface, dpr: number) => Math.max(3, Math.round((surfac
 /** How wide the strip down the right edge is that shows what the mix covers, as a part of the canvas (it sits in the margin, clear of the paint). */
 const COVER = MARGIN * 0.9;
 
+/** For a song from a file: how much of it one pass across the canvas holds (seconds; 0 = all of it). */
+const PASSES = [{ value: 8, label: "8 s" }, { value: 15, label: "15 s" }, { value: 30, label: "30 s" }, { value: 0, label: "All" }];
+
 /**
- * The canvas: while the song plays, it paints itself.
+ * The canvas: while music plays, it paints itself.
  *
- * Time runs across, frequency runs up, an octave to every equal step. Every sound is painted
- * where it is, as long as it lasts and as heavy as it is loud: short sounds are dabs, sounds
- * that last are strokes, noise is spray. The guide marks the frequencies, the bars, and what
- * the mix has lately covered.
+ * It listens to what is actually sounding (the app's own mix, or any song opened from a file)
+ * and every tone in it holds a brush to the canvas for as long as it lasts: across is time, up
+ * is frequency. The paint is wet: it runs, bleeds into its neighbours, mixes as pigment does
+ * and dries. No two paintings come out the same.
  */
 export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay }: {
   /** the page is on screen */
@@ -51,10 +59,14 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const pal = getPalette(prefs.palette);
   const surface: Surface = prefs.surface ?? pal.surface;
   const fade = prefs.fade ?? 1;
+  const style = prefs.style ?? "auto";
+  const drips = !!prefs.drips;
+  const pass = prefs.pass ?? 15;
   const guide = prefs.guide !== false;
   const stage = useRef<HTMLDivElement>(null);
   /** the strip that shows what the mix covers */
   const cover = useRef<HTMLCanvasElement>(null);
+  const covered = useRef(new Cover());
   /** what each part of the mix is sounding right now, band by band (read off the mixer every frame) */
   const levels = useRef<Record<StemId, Float32Array>>({ chords: new Float32Array(BANDS), melody: new Float32Array(BANDS), drums: new Float32Array(BANDS) });
   /** the bars the canvas on show holds: the number of its first (0 = bar 1), how many, and how many a full canvas holds */
@@ -62,35 +74,58 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const barsId = useRef("");
   const host = useRef<HTMLDivElement>(null);
   const tex = useRef<HTMLCanvasElement>(null);
-  const painter = useRef<Painter | null>(null);
+  const painter = useRef<Painting | null>(null);
+  /** the ear on the app's own sound (there once sound has started) */
+  const hearing = useRef<Listening | null>(null);
+  /** a song opened from a file, what plays it, and what reads it for the painting */
+  const [song, setSong] = useState<Song | null>(null);
+  const [songOn, setSongOn] = useState(false);
+  const [opening, setOpening] = useState(false);
+  const filePlayer = useRef<Player | null>(null);
+  const reader = useRef<Reader | null>(null);
+  const pick = useRef<HTMLInputElement>(null);
   /** which weaving of the cloth is the current one (a newer one stops an older one) */
   const weaving = useRef(0);
   const [full, setFull] = useState(false);
   const [painted, setPainted] = useState(false);
+  const [can] = useState(() => Sim.supported());
   const tonic = pc(keyOf.tonic);
   const scale = useMemo(() => scalePcs(tonic, getScale(keyOf.scaleId)), [tonic, keyOf.scaleId]);
   const dark = roles(pal).dark;
   /** the colours of the three parts of the mix in the strip that shows what it covers */
   const stemColors = useMemo((): Record<StemId, string> => trio(pal), [pal]);
-  const live = useRef({ playing, getSpot, rest, guide, stemColors });
-  live.current = { playing, getSpot, rest, guide, stemColors };
+  const live = useRef({ playing, getSpot, rest, guide, stemColors, song, pass, fade });
+  live.current = { playing, getSpot, rest, guide, stemColors, song, pass, fade };
   const setPrefs = (patch: Partial<typeof prefs>) => set((s) => ({ ...s, canvas: { ...(s.canvas ?? { palette: DEFAULT_PALETTE }), ...patch } }));
   /** the family of colour schemes being looked through (it starts on the family of the one in use) */
   const [group, setGroup] = useState(pal.group);
 
   // the painter lives as long as the page does, so a painting is still there after a look at another page
   useEffect(() => {
-    if (!host.current) return;
-    const p = new Painter(host.current, pal, FADES[fade].keep);
-    p.setKey(tonic, scale);
+    if (!host.current || !can) return;
+    let p: Painting;
+    try {
+      p = new Painting(host.current, pal);
+    } catch {
+      return;
+    }
     painter.current = p;
     return () => {
       p.destroy();
       painter.current = null;
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
-  useEffect(() => painter.current?.setKey(tonic, scale), [tonic, scale]);
-  useEffect(() => painter.current?.setKeep(FADES[fade].keep), [fade]);
+  // the colours follow the key: the song's own, or (for a song from a file) the one that is heard
+  useEffect(() => {
+    if (song) painter.current?.hearKey();
+    else painter.current?.setKey(tonic, scale);
+  }, [tonic, scale, song]);
+  useEffect(() => {
+    const p = painter.current;
+    if (!p) return;
+    p.style = style;
+    p.drips = drips;
+  }, [style, drips]);
   // new colours: a new canvas
   const first = useRef(true);
   useEffect(() => {
@@ -138,6 +173,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
         }
         g.putImageData(img, 0, 0, 0, from, tw, Math.min(th, y) - from);
         if (y < th) requestAnimationFrame(strip);
+        // the paint is told the grain of what it is on: dry paint catches its ridges, wet paint settles in its hollows
+        else painter.current?.sim.setPaper(t);
       };
       strip();
     }
@@ -160,7 +197,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   }, [active, fit, full]);
 
   /** Draw what the mix has lately covered: for every band a bar, as long as the mix is strong there, in the colours of the parts that make it up. */
-  const drawCover = useCallback((p: Painter) => {
+  const drawCover = useCallback(() => {
     const cv = cover.current;
     const el = stage.current;
     if (!cv || !el) return;
@@ -174,7 +211,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     const g = cv.getContext("2d")!;
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.clearRect(0, 0, w, h);
-    const { level, share } = p.coverage();
+    const { level, share } = covered.current.coverage();
     for (let b = 0; b < BANDS; b++) {
       if (level[b] < 0.01) continue;
       const y1 = yOfHz(F_LO * Math.pow(2, b / PER_OCTAVE), h);
@@ -195,39 +232,67 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   // while the page is on screen: hear what sounds, and paint it
   useEffect(() => {
     if (!active) return;
-    const stop = listen();
     let raf = 0;
     let last = performance.now();
     let drawn = 0;
+    let asked = false;
+    let gone = false;
+    const none: Frame[] = [];
     const tick = (now: number) => {
       const p = painter.current;
       const c = audioIfStarted();
+      const dt = Math.min(100, now - last);
+      if (c && !asked) {
+        // an ear on everything the app plays, from the moment there is sound
+        asked = true;
+        void listenLive(c).then((l) => {
+          if (gone) l?.stop();
+          else hearing.current = l;
+        });
+      }
+      const lv = live.current;
       if (p) {
-        const spot = live.current.playing ? live.current.getSpot() : null;
-        p.at(spot);
-        if (c) {
-          // what is heard comes out of the speakers a moment after it is scheduled
-          const heard = c.currentTime - (c.outputLatency || 0);
-          for (const hit of due(heard)) p.hit(hit, heard - hit.time);
-          if (spot) {
-            // what the mixer is putting out right now, part by part
-            for (const s of STEMS) readStem(s, levels.current[s]);
-            p.mix(levels.current, now - last);
-          }
-        }
-        p.frame(now - last);
+        const heard = hearing.current?.take() ?? none;
+        const spot = lv.playing ? lv.getSpot() : null;
+        const fp = filePlayer.current;
+        const pos = lv.song && fp ? fp.position() : null;
+        let moving = false;
+        let passSeconds = 16;
+        if (lv.song && pos !== null && reader.current) {
+          // a song from a file: read just as far as it has played, so the paint is exactly in time
+          passSeconds = lv.pass > 0 ? lv.pass : lv.song.duration;
+          const frames = reader.current.upTo(pos);
+          p.hear(frames, (t) => MARGIN + ((t % passSeconds) / passSeconds) * (1 - 2 * MARGIN));
+          moving = true;
+        } else if (spot && c) {
+          // the app's own song: what the ear on the mix heard, each moment where the music was then
+          const pg = pageOf(spot, stage.current?.clientWidth ?? 600);
+          passSeconds = pg.perPage * spot.bar * spot.spb;
+          const at = c.currentTime;
+          p.hear(heard, (t) => {
+            let f = pg.frac - (at - t) / passSeconds;
+            if (f < 0) f += 1;
+            return MARGIN + Math.min(1, f) * (1 - 2 * MARGIN);
+          });
+          for (const s of STEMS) readStem(s, levels.current[s]);
+          covered.current.mix(levels.current, dt);
+          moving = true;
+        } else p.lift();
+        const half = FADES[lv.fade]?.half ?? 0;
+        p.fade = half > 0 ? Math.LN2 / (half * passSeconds) : 0;
+        p.frame(dt / 1000, moving);
         if (p.made > 0) setPainted(true);
         // the guide: which bars this canvas holds, and (a few times a second) what the mix covers
-        const where = spot ?? live.current.rest;
+        const where = spot ?? lv.rest;
         const pg = pageOf(where, stage.current?.clientWidth ?? 600);
-        const id = `${pg.page}/${pg.perPage}/${where.bars}`;
+        const id = lv.song ? "song" : `${pg.page}/${pg.perPage}/${where.bars}`;
         if (id !== barsId.current) {
           barsId.current = id;
-          setBars({ first: pg.page * pg.perPage, count: Math.max(0, Math.min(pg.perPage, Math.round(where.bars) - pg.page * pg.perPage)), per: pg.perPage });
+          setBars(lv.song ? { first: 0, count: 0, per: 1 } : { first: pg.page * pg.perPage, count: Math.max(0, Math.min(pg.perPage, Math.round(where.bars) - pg.page * pg.perPage)), per: pg.perPage });
         }
-        if (live.current.guide && now - drawn > 110) {
+        if (lv.guide && !lv.song && now - drawn > 110) {
           drawn = now;
-          drawCover(p);
+          drawCover();
         }
       }
       last = now;
@@ -235,10 +300,55 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     };
     raf = requestAnimationFrame(tick);
     return () => {
+      gone = true;
       cancelAnimationFrame(raf);
-      stop();
+      hearing.current?.stop();
+      hearing.current = null;
     };
   }, [active, drawCover]);
+
+  // ── a song from a file ──
+  const stopSong = useCallback(() => {
+    filePlayer.current?.stop();
+    setSongOn(false);
+    painter.current?.lift();
+  }, []);
+  const playSong = (s: Song) => {
+    const c = audioContext();
+    const fp = (filePlayer.current ??= new Player(c));
+    fp.onEnd = () => setSongOn(false);
+    reader.current = new Reader(s, 0);
+    painter.current?.lift();
+    fp.play(s, 0);
+    setSongOn(true);
+  };
+  const open = async (file: File | undefined | null) => {
+    if (!file) return;
+    stopSong();
+    setOpening(true);
+    try {
+      const s = await openSong(file, audioContext());
+      painter.current?.fresh();
+      setSong(s);
+    } catch {
+      toast("Can't read that file as sound");
+    }
+    setOpening(false);
+  };
+  const closeSong = () => {
+    stopSong();
+    setSong(null);
+    painter.current?.fresh();
+  };
+  // the app's own song starts: the file gives way
+  useEffect(() => {
+    if (playing) stopSong();
+  }, [playing, stopSong]);
+  // leaving the page stops the file
+  useEffect(() => {
+    if (!active) stopSong();
+  }, [active, stopSong]);
+  useEffect(() => () => filePlayer.current?.stop(), []);
 
   // Escape leaves the full screen
   useEffect(() => {
@@ -265,7 +375,17 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
 
   return (
     <section className={`card cv${full ? " full" : ""}`} aria-label="Canvas">
-      <div className={`cv-stage${dark ? " dark" : ""}`} ref={stage} style={{ background: pal.ground }} data-palette={pal.id}>
+      <div
+        className={`cv-stage${dark ? " dark" : ""}`}
+        ref={stage}
+        style={{ background: pal.ground }}
+        data-palette={pal.id}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          void open(e.dataTransfer.files[0]);
+        }}
+      >
         <div className="cv-host" ref={host} />
         <canvas className="cv-tex" ref={tex} />
         <div className="cv-edge" />
@@ -281,15 +401,25 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
             <canvas className="cv-cover" ref={cover} style={{ width: `${COVER * 100}%` }} />
           </div>
         )}
-        {!painted && !playing && <p className="cv-hint" style={{ color: pal.ink }} aria-hidden="true">▶</p>}
+        {!can && <p className="cv-hint" style={{ color: pal.ink }}>This device can't run the paint (it needs WebGL 2)</p>}
+        {can && !painted && !playing && !songOn && <p className="cv-hint" style={{ color: pal.ink }} aria-hidden="true">{opening ? "…" : "▶"}</p>}
+        {song && (
+          <div className="cv-song">
+            <button className={`play-btn sm${songOn ? " stop" : ""}`} onClick={() => (songOn ? stopSong() : playSong(song))} aria-label={songOn ? "Stop the song" : "Play the song"}>{songOn ? "■" : "▶"}</button>
+            <span className="cv-song-name" title={song.name}>{song.name}</span>
+            <button className="icon-btn" aria-label="Close the song" title="Close the song" onClick={closeSong}>✕</button>
+          </div>
+        )}
+        <input ref={pick} type="file" accept="audio/*,.wav,.mp3,.flac,.ogg,.m4a,.aac,.opus" hidden onChange={(e) => { void open(e.target.files?.[0]); e.target.value = ""; }} />
         <div className="cv-tools">
+          <button className="icon-btn" aria-label="Open a song from a file" title="Open a song (or drop one on the canvas)" disabled={opening || !can} onClick={() => pick.current?.click()}><OpenIcon /></button>
           <button className={`icon-btn cv-hzbtn${guide ? " on" : ""}`} aria-pressed={guide} aria-label="Guide: frequencies, bars, and what the mix covers" title="Guide: frequencies, bars, and what the mix covers" onClick={() => setPrefs({ guide: !guide })}>Hz</button>
-          {full && <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>}
+          {full && !song && <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>}
           <button className="icon-btn" aria-label={full ? "Leave the full screen" : "Fill the screen"} title={full ? "Back" : "Fill the screen"} onClick={() => setFull(!full)}>{full ? "✕" : "⤢"}</button>
         </div>
       </div>
       <div className="cv-bar">
-        {guide && (
+        {guide && !song && (
           <p className="cv-key">
             {STEM_IDS.map((id) => <span key={id}><i style={{ background: stemColors[id] }} />{id}</span>)}
           </p>
@@ -310,8 +440,17 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
         <div className="cv-opts">
           <span className="kb-label">Surface</span>
           <Seg value={surface} options={SURFACES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ surface: v })} label="What the paint is on" />
-          <span className="kb-label" title="How long old paint stays when the music comes round again">Old paint</span>
+          <span className="kb-label">Paint</span>
+          <Seg value={style} options={STYLES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ style: v })} label="How the paint behaves" />
+          <button className={`btn sm${drips ? " on" : ""}`} aria-pressed={drips} title="Wet paint runs down the canvas" onClick={() => setPrefs({ drips: !drips })}>Drips</button>
+          <span className="kb-label" title="How long old paint stays as the music goes on">Old paint</span>
           <Seg value={fade} options={FADES.map((f) => ({ value: f.id, label: f.label }))} onChange={(v) => setPrefs({ fade: v })} label="How long old paint stays" />
+          {song && (
+            <>
+              <span className="kb-label" title="How much of the song one pass across the canvas holds">Across</span>
+              <Seg value={pass} options={PASSES} onChange={(v) => setPrefs({ pass: v })} label="How much of the song one pass across the canvas holds" />
+            </>
+          )}
           <span className="spacer" />
           <button className="btn sm" disabled={!painted} onClick={clear}>Clear</button>
           <button className="btn sm" disabled={!painted} onClick={save}>Save picture</button>

@@ -64,6 +64,28 @@ thanks to their authors:
 - Measurements of the Juno-60 chorus published with **junox** by Andy Harman
   (GPL-3.0-or-later) (`width.rs`).
 
+The canvas (`src/canvas/`, `src/listen/`) is written for this project. These informed it, and
+where numbers or methods were taken they are used under their licences, with thanks:
+
+- **ink-stroke-modeler** by Google (Apache-2.0): the spring a brush tip follows (its mass and
+  drag constants) (`hand.ts`).
+- **libmypaint** and **mypaint-brushes** (ISC; brush files CC0): how touches overlap along a
+  stroke, how a brush's size and weight vary from touch to touch, and how spatter sizes are
+  spread (`hand.ts`).
+- **Krita**'s bristle brush (GPL-2.0-or-later) and **p5.brush** by Alejandro Campos (MIT): a
+  brush that runs dry hair by hair; pressure that never jumps (`hand.ts`, `sim.ts`).
+- **Fluid Paint** by David Li (MIT) and **WebGL Fluid Simulation** by Pavel Dobryakov (MIT):
+  wet paint as a heavily damped flow on the graphics card, lit by its own thickness (`sim.ts`).
+- Curtis, Anderson, Seims, Fleischer and Salesin, "Computer-Generated Watercolor" (1997), as
+  transcribed in open ports: pigment settling as water is lost, more in the hollows of the
+  paper; washes that dry from their edges (`sim.ts`).
+- **spectral.js** by Ronald van Wijnen (MIT) and Kubelka and Munk's theory: mixing colours by
+  what they absorb and scatter (here on three channels) (`sim.ts`).
+- **aubio** (GPL-3.0-or-later), **librosa** (ISC) and **madmom** (BSD-2-Clause): the shape of
+  the hit detector (the rise of a log-frequency spectrum, picked against what has been usual);
+  McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
+- Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 

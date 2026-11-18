@@ -29,11 +29,17 @@ export type Tab = "guitar" | "piano";
 /** The four pages: the frame (sections, lengths, key, tempo) and the three parts that play inside it. */
 export type Pane = "track" | "frame" | "rhythm" | "melody" | "drums" | "vocals" | "canvas";
 export const PANES: { id: Pane; label: string }[] = [{ id: "track", label: "Track" }, { id: "frame", label: "Frame" }, { id: "rhythm", label: "Chords" }, { id: "melody", label: "Melody" }, { id: "drums", label: "Drums" }, { id: "vocals", label: "Vocals" }, { id: "canvas", label: "Canvas" }];
-/** How the canvas is set: its colours, its surface, and how fast old paint fades (0 = it stays, 2 = fast). */
+/** How the canvas is set: its colours, its surface, how the paint behaves, and how fast old paint fades (0 = it stays, 3 = fast). */
 export interface CanvasPrefs {
   palette: string;
   surface?: Surface;
-  fade?: 0 | 1 | 2;
+  fade?: 0 | 1 | 2 | 3;
+  /** how the paint behaves: as the music suggests, always wet, or always thick */
+  style?: "auto" | "wash" | "thick";
+  /** wet paint runs down the canvas */
+  drips?: boolean;
+  /** for a song from a file: how many seconds of it one pass across the canvas holds (0 = the whole song) */
+  pass?: number;
   /** the guide over the canvas (frequencies, bars, what the mix covers): shown unless this is false */
   guide?: boolean;
 }
@@ -244,7 +250,7 @@ function load(): AppState {
       ...parsed,
       tab,
       pane: PANES.some((x) => x.id === parsed.pane) ? parsed.pane : "rhythm",
-      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 ? parsed.canvas.fade : 1, guide: parsed.canvas.guide === false ? false : undefined } : undefined,
+      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 || parsed.canvas.fade === 3 ? parsed.canvas.fade : 1, guide: parsed.canvas.guide === false ? false : undefined, style: parsed.canvas.style === "wash" || parsed.canvas.style === "thick" ? parsed.canvas.style : undefined, drips: parsed.canvas.drips === true ? true : undefined, pass: parsed.canvas.pass === 0 || parsed.canvas.pass === 8 || parsed.canvas.pass === 30 ? parsed.canvas.pass : undefined } : undefined,
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},

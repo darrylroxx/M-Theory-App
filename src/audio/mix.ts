@@ -53,6 +53,21 @@ let current: Mix | undefined;
 const desks = new WeakMap<BaseAudioContext, Record<TrackId, GainNode>>();
 let liveFaders: Record<TrackId, GainNode> = {};
 
+/**
+ * The point every sound of the song passes on its way to the speakers (one per audio context).
+ * Anything that wants to hear the whole mix as it is (the canvas does) listens here.
+ */
+const masters = new WeakMap<BaseAudioContext, GainNode>();
+export function master(c: BaseAudioContext): GainNode {
+  let m = masters.get(c);
+  if (!m) {
+    m = c.createGain();
+    m.connect(c.destination);
+    masters.set(c, m);
+  }
+  return m;
+}
+
 /** The fader for a track: its instrument connects into it, and it goes on to the speakers. */
 export function fader(id: TrackId, c: BaseAudioContext): GainNode {
   let set = desks.get(c);
@@ -65,7 +80,7 @@ export function fader(id: TrackId, c: BaseAudioContext): GainNode {
   if (f) return f;
   const g = c.createGain();
   g.gain.value = gainOf(current, id);
-  g.connect(c.destination);
+  g.connect(master(c));
   set[id] = g;
   return g;
 }
