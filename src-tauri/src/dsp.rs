@@ -111,8 +111,13 @@ pub fn coef(seconds: f32, sr: f32) -> f32 {
     if seconds <= 0.0 { 0.0 } else { (-1.0 / (seconds * sr)).exp() }
 }
 
-/// A feed-forward compressor in the log domain (soft knee, smoothed gain).
-/// `opto` gives the slow, program-dependent second release of an optical compressor.
+/// A compressor in the log domain (soft knee, smoothed gain), in two characters:
+/// - `feedback` (the FET kind, as in an 1176): the level is read from the compressor's own
+///   output, so the harder it works the less it sees. That is why such a unit grabs peaks
+///   fast yet never sounds clamped.
+/// - `opto` (as in an LA-2A): the gain element is a light and a photo-cell. Its speed depends
+///   on how hard it is working (deep reduction recovers fast at first, the last few decibels
+///   slowly), the law of the optical stage in mzuther's Squeezer (GPL-3.0-or-later).
 #[derive(Clone, Debug)]
 pub struct Compressor {
     pub threshold: f32,
@@ -127,6 +132,12 @@ pub struct Compressor {
     power_c: f32,
     gr: f32,
     slow: f32,
+    opto: bool,
+    /// the photo-cell's memory: the last part of the release, which takes seconds
+    tail: f32,
+    pub feedback: bool,
+    last: f32,
+    sr: f32,
 }
 impl Compressor {
     pub fn new(sr: f32, threshold: f32, ratio: f32, knee: f32, attack: f32, release: f32, rms: bool, opto: bool) -> Self {
@@ -143,12 +154,19 @@ impl Compressor {
             power_c: coef(0.01, sr),
             gr: 0.0,
             slow: 0.0,
+            opto,
+            tail: 0.0,
+            feedback: false,
+            last: 0.0,
+            sr,
         }
     }
     /// How much the level is turned down for a given input level (dB, ≤ 0).
     pub fn curve(&self, level: f32) -> f32 {
+        self.curve_with(level, 1.0 / self.ratio - 1.0)
+    }
+    fn curve_with(&self, level: f32, slope: f32) -> f32 {
         let over = level - self.threshold;
-        let slope = 1.0 / self.ratio - 1.0;
         if 2.0 * over < -self.knee {
             0.0
         } else if 2.0 * over.abs() <= self.knee && self.knee > 0.0 {
@@ -159,24 +177,39 @@ impl Compressor {
     }
     /// The gain reduction right now, in dB (≤ 0).
     pub fn reduction(&self) -> f32 {
-        self.gr.min(self.slow)
+        if self.opto { 0.75 * self.slow + 0.25 * self.tail } else { self.gr }
     }
     #[inline]
     pub fn run(&mut self, x: f32) -> f32 {
+        // feedback: listen to what came out last time; feed-forward: to what is coming in
+        let src = if self.feedback { self.last } else { x };
         let level = if self.rms {
-            self.power = flush(self.power * self.power_c + x * x * (1.0 - self.power_c));
+            self.power = flush(self.power * self.power_c + src * src * (1.0 - self.power_c));
             gain_to_db(self.power.sqrt())
         } else {
-            gain_to_db(x.abs())
+            gain_to_db(src.abs())
         };
-        let target = self.curve(level);
+        // read from the output, a ratio of R needs a slope of 1 − R (the output only rises 1/R as far)
+        let target = if self.feedback { self.curve_with(level, 1.0 - self.ratio) } else { self.curve(level) };
         // attack when more reduction is wanted, release when less
         let c = if target < self.gr { self.att } else { self.rel };
         self.gr = target + (self.gr - target) * c;
-        // the slow part follows the fast part down at once and comes back over seconds (opto)
-        self.slow = if self.gr < self.slow { self.gr } else { self.gr + (self.slow - self.gr) * self.rel_slow };
-        let g = 0.5 * self.gr + 0.5 * self.slow;
-        x * db_to_gain(g + self.makeup)
+        let g = if self.opto {
+            // the photo-cell: the more it is lit, the faster it moves (480/(3 + dB) ms to recover,
+            // a tenth of that to respond)
+            let res = 480.0 / (3.0 + (-self.slow).max(0.0));
+            let ms = if self.gr < self.slow { res / 10.0 } else { res };
+            let c = (-1.3093 / (ms * 0.001 * self.sr)).exp();
+            self.slow = self.gr + (self.slow - self.gr) * c;
+            // and it remembers: a quarter of the reduction comes back only over a second or two
+            self.tail = if self.slow < self.tail { self.slow } else { self.slow + (self.tail - self.slow) * self.rel_slow };
+            0.75 * self.slow + 0.25 * self.tail
+        } else {
+            self.gr
+        };
+        let y = x * db_to_gain(g);
+        self.last = y;
+        y * db_to_gain(self.makeup)
     }
 }
 
@@ -217,33 +250,6 @@ impl DeEsser {
     }
 }
 
-/// Preamp colour: a gently asymmetric soft clip (more second harmonic, like a transformer
-/// and a class-A stage), with a little low-end lift before it and a matching cut after.
-#[derive(Clone, Debug)]
-pub struct Warmth {
-    pub drive: f32,
-    pre: Biquad,
-    post: Biquad,
-    dc: Biquad,
-}
-impl Warmth {
-    pub fn new(sr: f32) -> Self {
-        Warmth { drive: 0.0, pre: Biquad::new(Shape::LowShelf(2.0), 160.0, 0.7, sr), post: Biquad::new(Shape::LowShelf(-2.0), 160.0, 0.7, sr), dc: Biquad::new(Shape::HighPass, 18.0, 0.7, sr) }
-    }
-    #[inline]
-    pub fn run(&mut self, x: f32) -> f32 {
-        if self.drive <= 0.0 {
-            return x;
-        }
-        let k = 1.0 + self.drive * 6.0;
-        let v = self.pre.run(x) * k;
-        // asymmetric: the positive half bends a little sooner
-        let y = if v >= 0.0 { (v * 1.15).tanh() / 1.15 } else { v.tanh() };
-        let y = self.post.run(y / k.sqrt());
-        self.dc.run(y)
-    }
-}
-
 /// A delay line with fractional reading (linear interpolation).
 #[derive(Clone, Debug)]
 pub struct Line {
@@ -270,6 +276,22 @@ impl Line {
         let b = self.buf[(self.w + n - i - 1) % n];
         a + (b - a) * f
     }
+    /// The same, read through four points (a Hermite curve): for delays whose time is moving
+    /// (tape wow, chorus, pitch), where a straight line between two samples would dull the highs.
+    #[inline]
+    pub fn at_smooth(&self, d: f32) -> f32 {
+        let n = self.buf.len();
+        let d = d.clamp(2.0, (n - 3) as f32);
+        let i = d.floor() as usize;
+        let f = d - i as f32;
+        let p = |k: usize| self.buf[(self.w + 2 * n - k) % n];
+        // points at delays i-1, i, i+1, i+2; the wanted one lies between i and i+1
+        let (y0, y1, y2, y3) = (p(i - 1), p(i), p(i + 1), p(i + 2));
+        let c1 = 0.5 * (y2 - y0);
+        let c2 = y0 - 2.5 * y1 + 2.0 * y2 - 0.5 * y3;
+        let c3 = 0.5 * (y3 - y0) + 1.5 * (y1 - y2);
+        ((c3 * f + c2) * f + c1) * f + y1
+    }
     #[inline]
     pub fn tap(&self, d: usize) -> f32 {
         let n = self.buf.len();
@@ -279,17 +301,17 @@ impl Line {
 
 /// A Schroeder all-pass built on a delay line (as used in the plate).
 #[derive(Clone, Debug)]
-struct AllPass {
+pub struct AllPass {
     line: Line,
-    len: f32,
-    g: f32,
+    pub len: f32,
+    pub g: f32,
 }
 impl AllPass {
-    fn new(len: f32, g: f32) -> Self {
+    pub fn new(len: f32, g: f32) -> Self {
         AllPass { line: Line::new(len as usize + 40), len, g }
     }
     #[inline]
-    fn run(&mut self, x: f32, extra: f32) -> f32 {
+    pub fn run(&mut self, x: f32, extra: f32) -> f32 {
         let d = self.line.at(self.len + extra);
         let v = x - self.g * d;
         self.line.push(v);
@@ -398,32 +420,6 @@ impl Plate {
     }
 }
 
-/// An echo with a darkening, slightly saturating feedback loop (like tape), and a little
-/// spread between left and right.
-#[derive(Clone, Debug)]
-pub struct Echo {
-    line: Line,
-    pub time: f32,
-    pub feedback: f32,
-    tone: OnePole,
-    low: Biquad,
-    sr: f32,
-    fb: f32,
-}
-impl Echo {
-    pub fn new(sr: f32) -> Self {
-        Echo { line: Line::new((sr * 2.1) as usize), time: 0.11, feedback: 0.15, tone: OnePole::hz(3500.0, sr), low: Biquad::new(Shape::HighPass, 180.0, 0.7, sr), sr, fb: 0.0 }
-    }
-    #[inline]
-    pub fn run(&mut self, x: f32) -> (f32, f32) {
-        let d = self.line.at((self.time * self.sr).clamp(1.0, self.sr * 2.0));
-        let wet = self.low.run(self.tone.run(d));
-        self.fb = (wet * self.feedback.clamp(0.0, 0.92)).tanh();
-        self.line.push(x + self.fb);
-        (wet, wet * 0.85)
-    }
-}
-
 /// A last stage that never lets the level go past full scale, without look-ahead: it is
 /// clean below about −3 dBFS and bends smoothly above.
 #[inline]
@@ -481,16 +477,6 @@ mod tests {
     }
 
     #[test]
-    fn warmth_adds_harmonics_but_stays_in_bounds() {
-        let mut w = Warmth::new(SR);
-        w.drive = 1.0;
-        let out: Vec<f32> = sine(220.0, 48000, 0.9).into_iter().map(|x| w.run(x)).collect();
-        assert!(out.iter().all(|v| v.is_finite() && v.abs() < 1.5));
-        let mut off = Warmth::new(SR);
-        assert_eq!(off.run(0.3), 0.3);
-    }
-
-    #[test]
     fn the_plate_rings_on_after_a_click_and_then_dies_away() {
         let mut p = Plate::new(SR);
         p.decay = 0.6;
@@ -508,25 +494,49 @@ mod tests {
     }
 
     #[test]
-    fn the_echo_repeats_after_its_time() {
-        let mut e = Echo::new(SR);
-        e.time = 0.1;
-        e.feedback = 0.0;
-        let mut first = None;
-        for i in 0..9600 {
-            let (l, _) = e.run(if i == 0 { 1.0 } else { 0.0 });
-            if first.is_none() && l.abs() > 0.05 {
-                first = Some(i);
-            }
-        }
-        let at = first.unwrap();
-        assert!((4790..4830).contains(&at), "first repeat at {at}");
-    }
-
-    #[test]
     fn the_safety_stage_never_passes_full_scale() {
         assert_eq!(safety(0.5), 0.5);
         assert!(safety(4.0) <= 1.0 && safety(-4.0) >= -1.0);
         assert!(safety(0.9) > 0.7 && safety(0.9) < 0.9);
+    }
+
+    #[test]
+    fn the_feedback_compressor_holds_peaks_at_its_ratio_without_chatter() {
+        // 4:1 from −20 dB, reading its own output (the FET kind), fast attack
+        let mut c = Compressor::new(SR, -20.0, 4.0, 0.0, 0.0004, 0.08, false, false);
+        c.feedback = true;
+        // a tone 12 dB over the threshold should come out about 3 dB over it
+        let x = sine(1000.0, SR as usize, db_to_gain(-8.0));
+        let y: Vec<f32> = x.iter().map(|v| c.run(*v)).collect();
+        let out = gain_to_db(rms(&y[24000..]) * 1.4142);
+        assert!((out - (-17.0)).abs() < 1.5, "peak level out: {out} dB");
+        // and the gain is steady: a pure tone stays nearly pure (no chatter from the loop)
+        let third: f32 = y[24000..].iter().enumerate().map(|(i, v)| v * (2.0 * PI * 3000.0 * i as f32 / SR).sin()).sum::<f32>().abs() / 12000.0;
+        assert!(third < 0.05 * db_to_gain(out), "third harmonic {third}");
+    }
+
+    #[test]
+    fn the_optical_compressor_lets_go_quickly_at_first_then_slowly() {
+        let mut c = Compressor::new(SR, -30.0, 3.0, 6.0, 0.01, 0.06, true, true);
+        for v in sine(500.0, SR as usize, 0.5) {
+            c.run(v);
+        }
+        let deep = c.reduction();
+        assert!(deep < -6.0, "working: {deep} dB");
+        // silence: how long until half the reduction is gone, and how long for nine tenths
+        let (mut half, mut most) = (0usize, 0usize);
+        for i in 0..(SR as usize * 3) {
+            c.run(0.0);
+            if half == 0 && c.reduction() > deep * 0.5 {
+                half = i;
+            }
+            if most == 0 && c.reduction() > deep * 0.1 {
+                most = i;
+            }
+        }
+        let (half, most) = (half as f32 / SR, most as f32 / SR);
+        assert!(half > 0.01 && half < 0.25, "half back after {half} s");
+        // a plain exponential would need 3.3 times as long for nine tenths; the photo-cell takes longer still
+        assert!(most > half * 3.6, "nine tenths back after {most} s (half after {half} s)");
     }
 }

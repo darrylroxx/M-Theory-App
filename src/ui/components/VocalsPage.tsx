@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
@@ -6,7 +6,7 @@ import { renderSong } from "../../audio/synth";
 import { loadTake } from "../../audio/takebuffers";
 import { audioContext } from "../../audio/context";
 import { fader } from "../../audio/mix";
-import { ECHO_TIMES, FX_DEFAULT, PRESETS, echoSeconds, presetFx, type VocalFx } from "../../audio/vocalfx";
+import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
 import { activeTake, cutTakes, groupsOf, type Take } from "../../song/takes";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
@@ -34,24 +34,31 @@ const CHECKS: { id: keyof NonNullable<Studio["checks"]>; label: string; hint: st
   { id: "inst", label: "INST off", hint: "INST is for a guitar plugged into Input 2. For a mic on Input 1 it does nothing" },
   { id: "direct", label: "Direct Monitor on", hint: "On: you hear yourself straight from the interface, dry. Off: you hear yourself through the app's effects" },
 ];
-const KNOBS: { k: keyof VocalFx; label: string; min: number; max: number; step: number; unit?: string; more?: boolean; hint: string }[] = [
-  { k: "warmth", label: "Warmth", min: 0, max: 1, step: 0.01, hint: "Preamp colour: thicker, rounder, a touch of drive" },
-  { k: "punch", label: "Punch", min: 0, max: 1, step: 0.01, hint: "Fast compression: catches the peaks and brings the voice forward" },
-  { k: "smooth", label: "Smooth", min: 0, max: 1, step: 0.01, hint: "Slow compression: evens loud and soft phrases out" },
-  { k: "deess", label: "De-ess", min: 0, max: 1, step: 0.01, hint: "Tames sharp s and t sounds" },
-  { k: "presence", label: "Presence", min: -6, max: 6, step: 0.5, unit: "dB", hint: "Clarity around 4 kHz" },
-  { k: "air", label: "Air", min: -6, max: 6, step: 0.5, unit: "dB", hint: "Breath and sparkle above 11 kHz" },
-  { k: "echo", label: "Echo", min: 0, max: 1, step: 0.01, hint: "How much echo (it dips while you sing)" },
-  { k: "verb", label: "Reverb", min: 0, max: 1, step: 0.01, hint: "How much plate reverb (it dips while you sing)" },
-  { k: "lowcut", label: "Low cut", min: 20, max: 300, step: 5, unit: "Hz", more: true, hint: "Removes rumble and pops below this" },
-  { k: "gate", label: "Gate", min: 0, max: 1, step: 0.01, more: true, hint: "Turns the quietest moments between phrases down" },
-  { k: "mud", label: "Mud cut", min: 0, max: 1, step: 0.01, more: true, hint: "Takes out the boxy 300 Hz area" },
-  { k: "double", label: "Double", min: 0, max: 1, step: 0.01, more: true, hint: "Two faint copies left and right: wider and thicker" },
-  { k: "echo_feedback", label: "Repeats", min: 0, max: 0.85, step: 0.01, more: true, hint: "How many times the echo comes back" },
-  { k: "verb_size", label: "Size", min: 0, max: 1, step: 0.01, more: true, hint: "Reverb length" },
-  { k: "verb_tone", label: "Darkness", min: 0, max: 1, step: 0.01, more: true, hint: "Reverb tone: bright to dark" },
-  { k: "verb_predelay", label: "Pre-delay", min: 0, max: 0.15, step: 0.005, unit: "s", more: true, hint: "A gap before the reverb, so the words stay clear" },
-  { k: "level", label: "Level", min: -12, max: 12, step: 0.5, unit: "dB", more: true, hint: "Output level of the chain" },
+type Group = "color" | "eq" | "dyn" | "width" | "echo" | "verb" | "out";
+const KNOBS: { k: keyof VocalFx; g: Group; label: string; min: number; max: number; step: number; unit?: string; more?: boolean; hint: string }[] = [
+  { k: "warmth", g: "color", label: "Amount", min: 0, max: 1, step: 0.01, hint: "How hard the voice is pushed into the colour (the volume stays put)" },
+  { k: "lowcut", g: "eq", label: "Low cut", min: 20, max: 300, step: 5, unit: "Hz", hint: "Removes rumble and pops below this" },
+  { k: "low", g: "eq", label: "Body", min: -6, max: 6, step: 0.5, unit: "dB", hint: "The weight of the voice, below 120 Hz" },
+  { k: "mud", g: "eq", label: "Mud cut", min: 0, max: 1, step: 0.01, hint: "Takes out the boxy low mids" },
+  { k: "presence", g: "eq", label: "Presence", min: -6, max: 6, step: 0.5, unit: "dB", hint: "Clarity: how far forward the voice sits" },
+  { k: "air", g: "eq", label: "Air", min: -6, max: 9, step: 0.5, unit: "dB", hint: "Breath and sparkle at the very top" },
+  { k: "mud_freq", g: "eq", label: "Mud at", min: 150, max: 900, step: 10, unit: "Hz", more: true, hint: "Where the mud cut is" },
+  { k: "presence_freq", g: "eq", label: "Presence at", min: 800, max: 9000, step: 50, unit: "Hz", more: true, hint: "Where the presence band is" },
+  { k: "highcut", g: "eq", label: "High cut", min: 1500, max: 20000, step: 100, unit: "Hz", more: true, hint: "Rolls off everything above (20000 = off): telephone and lo-fi sounds" },
+  { k: "punch", g: "dyn", label: "Punch", min: 0, max: 1, step: 0.01, hint: "Fast compression (the FET kind): catches peaks, brings the voice forward" },
+  { k: "smooth", g: "dyn", label: "Smooth", min: 0, max: 1, step: 0.01, hint: "Slow compression (the optical kind): evens loud and soft phrases out" },
+  { k: "deess", g: "dyn", label: "De-ess", min: 0, max: 1, step: 0.01, hint: "Tames sharp s and t sounds" },
+  { k: "gate", g: "dyn", label: "Gate", min: 0, max: 1, step: 0.01, more: true, hint: "Turns the quietest moments between phrases down" },
+  { k: "deess_freq", g: "dyn", label: "De-ess at", min: 3000, max: 10000, step: 100, unit: "Hz", more: true, hint: "Where the esses are: lower for a deep voice, higher for a bright one" },
+  { k: "double", g: "width", label: "Amount", min: 0, max: 1, step: 0.01, hint: "How much width is added beside the voice" },
+  { k: "echo", g: "echo", label: "Amount", min: 0, max: 1, step: 0.01, hint: "How loud the echo is" },
+  { k: "echo_feedback", g: "echo", label: "Repeats", min: 0, max: 1, step: 0.01, hint: "How many times the echo comes back" },
+  { k: "verb", g: "verb", label: "Amount", min: 0, max: 1, step: 0.01, hint: "How loud the reverb is" },
+  { k: "verb_size", g: "verb", label: "Size", min: 0, max: 1, step: 0.01, hint: "How big the space is and how long it rings" },
+  { k: "verb_tone", g: "verb", label: "Darkness", min: 0, max: 1, step: 0.01, more: true, hint: "Bright to dark" },
+  { k: "verb_predelay", g: "verb", label: "Pre-delay", min: 0, max: 0.15, step: 0.005, unit: "s", more: true, hint: "A gap before the reverb, so the words stay clear" },
+  { k: "duck", g: "verb", label: "Duck", min: 0, max: 0.9, step: 0.01, more: true, hint: "How far the echo and reverb step back while you sing" },
+  { k: "level", g: "out", label: "Level", min: -12, max: 12, step: 0.5, unit: "dB", more: true, hint: "Output level of the chain" },
 ];
 const sig = (fx: VocalFx) => JSON.stringify(fx);
 const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
@@ -71,7 +78,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const sel = studio.vocal ?? null;
   const setSel = (id: string) => setStudio({ vocal: id });
   const track = vocals.find((t) => t.id === sel) ?? vocals[0];
-  const fx: VocalFx = track?.fx ?? FX_DEFAULT;
+  // a sound saved before colours, spaces and echo types existed gets their defaults
+  const fx: VocalFx = useMemo(() => reviveFx(track?.fx) ?? FX_DEFAULT, [track?.fx]);
   const desktop = isDesktop();
   const bpm = state.progression.bpm;
 
@@ -272,6 +280,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     set((s) => ({ ...s, progression: addTrack(s.progression, "vocals", id).p }));
     setSel(id);
   };
+  /** One part of the vocal sound: its name, its choice of type, its knobs. */
+  const group = (g: Group, title: string, picker: React.ReactNode) => (
+    <div className="vc-group-box" role="group" aria-label={title}>
+      <div className="vc-group-head"><b className="vc-title">{title}</b>{picker}</div>
+      <div className="vc-knobs">
+        {KNOBS.filter((k) => k.g === g && (more || !k.more)).map((k) => (
+          <label key={k.k} className="vc-knob" title={k.hint}>
+            <span>{k.label}<small className="mono">{(fx[k.k] as number).toFixed(k.step < 0.1 ? 2 : k.step < 1 ? 1 : 0).replace(/\.0+$|(\.\d*?)0+$/, "$1") || "0"}{k.unit ? ` ${k.unit}` : ""}</small></span>
+            <input type="range" min={k.min} max={k.max} step={k.step} disabled={!track} value={fx[k.k] as number} aria-label={`${title}: ${k.label}`} onChange={(e) => setFx({ [k.k]: Number(e.target.value) } as Partial<VocalFx>)} />
+          </label>
+        ))}
+      </div>
+    </div>
+  );
   const channels = Math.min(2, opened?.inputs ?? chosen?.channels ?? 2);
   const checks = studio.checks ?? {};
   const running = phase !== "idle";
@@ -354,20 +376,23 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
 
             <div className="vc-box">
               <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" /><label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
-              <div className="vc-presets" role="group" aria-label="Starting points">
-                {PRESETS.map((p) => <button key={p.id} className="chip" title={p.hint} disabled={!track} onClick={() => setTrack((t) => ({ ...t, fx: presetFx(p.id, bpm) }))}>{p.name}</button>)}
-              </div>
-              <div className="vc-knobs">
-                {KNOBS.filter((k) => more || !k.more).map((k) => (
-                  <label key={k.k} className="vc-knob" title={k.hint}>
-                    <span>{k.label}<small className="mono">{(fx[k.k] as number).toFixed(k.step < 0.1 ? 2 : 1).replace(/\.?0+$/, "") || "0"}{k.unit ? ` ${k.unit}` : ""}</small></span>
-                    <input type="range" min={k.min} max={k.max} step={k.step} disabled={!track} value={fx[k.k] as number} onChange={(e) => setFx({ [k.k]: Number(e.target.value) } as Partial<VocalFx>)} />
-                  </label>
-                ))}
-              </div>
+              <label className="vc-preset">
+                <select aria-label="Starting point" disabled={!track} value="" onChange={(e) => { const id = e.target.value; if (id) setTrack((t) => ({ ...t, fx: presetFx(id, bpm) })); }}>
+                  <option value="" disabled>Preset…</option>
+                  {PRESETS.map((p) => <option key={p.id} value={p.id} title={p.hint}>{p.name}</option>)}
+                </select>
+              </label>
+              {group("color", "Colour", <Pick label="Preamp colour" value={fx.color} options={COLORS} off={!track} onPick={(v) => setFx({ color: v })} />)}
+              {group("eq", "EQ", more ? <span className="seg" role="radiogroup" aria-label="Air band" title="Where the air band starts: the higher, the silkier">{AIR_BANDS.map((b) => <button key={b.hz} role="radio" aria-checked={fx.air_freq === b.hz} className={fx.air_freq === b.hz ? "on" : ""} disabled={!track} onClick={() => setFx({ air_freq: b.hz })}>{b.label}</button>)}</span> : null)}
+              {group("dyn", "Dynamics", null)}
+              {group("width", "Width", <Pick label="Width" value={fx.width} options={WIDTHS} off={!track} onPick={(v) => setFx({ width: v })} />)}
+              {group("echo", "Echo", <>
+                <Pick label="Echo type" value={fx.echo_type} options={ECHOES} off={!track} onPick={(v) => setFx({ echo_type: v })} />
+                <span className="seg" role="radiogroup" aria-label="Echo time">{ECHO_TIMES.map((e) => <button key={e.id} role="radio" aria-checked={Math.abs(echoSeconds(e.id, bpm) - fx.echo_time) < 0.002} className={Math.abs(echoSeconds(e.id, bpm) - fx.echo_time) < 0.002 ? "on" : ""} disabled={!track} onClick={() => setFx({ echo_time: echoSeconds(e.id, bpm) })}>{e.label}</button>)}</span>
+              </>)}
+              {group("verb", "Reverb", <Pick label="Reverb type" value={fx.verb_type} options={SPACES} off={!track} onPick={(v) => setFx({ verb_type: v })} />)}
+              {more && group("out", "Output", null)}
               <div className="row">
-                <span className="kb-label">Echo time</span>
-                <span className="seg">{ECHO_TIMES.map((e) => <button key={e.id} className={Math.abs(echoSeconds(e.id, bpm) - fx.echo_time) < 0.002 ? "on" : ""} disabled={!track} onClick={() => setFx({ echo_time: echoSeconds(e.id, bpm) })}>{e.label}</button>)}</span>
                 <span className="spacer" />
                 <button className="btn sm" onClick={() => setMore(!more)}>{more ? "Less" : "More"}</button>
               </div>
@@ -401,5 +426,14 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
         </div>
       )}
     </section>
+  );
+}
+
+/** A row of choices (the types of colour, echo, reverb …). */
+function Pick<T extends string>({ label, value, options, off, onPick }: { label: string; value: T; options: { id: T; name: string; hint: string }[]; off: boolean; onPick: (v: T) => void }) {
+  return (
+    <span className="seg vc-pick" role="radiogroup" aria-label={label}>
+      {options.map((o) => <button key={o.id} role="radio" aria-checked={value === o.id} className={value === o.id ? "on" : ""} title={o.hint} disabled={off} onClick={() => onPick(o.id)}>{o.name}</button>)}
+    </span>
   );
 }

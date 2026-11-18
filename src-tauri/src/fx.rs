@@ -1,9 +1,16 @@
-//! The live vocal chain, in the order engineers use:
-//! preamp colour → low cut → gate → mud cut → fast (FET) compressor → de-esser →
-//! smooth (opto) compressor → presence and air → doubler → echo and plate sends (ducked under
-//! the voice) → output level → safety stage. Nothing looks ahead, so it adds no delay.
+//! The live vocal chain, in the order a voice meets things in a studio:
+//! preamp colour → low cut → gate → EQ (low shelf, mud) → fast FET compressor → de-esser →
+//! smooth optical compressor → EQ (presence, air, high cut) → width → echo and reverb sends
+//! (filtered, and ducked under the voice) → output level → safety stage.
+//! Nothing looks ahead, so the voice is never delayed (the oversampled colour stages cost
+//! about 0.06 ms). Where each part comes from is said in its own module.
 
-use crate::dsp::{db_to_gain, safety, Biquad, Compressor, DeEsser, Echo, Line, Plate, Shape, Warmth};
+use crate::color::{Color, ColorKind};
+use crate::delays::{EchoKind, Echoes};
+use crate::dsp::{db_to_gain, safety, Compressor, DeEsser, OnePole, Plate};
+use crate::eqm::{Air, Bq};
+use crate::space::{Space, SpaceKind};
+use crate::width::{Width, WidthKind};
 use serde::{Deserialize, Serialize};
 
 /// The chain's settings, as the page sends them. Amounts are 0..1 unless noted.
@@ -11,28 +18,41 @@ use serde::{Deserialize, Serialize};
 #[serde(default)]
 pub struct VocalFx {
     pub on: bool,
-    /// preamp colour (drive)
+    /// preamp colour: which, and how much
+    pub color: ColorKind,
     pub warmth: f32,
     /// low cut, Hz
     pub lowcut: f32,
     /// quiet parts between phrases turned down (0 = off)
     pub gate: f32,
-    /// the boxy 250–400 Hz area turned down
+    /// dB, shelf below 120 Hz (−6..6): body
+    pub low: f32,
+    /// the boxy area turned down, and where it is (Hz)
     pub mud: f32,
+    pub mud_freq: f32,
     /// fast compression: catches peaks, adds punch
     pub punch: f32,
     /// slow, smooth compression: evens the level out
     pub smooth: f32,
     pub deess: f32,
-    /// dB at 4 kHz (−6..6)
+    pub deess_freq: f32,
+    /// dB (−6..6), and where (Hz)
     pub presence: f32,
-    /// dB, shelf from 11 kHz (−6..6)
+    pub presence_freq: f32,
+    /// dB (−6..9) from the air band's corner (Hz: 10000, 20000 or 40000 are the classic ones)
     pub air: f32,
+    pub air_freq: f32,
+    /// everything above this is rolled off (Hz; 20000 = off): telephone and lo-fi sounds
+    pub highcut: f32,
+    /// width: which kind, and how much
+    pub width: WidthKind,
     pub double: f32,
+    pub echo_type: EchoKind,
     pub echo: f32,
     /// seconds
     pub echo_time: f32,
     pub echo_feedback: f32,
+    pub verb_type: SpaceKind,
     pub verb: f32,
     /// 0 short … 1 long
     pub verb_size: f32,
@@ -40,86 +60,157 @@ pub struct VocalFx {
     pub verb_predelay: f32,
     /// 0 bright … 1 dark
     pub verb_tone: f32,
+    /// how far the echo and reverb step back while the voice sings (0 = not at all)
+    pub duck: f32,
     /// dB
     pub level: f32,
 }
 impl Default for VocalFx {
     fn default() -> Self {
-        VocalFx { on: true, warmth: 0.2, lowcut: 90.0, gate: 0.0, mud: 0.3, punch: 0.4, smooth: 0.4, deess: 0.4, presence: 2.0, air: 2.0, double: 0.0, echo: 0.0, echo_time: 0.11, echo_feedback: 0.15, verb: 0.25, verb_size: 0.5, verb_predelay: 0.03, verb_tone: 0.3, level: 0.0 }
+        VocalFx {
+            on: true, color: ColorKind::Tube, warmth: 0.2, lowcut: 90.0, gate: 0.0, low: 0.0, mud: 0.3, mud_freq: 320.0, punch: 0.4, smooth: 0.4, deess: 0.4, deess_freq: 6500.0,
+            presence: 2.0, presence_freq: 4000.0, air: 2.0, air_freq: 12000.0, highcut: 20000.0, width: WidthKind::Double, double: 0.0,
+            echo_type: EchoKind::Tape, echo: 0.0, echo_time: 0.11, echo_feedback: 0.15, verb_type: SpaceKind::Plate, verb: 0.25, verb_size: 0.5, verb_predelay: 0.03, verb_tone: 0.3, duck: 0.45, level: 0.0,
+        }
     }
 }
 
 pub struct Chain {
     sr: f32,
     fx: VocalFx,
-    warmth: Warmth,
-    lowcut: [Biquad; 2],
+    color: Color,
+    lowcut: [Bq; 2],
     gate_env: f32,
     gate_gain: f32,
-    mud: Biquad,
+    low: Bq,
+    mud: Bq,
     fet: Compressor,
     deess: DeEsser,
     opto: Compressor,
-    presence: Biquad,
-    air: Biquad,
-    dbl: [Line; 2],
-    dbl_phase: f32,
-    echo: Echo,
+    presence: Bq,
+    air: Air,
+    highcut: Bq,
+    width: Width,
+    echoes: Echoes,
     plate: Plate,
+    space: Space,
+    /// the sends' own tone: lows kept out of the echo and the reverb
+    send_lo: [OnePole; 2],
     duck: f32,
+    /// the EQ as it is now and as it is wanted: it glides there, so a preset can be changed mid-note
+    /// (low cut, low, mud amount, mud Hz, presence, presence Hz, air, air Hz, high cut)
+    eq_now: [f64; 9],
+    eq_want: [f64; 9],
+    eq_tick: u32,
 }
 
 impl Chain {
     pub fn new(sr: f32, fx: &VocalFx) -> Self {
+        let mut fet = Compressor::new(sr, -18.0, 4.0, 6.0, 0.0004, 0.08, false, false);
+        fet.feedback = true;
         let mut c = Chain {
             sr,
             fx: fx.clone(),
-            warmth: Warmth::new(sr),
-            lowcut: [Biquad::new(Shape::HighPass, 90.0, 0.54, sr), Biquad::new(Shape::HighPass, 90.0, 1.31, sr)],
+            color: Color::new(sr),
+            lowcut: [Bq::default(); 2],
             gate_env: 0.0,
             gate_gain: 1.0,
-            mud: Biquad::new(Shape::Peak(0.0), 320.0, 1.4, sr),
-            fet: Compressor::new(sr, -18.0, 4.0, 6.0, 0.0004, 0.08, false, false),
+            low: Bq::default(),
+            mud: Bq::default(),
+            fet,
             deess: DeEsser::new(sr, 6500.0),
             opto: Compressor::new(sr, -20.0, 3.0, 8.0, 0.01, 0.06, true, true),
-            presence: Biquad::new(Shape::Peak(0.0), 4000.0, 0.9, sr),
-            air: Biquad::new(Shape::HighShelf(0.0), 11000.0, 0.707, sr),
-            dbl: [Line::new((sr * 0.04) as usize), Line::new((sr * 0.04) as usize)],
-            dbl_phase: 0.0,
-            echo: Echo::new(sr),
+            presence: Bq::default(),
+            air: Air::default(),
+            highcut: Bq::default(),
+            width: Width::new(sr),
+            echoes: Echoes::new(sr),
             plate: Plate::new(sr),
+            space: Space::new(sr),
+            send_lo: [OnePole::hz(250.0, sr); 2],
             duck: 0.0,
+            eq_now: [0.0; 9],
+            eq_want: [0.0; 9],
+            eq_tick: 0,
         };
+        c.fx.deess_freq = -1.0;
         c.set(fx);
+        // at the start the EQ is simply where it should be
+        c.eq_now = c.eq_want;
+        c.eq_apply();
         c
     }
 
     /// New settings, without resetting what is ringing (no clicks while a knob moves).
     pub fn set(&mut self, fx: &VocalFx) {
-        let sr = self.sr;
-        self.fx = fx.clone();
-        self.warmth.drive = fx.warmth.clamp(0.0, 1.0) * 0.8;
-        // a 4th-order Butterworth low cut, as two biquads
-        let f = fx.lowcut.clamp(20.0, 400.0);
-        self.lowcut[0].set(Shape::HighPass, f, 0.54, sr);
-        self.lowcut[1].set(Shape::HighPass, f, 1.31, sr);
-        self.mud.set(Shape::Peak(-5.0 * fx.mud.clamp(0.0, 1.0)), 320.0, 1.4, sr);
+        let sr = self.sr as f64;
+        let was = std::mem::replace(&mut self.fx, fx.clone());
+        self.color.set(fx.color, fx.warmth);
+        self.eq_want = [
+            fx.lowcut.clamp(20.0, 400.0) as f64,
+            fx.low.clamp(-6.0, 6.0) as f64,
+            fx.mud.clamp(0.0, 1.0) as f64,
+            fx.mud_freq.clamp(150.0, 900.0) as f64,
+            fx.presence.clamp(-6.0, 6.0) as f64,
+            fx.presence_freq.clamp(800.0, 9000.0) as f64,
+            fx.air.clamp(-6.0, 9.0) as f64,
+            fx.air_freq.clamp(5000.0, 40000.0) as f64,
+            if fx.highcut < 18000.0 { fx.highcut.clamp(1500.0, 18000.0) as f64 } else { 20000.0 },
+        ];
         let p = fx.punch.clamp(0.0, 1.0);
         self.fet.threshold = -6.0 - 22.0 * p;
-        self.fet.ratio = 2.0 + 4.0 * p;
+        self.fet.ratio = 3.0 + 5.0 * p;
         self.fet.makeup = -self.fet.curve(-14.0) * 0.6;
+        if (was.deess_freq - fx.deess_freq).abs() > 1.0 {
+            self.deess = DeEsser::new(self.sr, fx.deess_freq.clamp(3000.0, 10000.0));
+        }
         self.deess.amount = fx.deess.clamp(0.0, 1.0);
         let s = fx.smooth.clamp(0.0, 1.0);
         self.opto.threshold = -8.0 - 20.0 * s;
-        self.opto.ratio = 1.5 + 2.5 * s;
+        self.opto.ratio = 2.0 + 2.0 * s;
         self.opto.makeup = -self.opto.curve(-16.0) * 0.6;
-        self.presence.set(Shape::Peak(fx.presence.clamp(-6.0, 6.0)), 4000.0, 0.9, sr);
-        self.air.set(Shape::HighShelf(fx.air.clamp(-6.0, 6.0)), 11000.0, 0.707, sr);
-        self.echo.time = fx.echo_time.clamp(0.02, 2.0);
-        self.echo.feedback = fx.echo_feedback.clamp(0.0, 0.9);
+        let _ = sr;
+        self.width.kind = fx.width;
+        self.echoes.set(fx.echo_type, fx.echo_time, fx.echo_feedback);
         self.plate.decay = 0.3 + 0.62 * fx.verb_size.clamp(0.0, 1.0);
         self.plate.predelay = fx.verb_predelay.clamp(0.0, 0.2);
         self.plate.set_damping(fx.verb_tone);
+        self.space.set(fx.verb_type, fx.verb_size, fx.verb_tone);
+        self.space.predelay = fx.verb_predelay.clamp(0.0, 0.2);
+    }
+
+    /// The EQ's filters, from where its settings are right now.
+    fn eq_apply(&mut self) {
+        let sr = self.sr as f64;
+        let e = self.eq_now;
+        // a 4th-order Butterworth low cut, as two sections
+        self.lowcut[0].highpass(e[0], 0.54, sr);
+        self.lowcut[1].highpass(e[0], 1.31, sr);
+        self.low.lowshelf(120.0, e[1], sr);
+        self.mud.bell(e[3], 1.4, -5.0 * e[2], sr);
+        self.presence.bell(e[5], 0.9, e[4], sr);
+        self.air.set(e[7], e[6], sr);
+        if e[8] < 18000.0 {
+            self.highcut.lowpass(e[8], 0.7071, sr);
+        } else {
+            self.highcut.flat();
+        }
+    }
+    /// Every 16 samples the EQ moves a step towards where it is wanted (most of the way in 10 ms).
+    #[inline]
+    fn eq_glide(&mut self) {
+        self.eq_tick = self.eq_tick.wrapping_add(1);
+        if self.eq_tick % 16 != 0 || self.eq_now == self.eq_want {
+            return;
+        }
+        let step = 1.0 - (-16.0 / (0.004 * self.sr as f64)).exp();
+        for k in 0..9 {
+            let d = self.eq_want[k] - self.eq_now[k];
+            // frequencies move in proportion, decibels in decibels; close enough is there
+            let near = if matches!(k, 0 | 3 | 5 | 7 | 8) { self.eq_want[k] * 0.002 } else { 0.01 };
+            self.eq_now[k] = if d.abs() < near { self.eq_want[k] } else { self.eq_now[k] + d * step };
+        }
+        self.eq_apply();
     }
 
     /// How much the compressors are turning the voice down right now (dB, ≥ 0), for a meter.
@@ -133,20 +224,22 @@ impl Chain {
         if !self.fx.on {
             return (x, x);
         }
-        let mut v = self.warmth.run(x);
-        v = self.lowcut[0].run(v);
-        v = self.lowcut[1].run(v);
+        self.eq_glide();
+        let v = self.color.run(x) as f64;
+        let v = self.lowcut[0].run(v);
+        let mut v = self.lowcut[1].run(v) as f32;
         // gate: an expander that only turns the quietest moments down (by up to 15 dB)
         if self.fx.gate > 0.0 {
             let a = v.abs();
             self.gate_env = if a > self.gate_env { a } else { self.gate_env * 0.9995 };
             let thr = db_to_gain(-62.0 + 26.0 * self.fx.gate);
-            let want = if self.gate_env >= thr { 1.0 } else { (self.gate_env / thr).powf(1.0).max(db_to_gain(-15.0)) };
+            let want = if self.gate_env >= thr { 1.0 } else { (self.gate_env / thr).max(db_to_gain(-15.0)) };
             let c = if want > self.gate_gain { 0.995 } else { 0.9998 };
             self.gate_gain = want + (self.gate_gain - want) * c;
             v *= self.gate_gain;
         }
-        v = self.mud.run(v);
+        let w = self.low.run(v as f64);
+        v = self.mud.run(w) as f32;
         if self.fx.punch > 0.0 {
             v = self.fet.run(v);
         }
@@ -154,37 +247,33 @@ impl Chain {
         if self.fx.smooth > 0.0 {
             v = self.opto.run(v);
         }
-        v = self.air.run(self.presence.run(v));
+        let w = self.presence.run(v as f64);
+        let w = self.air.run(w);
+        let v = self.highcut.run(w) as f32;
         let mut l = v;
         let mut r = v;
-        // doubler: two slightly late, gently wavering copies, one each side
         if self.fx.double > 0.0 {
-            self.dbl[0].push(v);
-            self.dbl[1].push(v);
-            self.dbl_phase += 2.0 * std::f32::consts::PI * 0.31 / self.sr;
-            if self.dbl_phase > 6.2832 {
-                self.dbl_phase -= 6.2832;
-            }
-            let m = self.sr * 0.0012;
-            let a = self.dbl[0].at(self.sr * 0.013 + m * self.dbl_phase.sin());
-            let b = self.dbl[1].at(self.sr * 0.021 + m * (self.dbl_phase * 1.37).cos());
-            let g = 0.45 * self.fx.double;
-            l += a * g;
-            r += b * g;
+            let (a, b) = self.width.run(v);
+            l += a * self.fx.double;
+            r += b * self.fx.double;
         }
-        // the echo and the plate get quieter while the voice is singing, and bloom in the gaps
+        // the echo and the reverb step back while the voice is singing, and bloom in the gaps
         let a = v.abs();
         self.duck = if a > self.duck { self.duck + (a - self.duck) * 0.01 } else { self.duck * 0.99995 };
-        let duck = 1.0 - 0.45 * (self.duck * 4.0).min(1.0);
+        let duck = 1.0 - self.fx.duck.clamp(0.0, 0.9) * (self.duck * 4.0).min(1.0);
+        let mut to_verb = v * self.fx.verb * 0.7;
         if self.fx.echo > 0.0 {
-            let (el, er) = self.echo.run(v * self.fx.echo);
+            let (el, er) = self.echoes.run(v * self.fx.echo);
             l += el * duck;
             r += er * duck;
+            // the repeats go into the room too, as they would in one
+            to_verb += 0.25 * (el + er) * self.fx.verb;
         }
         if self.fx.verb > 0.0 {
-            let (pl, pr) = self.plate.run(v * self.fx.verb * 0.7);
-            l += pl * duck;
-            r += pr * duck;
+            let (pl, pr) = if self.fx.verb_type == SpaceKind::Plate { self.plate.run(to_verb) } else { self.space.run(to_verb) };
+            // the return's lows are kept out of the mix (they only make mud)
+            l += (pl - self.send_lo[0].run(pl)) * duck;
+            r += (pr - self.send_lo[1].run(pr)) * duck;
         }
         let g = db_to_gain(self.fx.level.clamp(-24.0, 12.0));
         (safety(l * g), safety(r * g))
@@ -261,5 +350,74 @@ mod tests {
         assert_eq!(fx.verb, 0.6);
         assert_eq!(fx.presence, 3.0);
         assert_eq!(fx.lowcut, 90.0);
+    }
+
+    #[test]
+    fn every_colour_echo_space_and_width_is_stable_at_full_tilt() {
+        let colors = ["clean", "tube", "console", "tape", "drive"];
+        let echoes = ["slap", "tape", "analog", "digital", "pingpong", "ambient"];
+        let spaces = ["plate", "room", "hall", "chamber", "cloud"];
+        let widths = ["double", "micro", "chorus"];
+        let mut x = voice(SR as usize);
+        x.extend(std::iter::repeat(0.0).take(SR as usize * 2));
+        for k in 0..6 {
+            let json = format!(
+                r#"{{"color":"{}","echo_type":"{}","verb_type":"{}","width":"{}","warmth":1,"gate":1,"low":6,"mud":1,"punch":1,"smooth":1,"deess":1,"presence":6,"air":9,"air_freq":40000,"double":1,"echo":1,"echo_feedback":1,"verb":1,"verb_size":1,"level":12}}"#,
+                colors[k % 5], echoes[k], spaces[k % 5], widths[k % 3]
+            );
+            let fx: VocalFx = serde_json::from_str(&json).unwrap();
+            let mut c = Chain::new(SR, &fx);
+            let out = c.render(&x);
+            assert!(out.iter().all(|v| v.is_finite() && v.abs() <= 1.0), "{json}");
+            assert!(out[..9600].iter().map(|v| v.abs()).fold(0.0, f32::max) > 0.05, "the voice comes through: {json}");
+        }
+    }
+
+    #[test]
+    fn changing_any_setting_while_singing_makes_no_click() {
+        // switch type after type under a steady tone: the dry voice must stay smooth
+        let mut c = Chain::new(SR, &VocalFx { verb: 0.0, echo: 0.0, ..VocalFx::default() });
+        let mut last = 0.0f32;
+        let mut jump = 0.0f32;
+        for i in 0..96000 {
+            if i % 9600 == 4800 {
+                let k = i / 9600;
+                let fx = VocalFx { verb: 0.0, echo: 0.0, presence: (k as f32) - 4.0, air: (k % 5) as f32, mud: (k % 3) as f32 / 2.0, low: (k % 4) as f32 - 2.0, ..VocalFx::default() };
+                c.set(&fx);
+            }
+            let (l, _) = c.run(0.2 * (2.0 * std::f32::consts::PI * 300.0 * i as f32 / SR).sin());
+            if i > 4000 {
+                jump = jump.max((l - last).abs());
+            }
+            last = l;
+        }
+        assert!(jump < 0.05, "{jump}");
+    }
+
+    #[test]
+    fn older_settings_and_unknown_names_still_load() {
+        // a sound saved before colours, spaces and echo types existed
+        let old: VocalFx = serde_json::from_str(r#"{"on":true,"warmth":0.3,"lowcut":100,"echo":0.2,"echo_time":0.3,"verb":0.4}"#).unwrap();
+        assert_eq!(old.color, ColorKind::Tube);
+        assert_eq!(old.verb_type, SpaceKind::Plate);
+        assert_eq!(old.echo_type, EchoKind::Tape);
+        assert_eq!(old.width, WidthKind::Double);
+        // a name from a newer version than this one
+        let newer: VocalFx = serde_json::from_str(r#"{"verb_type":"cathedral","color":"ribbon"}"#).unwrap();
+        assert_eq!(newer.verb_type, SpaceKind::Plate);
+        assert_eq!(newer.color, ColorKind::Tube);
+    }
+
+    /// How long one sample takes with everything on (run with `--release -- --ignored`).
+    #[test]
+    #[ignore]
+    fn speed() {
+        let fx: VocalFx = serde_json::from_str(r#"{"color":"console","echo_type":"ambient","verb_type":"cloud","width":"micro","warmth":0.6,"gate":0.3,"double":0.5,"echo":0.4,"echo_feedback":0.5,"verb":0.5}"#).unwrap();
+        let mut c = Chain::new(SR, &fx);
+        let x = voice(SR as usize * 10);
+        let t = std::time::Instant::now();
+        let out = c.render(&x);
+        let ns = t.elapsed().as_nanos() as f64 / x.len() as f64;
+        println!("{ns:.0} ns per sample = {:.1}% of one core at 48 kHz; a 64-sample block takes {:.0} of its 1333 microseconds ({})", ns * 48000.0 / 1e7, ns * 64.0 / 1000.0, out.len());
     }
 }

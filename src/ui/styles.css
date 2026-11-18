@@ -874,6 +874,12 @@ button.dm-strip-name:hover { color: var(--accent); }
 .vc-mini input[type="number"] { width: 64px; }
 .vc-mix { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .vc-presets { display: flex; flex-wrap: wrap; gap: 5px; }
+.vc-preset select { width: 100%; }
+.vc-group-box { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
+.vc-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.vc-group-head .vc-title { min-width: 68px; }
+.vc-pick { flex-wrap: wrap; }
+.vc-pick button, .vc-group-head .seg button { padding: 4px 9px; font-size: 0.78rem; }
 .vc-knobs { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 6px 14px; }
 .vc-knob { display: flex; flex-direction: column; gap: 2px; font-size: 0.8rem; font-weight: 700; }
 .vc-knob span { display: flex; justify-content: space-between; }

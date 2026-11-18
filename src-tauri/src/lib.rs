@@ -6,6 +6,13 @@ mod dsp;
 mod fx;
 mod engine;
 mod rt;
+mod testutil;
+mod os;
+mod eqm;
+mod color;
+mod space;
+mod delays;
+mod width;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
