@@ -86,6 +86,28 @@ where numbers or methods were taken they are used under their licences, with tha
   McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
 - Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
 
+The piano and the electric piano (`src/keys/`, `public/keys/`, `scripts/piano-pack.py`,
+`scripts/epiano-pack.py`):
+
+- **Salamander Grand Piano V3** by Alexander Holm, mapped to SFZ by kinwie
+  (<https://github.com/sfzinstruments/SalamanderGrandPiano>), licensed under **CC BY 3.0**
+  (<https://creativecommons.org/licenses/by/3.0/>). The piano's recordings in
+  `public/keys/piano/` are derived from it: 30 keys at 5 of its 16 velocity layers and its
+  string-resonance release samples, trimmed, faded, level-matched and encoded as MP3. This
+  instrument is derived from the SFZ instrument in that repository. Its mapping also gave the
+  numbers for the damper sounds (their level against the note, how much quieter they get the
+  longer a note was held) and which keys have no dampers. The full licence and the list of
+  changes are in `public/keys/piano/LICENSE.md`.
+- **mda ePiano** by Paul Kellett (MIT, or GPL-2.0-or-later): the electric piano's sample table
+  (`public/keys/epiano/tines.bin`, unchanged) and its whole design, ported to Web Audio nodes:
+  key groups and their loops, the loop crossfade, the velocity curve, decay and release, the
+  stereo spread, the treble control and the tremolo / autopan (`tines.ts`, `epiano.ts`).
+  Copyright (c) 2008 Paul Kellett; the MIT notice is in `public/keys/epiano/LICENSE.md`.
+- **smplr** by danigb (MIT): the shape of the sampler (one source and gain per note, notes cut
+  with a short fade when voices run out, releases faded from wherever the note has got to, only
+  the recordings a song needs loaded before a bounce). No code was copied.
+- Loudness is measured with the K-weighting and gating of **ITU-R BS.1770**.
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 

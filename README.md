@@ -274,6 +274,13 @@ src/
     rhythms.ts     the rhythm library: 286 rhythms in fifteen styles, in shorthand
     beats.ts       step-grid format (multi-bar), swing, variation, vibes, kits
     midi.ts        Standard MIDI File writer
+    instrument.ts  what every instrument offers the player (play, stop, load), so a track can change instrument
+  keys/
+    pack.ts        the piano's recordings: which one a key and velocity play, tuning, loudness, loading order
+    sampler.ts     the sampled piano: re-pitching, dampers, the sustain pedal, voices, loading by register
+    keyboard.ts    what every keyboard does with its notes: lanes, re-struck keys, stealing, pedal, release
+    tines.ts       the electric piano's arithmetic (a port of mda ePiano)
+    epiano.ts      the electric piano, built from Web Audio's own nodes
   ui/            React app: the guitar page, shape finder, tray, drag & drop
 ```
 
@@ -302,6 +309,9 @@ src/
 - **Drum sounds** come from one general drum synthesizer, built from how the classic machines and the best drum synths work (circuit studies of the TR-808, the Mutable Instruments Plaits source, Perry Cook's PhISEM shaker models, Sound On Sound's "Synth Secrets"). Each sound is a short recipe of layers: oscillators with a fast pitch drop and a slow sag; a pulse ringing a resonant filter (the 808's bridged-T way); several drum-head modes at the ratios of a real membrane; a bank of square waves through band-pass filters for hats, cymbals and cowbell; noise that is white, pink or clocked, with clap bursts, gated tails and snare wires that follow the head; beads and jingles colliding for shakers and tambourines; and dozens of decaying partials for cymbals and bells. Each sound is rendered in three slightly different takes that are played in turn, and every sound is brought to the same loudness (over 40 ms, 300 ms and, for kicks, a second), so swapping one never upsets the mix.
 - **Drum effects** are a small mixing desk of Web Audio nodes: each drum has its own level, pan, and reverb and echo sends; the kit then passes through the saturation above, a tape stage (a short delay whose length drifts), tone, a compressor and a soft ceiling that adds no delay. The reverbs are generated stereo impulse responses (a spring is an impulse sent round a loop of 60 all-pass filters; the gated room is a flat burst that stops dead). The sampler modes hold samples at a lower rate without filtering and quantise them, as the old sampling drum machines did. The noise beds (vinyl crackle, tape hiss, room tone, hum) are rendered once as seamless loops. Saturation, compression and tone are loudness-compensated from measurements of the finished output. The drum grid re-locks to every chord change, so the beat and the chords cannot drift apart.
 
+- **The piano** is a real grand, recorded: every third key (each one a minor third from the next) struck at five strengths, from a whisper to full force, so each note is played by the recording nearest it, moved at most a semitone or so and tuned to the piano's own slightly stretched scale (the bass a little flat, the treble a little sharp, as tuners leave a real one). A harder touch picks a harder-struck recording, which is brighter as well as louder; played a little softer than a recording was made, it is darkened toward the next softer one, so the tone brightens smoothly as you play harder rather than in five steps (mixing the two recordings instead makes some overtones cancel, which sounds hollow). Letting a key go drops the damper: the note stops in a fraction of a second (longer in the bass, where the strings are heavy), with the soft thud and ring of the felt landing; the top keys have no dampers and ring on, as on a real piano. The sustain pedal holds everything let go until it lifts. Striking a key again stops its previous sound, and when more than 64 notes ring at once the oldest give way with a short fade. The recordings download once (about 19 MB, in the background: the first 4 MB are enough to play every key, middle octaves first) and stay on the device, so the installed app plays them offline.
+- **The electric piano** is a classic tine piano: 11 recorded keys at three strengths, each a short attack followed by a loop of its steady tone, faded as a struck tine fades and stopped quickly by the damper. It has a treble control and a tremolo or autopan, and is under 1 MB. Each recording is retuned from its own loop, so every key is within a cent of true pitch.
+
 Everything runs locally in your browser. Your ideas are saved in the browser's local storage. When the app is opened as a claude.ai artifact, each saved idea is also written to your private area of the artifact's database, so the same library shows up on your other devices.
 
 ### Where the harp, the styles and the effects come from
@@ -311,6 +321,10 @@ The numbers and patterns were collected from published acoustics research, teach
 - Harp acoustics: Chadefaux, Le Carrou et al., *Experimentally based description of harp plucking* (JASA 2012); Le Carrou, Gautier et al. on the concert harp's soundboard and sound-hole modes and on sympathetic strings; Woodhouse, *Euphonics* (string damping, plucked-string synthesis); Waltham's harp chapters and ASA papers; UNSW Music Acoustics (harp); the Vienna Symphonic Library's harp notes; Sound On Sound, *Synthesizing plucked strings*.
 - Playing styles: Wikipedia (Strum, Carter Family picking, Tresillo, Clave, Ska stroke, Banjo roll); guitar lesson sites (rhythmguitar.org, justinguitar, andyguitar, Fender, MusicRadar, Guitar World, Premier Guitar, Classical Guitar Magazine, jazzguitar.be); the Giuliani right-hand studies; harp accompaniment guides (myharpsdelight.com, harpmastery, Harp Column).
 - Effects: J. O. Smith, *Physical Audio Signal Processing* (flanging and phasing); Valhalla DSP's notes on reverb types, shimmer and echo; Sound On Sound technique articles; the Web Audio API documentation (MDN); circuit analyses of classic overdrive, chorus and phaser pedals.
+
+### Where the piano comes from
+
+The grand piano's recordings are a reduced **Salamander Grand Piano V3** by Alexander Holm (CC BY 3.0), as mapped by kinwie in the sfzinstruments collection; the electric piano is a port of **mda ePiano** by Paul Kellett (MIT), its recordings included. What was taken, what was changed and the licences are in `NOTICE.md` and `public/keys/*/LICENSE.md`; `scripts/piano-pack.py` rebuilds the piano's files from the originals.
 
 ### Where the canvas's colours come from
 
