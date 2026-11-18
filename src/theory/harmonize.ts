@@ -32,6 +32,8 @@
  *               source: { melody: thatTrack.melody }, under: thatSection.chords,
  *               bar: sigBeats(sig), compound: isCompound(sig), bars: sectionBars })
  *     → { melody, register }        (or { chords, register, voicing } for a chords track)
+ * A chords track written from a melody takes the section's chords as `under` too: its layers
+ * then sit on them (only "Best fit" chooses new chords for the tune).
  * `harmonyChoices` lists the options for the new track with the ones that would write nothing
  * marked, for greying out. Chords come back with fresh ids and no pinned voicing; `register`
  * and `voicing` say where a keyboard should voice them (see keys/voicing.ts `keyStyleOf`).
@@ -110,7 +112,7 @@ export interface HarmonizeInput {
   option: string;
   /** what it is written from: a chords track, a melody track (or both, for checking swaps against the tune) */
   source: { chords?: ProgChord[]; melody?: Melody };
-  /** the song's chords in this section, for a melody harmonised against them */
+  /** the song's chords in this section: what a melody harmony bends to, and what a chords layer written from a melody sits on */
   under?: ProgChord[];
   key: Key;
   /** beats in a bar */
@@ -432,6 +434,14 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
     if (c.type.id === "dim" || c.type.id === "m7b5" || c.type.id === "dim7") prior += 0.3;
     out.push({ ref: c.ref, pcs: pcsOf(c.ref), prior });
   }
+  // where the chord on the 5th is major and its 7th is in the key (major, harmonic minor), its
+  // dominant 7th too, a little dearer (it carries the key's 4th over V, as tunes often ask)
+  const five = out.find((c) => mod12(pc(c.ref.root) - ctx.tonic) === 7 && c.ref.typeId === "maj");
+  const parentPcs = scalePcs(ctx.tonic, getScale(parent));
+  if (five) {
+    const ref = { root: five.ref.root, typeId: "7" };
+    if (pcsOf(ref).every((p) => parentPcs.includes(p))) out.push({ ref, pcs: pcsOf(ref), prior: five.prior + 0.15 });
+  }
   // a natural-minor key borrows the major dominant from harmonic minor (it has the leading note);
   // the other minor modes keep their own minor v, which is their sound
   if (parent === "aeolian") {
@@ -589,7 +599,10 @@ interface Range {
 function rangeAround(line: LineNote[], ctx: Ctx): Range {
   const lo0 = Math.min(...line.map((n) => n.midi));
   const hi0 = Math.max(...line.map((n) => n.midi));
-  return { lo: Math.max(36, Math.min(ctx.base - 12, lo0) , lo0 - 12), hi: Math.min(96, Math.max(ctx.base + 36, hi0), hi0 + 12) };
+  // never more than an octave from the tune; down to an octave under the grid, or a sixth under
+  // the tune's lowest note when the tune itself goes that low (so a low tune can still have a
+  // harmony under it)
+  return { lo: Math.max(36, Math.min(ctx.base - 12, lo0 - 9), lo0 - 12), hi: Math.min(96, Math.max(ctx.base + 36, hi0), hi0 + 12) };
 }
 
 /** Under-chords for a melody: the song's chords there, or ones chosen for the tune. */
@@ -603,7 +616,10 @@ function underFor(input: HarmonizeInput, line: LineNote[], ctx: Ctx): Span[] {
   return chordSpans(chordsForMelody(line, ctx), ctx.len);
 }
 
-const IC_STRONG = [3, 6, 6, 0, 0, 0.8, 6, 1.2, 0, 0, 6, 6];
+// what an interval with the tune costs, on a strong note and on a weak one (index: semitones,
+// octaves folded). On a strong note a clash with the tune costs more than a note outside the chord
+// (even an avoid note): the two lines are what the ear follows.
+const IC_STRONG = [3, 11, 11, 0, 0, 0.8, 11, 1.2, 0, 0, 11, 11];
 const IC_WEAK = [3, 2, 2, 0, 0, 0.8, 2, 0.8, 0, 0, 2, 2];
 
 /**
@@ -611,13 +627,17 @@ const IC_WEAK = [3, 2, 2, 0, 0, 0.8, 2, 0.8, 0, 0, 2, 2];
  * sixth below). Each note tries, in order: the plain diatonic interval; the nearest chord tone on
  * the same side (a third to a sixth away); the same interval turned over (a third above becomes a
  * sixth below); the other third; holding the note before. Costs pick between them: on strong
- * notes a chord tone wins, short weak notes may pass through by step, parallel fifths and
- * octaves are out, and the line stays on its side of the tune where it can.
+ * notes a chord tone wins and a clash with the tune is worse than a note outside the chord, short
+ * weak notes may pass through by step, parallel fifths and octaves are out, and the line stays on
+ * its side of the tune where it can.
+ *
+ * `nearest` is the "chord tones" line: a tune note in the chord takes the nearest chord note
+ * under it (at least a minor third down, so never a rub; a sixth rather than a tritone), any other
+ * note the third below, bent to the chord on a strong beat; the line never goes above the tune.
  */
-function intervalLine(line: LineNote[], k: number, spans: Span[], ctx: Ctx): MelodyNote[] {
+function intervalLine(line: LineNote[], k: number, spans: Span[], ctx: Ctx, nearest = false): MelodyNote[] {
   const range = rangeAround(line, ctx);
   const side = Math.sign(k);
-  const band = Math.abs(k) >= 4 ? [7, 10] : [3, 5];
   const out: MelodyNote[] = [];
   let prevH: number | null = null;
   let prevN: number | null = null;
@@ -627,13 +647,24 @@ function intervalLine(line: LineNote[], k: number, spans: Span[], ctx: Ctx): Mel
     const scale = localScale(ctx.seven, ref);
     const strong = strongNote(n, ctx.bar);
     const shift = (kk: number) => stepAlong(n.midi, kk, scale) ?? stepOutside(n.midi, kk, ctx.key, ctx.keyPcs);
-    const cands: { m: number; order: number }[] = [{ m: shift(k), order: 0 }];
-    // chord tones on the same side, those nearest the size asked for (a third, or a sixth) first
-    const size = Math.abs(k) >= 4 ? 8.5 : 3.5;
-    if (chord) for (let d = 3; d <= 10; d++) if (chord.includes(mod12(n.midi + side * d))) cands.push({ m: n.midi + side * d, order: 1 + Math.abs(d - size) * 0.1 + (d === 6 ? 1 : 0) });
-    cands.push({ m: shift(k > 0 ? k - 7 : k + 7), order: 2 });
-    cands.push({ m: shift(Math.abs(k) === 2 ? -k : 2 * Math.sign(k)), order: 3 });
-    if (prevH !== null) cands.push({ m: prevH, order: 4 });
+    const onChord = nearest && !!chord?.includes(mod12(n.midi));
+    const band = onChord ? [3, 9] : Math.abs(k) >= 4 ? [7, 10] : [3, 5];
+    let cands: { m: number; order: number }[] = [];
+    if (onChord) {
+      // chord notes under it, nearest first (a fourth below still beats a sixth below: C→G, E→C, G→E)
+      for (let d = 3; d <= 9; d++) if (chord!.includes(mod12(n.midi - d))) cands.push({ m: n.midi - d, order: (d - 3) * 0.3 });
+    }
+    if (!cands.length) {
+      cands.push({ m: shift(k), order: 0 });
+      // chord tones on the same side, those nearest the size asked for (a third, or a sixth) first
+      const size = Math.abs(k) >= 4 ? 8.5 : 3.5;
+      if (chord) for (let d = 3; d <= 10; d++) if (chord.includes(mod12(n.midi + side * d))) cands.push({ m: n.midi + side * d, order: 1 + Math.abs(d - size) * 0.1 + (d === 6 ? 1 : 0) });
+      cands.push({ m: shift(k > 0 ? k - 7 : k + 7), order: 2 });
+      cands.push({ m: shift(Math.abs(k) === 2 ? -k : 2 * Math.sign(k)), order: 3 });
+      if (prevH !== null) cands.push({ m: prevH, order: 4 });
+      // (the plain third below is always below, so something is left)
+      if (nearest) cands = cands.filter((c) => c.m < n.midi);
+    }
     let best = cands[0].m;
     let bestCost = Infinity;
     for (const c of cands) {
@@ -642,7 +673,8 @@ function intervalLine(line: LineNote[], k: number, spans: Span[], ctx: Ctx): Mel
       let s = c.order;
       if (m < range.lo || m > range.hi) s += 30;
       if (m === n.midi) s += 8;
-      if (Math.sign(m - n.midi) !== side) s += 2.5;
+      // crossing the tune costs more than a note outside the chord: the line keeps its side
+      if (Math.sign(m - n.midi) !== side) s += 6.5;
       if (Math.abs(m - n.midi) > 16) s += 4;
       // the line keeps the size it is named for: a third (a fourth at a push), or a sixth (a fifth at a push)
       const dist = Math.abs(m - n.midi);
@@ -672,36 +704,6 @@ function intervalLine(line: LineNote[], k: number, spans: Span[], ctx: Ctx): Mel
   return out;
 }
 
-/**
- * The nearest chord tone under each note, at least a minor third down (so never a rub), the next
- * one down when that would make parallel fifths or octaves; a note outside the chord gets the
- * diatonic third below.
- */
-function chordToneUnder(line: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
-  const range = rangeAround(line, ctx);
-  const out: MelodyNote[] = [];
-  let prevH: number | null = null;
-  let prevN: number | null = null;
-  for (const n of line) {
-    const ref = spanAt(spans, n.at)?.ref ?? null;
-    const scale = localScale(ctx.seven, ref);
-    const third = stepAlong(n.midi, -2, scale) ?? stepOutside(n.midi, -2, ctx.key, ctx.keyPcs);
-    let pick = third;
-    if (ref && pcsOf(ref).includes(mod12(n.midi))) {
-      const chord = pcsOf(ref);
-      const opts: number[] = [];
-      for (let d = 3; d <= 9; d++) if (chord.includes(mod12(n.midi - d)) && mod12(d) !== 0) opts.push(n.midi - d);
-      const ok = opts.filter((m) => m >= range.lo && !(prevH !== null && prevN !== null && parallelPerfect(prevN, prevH, n.midi, m)));
-      if (ok.length) pick = ok[0];
-      else if (opts.length) pick = opts[0];
-    }
-    out.push({ at: n.at, midi: pick });
-    prevH = pick;
-    prevN = n.midi;
-  }
-  return out;
-}
-
 /** The tune an octave away: up when there is room, else down; a note that would leave the range is left out. */
 function octaveLine(line: LineNote[], ctx: Ctx): MelodyNote[] {
   const lo = Math.max(36, ctx.base - 12);
@@ -716,9 +718,9 @@ function octaveLine(line: LineNote[], ctx: Ctx): MelodyNote[] {
 
 /**
  * Call and response: wherever the tune takes a breath (three beats or more after a note, or two
- * when the gap runs up to a bar line), the last few notes come back a scale step lower (or
- * higher) after the first beat of the gap, or, when they don't fit,
- * the chord is played as a short run from the tune's last note back toward the middle of the
+ * when the gap runs up to a bar line), the last few notes (as many as fit) come back a scale step
+ * lower (or higher) after the first beat of the gap, or, when not even two fit, the chord is
+ * played as a short run from a chord note near the tune's last one back toward the middle of the
  * tune (so the answer stays in the singer's range). Silent while the tune sings.
  */
 function answerLine(line: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
@@ -737,7 +739,9 @@ function answerLine(line: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
     const g0 = Math.ceil((n.at + TICKS) / TICKS) * TICKS;
     const g1 = next;
     if (g1 - g0 < TICKS) continue;
-    const motif = line.filter((x) => x.at >= g0 - barTicks && x.at <= n.at).slice(-4);
+    // the last few notes sung (up to four, within a bar), cut to the longest ending that fits the gap
+    let motif = line.filter((x) => x.at >= g0 - barTicks && x.at <= n.at).slice(-4);
+    while (motif.length > 2 && motif[motif.length - 1].at - motif[0].at + TICKS > g1 - g0) motif = motif.slice(1);
     const ref = spanAt(spans, g0)?.ref ?? null;
     const placed: MelodyNote[] = [];
     const span = motif.length ? motif[motif.length - 1].at - motif[0].at + TICKS : Infinity;
@@ -747,23 +751,28 @@ function answerLine(line: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
         const r = spanAt(spans, at)?.ref ?? null;
         const scale = localScale(ctx.seven, r);
         let m = stepAlong(x.midi, dir, scale) ?? stepOutside(x.midi, dir, ctx.key, ctx.keyPcs);
-        // a strong note of the echo that rubs against the chord moves to the nearest chord tone
-        if (r && beatStrength(at, ctx.bar) >= 2 && !pcsOf(r).includes(mod12(m))) {
-          for (const d of [1, -1, 2, -2]) if (pcsOf(r).includes(mod12(m + d))) {
-            m += d;
-            break;
-          }
+        // a strong note of the echo that rubs against the chord moves to the nearest chord tone,
+        // the way that keeps the motif's shape (still rising where it rose, falling where it fell)
+        const chord = r ? pcsOf(r) : [];
+        if (r && beatStrength(at, ctx.bar) >= 2 && !chord.includes(mod12(m))) {
+          const k = placed.length;
+          const want = k ? Math.sign(x.midi - motif[motif.indexOf(x) - 1].midi) : 0;
+          const near = [1, -1, 2, -2].map((d) => m + d).filter((y) => chord.includes(mod12(y)));
+          const shaped = near.filter((y) => !k || Math.sign(y - placed[k - 1].midi) === want);
+          m = shaped[0] ?? near[0] ?? m;
         }
         placed.push({ at, midi: m });
       }
     } else if (ref) {
       const chord = pcsOf(ref);
-      const step = g1 - g0 >= 2 * TICKS ? ctx.unit : TICKS / 2;
+      // eighth notes, or triplet eighths in 6/8, 9/8 and 12/8
+      const step = ctx.unit;
       const count = Math.max(1, Math.min(4, Math.floor((g1 - g0) / step)));
       const way = n.midi > middle ? -1 : 1;
-      // start on the chord note nearest the last one sung, then walk the chord toward the middle
+      // start on a chord note near the last one sung (not that note again: an answer is a new
+      // voice), then walk the chord toward the middle
       let m = n.midi;
-      for (let d = 0; d <= 6; d++) {
+      for (let d = 2; d <= 7; d++) {
         if (chord.includes(mod12(n.midi + way * d))) {
           m = n.midi + way * d;
           break;
@@ -846,7 +855,8 @@ function secondRange(tune: LineNote[], ctx: Ctx): Range & { below: boolean } {
 
 /**
  * A counter-line: a line of its own. Its notes fall on the chord changes and the strong
- * beats, chosen from the chord's tones (the 3rd and 7th first) by a dynamic-programming search
+ * beats, chosen from the chord's tones (the 3rd and 7th first; against a tune, its available
+ * tensions when no chord tone is consonant there) by a dynamic-programming search
  * whose costs are the first-species rules: consonance with the tune at every one of those
  * moments, contrary or oblique motion preferred, no parallel fifths or octaves, no moving into
  * one by similar motion, mostly steps, a leap answered by a step back, no more than three of the
@@ -861,15 +871,29 @@ function counterLine(tune: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
   const centre = (lo + hi) / 2;
   const climax = tune.length ? tune.reduce((a, b) => (b.midi > a.midi ? b : a)).at : -1;
   const leading = ctx.keyPcs.includes(mod12(ctx.tonic - 1)) ? mod12(ctx.tonic - 1) : -1;
-  const cand = anchors.map((a) => {
-    let c = tonesIn(a.ref, lo, hi);
-    if (!c.length) c = tonesIn(a.ref, lo - 6, hi + 6);
-    return c;
-  });
   const mAt = anchors.map((a) => (tune.length ? soundingAt(tune, a.t) : null));
   const mBefore = anchors.map((a) => (tune.length ? soundingBefore(tune, a.t) : null));
+  const cand = anchors.map((a, i) => {
+    // the line's range, stretched where the tune dips into it, so there is always room for a
+    // consonance on the line's own side of the tune
+    const m = mAt[i];
+    const l = m !== null && below ? Math.min(lo, m - 9) : lo;
+    const h = m !== null && !below ? Math.max(hi, m + 9) : hi;
+    let c = tonesIn(a.ref, l, h);
+    if (!c.length) c = tonesIn(a.ref, l - 6, h + 6);
+    // against a tune, the chord's available tensions too (a note of its scale that is no minor
+    // ninth over a chord note: the 9th, 6th or major 7th over a major chord …), at a price: when
+    // the tune sits on a colour note itself (a 9th, a ♯11) the chord notes may all clash with it,
+    // and the first rule of counterpoint is consonance with the other voice
+    if (mAt[i] !== null) {
+      const chord = pcsOf(a.ref);
+      const scale = localScale(ctx.seven, a.ref);
+      for (let x = l; x <= h; x++) if (scale.includes(mod12(x)) && !chord.includes(mod12(x)) && !avoids(x, chord)) c.push({ m: x, role: 0 });
+    }
+    return c;
+  });
   const node = (i: number, c: { m: number; role: number }) => {
-    let s = c.role === 3 || c.role === 7 ? 0 : c.role === 1 ? 0.6 : 0.9;
+    let s = c.role === 3 || c.role === 7 ? 0 : c.role === 1 ? 0.6 : c.role === 0 ? 3.5 : 0.9;
     s += Math.abs(c.m - centre) * 0.05;
     const m = mAt[i];
     if (m !== null) {
@@ -1299,7 +1323,10 @@ function relativeOf(ref: ChordRef, ctx: Ctx, tune: LineNote[], start: number, en
       return blends(r, ref) && carries(r, notes, ctx);
     });
   if (!opts.length) return ref;
-  return opts.length > 1 && ctx.rng() < 0.3 ? opts[1] : opts[0];
+  // the seed may pick the second cousin, but never the diminished one by chance (a V swapped
+  // for vii° only when iii won't do)
+  const dim = (r: ChordRef) => ["dim", "m7b5"].includes(r.typeId);
+  return opts.length > 1 && !dim(opts[1]) && ctx.rng() < 0.3 ? opts[1] : opts[0];
 }
 
 /** The chord borrowed from the parallel key on the same degree: iv, ♭VI, ♭VII, ♭III, iiø in major; IV, V, ii (and a final major I) in minor. */
@@ -1425,7 +1452,36 @@ function pedalChords(src: ProgChord[], ctx: Ctx): ProgChord[] {
   return mapChords(src, ctx, (ref) => (pc(ref.root) === pedal ? { root: ref.root, typeId: ref.typeId } : { root: ref.root, typeId: ref.typeId, bass }));
 }
 
-/** Lead-ins: the second half of a chord lasting two beats or more becomes the dominant 7th of the chord after it. */
+/**
+ * Where a chord is cut in two to slip another chord in before the next one: on a beat, the
+ * strongest one inside it, nearest its middle (2+2 in 4/4, 2+1 in 3/4, 3+2 in 5/4, 4+3 in 7/4,
+ * bar and bar in a two-bar chord), each part at least a beat long. Null when it is too short.
+ */
+function splitPoint(start: number, end: number, bar: number): number | null {
+  const mid = (start + end) / 2;
+  let best: number | null = null;
+  let bestScore = -Infinity;
+  for (let t = Math.ceil((start + TICKS) / TICKS) * TICKS; t <= end - TICKS; t += TICKS) {
+    // a tie goes to the later beat: the chord slipped in is the shorter one
+    const score = beatStrength(t, bar) * 4 - Math.abs(t - mid) / TICKS + (t > mid ? 0.01 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      best = t;
+    }
+  }
+  return best;
+}
+
+/** A chord cut at `cut` into itself and another chord (lengths in beats). */
+function cutInTwo(s: Slot, cut: number, ref: ChordRef, ctx: Ctx): ProgChord[] {
+  const first = (cut - s.start) / TICKS;
+  return [
+    { id: ctx.id(), ref: { ...s.c.ref }, beats: first },
+    { id: ctx.id(), ref, beats: s.c.beats - first },
+  ];
+}
+
+/** Lead-ins: the second half of a chord lasting two beats or more (cut on a beat) becomes the dominant 7th of the chord after it. */
 function leadInChords(src: ProgChord[], ctx: Ctx, tune: LineNote[]): ProgChord[] {
   const slots = slotsOf(src);
   const out: ProgChord[] = [];
@@ -1438,20 +1494,18 @@ function leadInChords(src: ProgChord[], ctx: Ctx, tune: LineNote[]): ProgChord[]
     if (!tt.intervals.includes("5") || !(tt.intervals.includes("3") || tt.intervals.includes("b3"))) return keep(s.c.beats);
     const dom: ChordRef = { root: friendlySpelling(intervalNote(target.root, "5"), ctx.key), typeId: "7" };
     if (mod12(pc(s.c.ref.root) - pc(target.root)) === 7 || sameRef(dom, s.c.ref) || pc(s.c.ref.root) === pc(target.root)) return keep(s.c.beats);
-    const first = Math.max(1, Math.round(s.c.beats) / 2);
-    const half = Math.round(first * 2) / 2;
-    const cut = s.start + Math.round(half * TICKS);
+    const cut = splitPoint(s.start, s.end, ctx.bar);
+    if (cut === null) return keep(s.c.beats);
     // the melody over the lead-in must be in it, or be its 9th or 13th
     const r = pc(dom.root);
     const ok = strongIn(tune, cut, s.end, ctx.bar).every((m) => pcsOf(dom).includes(mod12(m)) || mod12(m - r) === 2 || mod12(m - r) === 9);
-    if (!ok || s.c.beats - half < 1) return keep(s.c.beats);
-    out.push({ id: ctx.id(), ref: { ...s.c.ref }, beats: half });
-    out.push({ id: ctx.id(), ref: dom, beats: s.c.beats - half });
+    if (!ok) return keep(s.c.beats);
+    out.push(...cutInTwo(s, cut, dom, ctx));
   });
   return out;
 }
 
-/** Passing diminished: where the bass would climb a whole step, the diminished 7th a semitone under the next chord slides in between. */
+/** Passing diminished: where the bass would climb a whole step, the diminished 7th a semitone under the next chord slides in (on the second part of the chord before, cut on a beat). */
 function passingChords(src: ProgChord[], ctx: Ctx, tune: LineNote[]): ProgChord[] {
   const slots = slotsOf(src);
   const out: ProgChord[] = [];
@@ -1464,13 +1518,12 @@ function passingChords(src: ProgChord[], ctx: Ctx, tune: LineNote[]): ProgChord[
     const tt = getChordType(next.c.ref.typeId);
     if (mod12(pc(b) - pc(a)) !== 2 || !tt.intervals.includes("5")) return keep();
     const dim: ChordRef = { root: friendlySpelling(intervalNote(next.c.ref.root, "7"), ctx.key), typeId: "dim7" };
-    const half = Math.round(Math.max(1, s.c.beats / 2) * 2) / 2;
-    const cut = s.start + Math.round(half * TICKS);
+    const cut = splitPoint(s.start, s.end, ctx.bar);
+    if (cut === null) return keep();
     const tones = pcsOf(dim);
     const ok = strongIn(tune, cut, s.end, ctx.bar).every((m) => tones.includes(mod12(m)) || tones.some((p) => mod12(m - p) === 2));
-    if (!ok || s.c.beats - half < 0.5) return keep();
-    out.push({ id: ctx.id(), ref: { ...s.c.ref }, beats: half });
-    out.push({ id: ctx.id(), ref: dim, beats: s.c.beats - half });
+    if (!ok) return keep();
+    out.push(...cutInTwo(s, cut, dim, ctx));
   });
   return out;
 }
@@ -1543,7 +1596,7 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
       case "sixth-below":
         return pack(intervalLine(tune, -5, spans, ctx));
       case "chord-tones":
-        return pack(fromChords ? chordToneWalk(spans, ctx) : chordToneUnder(tune, spans, ctx));
+        return pack(fromChords ? chordToneWalk(spans, ctx) : intervalLine(tune, -2, spans, ctx, true));
       case "counter":
         return pack(counterLine(tune, spans, ctx));
       case "answer":
@@ -1558,11 +1611,16 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
     return pack([]);
   }
 
-  // a new chords track: from the source's chords, or from chords chosen for its melody ("Best fit"
-  // always chooses for the melody, leaning toward any chords already there)
+  // a new chords track: from the source's chords (or the song's chords under a melody source), or
+  // from chords chosen for its melody ("Best fit" always chooses for the melody, leaning toward any
+  // chords already there)
+  // A layer written from a melody track sits on the song's chords when the section has some
+  // (`under`), so it sounds with them; with none, chords are chosen for the tune first.
   const own = (input.source.chords ?? []).filter((c) => Number(c?.beats) > 0);
-  const refit = !own.length || (opt.id === "fit" && tune.length > 0);
-  const src = refit ? chordsForMelody(tune, ctx, chordSpans(input.under?.length ? input.under : own, ctx.len)) : own;
+  const songs = (input.under ?? []).filter((c) => Number(c?.beats) > 0);
+  const base = own.length ? own : opt.id !== "fit" && songs.some((c) => !c.rest && usable(c.ref)) ? songs : [];
+  const refit = !base.length || (opt.id === "fit" && tune.length > 0);
+  const src = refit ? chordsForMelody(tune, ctx, chordSpans(songs.length ? songs : own, ctx.len)) : base;
   if (!src.length) return { chords: [] };
   const tuneFor = tune;
   const mid = { register: "mid" as const, voicing: "close" as const };

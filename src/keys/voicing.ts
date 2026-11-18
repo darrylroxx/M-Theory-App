@@ -14,7 +14,8 @@
  *
  * Every shape is placed at every height inside a register and filtered by the rules a pianist
  * or arranger follows: nothing muddy low down (a third under E3 rumbles, a fifth under E2
- * does), at most a ninth-ish stretch per hand, and never more than eight notes. Then a
+ * does), no semitone between the two top or the two bottom keys (and as few as can be inside),
+ * at most a ninth-ish stretch per hand, and never more than eight notes. Then a
  * dynamic-programming search (Viterbi) picks one candidate per chord so that the whole
  * progression moves least: semitones of movement cost 1, a held note is a bonus, a big leap in
  * the top voice and parallel fifths or octaves cost extra.
@@ -77,6 +78,26 @@ export function lowIntervalOk(midi: number[]): boolean {
     if (lo < 52 && iv < 3) return false;
   }
   return true;
+}
+
+/**
+ * The outer pairs keep a tone apart: a semitone between the two top notes hides the melody note
+ * on top, and one between the two bottom notes blurs the bass (jazzband's smallest top and
+ * bottom distances). A semitone inside the voicing is allowed but costs (Impro-Visor keeps
+ * neighbouring keys of one hand a tone apart): see `rubs`.
+ */
+export function outerOk(midi: number[]): boolean {
+  const s = [...midi].sort((a, b) => a - b);
+  const n = s.length;
+  return n < 2 || (s[1] - s[0] !== 1 && s[n - 1] - s[n - 2] !== 1);
+}
+
+/** How many neighbouring keys of a voicing sit a semitone apart. */
+export function rubs(midi: number[]): number {
+  const s = [...midi].sort((a, b) => a - b);
+  let n = 0;
+  for (let i = 1; i < s.length; i++) if (s[i] - s[i - 1] === 1) n++;
+  return n;
 }
 
 // ── Hands ───────────────────────────────────────────────────────
@@ -163,8 +184,9 @@ export function chordTones(ref: ChordRef): ChordTones {
     tones.push({ pc: p, token: iv, num: parseInterval(iv).number, required: !optional.has(iv) });
   }
   const has = (num: number) => tones.find((t) => t.num === num);
-  // what stands for the 3rd in a sus chord is its 4th or 2nd; for the 7th, a 6th (or a 13th)
-  const third = has(3) ?? has(4) ?? has(2) ?? has(11) ?? has(9);
+  // what stands for the 3rd in a sus chord is its 4th or 2nd (or the 11th of an eleventh chord,
+  // which is played without its 3rd); for the 7th, a 6th (or a 13th)
+  const third = (has(3)?.required ? has(3) : undefined) ?? has(4) ?? has(2) ?? has(11) ?? has(9) ?? has(3);
   const seventh = has(7) ?? has(6) ?? has(13);
   const guides = [third, seventh].filter((t): t is Tone => !!t).map((t) => t.pc);
   const bass = ref.bass && pc(ref.bass) !== root ? pc(ref.bass) : undefined;
@@ -172,8 +194,9 @@ export function chordTones(ref: ChordRef): ChordTones {
 }
 
 /**
- * The tones a style voices, at most five: big chords lose their optional tones first (the
- * 5th, then the 9th under an 11th or 13th), the way pianists thin out a thirteenth chord.
+ * The tones a style voices, at most five: big chords lose their optional tones first (the 3rd
+ * under a natural 11th, the 5th, then the 9th under an 11th or 13th), the way pianists thin out
+ * a thirteenth chord.
  */
 function voiced(ct: ChordTones, max: number): Tone[] {
   const list = [...ct.tones];
@@ -183,6 +206,8 @@ function voiced(ct: ChordTones, max: number): Tone[] {
     return i >= 0;
   };
   while (list.length > max) {
+    // an eleventh chord sheds its major 3rd first: the 11th a semitone above it is the avoid note
+    if (list.some((t) => t.token === "11") && drop((t) => t.token === "3")) continue;
     if (drop((t) => t.num === 5)) continue;
     if (drop((t) => t.num === 9)) continue;
     if (drop((t) => t.num !== 1)) continue;
@@ -325,6 +350,18 @@ function complete(v: number[], ct: ChordTones, style: KeyStyle): boolean {
 }
 
 /**
+ * Is the key at the bottom one the chord can stand on: its root or slash bass, or its 3rd, 5th, 7th
+ * (an inversion)? A 9th, 11th or 13th in the bass turns it into another chord (E7♭9 over F is
+ * heard as an F chord), so a colour tone never goes at the bottom.
+ */
+function bassOk(v: number[], ct: ChordTones): boolean {
+  const p = mod12(v[0]);
+  if (p === ct.root || p === ct.bass) return true;
+  const t = ct.tones.find((x) => x.pc === p);
+  return !t || t.num < 8;
+}
+
+/**
  * Every voicing of a chord in one style inside a register, each a list of MIDI notes from the
  * bottom up, already checked for muddiness and reach. Empty when the style can't fit.
  */
@@ -340,7 +377,7 @@ export function keyCandidates(ref: ChordRef, opts: KeyOptions = {}): number[][] 
     const v = withBass(v0, ct);
     if (!v || v.length > MAX_KEYS) continue;
     if (v[0] < low - (ct.bass !== undefined ? 12 : 0) || v[v.length - 1] > high) continue;
-    if (!lowIntervalOk(v) || !playable(v) || !complete(v, ct, style)) continue;
+    if (!lowIntervalOk(v) || !outerOk(v) || !bassOk(v, ct) || !playable(v) || !complete(v, ct, style)) continue;
     const k = v.join(",");
     if (seen.has(k)) continue;
     seen.add(k);
@@ -434,17 +471,23 @@ export function moveCost(a: number[], b: number[]): number {
 
 /** The note a chord wants at the bottom: its slash bass, or its root. */
 const bottomOf = (ref: ChordRef) => pc(ref.bass ?? ref.root);
+const isSlash = (ref: ChordRef) => !!ref.bass && pc(ref.bass) !== pc(ref.root);
 
 /**
- * What a voicing costs by itself: distance from the middle of its register, and an inversion
- * (a chord is clearest with its root, or its slash bass, at the bottom; `alone`: the chord is
- * shown on its own, with nothing to lead from, where that clarity matters most).
+ * What a voicing costs by itself: distance from the middle of its register, keys outside the
+ * register (only a widened search finds those; a slash bass may sit under it), an inversion (a
+ * chord is clearest with its root, or its slash bass, at the bottom; `alone`: the chord is shown
+ * on its own, with nothing to lead from, where that clarity matters most), and semitone rubs.
  */
-function placeCost(v: number[], low: number, high: number, bottom: number, alone = false): number {
+function placeCost(v: number[], low: number, high: number, bottom: number, alone = false, slash = false): number {
   const centre = (low + high) / 2;
   const mean = v.reduce((a, b) => a + b, 0) / v.length;
   let cost = Math.abs(mean - centre) * 0.1;
+  const lowest = slash && v.length > 1 ? v[1] : v[0];
+  cost += 0.5 * (Math.max(0, low - lowest) + Math.max(0, v[v.length - 1] - high));
   if (mod12(v[0]) !== bottom) cost += alone ? 1.5 : 0.6;
+  // a semitone between neighbouring keys rubs: allowed, but a voicing without one is clearer
+  cost += 1.5 * rubs(v);
   return cost;
 }
 
@@ -486,11 +529,12 @@ const lexLess = (a: number[], b: number[]) => {
 export function pianoVoicing(ref: ChordRef, opts: KeyOptions = {}): number[] {
   const { low, high } = bounds(opts);
   const bottom = bottomOf(ref);
+  const slash = isSlash(ref);
   const cands = candidatesOrFallback(ref, opts);
   let best = cands[0];
   let bestCost = Infinity;
   for (const v of cands) {
-    const cost = opts.prev?.length ? placeCost(v, low, high, bottom) * 0.5 + moveCost(opts.prev, v) : placeCost(v, low, high, bottom, true);
+    const cost = opts.prev?.length ? placeCost(v, low, high, bottom, false, slash) * 0.5 + moveCost(opts.prev, v) : placeCost(v, low, high, bottom, true, slash);
     if (cost < bestCost - 1e-9 || (Math.abs(cost - bestCost) < 1e-9 && lexLess(v, best))) {
       best = v;
       bestCost = cost;
@@ -511,7 +555,7 @@ export function arrangeKeys(chords: (ChordRef | null | undefined)[], opts: KeyOp
   const out: number[][] = chords.map(() => []);
   if (!idx.length) return out;
   const cands = idx.map((i) => candidatesOrFallback(chords[i]!, opts));
-  const node = idx.map((i, k) => cands[k].map((v) => placeCost(v, low, high, bottomOf(chords[i]!))));
+  const node = idx.map((i, k) => cands[k].map((v) => placeCost(v, low, high, bottomOf(chords[i]!), false, isSlash(chords[i]!))));
   // cost[k][j]: the best total ending with candidate j of the k-th chord
   let cost = cands[0].map((v, j) => node[0][j] + (opts.prev?.length ? moveCost(opts.prev, v) : 0));
   const back: number[][] = [cands[0].map(() => -1)];

@@ -1,7 +1,7 @@
 import type { CSSProperties } from "react";
 import { splitHands } from "../../keys/voicing";
 import { keyCentre, keyRects, keyboardWindow } from "../../keys/keyboard";
-import { chordNotes, chordToneMap, chordTypeOf, findChordType, type ChordRef } from "../../theory/chords";
+import { chordNotes, chordSymbol, chordToneMap, chordTypeOf, findChordType, type ChordRef } from "../../theory/chords";
 import { mod12, midiToName, pc } from "../../theory/notes";
 import { spellInKey, type Key } from "../../theory/keys";
 import type { LabelMode } from "../state";
@@ -85,11 +85,13 @@ export function KeyboardDiagram({ notes, chord, keyOf, labels = "intervals", wid
     const t = tok(m);
     return t === "bass" ? nameOf(m) : t ? tokenLabel(t) : nameOf(m);
   };
-  const spoken = keys.map((m) => plain(m) + (Math.floor(m / 12) - 1)).join(" ");
+  // read out as the chord and its keys, low to high: "B♭maj7 on piano: B♭3 D4 F4 A4"
+  const spoken = keys.map((m) => nameOf(m) + (Math.floor(m / 12) - 1)).join(" ");
+  const named = chord && findChordType(chord.typeId) ? `${chordSymbol(chord)} on piano` : "Piano keys";
 
   return (
     <svg className={`kbd${compact ? " compact" : ""}${className ? " " + className : ""}`} width={width} height={height} viewBox={`0 0 ${width} ${height}`} role="img"
-      aria-label={keys.length ? `Piano keys ${spoken}` : "Piano keys, none pressed"}>
+      aria-label={keys.length ? `${named}: ${spoken}` : `${named}, no keys pressed`}>
       {keyRects(win.lo, win.hi).map((k) => {
         const on = pressed.has(k.midi);
         const root = on && rootPc !== null && mod12(k.midi) === rootPc;

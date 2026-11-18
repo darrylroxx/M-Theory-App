@@ -15,9 +15,10 @@ import {
   type HarmonizeInput,
 } from "./harmonize";
 import { CHORD_TYPES, refPcs, type ChordRef } from "./chords";
-import { keyScale, type Key } from "./keys";
+import { diatonicChords, keyScale, type Key } from "./keys";
 import { mod12, pc } from "./notes";
 import { getScale, scalePcs } from "./scales";
+import { seededRng } from "./progression";
 import { TICKS, type Melody } from "../song/melody";
 import type { ProgChord } from "../ui/state";
 
@@ -766,6 +767,176 @@ describe("edge cases", () => {
       const out = harmonize(input(c, "melody", o.id, "melody")).melody!;
       expect(out.div, o.id).toBe(3);
       for (const n of out.notes) expect(n.at % 4, o.id).toBe(0);
+    }
+  });
+});
+
+// ── Musical checks found in review ────────────────────────────
+
+describe("the lines a musician would expect", () => {
+  it("chord tones: the nearest chord note under the tune (C→G, E→C, G→E), never a tritone with it", () => {
+    const out = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 72], [1, 76], [2, 79]], 1) }, under: P("C"), key: C, bar: 4, bars: 1 }).melody!;
+    expect(out.notes.map((n) => n.midi)).toEqual([67, 72, 76]);
+    // A over A diminished: the C a sixth below, not the E♭ a tritone below
+    const dim = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 69]], 1) }, under: P("Adim"), key: { tonic: "Bb", scaleId: "ionian" }, bar: 4, bars: 1 }).melody!;
+    expect(dim.notes.map((n) => n.midi)).toEqual([60]);
+    // a tune note outside the chord on a strong beat: the third below bends to the chord, never a minor ninth over it
+    const off = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 72]], 1) }, under: P("Eb"), key: { tonic: "Ab", scaleId: "ionian" }, bar: 4, bars: 1 }).melody!;
+    expect(refPcs({ root: "Eb", typeId: "maj" })).toContain(mod12(off.notes[0].midi));
+  });
+
+  it("a harmony under a low tune goes under it (the range reaches a sixth below the tune's lowest note)", () => {
+    const tune = M([[0, 48], [2, 52], [4, 53], [6, 57], [8, 55], [10, 59], [12, 60]]);
+    for (const id of ["third-below", "sixth-below", "chord-tones"]) {
+      const out = harmonize({ kind: "melody", option: id, source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4 }).melody!;
+      out.notes.forEach((h, i) => expect(h.midi, `${id} at ${h.at / TICKS}`).toBeLessThan(tune.notes[i].midi));
+      for (const h of out.notes) expect(h.midi).toBeGreaterThanOrEqual(36);
+    }
+  });
+
+  it("a counter-line stays consonant when the tune sits on a colour note (no chord note fits: a tension does)", () => {
+    // the tune holds G over F (its 9th), then A over G (its 9th): C under G then D under A would be
+    // parallel fifths, and every other chord note clashes, so a tension is used instead
+    const tune = M([[0, 72], [1, 71], [1.5, 69], [2, 67], [8, 69], [9, 71], [10, 72]]);
+    const notes = harmonize({ kind: "melody", option: "counter", source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4 }).melody!.notes;
+    const line = melodyLine(tune, 16 * TICKS);
+    for (let t = 0; t < 16 * TICKS; t += TICKS) {
+      if (!strong(t, 4)) continue;
+      const a = sounding(notes, t);
+      const b = sounding(line, t);
+      if (a !== null && b !== null) expect(CONSONANT, `beat ${t / TICKS}: ${b}/${a}`).toContain(ic(a, b));
+    }
+    // and the tune starting low in its range still gets a consonance on the line's own side
+    const low = harmonize({ kind: "melody", option: "counter", source: { melody: M([[0, 67], [2, 79], [4, 82], [6, 84], [8, 82], [10, 79], [12, 84], [14, 82]]) }, under: P("Eb Ab Bb Eb"), key: { tonic: "Eb", scaleId: "ionian" }, bar: 4, bars: 4 }).melody!;
+    expect(CONSONANT).toContain(ic(low.notes[0].midi, 67));
+    expect(low.notes[0].midi).toBeLessThan(67);
+  });
+
+  it("an answer starts on a new note and echoes as much of the last phrase as fits the gap", () => {
+    const tune = M([[0, 72], [1, 71], [1.5, 69], [2, 67], [8, 69], [9, 71], [10, 72]]);
+    const out = harmonize({ kind: "melody", option: "answer", source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4 }).melody!;
+    // the four notes C B A G come back a step lower in the gap after them
+    expect(out.notes.filter((n) => n.at < 8 * TICKS).length).toBe(4);
+    // where no two notes fit, a run of chord notes answers, starting on a note other than the one just sung
+    const d = { tonic: "D", scaleId: "ionian" };
+    const tune2 = M([[0, 66], [1, 69], [2, 74], [3, 73], [5, 71], [7, 74], [10, 71], [12, 67], [15, 69], [17, 73]]);
+    const out2 = harmonize({ kind: "melody", option: "answer", source: { melody: tune2 }, under: P("D:5 Bm:5 G:5 A:5"), key: d, bar: 5, bars: 4 }).melody!;
+    const line2 = melodyLine(tune2, 20 * TICKS);
+    let gaps = 0;
+    for (const n of out2.notes) {
+      const before = line2.filter((x) => x.at < n.at).pop()!;
+      const prev = out2.notes.filter((x) => x.at < n.at && x.at > before.at);
+      if (!prev.length) {
+        gaps++;
+        expect(n.midi, `answer at ${n.at / TICKS}`).not.toBe(before.midi);
+      }
+    }
+    expect(gaps).toBeGreaterThanOrEqual(3);
+  });
+
+  it("an answer in 6/8, 9/8 or 12/8 moves in triplet eighths, on the triplet grid", () => {
+    const tune = M([[0, 71], [2 / 3, 72], [4 / 3, 71], [2, 67], [4, 72], [5, 71], [6, 69], [8, 67], [9, 71], [10, 74], [12, 74], [13, 72], [14, 71]], 4, 3);
+    const out = harmonize({ kind: "melody", option: "answer", source: { melody: tune }, under: P("Em C G D"), key: { tonic: "E", scaleId: "aeolian" }, bar: 4, bars: 4, compound: true }).melody!;
+    expect(out.notes.length).toBeGreaterThan(0);
+    expect(out.div).toBe(3);
+    for (const n of out.notes) expect(n.at % 4).toBe(0);
+  });
+});
+
+describe("chords slipped in fall on a beat", () => {
+  const cuts = (chords: ProgChord[]) => bounds(chords).starts.map((t) => t / TICKS);
+  it("3/4 splits 2+1, 5/4 3+2, 7/4 4+3, 4/4 2+2", () => {
+    expect(sym(harmonize({ kind: "chords", option: "lead-in", source: { chords: P("G:3 C:3 D7:3 G:3") }, key: { tonic: "G", scaleId: "ionian" }, bar: 3, bars: 4 }).chords)).toBe("G:maj@3 C:maj@2 A:7@1 D:7@3 G:maj@3");
+    expect(sym(harmonize({ kind: "chords", option: "passing", source: { chords: P("D:5 Bm:5 G:5 A:5") }, key: { tonic: "D", scaleId: "ionian" }, bar: 5, bars: 4 }).chords)).toContain("G:maj@3 G#:dim7@2");
+    expect(sym(harmonize({ kind: "chords", option: "lead-in", source: { chords: P("C:7 Am:7") }, key: C, bar: 7, bars: 2 }).chords)).toBe("C:maj@4 E:7@3 A:min@7");
+    expect(sym(harmonize({ kind: "chords", option: "lead-in", source: { chords: P("C Am") }, key: C, bar: 4, bars: 2 }).chords)).toBe("C:maj@2 E:7@2 A:min@4");
+  });
+  it("never between beats, in any meter", () => {
+    for (const bar of [2, 3, 4, 5, 6, 7])
+      for (const id of ["lead-in", "passing"]) {
+        const src = P("C Dm Em F G Am", bar);
+        for (const t of cuts(harmonize({ kind: "chords", option: id, source: { chords: src }, key: C, bar, bars: 6 }).chords!)) expect(Number.isInteger(t), `${id} in ${bar}: ${t}`).toBe(true);
+      }
+  });
+});
+
+describe("chord layers written from a melody", () => {
+  it("sit on the song's own chords when the section has some (so the layer sounds with them)", () => {
+    const c = CASES[0];
+    for (const id of ["pad", "higher", "shell", "colour", "sus", "pedal"]) {
+      const out = harmonize({ kind: "chords", option: id, source: { melody: c.tune }, under: c.chords, key: c.key, bar: 4, bars: 4 }).chords!;
+      let at = 0;
+      for (const ch of out) {
+        if (!ch.rest) expect(pc(ch.ref.root), `${id} at ${at}`).toBe(pc(chordAt(c.chords, at * TICKS)!.root));
+        at += ch.beats;
+      }
+    }
+  });
+  it("best fit uses V7 where the tune sings the key's 4th over V", () => {
+    const out = harmonize({ kind: "chords", option: "fit", source: { melody: M([[0, 60], [1, 64], [2, 67], [4, 67], [5, 71], [6, 65], [7, 74], [8, 72]], 3) }, key: C, bar: 4, bars: 3 }).chords!;
+    expect(sym(out)).toContain("G:7");
+  });
+  it("relative swap never turns V into vii° by chance", () => {
+    for (let seed = 1; seed <= 40; seed++) {
+      const out = harmonize({ kind: "chords", option: "relative", source: { chords: P("D Bm G A") }, key: { tonic: "D", scaleId: "ionian" }, bar: 4, bars: 4, seed }).chords!;
+      expect(out[3].ref.typeId, `seed ${seed}`).not.toBe("dim");
+    }
+  });
+});
+
+describe("random tunes over random progressions", () => {
+  const KEYS: Key[] = [C, Am, { tonic: "D", scaleId: "dorian" }, { tonic: "G", scaleId: "mixolydian" }, { tonic: "E", scaleId: "phrygian" }, { tonic: "F", scaleId: "lydian" }, { tonic: "Bb", scaleId: "ionian" }, { tonic: "B", scaleId: "harmonicMinor" }];
+  const METERS = [{ bar: 4 }, { bar: 3 }, { bar: 2, compound: true }, { bar: 4, compound: true }, { bar: 5 }, { bar: 7 }];
+  it("third, sixth and chord-tone lines never clash with the tune on a strong note; counter-lines are consonant there with no parallels; everything sits on the grid", () => {
+    const rng = seededRng(2026);
+    for (let it = 0; it < 120; it++) {
+      const key = KEYS[it % KEYS.length];
+      const { bar, compound } = METERS[Math.floor(rng() * METERS.length)];
+      const bars = 2 + Math.floor(rng() * 3);
+      const diat = diatonicChords(key, rng() < 0.3 ? 4 : 3).filter((c) => !c.type.synthetic);
+      const chords: ProgChord[] = Array.from({ length: bars }, (_, i) => ({ id: "c" + i, ref: diat[Math.floor(rng() * diat.length)].ref, beats: bar }));
+      const scale = scalePcs(pc(key.tonic), keyScale(key));
+      const ladder: number[] = [];
+      for (let m = 55; m <= 81; m++) if (scale.includes(mod12(m))) ladder.push(m);
+      const div = compound ? 3 : 2;
+      const notes: { at: number; midi: number }[] = [];
+      let idx = Math.floor(ladder.length / 2);
+      for (let t = 0; t < bars * bar * TICKS; t += TICKS / div)
+        if (rng() < (t % TICKS === 0 ? 0.6 : 0.25)) {
+          idx = Math.max(0, Math.min(ladder.length - 1, idx + Math.round((rng() - 0.5) * 5)));
+          notes.push({ at: t, midi: ladder[idx] });
+        }
+      if (!notes.length) continue;
+      const tune: Melody = { div: div as Melody["div"], bars, notes };
+      const len = bars * bar * TICKS;
+      const line = melodyLine(tune, len);
+      const tag = `${key.tonic} ${key.scaleId} ${bar}${compound ? "c" : ""} #${it}`;
+      const run = (option: string) => harmonize({ kind: "melody", option, source: { melody: tune }, under: chords, key, bar, bars, compound, seed: it }).melody!;
+      for (const id of ["third-above", "third-below", "sixth-below", "chord-tones"]) {
+        const out = run(id);
+        out.notes.forEach((h, i) => {
+          const n = line[i];
+          if (beatStrength(n.at, bar) >= 2 || n.end - n.at > TICKS) expect(CONSONANT, `${tag} ${id} at ${n.at / TICKS}: ${n.midi}/${h.midi}`).toContain(ic(h.midi, n.midi));
+          if (i > 0) expect(parallelPerfect(line[i - 1].midi, out.notes[i - 1].midi, n.midi, h.midi), `${tag} ${id} parallel at ${n.at / TICKS}`).toBe(false);
+        });
+      }
+      const counter = run("counter").notes;
+      for (let t = 0; t < len; t += TICKS / div) {
+        if (!strong(t, bar)) continue;
+        const a = sounding(counter, t);
+        const b = sounding(line, t);
+        if (a !== null && b !== null) expect(CONSONANT, `${tag} counter at ${t / TICKS}: ${b}/${a}`).toContain(ic(a, b));
+      }
+      const moments = [...new Set([...counter.map((n) => n.at), ...line.map((n) => n.at)])].sort((a, b) => a - b);
+      for (let i = 1; i < moments.length; i++) {
+        const [a1, b1, a2, b2] = [sounding(counter, moments[i - 1]), sounding(line, moments[i - 1]), sounding(counter, moments[i]), sounding(line, moments[i])];
+        if (a1 !== null && b1 !== null && a2 !== null && b2 !== null) expect(parallelPerfect(b1, a1, b2, a2), `${tag} counter parallel at ${moments[i] / TICKS}`).toBe(false);
+      }
+      for (const o of MELODY_HARMONY) {
+        const out = run(o.id);
+        if (compound) expect([1, 3], `${tag} ${o.id}`).toContain(out.div);
+        for (const n of out.notes) expect(n.at % (TICKS / out.div), `${tag} ${o.id} grid`).toBe(0);
+      }
     }
   });
 });

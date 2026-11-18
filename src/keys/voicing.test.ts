@@ -12,9 +12,11 @@ import {
   lowIntervalOk,
   matchVoices,
   moveCost,
+  outerOk,
   parallelPerfects,
   pianoVoicing,
   playable,
+  rubs,
   splitHands,
   totalMoveCost,
   totalMovement,
@@ -23,7 +25,7 @@ import {
 } from "./voicing";
 import { CHORD_TYPES, type ChordRef } from "../theory/chords";
 import { mod12, pc } from "../theory/notes";
-import { semitonesOf } from "../theory/intervals";
+import { parseInterval, semitonesOf } from "../theory/intervals";
 
 const ref = (root: string, typeId: string, bass?: string): ChordRef => ({ root, typeId, ...(bass ? { bass } : {}) });
 const pcsOf = (v: number[]) => new Set(v.map(mod12));
@@ -59,6 +61,33 @@ describe("piano voicings, chord by chord", () => {
             expect(playable(v), label).toBe(true);
           }
     });
+
+  it("no semitone between the two top or the two bottom keys, and never a colour tone (9th, 11th, 13th) in the bass", () => {
+    for (const style of KEY_STYLES)
+      for (const reg of Object.values(REGISTERS))
+        for (const root of ROOTS)
+          for (const t of CHORD_TYPES) {
+            const v = pianoVoicing(ref(root, t.id), { style, low: reg.low, high: reg.high });
+            const label = `${style} ${root}${t.symbol} ${reg.low}-${reg.high}: ${v.join(",")}`;
+            expect(outerOk(v), label).toBe(true);
+            const bass = t.intervals.find((iv) => mod12(pc(root) + semitonesOf(iv)) === mod12(v[0]));
+            if (bass) expect(parseInterval(bass).number, label).toBeLessThan(8);
+          }
+    // the textbook cases: B♭13 never ends on G under A♭, E7♭9 never stands on F
+    expect(rubs([60, 61])).toBe(1);
+    expect(outerOk([58, 62, 67, 68])).toBe(false);
+    expect(outerOk([52, 53, 56, 59, 62])).toBe(false);
+    for (const style of KEY_STYLES) expect(mod12(pianoVoicing(ref("E", "7b9"), { style })[0]), style).not.toBe(5);
+  });
+
+  it("an eleventh chord is voiced without its 3rd (the 11th a semitone above it is the avoid note)", () => {
+    for (const style of ["open", "drop2", "shell"] as KeyStyle[]) {
+      const v = pianoVoicing(ref("C", "11"), { style });
+      expect(pcsOf(v).has(4), style).toBe(false);
+      expect(pcsOf(v).has(5), style).toBe(true);
+      expect(pcsOf(v).has(10), style).toBe(true);
+    }
+  });
 
   it("a triad keeps all three notes in every style but the shell, and the shell keeps root, 3rd and 7th", () => {
     for (const style of KEY_STYLES) {
