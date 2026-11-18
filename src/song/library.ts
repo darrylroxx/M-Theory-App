@@ -40,6 +40,17 @@ export function fingerprint(s: Snapshot): string {
   return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: p.layers } : {}) });
 }
 
+/**
+ * Is the music still as it was? (Which section is selected, and which track a page is editing,
+ * do not count.) An undo puts back what was there before one change, so it is only offered
+ * while nothing else has changed since: it would take that away too.
+ */
+export function sameMusic(a: Progression, b: Progression): boolean {
+  if (a === b) return true;
+  const as = (progression: Progression): Snapshot => ({ key: { tonic: "C", scaleId: "ionian" }, progression, capo: 0, tuningId: "" });
+  return fingerprint(as(a)) === fingerprint(as(b));
+}
+
 /** Nothing worth saving yet. */
 export const isBlank = (p: Progression) => !p.chords.length && !p.song && !p.beat?.on && !p.melody?.notes.length;
 

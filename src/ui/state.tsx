@@ -311,6 +311,8 @@ export interface ToastAction {
   run: () => void;
   /** milliseconds (20 seconds if not given) */
   ms?: number;
+  /** offered only while this holds (an undo, while nothing else has changed); the message goes when it stops */
+  when?: (s: AppState) => boolean;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -519,10 +521,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.saved, state.tombs, cloud]);
 
   const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow };
+  const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>
       {children}
-      {toastMsg && (
+      {toastMsg && toastLive && (
         <div className={`toast${toastMsg.action ? " act" : ""}`} role="status">
           <span>{toastMsg.msg}</span>
           {toastMsg.action && <button aria-label={toastMsg.action.aria} title={toastMsg.action.aria} onClick={() => { toastMsg.action!.run(); setToast(null); }}>{toastMsg.action.label}</button>}

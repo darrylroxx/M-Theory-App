@@ -34,7 +34,8 @@ import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
-import { sectionSig, setSig, sigOf } from "../../song/unity";
+import { conform, sectionSig, setSig, sigOf } from "../../song/unity";
+import { sameMusic } from "../../song/library";
 import { FrameSections } from "../components/FrameSections";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
@@ -1195,16 +1196,19 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   };
   const canExport = any;
   const setBpm = (n: number) => change((p) => ({ ...p, bpm: Math.max(40, Math.min(200, Math.round(n))) }));
-  // the song's time signature: every section plays in it unless it has its own. A change can be taken back for a while.
+  // the song's time signature: every section plays in it unless it has its own. A change can be taken back for a while, as long as nothing else has changed since.
   const sig = sigOf(prog);
-  const [undoSig, setUndoSig] = useState<Progression | null>(null);
+  const [undoSig, setUndoSig] = useState<{ before: Progression; after: Progression } | null>(null);
   const undoTimer = useRef(0);
+  const canUndoSig = useMemo(() => !!undoSig && sameMusic(prog, undoSig.after), [prog, undoSig]);
   const pickSig = (m: TimeSig) => {
     if (sameSig(m, sig)) return;
-    setUndoSig(prog);
+    const after = conform(setSig(prog, m));
+    setUndoSig({ before: prog, after });
     window.clearTimeout(undoTimer.current);
     undoTimer.current = window.setTimeout(() => setUndoSig(null), 20000);
-    change((p) => setSig(p, m));
+    // (should the song have moved on in the meantime, the change is made to it as it is, and there is nothing to undo)
+    change((p) => (p === prog ? after : setSig(p, m)));
   };
   // a recording keeps the time signature of the section it was sung in
   const offSig = [...new Set(playing.filter((k) => k.sig && k.sig !== sigName(sectionSig(prog, k.at.block))).map((k) => k.sig!))];
@@ -1227,7 +1231,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
           {TIME_SIGS.map((m) => (
             <button key={sigName(m)} role="radio" aria-checked={sameSig(m, sig)} aria-label={sigName(m)} className={`sig${sameSig(m, sig) ? " on" : ""}`} onClick={() => pickSig(m)}><b>{m.num}</b><b>{m.den}</b></button>
           ))}
-          {undoSig && <button className="btn sm" aria-label="Undo the time signature change" title="Undo" onClick={() => { const back = undoSig; setUndoSig(null); change(() => back); }}>↶</button>}
+          {canUndoSig && undoSig && <button className="btn sm" aria-label="Undo the time signature change" title="Undo" onClick={() => { const back = undoSig.before; setUndoSig(null); change(() => back); }}>↶</button>}
         </div>
         {offSig.length > 0 && <p className="small fr-note" role="note">Vocals: recorded in {offSig.join(", ")}</p>}
         {offTempo.length > 0 && (

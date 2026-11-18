@@ -648,6 +648,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 /* a section in a time signature of its own */
 .fr-sig.own { border-style: solid; border-color: var(--kc); background: color-mix(in srgb, var(--kc) 30%, var(--card)); color: var(--text); }
 .fr-undo { width: 34px; height: 34px; border-radius: 9px; border: 1px solid var(--border-2); background: var(--card); color: var(--text); font-weight: 800; padding: 0; }
+.fr-sigs-of { flex-wrap: wrap; }
 .fr-sigs-of .sig { flex: 0 0 auto; }
 .sig.sm { width: 38px; height: 42px; }
 .sig.sm b { font-size: 0.9rem; }
@@ -929,7 +930,8 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tl-bar { flex: 1 1 0; min-width: 0; border-left: 1px solid var(--border); position: relative; }
 .tl-bar:first-child { border-left: none; }
 .tl-bar.sec { border-left-color: var(--border-2); }
-.tl-bar i { position: absolute; top: 5px; left: 4px; font-style: normal; font-size: 0.66rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
+.tl-bar i { position: absolute; top: 5px; left: 4px; display: flex; gap: 3px; max-width: calc(100% - 6px); font-style: normal; font-size: 0.66rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
+.tl-bar i b { min-width: 0; overflow: hidden; text-overflow: ellipsis; font-weight: 900; color: var(--text); }
 .tl-takes { position: absolute; left: 0; right: 0; top: 22px; bottom: 2px; }
 .tl-take { position: absolute; height: 16px; padding: 0 5px; border: none; border-radius: 5px; text-align: left; overflow: hidden; white-space: nowrap; font-size: 0.66rem; font-weight: 800; color: var(--text); background: color-mix(in srgb, var(--third, #3d8bfd) 30%, transparent); box-shadow: inset 2px 0 0 var(--third, #3d8bfd); }
 .tl-take.keep { background: color-mix(in srgb, var(--star) 30%, transparent); box-shadow: inset 2px 0 0 var(--star); }

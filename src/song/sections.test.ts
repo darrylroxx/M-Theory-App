@@ -162,6 +162,32 @@ describe("section names and letters", () => {
     expect(sound(p)).toEqual(before);
   });
 
+  it("with no song yet, ↻ A plays the page again at once", () => {
+    const p = repeatSection(base(["C", "G"]), "", id);
+    expect(labels(p)).toBe("A A");
+    expect(sections(p).map((s) => roots(s))).toEqual(["CG", "CG"]);
+    // a part that is not in the song: nothing happens
+    const q = abc();
+    expect(sections(repeatSection(q, "nope", id))).toHaveLength(3);
+  });
+
+  it("what was sung before the page had sections goes into section A when it gets one", () => {
+    const take: Take = { id: "t1", n: 1, group: "g1", dry: "a.wav", wet: "b.wav", rate: 48000, start: 0, frames: 48000, at: { block: "", bar: 1 } };
+    const page = conform({ ...base(["C"]), tracks: [{ id: "v1", kind: "vocals", name: "Vocal 1", takes: [take], active: { g1: "t1" } }] });
+    const blockOf = (p: Progression) => p.tracks![0].takes![0].at;
+    // naming it, adding a section, playing it again: whichever makes the song, the recording stays in A
+    for (const p of [renameSection(page, "", "Intro", id), addNewSection(page, id), repeatSection(page, "", id)]) {
+      expect(blockOf(p)).toEqual({ block: p.song!.blocks[0].id, bar: 1 });
+      expect(p.tracks![0].active).toEqual({ g1: "t1" });
+    }
+    // a song that already has sections is left as it is
+    const song = ensureSong(page, id);
+    expect(ensureSong(song, id).tracks).toBe(song.tracks);
+    // and a page with no recordings keeps its tracks as they were
+    const plain = normalize(addTrack(base(["C"]), "chords", "c2").p);
+    expect(ensureSong(plain, id).tracks).toBe(plain.tracks);
+  });
+
   it("letters() lists each section once, with its name and colour", () => {
     const p = renameSection(abc(), "", "Out");
     expect(letters(p).map((x) => [x.letter, x.label, x.color])).toEqual([["A", "A", 0], ["B", "B", 1], ["C", "Out", 2]]);

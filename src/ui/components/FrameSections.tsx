@@ -3,15 +3,16 @@ import type { Beat } from "../../audio/beats";
 import { MAX_SECTION_BARS, QUICK_BARS, barsText, stepBars } from "../../song/frame";
 import { hasTune } from "../../song/melody";
 import { TIME_SIGS, sameSig, sigName, type TimeSig } from "../../song/meter";
-import { MAX_NAME, addNewSection, ensureSong, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, unlinkBlock, type Section } from "../../song/structure";
+import { MAX_NAME, addNewSection, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, unlinkBlock, type Section } from "../../song/structure";
 import { activeTake, groupsOf } from "../../song/takes";
 import { allTracks, focusTrack, isFirst, normalize, type Track, type TrackKind } from "../../song/tracks";
 import { copySection, keyShift, pasteSection, sectionHasContent } from "../../song/clip";
-import { setSectionSig, sigOf } from "../../song/unity";
+import { conform, setSectionSig, sigOf } from "../../song/unity";
+import { sameMusic } from "../../song/library";
 import { displayNote } from "../../theory/notes";
 import { CopyIcon, GripIcon, PasteIcon } from "../icons";
 import { letterClass } from "../letters";
-import { newId, useApp, type Pane, type Progression } from "../state";
+import { newId, useApp, type AppState, type Pane, type Progression } from "../state";
 
 type Len = { beats: number; bar: number };
 /** The page that edits each kind of track. */
@@ -93,7 +94,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     change((p) => removeBlock(p, x.blockId));
   };
   const addNew = () => change((p) => addNewSection(p));
-  const again = (partId: string) => change((p) => repeatSection(p, partId || ensureSong(p).song!.parts[0].id));
+  const again = (partId: string) => change((p) => repeatSection(p, partId));
   const uniq = letters(prog);
 
   /** Tap the name of the section you are on to rename it; any other one, to go to it. */
@@ -107,19 +108,22 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     setNaming(null);
   };
 
-  // ── a section's own time signature: a change can be taken back for a while ──
-  const [undoSig, setUndoSig] = useState<{ block: string; before: Progression } | null>(null);
+  // ── a section's own time signature: a change can be taken back for a while, as long as nothing else has changed since ──
+  const [undoSig, setUndoSig] = useState<{ block: string; before: Progression; after: Progression } | null>(null);
   const undoTimer = useRef(0);
   useEffect(() => () => window.clearTimeout(undoTimer.current), []);
+  const canUndoSig = useMemo(() => !!undoSig && sameMusic(prog, undoSig.after), [prog, undoSig]);
   const sigOfRow = (x: Section): TimeSig => x.meter ?? songSig;
   const pickSig = (x: Section, m: TimeSig) => {
     setPicking(null);
     // the song's signature means "follow the song"; nothing to do if that is how it already is
     if (sameSig(m, sigOfRow(x)) && sameSig(m, songSig) === !x.meter) return;
-    setUndoSig({ block: x.blockId, before: prog });
+    const after = conform(setSectionSig(prog, x.blockId, m));
+    setUndoSig({ block: x.blockId, before: prog, after });
     window.clearTimeout(undoTimer.current);
     undoTimer.current = window.setTimeout(() => setUndoSig(null), 20000);
-    change((p) => setSectionSig(p, x.blockId, m));
+    // (should the song have moved on in the meantime, the change is made to it as it is, and there is nothing to undo)
+    change((p) => (p === prog ? after : setSectionSig(p, x.blockId, m)));
   };
 
   // ── copy and paste a whole section ──
@@ -140,14 +144,18 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     if (!clip) return;
     if (sectionHasContent(prog, x.blockId) && !window.confirm(`Replace everything in ${x.label} with ${clip.from}?`)) return;
     const before = prog;
-    set((s) => ({ ...s, progression: pasteSection(s.progression, x.blockId, clip, s.key, newId) }));
+    const key = state.key;
+    const after = conform(pasteSection(prog, x.blockId, clip, key, newId));
+    set((s) => ({ ...s, progression: s.progression === prog ? after : pasteSection(s.progression, x.blockId, clip, s.key, newId) }));
     onPasted();
     setPicking(null);
-    const moved = keyShift(clip.key, state.key) !== 0;
-    toast(`${clip.from} → ${x.label}${moved ? ` · ${displayNote(state.key.tonic)}` : ""}`, {
-      label: "↶", aria: "Undo the paste",
+    const moved = keyShift(clip.key, key) !== 0;
+    // the paste can be taken back while the idea is still just as it left it
+    const still = (s: AppState) => (s.ideaId ?? null) === idea && s.key.tonic === key.tonic && s.key.scaleId === key.scaleId && sameMusic(s.progression, after);
+    toast(`${clip.from} → ${x.label}${moved ? ` · ${displayNote(key.tonic)}` : ""}`, {
+      label: "↶", aria: "Undo the paste", when: still,
       run: () => {
-        set((s) => ((s.ideaId ?? null) === idea ? { ...s, progression: before } : s));
+        set((s) => (still(s) ? { ...s, progression: before } : s));
         onPasted();
       },
     });
@@ -207,8 +215,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     const sy = window.scrollY;
     drag.current = { id, from, els, tops: rs.map((r) => r.top + sy), heights: rs.map((r) => r.height), gap: Math.max(0, rs[1].top - rs[0].bottom), listTop: list.getBoundingClientRect().top + sy, startY: startY + sy, y: startY, to: from };
     els.forEach((e, k) => (e.style.transition = k === from ? "none" : "transform 150ms ease"));
-    setNaming(null);
-    setPicking(null);
+    // (an open length or signature picker stays open until the drop: closing it now would move the rows from under the measurements)
     setLifted(id);
     return true;
   };
@@ -219,6 +226,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     dropped.current = Date.now();
     flip.current = { id: d.id, top: d.els[d.from].getBoundingClientRect().top };
     setLifted(null);
+    setPicking(null);
     // `to` is its place among the other rows; moveBlockTo counts the rows as they are now
     if (keep && d.to !== d.from) change((p) => moveBlockTo(p, d.id, d.to > d.from ? d.to + 1 : d.to));
   };
@@ -397,7 +405,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
                 </span>
                 <button className={`fr-sig${x.meter ? " own" : ""}`} aria-expanded={picking?.id === id && picking.what === "sig"} aria-label={`Time signature of ${x.label}: ${sigName(sig)}${x.meter ? "" : ", the song's"}. Change it`} title={x.meter ? "Its own time signature" : "The song's time signature"}
                   onClick={() => setPicking(picking?.id === id && picking.what === "sig" ? null : { id, what: "sig" })}><b>{sig.num}</b><b>{sig.den}</b></button>
-                {undoSig?.block === x.blockId && <button className="fr-undo" aria-label={`Undo the time signature change in ${x.label}`} title="Undo" onClick={() => { const back = undoSig.before; setUndoSig(null); change(() => back); }}>↶</button>}
+                {canUndoSig && undoSig?.block === x.blockId && <button className="fr-undo" aria-label={`Undo the time signature change in ${x.label}`} title="Undo" onClick={() => { const back = undoSig.before; setUndoSig(null); change(() => back); }}>↶</button>}
               </span>
               <span className="fr-tools">
                 <button className={copied(x) ? "on" : ""} aria-label={`Copy ${x.label}: everything in it`} title="Copy" onClick={() => copy(x)}><CopyIcon /></button>

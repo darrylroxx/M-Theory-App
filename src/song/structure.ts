@@ -253,7 +253,9 @@ function ensureSongN(p: Progression, id: () => string = uid): Progression {
   if (p.song?.blocks.length) return commit(p);
   const part: SongPart = tidy({ id: id(), color: 0, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers });
   const block: SongBlock = { id: id(), partId: part.id };
-  return { ...p, song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
+  // what was sung over the page (before it had sections) was sung in section A: it goes with it
+  const tracks = p.tracks && mapList(p.tracks, (t) => (t.takes?.some((k) => !k.at.block) ? { ...t, takes: t.takes.map((k) => (k.at.block ? k : { ...k, at: { ...k.at, block: block.id } })) } : t));
+  return { ...p, ...(tracks ? { tracks } : {}), song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
 }
 
 /** Load a part onto the page: its chords and melody, and the settings it plays with. */
@@ -339,11 +341,11 @@ function addBlock(p: Progression, song: Song, part: SongPart, id: () => string):
   return show(p, insert({ ...song, parts }, block), block.id);
 }
 
-/** Play a section again: a new block with the same music, right after the selected one. */
+/** Play a section again: a new block with the same music, right after the selected one. (With no song yet, the page is section A: it plays again.) */
 function repeatSectionN(p0: Progression, partId: string, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
-  const part = song.parts.find((x) => x.id === partId);
+  const part = song.parts.find((x) => x.id === partId) ?? (p0.song?.blocks.length ? undefined : song.parts[0]);
   return part ? addBlock(p, song, part, id) : p;
 }
 

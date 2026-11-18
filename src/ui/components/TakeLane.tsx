@@ -1,7 +1,7 @@
 import { useEffect, useRef } from "react";
 import { takeBars, type Take } from "../../song/takes";
 
-/** One bar of what a recording goes round: its section, which of its bars, its letter, its beats. */
+/** One bar of what a recording goes round: its section, which of its bars, what the section is called (its name or letter), its beats. */
 export interface LaneBar {
   block: string;
   bar: number;
@@ -73,7 +73,8 @@ export function TakeLane({ bars, takes, bpm, where, live, onPick }: {
           const starts = i === 0 || bars[i - 1].block !== b.block;
           return (
             <span key={`${b.block}:${b.bar}`} className={`tl-bar${starts ? " sec" : ""}`}>
-              {(starts || i % step === 0) && <i>{starts ? `${b.letter}${b.bar + 1}` : b.bar + 1}</i>}
+              {/* the section's name apart from the bar's number (a name can end in a number too) */}
+              {(starts || i % step === 0) && <i>{starts && <b>{b.letter}</b>}{b.bar + 1}</i>}
             </span>
           );
         })}
