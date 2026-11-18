@@ -18,6 +18,7 @@ import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
@@ -149,6 +150,8 @@ export interface AppState {
   clip?: Clips;
   /** The recording setup on this computer: which interface, the switches on it, how you listen */
   studio?: Studio;
+  /** How many bars the editing pages show at once, and whether they follow the music (kept apart from the song, so it never makes an idea look changed) */
+  view?: ViewPrefs;
 }
 
 /** The recording setup on this computer. */
@@ -261,6 +264,7 @@ function load(): AppState {
       tombs: parsed.tombs ?? {},
       clip: reviveClips(parsed.clip),
       studio: parsed.studio && typeof parsed.studio === "object" ? { host: typeof parsed.studio.host === "string" ? parsed.studio.host : undefined, device: typeof parsed.studio.device === "string" ? parsed.studio.device : undefined, checks: parsed.studio.checks ?? {}, monitor: parsed.studio.monitor === "effects" ? "effects" : "hardware", countIn: parsed.studio.countIn === 0 || parsed.studio.countIn === 2 ? parsed.studio.countIn : 1, clickOn: !!parsed.studio.clickOn, backing: typeof parsed.studio.backing === "number" ? parsed.studio.backing : 1, click: typeof parsed.studio.click === "number" ? parsed.studio.click : 0.5, nudge: typeof parsed.studio.nudge === "number" ? parsed.studio.nudge : 0, buffer: typeof parsed.studio.buffer === "number" && parsed.studio.buffer >= 16 && parsed.studio.buffer <= 4096 ? parsed.studio.buffer : undefined } : undefined,
+      view: reviveView(parsed.view),
       progression: reviveProgression(parsed.progression),
     };
   } catch {

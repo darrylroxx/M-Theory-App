@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { pageStart, shownCount, type BarsShown } from "../../song/window";
 import { chordSymbol } from "../../theory/chords";
 import { MAX_BEATS, MIN_BEATS, fitBeats, type ProgChord } from "../state";
 
@@ -14,9 +15,10 @@ export function lengthText(beats: number, bar: number): string {
  * The section drawn to scale: every chord as wide as it is long, with a line at each bar.
  * Drag the edge between two chords to move where the change falls; tap a chord to set its length exactly.
  * The ruler is as long as the section: bars with no chord in them are drawn empty (they are silent),
- * and whatever lies past the end of the section is struck out.
+ * and whatever lies past the end of the section is struck out. As many bars as are chosen fill
+ * the width; the rest is reached by scrolling it sideways.
  */
-export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange }: {
+export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange, shown = 0, follow = false }: {
   chords: ProgChord[];
   /** beats in a bar */
   bar: number;
@@ -30,6 +32,10 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
   nowIdx: number;
   /** new lengths, by chord id */
   onChange: (beats: Record<string, number>) => void;
+  /** bars across the width (0 = all of them) */
+  shown?: BarsShown;
+  /** while the music plays, the ruler turns a page to the chord that is sounding */
+  follow?: boolean;
 }) {
   const [sel, setSel] = useState<string | null>(null);
   const row = useRef<HTMLDivElement>(null);
@@ -37,6 +43,17 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
   const total = chords.reduce((a, c) => a + c.beats, 0);
   const bars = Math.max(1, Math.ceil(Math.max(total, length) / bar - 1e-6));
   const span = bars * bar;
+  const across = shownCount(shown, bars);
+  // with Follow on, the page with the sounding chord's first bar is brought into view (sideways only)
+  useEffect(() => {
+    const el = row.current;
+    const sc = el?.parentElement;
+    if (!follow || nowIdx < 0 || !el || !sc || el.offsetWidth <= sc.clientWidth + 1) return;
+    const from = chords.slice(0, nowIdx).reduce((a, c) => a + c.beats, 0);
+    const per = el.offsetWidth / bars;
+    const x = Math.floor(from / bar + 1e-6) * per;
+    if (x < sc.scrollLeft - 1 || x >= sc.scrollLeft + sc.clientWidth - 1) sc.scrollLeft = pageStart(Math.floor(from / bar + 1e-6), across, bars) * per;
+  }, [nowIdx, follow]); // eslint-disable-line react-hooks/exhaustive-deps
   const rest = Math.max(0, span - total);
   const over = total > length + 1e-6;
   const nameOf = (c: ProgChord) => (c.rest ? "Rest" : chordSymbol(c.ref));
@@ -83,7 +100,7 @@ export function BarRuler({ chords, bar, length, letter, onFit, nowIdx, onChange 
   return (
     <div className="ruler-wrap" data-nodrag>
       <div className="ruler-scroll">
-        <div className="ruler" ref={row} style={{ "--beats": bars * bar, "--bar": bar } as React.CSSProperties} role="group" aria-label="Chord lengths">
+        <div className="ruler" ref={row} style={{ "--beats": bars * bar, "--bar": bar, "--bars": bars, "--across": across } as React.CSSProperties} role="group" aria-label="Chord lengths">
           {chords.map((c, i) => (
             <span key={c.id} className={`ruler-block${c.rest ? " rest" : ""}${sel === c.id ? " on" : ""}${nowIdx === i ? " now" : ""}`} style={{ flexGrow: c.beats }}>
               <button className="ruler-name" aria-pressed={sel === c.id} aria-label={`${nameOf(c)}, ${lengthText(c.beats, bar)}. Change its length`}

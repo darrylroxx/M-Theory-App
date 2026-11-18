@@ -387,13 +387,17 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .beat-item.on { border-color: var(--accent); background: var(--accent); }
 .beat-item.on button { color: var(--accent-ink); }
 .beat-item .beat-del { padding: 0 8px 0 0; font-size: 0.68rem; opacity: 0.7; }
-.beat-grid { --rh: 30px; display: flex; gap: 6px; }
+.beat-grid { --rh: 30px; --cell: 14px; display: flex; gap: 6px; }
 .bg-labels { display: flex; flex-direction: column; gap: 3px; flex: 0 0 60px; }
 .bg-label { height: var(--rh); border-radius: 7px; border: 1px solid var(--border); border-left: 4px solid var(--dc); background: var(--card-2); padding: 0 5px; font-size: 0.74rem; font-weight: 750; text-align: left; overflow: hidden; white-space: nowrap; }
 .bg-label:hover, .bg-label.on { border-color: var(--dc); }
 .bg-label.on { background: color-mix(in srgb, var(--dc) 30%, var(--card-2)); }
 .bg-label.muted, .bg-row.muted { opacity: 0.35; }
-.bg-steps { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 3px; touch-action: pan-y; user-select: none; -webkit-user-select: none; }
+/* the bars on screen side by side; when they need more room than there is, they scroll sideways in here (never the page) */
+.bg-steps { position: relative; flex: 1; min-width: 0; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; padding-block: 3px; margin-block: -3px; scrollbar-width: thin; touch-action: pan-x pan-y; user-select: none; -webkit-user-select: none; }
+/* while editing, a sideways drag paints */
+.drums.editing .bg-steps { touch-action: pan-y; }
+.bg-bar { position: relative; flex: 1 1 0; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 3px); display: flex; flex-direction: column; gap: 3px; }
 .bg-row { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 3px; height: var(--rh); }
 .bg-cell { position: relative; z-index: 2; min-width: 0; padding: 0; border-radius: 5px; border: 1px solid var(--border); background: var(--card-2); cursor: pointer; }
 .bg-cell.beat { background: color-mix(in srgb, var(--text) 9%, var(--card-2)); border-color: var(--border-2); }
@@ -403,7 +407,7 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .bg-cell.l3 { background: var(--dc); border-color: var(--text); box-shadow: 0 0 0 2px var(--text) inset; }
 .bg-cell:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
 .bg-now { display: none; position: absolute; z-index: 3; top: -3px; bottom: -3px; left: calc(var(--now, 0) * 100% / var(--steps)); width: calc(100% / var(--steps)); border-radius: 6px; background: color-mix(in srgb, var(--text) 20%, transparent); box-shadow: 0 0 0 1.5px color-mix(in srgb, var(--text) 45%, transparent); pointer-events: none; }
-.bg-steps.playing .bg-now { display: block; }
+.bg-bar.playing .bg-now { display: block; }
 /* sound and effects */
 .dm-panel { display: flex; flex-direction: column; gap: 10px; min-width: 0; padding: 10px 12px 12px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); border-top: 3px solid var(--dc, var(--border-2)); }
 .dm-phead { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; min-width: 0; min-height: 46px; }
@@ -455,9 +459,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 
 /* ── Bar ruler: the section drawn to scale ── */
 .ruler-wrap { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.ruler-scroll { overflow-x: auto; scrollbar-width: none; border-radius: 8px; }
-.ruler-scroll::-webkit-scrollbar { display: none; }
-.ruler { position: relative; display: flex; height: 26px; min-width: calc(var(--beats) * 11px); border-radius: 8px; border: 1px solid var(--border-2); overflow: hidden;
+.ruler-scroll { overflow-x: auto; scrollbar-width: thin; border-radius: 8px; }
+.ruler-scroll::-webkit-scrollbar { height: 6px; }
+/* as many bars as are chosen fill the width; the rest is scrolled to */
+.ruler { position: relative; display: flex; height: 26px; width: calc(100% * var(--bars, 1) / var(--across, 1)); min-width: calc(var(--beats) * 11px); border-radius: 8px; border: 1px solid var(--border-2); overflow: hidden;
   background-color: var(--bg-2); background-image: linear-gradient(to right, var(--border-2) 1px, transparent 1px); background-size: calc(100% / var(--beats)) 100%; }
 .ruler-block { position: relative; flex: 1 1 0; min-width: 0; display: flex; }
 .ruler-name { flex: 1; min-width: 0; margin: 2px 1px; padding: 0 5px; border: none; border-radius: 5px; background: color-mix(in srgb, var(--accent) 28%, var(--card)); color: var(--text);
@@ -520,12 +525,14 @@ button.dm-strip-name:hover { color: var(--accent); }
 
 /* ── Melody: a grid of notes ── */
 .melody { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 66px; }
-.mg { --rh: 24px; display: flex; gap: 6px; user-select: none; }
+.mg { --rh: 24px; --cell: 14px; display: flex; gap: 6px; user-select: none; }
 .mg-labels { flex: 0 0 44px; display: flex; flex-direction: column; gap: 2px; }
 .mg-label { height: var(--rh); padding: 0; border-radius: 6px; border: 1px solid var(--border); background: var(--bg-2); color: var(--faint); font-size: 0.7rem; font-weight: 700; }
 .mg-label.in { background: color-mix(in srgb, var(--accent) 22%, var(--card)); border-color: color-mix(in srgb, var(--accent) 45%, var(--border)); color: var(--text); font-weight: 800; }
 .mg-label.home { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
-.mg-steps { position: relative; flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; --now: -1; }
+/* the bars on screen side by side; when they need more room than there is, they scroll sideways in here (never the page) */
+.mg-steps { position: relative; flex: 1; min-width: 0; display: flex; gap: 10px; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; --now: -1; }
+.mg-bar { position: relative; flex: 1 1 0; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 2px); display: flex; flex-direction: column; gap: 2px; --now: -1; }
 .mg-row { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 2px; height: var(--rh); }
 .mg-cell { position: relative; padding: 0; border: none; border-radius: 5px; background: var(--bg-2); min-width: 0; cursor: pointer; }
 .mg-row.in .mg-cell { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
@@ -535,7 +542,8 @@ button.dm-strip-name:hover { color: var(--accent); }
 .mg-cell:hover { outline: 2px solid var(--accent); outline-offset: -2px; }
 .mg-cell.on { background: var(--accent) !important; box-shadow: none; }
 .mg-cell.on.fit::after { background: var(--accent-ink); opacity: 0.8; }
-.mg-now { position: absolute; top: 0; bottom: 0; left: calc(var(--now) * 100% / var(--steps)); width: calc(100% / var(--steps)); border-radius: 5px; background: var(--text); opacity: 0.13; pointer-events: none; display: block; }
+.mg-now { position: absolute; top: 0; bottom: 0; left: calc(var(--now) * 100% / var(--steps)); width: calc(100% / var(--steps)); border-radius: 5px; background: var(--text); opacity: 0.13; pointer-events: none; display: none; }
+.mg-bar.sounding .mg-now { display: block; }
 .melody .dm-head .seg button { min-width: 34px; }
 @media (max-width: 620px) { .melody { padding: 10px; } .mg { --rh: 28px; gap: 4px; } .mg-labels { flex-basis: 36px; } .mg-row, .mg-steps, .mg-labels { gap: 2px; } }
 .voice-group { display: flex; flex-direction: column; gap: 6px; }
@@ -555,7 +563,6 @@ button.dm-strip-name:hover { color: var(--accent); }
 .link-chip { flex: 0 0 auto; display: inline-flex; align-items: center; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--faint); font-size: 0.74rem; font-weight: 800; white-space: nowrap; }
 .link-chip.own { border-style: solid; border-color: var(--accent); color: var(--accent); cursor: pointer; }
 
-.mg-steps { overflow: hidden; }
 .pick-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 @media (max-width: 620px) { .pick-wrap { flex: 1 1 100%; } .pick-wrap .beat-pick { flex: 1; min-width: 0; } .pick-wrap .beat-pick .beat-name { flex: 1; } }
 
@@ -572,7 +579,6 @@ button.dm-strip-name:hover { color: var(--accent); }
 .dm-bars { flex-wrap: nowrap; overflow-x: auto; scrollbar-width: none; min-width: 0; padding-bottom: 1px; }
 .dm-bars::-webkit-scrollbar { display: none; }
 .dm-bars button { flex: 0 0 auto; }
-.dm-bar > .dm-bars { flex: 1 1 120px; }
 .dm-bars button.hollow:not(.on) { border-style: dashed; background: none; color: var(--muted); }
 .dm-bars button.hollow.on { background: var(--muted); border-color: var(--muted); }
 /* rests, and the empty bars of the ruler */
@@ -916,3 +922,50 @@ button.dm-strip-name:hover { color: var(--accent); }
 .transport.locked .loopbar, .transport.locked .loop-btn { pointer-events: none; opacity: 0.7; }
 .tv-takes { position: relative; display: block; width: 100%; height: 100%; }
 .tv-take { position: absolute; top: 6px; bottom: 6px; border-radius: 6px; background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--kc) 55%, var(--text)) 0 2px, transparent 2px 5px), color-mix(in srgb, var(--kc) 30%, transparent); font-size: 0.7rem; font-weight: 800; padding: 2px 6px; overflow: hidden; white-space: nowrap; }
+
+/* ── Bars on screen: the editing pages show as many bars as are chosen, side by side ── */
+.bars-ctl { flex: 0 0 auto; display: inline-flex; align-items: center; gap: 6px; }
+.bars-ctl .seg { flex-wrap: nowrap; }
+.bars-ctl .seg button { min-width: 30px; padding: 4px 8px; }
+.bars-pick { display: none; height: 32px; padding: 0 6px; font-weight: 750; font-size: 0.85rem; }
+.bars-follow { padding: 4px 11px 4px 9px; }
+.bars-follow svg { display: block; flex: none; }
+@media (max-width: 620px) {
+  .bars-ctl .kb-label, .bars-ctl .seg, .bars-follow span { display: none; }
+  .bars-pick { display: inline-block; }
+  .bars-follow { width: 34px; height: 32px; padding: 0; justify-content: center; }
+}
+/* each bar has its number over it and a line between it and the next */
+.mg-bar + .mg-bar::before, .bg-bar + .bg-bar::before { content: ""; position: absolute; left: -6px; top: 0; bottom: 0; width: 2px; border-radius: 1px; background: var(--border-2); }
+.mg-num, .bg-num { flex: none; height: 16px; padding: 0 0 0 3px; border: none; border-radius: 4px; background: none; color: var(--muted); font-size: 0.68rem; font-weight: 850; line-height: 16px; text-align: left; font-variant-numeric: tabular-nums; }
+.mg-num:hover, .bg-num:hover { color: var(--text); }
+.mg-bar.sel .mg-num, .bg-bar.sel .bg-num { color: var(--accent); }
+.mg-numpad, .bg-numpad { flex: none; height: 16px; }
+.mg-bar.sounding .mg-num, .bg-bar.playing .bg-num { color: var(--text); }
+/* the tabs of the bars that are on screen, and the page buttons beside them */
+.dm-bars button.inview:not(.on) { border-color: color-mix(in srgb, var(--text) 45%, var(--border-2)); box-shadow: inset 0 -2px 0 color-mix(in srgb, var(--text) 55%, transparent); }
+.dm-page { flex: 0 0 auto; min-width: 30px; justify-content: center; padding-inline: 6px; font-size: 1rem; }
+.dm-tabrow { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dm-tabrow > .dm-bars { flex: 0 1 auto; }
+.dm-bar > .dm-tabrow { flex: 1 1 200px; }
+.tv-bars.tight i:first-child { padding-left: 3px; }
+/* the bar over each page: the tracks scroll before anything wraps */
+.clip-tracks { flex-wrap: nowrap; }
+@media (max-width: 620px) {
+  .clip-bar { gap: 5px; }
+  .dm-bar > .dm-tabrow { flex-basis: 100%; }
+  .bg-steps, .mg-steps { gap: 10px; }
+  .bg-bar { gap: 2px; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 2px); }
+}
+/* fingers: squares big enough to hit, and bars that settle on their edge when swiped */
+@media (max-width: 620px), (pointer: coarse) {
+  .mg { --cell: 30px; }
+  .mg-steps, .bg-steps { scroll-snap-type: x proximity; }
+  .mg-bar, .bg-bar { scroll-snap-align: start; }
+}
+/* more than one bar on screen: the grids, the tray and the Track page take the whole width;
+   the chord cards, the knobs and the pickers keep a comfortable width */
+main.wide { max-width: none; }
+main.wide .dock-inner { max-width: none; }
+main.wide .board, main.wide .harp { width: 100%; max-width: 1100px; margin-inline: auto; }
+main.wide .dm-panel, main.wide .dm-drawer { max-width: 1100px; }

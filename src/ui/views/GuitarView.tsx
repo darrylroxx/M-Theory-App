@@ -19,6 +19,8 @@ import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scal
 import { ChordDiagram } from "../components/ChordDiagram";
 import { ROLE_CLASS, Seg, displayRoman, toneClass } from "../components/common";
 import { BarRuler } from "../components/BarRuler";
+import { BarsControl, useBarsView } from "../components/BarsControl";
+import type { BarsShown } from "../../song/window";
 import { CanvasPage } from "../components/CanvasPage";
 import type { Spot } from "../../canvas/layout";
 import { DrumMachine } from "../components/DrumMachine";
@@ -45,7 +47,6 @@ export function GuitarView() {
   const { state, set, shapeOf, sheet, openSheet, tuning, toast } = useApp();
   const prog = state.progression;
   const beat = prog.beat ?? DEFAULT_BEAT;
-  const stepSink = useRef<((step: number) => void) | null>(null);
   const [nowIdx, setNowIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
   /** true while the whole song is playing (the tray follows it section by section) */
@@ -313,9 +314,15 @@ export function GuitarView() {
   const link = (g: SettingGroup): Link | undefined =>
     (editChords && (g === "style" || g === "sound")) || (editTune && g === "tuneSound") || (editDrums && (g === "groove" || g === "kit")) ? undefined
     : { source: linked.source, first: linked.first, own: linked.own[g], onReset: () => set((s) => ({ ...s, progression: relink(s.progression, g) })) };
+  // the same chips from one render to the next, so the editors are not drawn again for nothing while the music plays
+  const links = useMemo(() => ({ style: link("style"), sound: link("sound"), tuneSound: link("tuneSound"), kit: link("kit"), groove: link("groove") }), [linked, editChords, editTune, editDrums]); // eslint-disable-line react-hooks/exhaustive-deps
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
   const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
+  // bars on screen and Follow, the same on every editing page
+  const { shown, follow } = useBarsView();
+  const followRef = useRef(follow);
+  followRef.current = follow;
 
   useEffect(() => {
     if (player.current?.playing) player.current.update(playList.items, prog.bpm, prog.pattern, playList.loop, firstBeat, null);
@@ -330,8 +337,8 @@ export function GuitarView() {
     setNowIdx(-1);
   };
   /**
-   * Play. With no loop: from the section on screen, on through the song to its end (the page
-   * follows along). With a loop: the looped bars, round and round.
+   * Play. With no loop: from the section on screen, on through the song to its end (with Follow
+   * on, the page goes along). With a loop: the looped bars, round and round.
    */
   const startPlay = () => {
     const list = listRef.current;
@@ -343,15 +350,13 @@ export function GuitarView() {
     p.onStep = (i) => {
       const at = listRef.current.map[i];
       if (!at) return;
-      // a new section has started: the page goes there too
+      // a new section has started: with Follow on the page goes there too; with it off the page stays where it is
       if (at.block !== playBlock.current) {
         playBlock.current = at.block;
-        if (at.block) set((s) => (s.progression.song && s.progression.song.current !== at.block ? { ...s, progression: selectBlock(s.progression, at.block) } : s));
+        if (at.block && followRef.current) set((s) => (s.progression.song && s.progression.song.current !== at.block ? { ...s, progression: selectBlock(s.progression, at.block) } : s));
       }
       setNowIdx(at.block === curRef.current ? at.idx : -1);
     };
-    // the grids show where the music is only while the section on screen is the one sounding
-    p.onDrumStep = (n) => stepSink.current?.(playBlock.current === curRef.current ? n : -1);
     p.onEnd = () => { playBlock.current = null; setPlaying(false); setNowIdx(-1); };
     p.start(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, from);
     setPlaying(true);
@@ -388,11 +393,11 @@ export function GuitarView() {
 
   const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
   /** Load a rhythm. One written for other bars is fitted to the song's time signature (see song/unity). */
-  const pickBeat = (p: BeatPattern) => {
+  const pickBeat = useCallback((p: BeatPattern) => {
     set((s) => ({ ...s, progression: { ...s.progression, beat: applyPattern(s.progression.beat ?? DEFAULT_BEAT, p) } }));
     // hear it straight away
-    if (!playing) setAudition((n) => n + 1);
-  };
+    if (!playingRef.current) setAudition((n) => n + 1);
+  }, [set]);
   /** Choose how the section on screen is played. The bars stay as the time signature has them. */
   const pickStyle = (id: PatternId) => {
     set((s) => ({ ...s, progression: { ...s.progression, pattern: id } }));
@@ -569,7 +574,7 @@ export function GuitarView() {
       <div className={`page write${drag ? " dragging" : ""}`}>
         <Transport locked={recording} per={plan.per} current={curBlock} loop={loop} layout={layout} onBar={onLoopBar} onLoop={toggleLoop} getBar={getBar} playing={playing} onPlay={togglePlay} canPlay={plan.any} />
         <div className="pane" hidden={pane !== "track"}>
-          <TrackPage sections={trackSecs} current={curBlock} loop={loop} layout={layout} playing={playing} getWhere={getWhere} />
+          <TrackPage sections={trackSecs} current={curBlock} loop={loop} layout={layout} playing={playing} getWhere={getWhere} shown={shown} follow={follow} active={pane === "track"} />
         </div>
         <div className="pane" hidden={pane !== "frame"}>
           <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} voicingsOf={voicingsOf} song={plan.items} any={plan.any} beat={beat} plan={secs.length ? plan : null} />
@@ -582,14 +587,14 @@ export function GuitarView() {
           <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
             {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
             <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-            <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} letter={curLetter} onFit={setBars} />
+            <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} letter={curLetter} onFit={setBars} shown={shown} follow={follow} />
           </div>
-          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={link("style")} soundLink={link("sound")} />
+          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={links.style} soundLink={links.sound} />
         </div>
         <div className="pane" hidden={pane !== "melody"}>
           <ClipBar kind="melody" letter={curLetter} frame={frame} onPasted={onPasted} />
-          <MelodyGrid fresh={`${curBlock}:${pasted}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
-            sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
+          <MelodyGrid fresh={`${curBlock}:${pasted}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
+            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} />
@@ -599,7 +604,7 @@ export function GuitarView() {
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <ClipBar kind="drums" letter={curLetter} frame={frame} onPasted={onPasted} />
-          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} stepSink={stepSink} kitLink={link("kit")} grooveLink={link("groove")} frame={nBars} getPos={getPos} />
+          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} kitLink={links.kit} grooveLink={links.groove} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
         </div>
       </div>
       {pane === "rhythm" && away && !sheet && (
@@ -984,6 +989,7 @@ function ClipBar({ kind, letter, frame, onPasted }: { kind: ClipKind; letter: st
         <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={add}>+</button>
       </span>
       <span className="spacer" />
+      <BarsControl />
       <button className="icon-btn" title="Copy" aria-label={`Copy the ${what} of ${letter}`} onClick={copy}><CopyIcon /></button>
       {undo && undo.block === block ? (
         <button className="icon-btn" aria-label="Undo the paste" title="Undo" onClick={takeBack}>↶</button>
@@ -1320,7 +1326,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   );
 }
 
-function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, length, letter, onFit }: {
+function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, length, letter, onFit, shown, follow }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   nowIdx: number;
@@ -1334,11 +1340,24 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
   length: number;
   letter: string;
   onFit: (bars: number) => void;
+  /** bars across the ruler (0 = all of them), and whether the view goes along with the music */
+  shown: BarsShown;
+  follow: boolean;
 }) {
   const { state, set } = useApp();
   const chords = state.progression.chords;
   const arr = state.progression.arrange ?? null;
   const span = fretSpan(voicings);
+  // with Follow on, the chord that is sounding is kept in sight in its row (sideways only)
+  const slotsRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const r = slotsRef.current;
+    const el = r?.querySelector<HTMLElement>(".slot.now");
+    if (!follow || !r || !el) return;
+    const a = el.getBoundingClientRect();
+    const b = r.getBoundingClientRect();
+    if (a.left < b.left || a.right > b.right) r.scrollLeft += a.left - b.left - 8;
+  }, [nowIdx, follow]);
   /** A silence, one bar long, after the last chord. (Its chord is only a placeholder: nothing is played.) */
   const addRest = () => set((s) => ({ ...s, progression: { ...s.progression, chords: [...s.progression.chords, { id: newId(), ref: { root: s.key.tonic, typeId: "maj" }, beats: chordBeats(s.progression), rest: true }] } }));
   const marker = <span key="marker" className="drop-marker" />;
@@ -1380,13 +1399,13 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
           </div>
         )}
         <div className="dock-main">
-        <div className="dock-slots">
+        <div className="dock-slots" ref={slotsRef}>
           {chords.length === 0 && !drag ? <span className="dock-empty" aria-label="No chords yet">+</span> : els}
           {chords.length === 0 && drag && drag.index === null && <span className="dock-empty">↓</span>}
         </div>
         </div>
         <div className="dock-foot">
-          <BarRuler chords={chords} bar={bar} length={length} letter={letter} onFit={onFit} nowIdx={nowIdx} onChange={onLengths} />
+          <BarRuler chords={chords} bar={bar} length={length} letter={letter} onFit={onFit} nowIdx={nowIdx} onChange={onLengths} shown={shown} follow={follow} />
           <button className="rest-add" title="Add a bar of silence after the last chord" onClick={addRest}>+ Rest</button>
           {chords.length > 0 && <button className="rest-add clear" title="Take every chord out of this section" onClick={() => set((s) => ({ ...s, progression: { ...s.progression, chords: [] } }))}>Clear</button>}
         </div>
