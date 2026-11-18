@@ -1,16 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, grooveOf, setStep } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
-import { addNewSection, commit, ensureSong, letters, linkState, loadCurrent, mapAllChords, relink, moveBlock, moveBlockTo, nextLetter, removeBlock, repeatSection, reviveSong, sections, selectBlock, sharedCount, unlinkBlock } from "./structure";
+import { addNewSection, commit, ensureSong, letterAt, letters, linkState, loadCurrent, mapAllChords, relink, moveBlock, moveBlockTo, removeBlock, repeatSection, reviveSong, sections, selectBlock, sharedCount, unlinkBlock, type Song } from "./structure";
 
 const chord = (root: string): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats: 4 });
 const base = (roots: string[] = []): Progression => ({ chords: roots.map(chord), bpm: 90, pattern: "ring", loop: true });
 let n = 0;
 const id = () => `id${++n}`;
+/** the letters in playing order (they follow the order the sections first play in) */
 const order = (p: Progression) => sections(p).map((s) => s.letter).join("");
 const roots = (p: Progression) => p.chords.map((c) => c.ref.root);
 const setTray = (p: Progression, rs: string[]): Progression => ({ ...p, chords: rs.map(chord) });
-const partId = (p: Progression, letter: string) => p.song!.parts.find((x) => x.letter === letter)!.id;
+const partId = (p: Progression, letter: string) => sections(p).find((s) => s.letter === letter)!.partId;
+/** a stored song's letters in playing order */
+const lettersOf = (s: Song) => sections({ ...base(), song: s }).map((x) => x.letter).join("");
 const block = (p: Progression, i: number) => sections(p)[i].blockId;
 const cur = (p: Progression) => sections(p).findIndex((s) => s.current);
 
@@ -42,23 +45,26 @@ describe("song structure", () => {
 
   it("new and pasted sections land right after the selected one", () => {
     let p = addNewSection(base(["C"]), id); // A B, B selected
+    p = setTray(p, ["F"]);
     p = addNewSection(p, id); // A B C
+    p = setTray(p, ["G"]);
     p = selectBlock(p, block(p, 0));
     p = repeatSection(p, partId(p, "C"), id);
-    expect(order(p)).toBe("ACBC");
+    // C now plays second, so it is B; the old B plays third and is C
+    expect(order(p)).toBe("ABCB");
+    expect(sections(p).map((s) => s.chords[0]?.ref.root).join("")).toBe("CGFG");
     expect(cur(p)).toBe(1);
     p = addNewSection(p, id);
-    expect(order(p)).toBe("ACDBC");
+    expect(order(p)).toBe("ABCDB");
+    expect(sections(p).map((s) => s.chords[0]?.ref.root ?? "-").join("")).toBe("CG-FG");
   });
 
-  it("letters: first free one, reused after a section is gone", () => {
-    expect(nextLetter([])).toBe("A");
-    expect(nextLetter([{ letter: "A" }, { letter: "C" }])).toBe("B");
-    expect(nextLetter("ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("").map((letter) => ({ letter })))).toBe("A2");
+  it("letters follow the playing order: A to Z, then A2 …; after a section is gone the rest close up", () => {
+    expect([0, 1, 25, 26, 27, 52].map(letterAt)).toEqual(["A", "B", "Z", "A2", "B2", "A3"]);
     let p = addNewSection(addNewSection(base(["C"]), id), id); // A B C
     p = removeBlock(p, block(p, 1));
-    expect(order(p)).toBe("AC");
-    expect(order(addNewSection(p, id))).toBe("ACB");
+    expect(order(p)).toBe("AB");
+    expect(order(addNewSection(p, id))).toBe("ABC");
   });
 
   it("each letter once, for the drum section picker", () => {
@@ -82,22 +88,25 @@ describe("song structure", () => {
     expect(unlinkBlock(p, second, id).song!.parts).toHaveLength(2); // already on its own: nothing to do
   });
 
-  it("moves a block anywhere", () => {
+  it("moves a block anywhere; whatever plays first is A", () => {
     let p = addNewSection(addNewSection(addNewSection(base(["C"]), id), id), id); // ABCD
     const [a, b, c, d] = sections(p).map((s) => s.blockId);
+    const blocks = (q: Progression) => sections(q).map((s) => [a, b, c, d].indexOf(s.blockId)).join("");
     p = moveBlockTo(p, d, 0);
-    expect(order(p)).toBe("DABC");
-    p = moveBlockTo(p, d, 4);
+    expect(blocks(p)).toBe("3012");
     expect(order(p)).toBe("ABCD");
+    p = moveBlockTo(p, d, 4);
+    expect(blocks(p)).toBe("0123");
     p = moveBlockTo(p, a, 2);
-    expect(order(p)).toBe("BACD");
+    expect(blocks(p)).toBe("1023");
     expect(moveBlockTo(p, a, 1)).toBe(p); // dropped where it already is
     expect(moveBlockTo(p, a, 2)).toBe(p);
     p = moveBlock(p, c, -1);
-    expect(order(p)).toBe("BCAD");
+    expect(blocks(p)).toBe("1203");
     expect(moveBlock(p, b, -1)).toBe(p);
     p = moveBlock(p, b, 1);
-    expect(order(p)).toBe("CBAD");
+    expect(blocks(p)).toBe("2103");
+    expect(order(p)).toBe("ABCD");
     expect(sections(p).find((s) => s.current)!.blockId).toBe(d); // the selection does not move
   });
 
@@ -147,8 +156,8 @@ describe("song structure", () => {
     p = setTray(p, ["F"]);
     p = addNewSection(p, id); // C
     p = setTray(p, ["G"]);
-    // B and C have nothing of their own: they are stored as chords only
-    expect(p.song!.parts.slice(1).map((x) => Object.keys(x).sort())).toEqual([["chords", "id", "letter"], ["chords", "id", "letter"]]);
+    // B and C have nothing of their own: they are stored as chords only (and their colours)
+    expect(p.song!.parts.slice(1).map((x) => Object.keys(x).sort())).toEqual([["chords", "color", "id"], ["chords", "color", "id"]]);
     expect(linkState(p)).toMatchObject({ first: false, source: "A" });
     expect(Object.values(linkState(p).own).some(Boolean)).toBe(false);
     // change things in A afterwards: the style, the harp, the melody's harp, the kit, the rhythm, drums on
@@ -205,10 +214,12 @@ describe("song structure", () => {
     p = { ...setTray(p, ["F"]), pattern: "pinch" };
     p = addNewSection(p, id); // C: follows A
     p = setTray(p, ["G"]);
-    const before = sections(p).slice(1).map((s) => [s.letter, s.style, s.sound?.voice]);
+    const before = sections(p).slice(1).map((s) => [s.partId, s.style, s.sound?.voice]);
     p = removeBlock(p, block(p, 0));
-    expect(sections(p).map((s) => [s.letter, s.style, s.sound?.voice])).toEqual(before);
-    expect(before).toEqual([["B", "pinch", "kora"], ["C", "strum", "kora"]]);
+    expect(sections(p).map((s) => [s.partId, s.style, s.sound?.voice])).toEqual(before);
+    expect(before.map((x) => x.slice(1))).toEqual([["pinch", "kora"], ["strum", "kora"]]);
+    // the two that are left are now A and B
+    expect(order(p)).toBe("AB");
     // B now leads: changing its harp changes C's too, but C kept the old style as its own
     p = selectBlock(p, block(p, 0));
     expect(linkState(p).first).toBe(true);
@@ -263,7 +274,7 @@ describe("song structure", () => {
       current: "3",
     };
     const s = reviveSong(old)!;
-    expect(s.blocks.map((b) => s.parts.find((x) => x.id === b.partId)!.letter).join("")).toBe("ABCB");
+    expect(lettersOf(s)).toBe("ABCB");
     expect(s.current).toBe("3");
     expect(s.parts.find((x) => x.id === "c")!.chords[0].ref.root).toBe("F");
   });

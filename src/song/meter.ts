@@ -1,14 +1,17 @@
 /**
- * The time signature. One for the whole song, set on the Frame page, and the one thing that
- * says how long a bar is: on the Chords, Melody and Drums pages, in the Track view, the loop
- * bar, the count-in for vocals and every export. Nothing else decides it (it used to follow
- * the drum rhythm, or the playing style when the drums were off).
+ * The time signature. The song has one, set on the Frame page, and every section plays in it
+ * unless that section has been given one of its own. A section's signature is the one thing
+ * that says how long its bars are: on the Chords, Melody and Drums pages, in the Track view,
+ * the loop bar, the count-in for vocals and every export. Nothing else decides it (it used to
+ * follow the drum rhythm, or the playing style when the drums were off).
  *
  * A "beat" is the pulse the tempo counts: a quarter note in 3/4 or 4/4, a dotted quarter in
  * 6/8, 9/8 and 12/8 (so 6/8 is two beats to the bar, each one dividing in three).
  */
 import { DRUM_IDS, type DrumId } from "../audio/drums";
 import type { Melody } from "./melody";
+import type { Layer, Layers } from "./tracks";
+import type { ProgChord } from "../ui/state";
 
 export interface TimeSig {
   num: number;
@@ -114,4 +117,58 @@ export function fitMelody(m: Melody, from: number, to: number, compound: boolean
     notes.push({ ...n, at });
   }
   return { ...m, div: tri ? 3 : str ? 4 : m.div, notes };
+}
+
+type Rhythm = Parameters<typeof fitRhythm>[0];
+/** What to do to every chord, melody and drum rhythm of something (a section, a track's part of it). */
+export interface Maps {
+  chord?: (c: ProgChord) => ProgChord;
+  melody?: (m: Melody) => Melody;
+  rhythm?: <T extends Rhythm>(g: T) => T;
+}
+
+/** Everything written in one signature, moved into another (see fitChordBeats, fitMelody, fitRhythm). */
+export function refit(from: TimeSig, to: TimeSig): Maps {
+  const a = sigBeats(from);
+  const b = sigBeats(to);
+  const comp = isCompound(to);
+  // leaving 6/8, 9/8 or 12/8: the triplets become 16ths again
+  const straight = isCompound(from) && !comp;
+  return {
+    chord: (c) => {
+      const beats = fitChordBeats(c.beats, a, b);
+      return beats === c.beats ? c : { ...c, beats };
+    },
+    melody: (m) => fitMelody(m, a, b, comp, straight),
+    rhythm: (g) => fitRhythm(g, b, comp, straight),
+  };
+}
+
+/** A list with every item changed; the same list back when nothing changed. */
+export const mapList = <T,>(xs: T[], fn: (x: T) => T): T[] => {
+  let same = true;
+  const out = xs.map((x) => {
+    const y = fn(x);
+    if (y !== x) same = false;
+    return y;
+  });
+  return same ? xs : out;
+};
+
+/** Every track's part of a section changed; the same object back when nothing changed. */
+export function mapLayers(ls: Layers | undefined, f: Maps): Layers | undefined {
+  if (!ls) return ls;
+  const layer = (l: Layer): Layer => {
+    const c = l.chords && f.chord ? mapList(l.chords, f.chord) : l.chords;
+    const m = l.melody && f.melody ? f.melody(l.melody) : l.melody;
+    const b = l.beat && f.rhythm ? f.rhythm(l.beat) : l.beat;
+    return c === l.chords && m === l.melody && b === l.beat ? l : { ...l, chords: c, melody: m, beat: b };
+  };
+  let same = true;
+  const out: Layers = {};
+  for (const [k, v] of Object.entries(ls)) {
+    out[k] = layer(v);
+    if (out[k] !== v) same = false;
+  }
+  return same ? ls : out;
 }

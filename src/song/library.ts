@@ -16,7 +16,7 @@ import { chordSymbol } from "../theory/chords";
 import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
 import type { Progression, SavedProgression } from "../ui/state";
-import { commit, loadCurrent, reviveSong, sections, settle } from "./structure";
+import { commit, leadFirst, loadCurrent, reviveSong, sections, settle } from "./structure";
 
 /** Everything that makes up an idea, ready to store. */
 export interface Snapshot {
@@ -54,7 +54,7 @@ export function autoName(key: Key, existing: SavedProgression[]): string {
 /** One line about an idea: its sections, or its chords when it has no structure. */
 export function describeIdea(i: SavedProgression): string {
   const secs = sections(i.progression);
-  if (secs.length) return secs.map((s) => s.letter).join(" ");
+  if (secs.length) return secs.map((s) => s.label).join(" ");
   return i.progression.chords.map((c) => (c.rest ? "–" : chordSymbol(c.ref))).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
 }
 
@@ -69,7 +69,8 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const tracks = reviveTracks(p.tracks);
   const song = reviveSong(p.song, tracks);
   const melody = reviveMelody(p.melody);
-  const progression: Progression = settle(loadCurrent({
+  // the section that plays first leads (older songs could have another one leading)
+  const progression: Progression = settle(leadFirst(loadCurrent({
     chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
     // the melody used to share the chords' harp: one written back then keeps the sound it had
@@ -79,7 +80,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(reviveSig(p.meter) ? { meter: reviveSig(p.meter) } : {}),
     ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
     ...(tracks ? { tracks } : {}), ...(reviveLayers(p.layers, tracks) ? { layers: reviveLayers(p.layers, tracks) } : {}),
-  }));
+  })));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression: conform(progression), savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
 

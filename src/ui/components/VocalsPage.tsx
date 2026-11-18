@@ -15,7 +15,7 @@ import { setLive } from "../live";
 import { EqGraph } from "./EqGraph";
 import { EarIcon } from "../icons";
 import { sigName } from "../../song/meter";
-import { sigOf } from "../../song/unity";
+import { sectionSig } from "../../song/unity";
 
 /** What a recording goes round, and the song to play under it. */
 export interface RecordPlan {
@@ -213,7 +213,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (wasRecording && r && plan && t) {
         const group = newId();
         const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
-        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sigOf(state.progression)) }));
+        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sectionSig(state.progression, plan.at.block)) }));
         if (!takes.length) toast("Stopped before the first take");
         else {
           set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
