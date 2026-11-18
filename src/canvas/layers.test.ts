@@ -218,6 +218,13 @@ describe("each layer paints in its own kind of paint", () => {
     expect(longestRun(glaze)).toBeGreaterThan((xOfT(2) - xOfT(0.2)) * 0.8);
   });
 
+  it("a held voice that comes round to the other side of the canvas is lifted with all its strands: nothing is drawn across", () => {
+    const ms = play("vocals", [note(15.2, 64, 1.6, { attack: 0.2 })], 17.2);
+    expect(ms.filter((m) => m.x < W * 0.2).length).toBeGreaterThan(10);
+    expect(ms.filter((m) => m.x > W * 0.8).length).toBeGreaterThan(10);
+    expect(ms.filter((m) => m.x > W * 0.25 && m.x < W * 0.75)).toHaveLength(0);
+  });
+
   it("the other sounds are fog: huge, edge-less and very thin", () => {
     expect(fog.length).toBeGreaterThan(5);
     for (const m of fog) {

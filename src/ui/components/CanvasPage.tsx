@@ -153,12 +153,11 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     try {
       p = new Painting(host.current, pal);
     } catch (e) {
+      // (a graphics card that cannot run the paint: the page says so; while developing, say why)
       if (import.meta.env.DEV) console.error(e);
       return;
     }
     painter.current = p;
-    // (for looking into the painting from the browser's console while developing)
-    if (import.meta.env.DEV) (window as unknown as { __canvas?: unknown }).__canvas = { painter: p, files: fileLayers };
     return () => {
       p.destroy();
       painter.current = null;

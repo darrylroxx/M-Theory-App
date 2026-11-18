@@ -5,7 +5,8 @@
  * an ear on the layer's sound), what the whole mix sounds like, and where in the music each
  * moment is. It keeps:
  *
- * - a **hand** for every layer (`strokes.ts`), each with its own kind of brush;
+ * - a **hand** for every track of the song, or every stem of a recording (`strokes.ts`), each
+ *   with the kind of brush of the layer it is painted in;
  * - a **layout** (`place.ts`) that says where each moment of each layer goes, chosen by the music
  *   itself (**Auto**) or by the painter;
  * - the **mood** of the last few seconds (wet and slow, or dry and quick) and the **vibe** of the

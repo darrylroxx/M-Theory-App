@@ -168,7 +168,7 @@ On **Auto** the music chooses, from its vibe (below): a steady groove tends to t
 
 **The vibe.** About seventy numbers are measured from the music as a whole (the shape of its sound, its harmony and key, its rhythm and groove, its dynamics, how its notes are held or clipped, and which parts play and how much), the way music-similarity research measures songs, and read against fixed reference figures. They set how wet the paint runs, how loose the hand is, how fast the currents move, how many marks a sound leaves, how long the strokes are, which way round the palette the parts are cast and which layout Auto chooses. The same song always gets the same vibe; a song with similar parts gets a similar one, whatever its key, tempo or mix, and so a similar painting, while every mark, which follows its own notes, is new. Write a song inspired by a favourite, run both through the canvas, and you can see how close the atmosphere is.
 
-**Songs from files are split into layers** on your own computer, as soon as they are opened, well ahead of where they play: what is sudden is the drums, what is steady and low the bass, what is steady, in the middle of the stereo picture and does not repeat the voice, and the rest is shared out into chords, melody and fog by how its notes behave. This is plain signal processing, not a trained model, so the layers are approximate (a held synth line can pass for a voice). Until the split has caught up, the whole mix is heard and its notes shared out. The vibe of the whole song is known by the time it has been heard through once (a first idea of it after twenty seconds).
+**Songs from files are split into layers** on your own computer, as soon as they are opened, well ahead of where they play: what is sudden is the drums, what is steady and low the bass, what is steady, in the middle of the stereo picture and does not repeat the voice, and the rest is shared out into chords, melody and fog by how its notes behave. This is plain signal processing, not a trained model, so the layers are approximate (a held synth line can pass for a voice). Until the split has caught up, the whole mix is heard and its notes shared out. The vibe of the whole song is known by the time it has been heard through once (a first idea of it within a few seconds of opening it).
 
 **How to read it**
 
@@ -220,7 +220,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 484 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers
+npm test          # 485 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

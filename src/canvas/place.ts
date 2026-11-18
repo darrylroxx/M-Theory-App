@@ -210,7 +210,8 @@ export class Rings extends Layout {
     const ax = Math.min(1.3, this.w / this.h);
     const x = this.w / 2 + r * ax * Math.cos(th);
     const y = this.h / 2 + r * Math.sin(th);
-    return { x, y, dx: -Math.sin(th), dy: Math.cos(th), seg: w.jump, scale: 0.55 + 0.45 * (r / R) };
+    // (marks are smaller towards the middle, where the turns are short and close together)
+    return { x, y, dx: -Math.sin(th), dy: Math.cos(th), seg: w.jump, scale: 0.4 + 0.6 * (r / R) };
   }
   get ruler() {
     return false;

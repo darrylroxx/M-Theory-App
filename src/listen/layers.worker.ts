@@ -41,8 +41,9 @@ async function run(m: Extract<ToWorker, { type: "open" }>) {
       if (current !== id) return;
       if (!h) break;
       self.postMessage({ type: "heard", id, to: h.to, mix: h.mix, layers: h.layers });
-      // a first idea of the vibe after the first twenty seconds of music, and a better one every half minute after that
-      if (job.vibe.heard >= 20 && (told < 0 || h.to - told >= 30)) {
+      // a first idea of the vibe after the first eight seconds of music (a few seconds after the song is opened), and a
+      // better one every half minute of the song after that
+      if (job.vibe.heard >= 8 && (told < 0 || h.to - told >= 30)) {
         told = h.to;
         self.postMessage({ type: "vibe", id, fp: job.vibe.fingerprint(), bpm: job.vibe.bpm, final: false });
       }

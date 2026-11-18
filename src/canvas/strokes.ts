@@ -551,6 +551,13 @@ export class LayerHand {
         s.x = s.px = p.x;
         s.y = s.py = p.y;
         s.vx = s.vy = 0;
+        s.laidAt = null;
+        // (the voice's strands are lifted with it: they do not chase across the canvas to where it is set down)
+        for (const st of s.strands ?? []) {
+          st.x = st.px = p.x;
+          st.y = st.py = p.y;
+          st.ax = st.ay = 0;
+        }
         if (this.line) this.line = null;
       }
       const amp = s.cue.len !== undefined ? this.envelope(s, at) : s.amp;
