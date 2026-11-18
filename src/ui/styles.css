@@ -623,7 +623,9 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
 .fr-len button:disabled { opacity: 0.3; }
 .fr-len .fr-len-n { display: inline-flex; align-items: center; justify-content: center; gap: 4px; min-width: 76px; padding: 0 8px; font-size: 1.15rem; font-weight: 850; font-variant-numeric: tabular-nums; border-inline: 1px solid var(--border); }
 .fr-len .fr-len-n small { font-size: 0.72rem; font-weight: 750; color: var(--muted); }
-.fr-parts { grid-area: parts; display: flex; gap: 6px; min-width: 0; }
+.fr-parts { grid-area: parts; display: flex; flex-wrap: wrap; gap: 6px; min-width: 0; }
+.fr-note { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0 0; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, #e0a020 55%, var(--border)); background: color-mix(in srgb, #e0a020 12%, var(--card)); }
+.keybar + .fr-note { margin: -4px 0 12px; }
 .fr-part { display: inline-flex; align-items: center; gap: 5px; height: 34px; padding: 0 11px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--muted); font-size: 0.82rem; font-weight: 750; white-space: nowrap; }
 .fr-part.has { border-style: solid; border-color: color-mix(in srgb, var(--kc) 70%, var(--border-2)); background: color-mix(in srgb, var(--kc) 22%, var(--card)); color: var(--text); }
 .fr-part small { font-size: 0.72rem; font-weight: 850; opacity: 0.75; }
@@ -651,7 +653,7 @@ button.dm-tile.add { align-items: center; min-height: 40px; padding: 4px 12px; b
   .fr-len { justify-self: start; }
   .fr-len button { min-width: 36px; }
   .fr-len .fr-len-n { min-width: 66px; }
-  .fr-parts .fr-part { flex: 1 1 0; justify-content: center; padding: 0 6px; }
+  .fr-parts .fr-part { flex: 1 1 calc(33% - 6px); justify-content: center; padding: 0 6px; }
   .fr-unlink { margin-left: 0; padding: 0 8px; }
   .fr-tools button { width: 32px; }
 }

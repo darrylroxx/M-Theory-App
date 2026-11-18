@@ -3,13 +3,13 @@ import { DEFAULT_BEAT, applyPattern, barBeats, grooveOf, kitOfBeat, type Beat, t
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, styleBar, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, playNote, playSequence, prepFor, prepareNotes, setHarpSound, setTuneSound, strum } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, playNote, playSequence, prepFor, prepareNotes, renderSong, setHarpSound, setTuneSound, strum } from "../../audio/synth";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { QUICK_BARS, MAX_SECTION_BARS, barsOr, barsText, fitLoop, frameBeats, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type BarRef, type LoopSpan } from "../../song/frame";
-import { addNewSection, ensureSong, letters, linkState, nextLetter, mapAllChords, moveBlock, setSectionBars, relink, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section, type SettingGroup } from "../../song/structure";
+import { addNewSection, ensureSong, letters, linkState, nextLetter, mapAllChords, mapAllMelodies, moveBlock, setSectionBars, relink, removeBlock, repeatSection, sections, selectBlock, sharedCount, unlinkBlock, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
 import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
@@ -27,8 +27,9 @@ import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { VocalsPage } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
-import { focusTrack, normalize, tracksOf, type EditKind } from "../../song/tracks";
-import { activeTake, groupsOf } from "../../song/takes";
+import { allTracks, focusTrack, isFirst, normalize, tracksOf, type EditKind, type Layers, type Track, type TrackKind } from "../../song/tracks";
+import { activeTake, groupsOf, type Take } from "../../song/takes";
+import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { loadTake, takeBuffer } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
@@ -577,7 +578,7 @@ export function GuitarView() {
           <TrackPage sections={trackSecs} current={curBlock} loop={loop} layout={layout} playing={playing} getWhere={getWhere} />
         </div>
         <div className="pane" hidden={pane !== "frame"}>
-          <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} items={items} beat={beat} tune={tune} plan={secs.length ? plan : null} />
+          <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} voicingsOf={voicingsOf} song={plan.items} any={plan.any} beat={beat} plan={secs.length ? plan : null} />
         </div>
         <div className="pane" hidden={pane !== "rhythm"}>
           <ClipBar kind="rhythm" letter={curLetter} frame={frame} onPasted={onPasted} />
@@ -639,8 +640,8 @@ const KeyBar = memo(function KeyBar() {
       // the melody moves with the key, by as much as its grid does (so it stays on the same rows)
       const by = melodyBase(newKey) - melodyBase(s.key);
       const p = mapAllChords(s.progression, (c) => ({ ...c, ref: transposeRef(c.ref, n, newKey), voicingId: undefined }));
-      const move = (m: Melody | undefined) => (m ? transposeMelody(m, by) : m);
-      return { ...s, key: newKey, progression: { ...p, melody: move(p.melody), song: p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, melody: move(x.melody) })) } : p.song } };
+      // every melody moves too, the added melody tracks' as well
+      return { ...s, key: newKey, progression: mapAllMelodies(p, (m) => transposeMelody(m, by)) };
     });
 
   return (
@@ -1069,26 +1070,46 @@ function Transport({ locked, per, current, loop, layout, onBar, onLoop, getBar, 
   );
 }
 
+/** The page that edits each kind of track. */
+const TRACK_PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drums: "drums", vocals: "vocals" };
+const keyName = (tonic: string, scaleId: string) => `${displayNote(tonic)} ${getScale(scaleId).name}`;
+
 /**
- * The frame: everything that the three parts play inside. The sections in order and how many
- * bars each one has, the key, the tempo, and the way out (MIDI, chords and tab).
+ * The frame: everything every track plays inside. The sections in order, how many bars each one
+ * has and what each track holds in it, the key, the tempo, and the way out (the song as a WAV
+ * file, MIDI with every track, chords and tab).
  */
-function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
+function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, beat, plan }: {
   secs: Section[];
   lengths: Lengths;
   here: Len;
   voicings: (Voicing | undefined)[];
-  items: PlayItem[];
+  voicingsOf: (chords: ProgChord[]) => (Voicing | undefined)[];
+  /** the whole song as it plays (every track), and whether there is anything in it */
+  song: PlayItem[];
+  any: boolean;
   beat: Beat;
-  tune: PlayTune | null;
   plan: SongPlan | null;
 }) {
   const { state, set, tuning, toast, idea } = useApp();
   const prog = state.progression;
+  /** every track in its place (a page may be editing an added one) */
+  const np = useMemo(() => normalize(prog), [prog]);
+  const tracks = useMemo(() => allTracks(np), [np]);
+  const vocals = tracks.filter((t) => t.kind === "vocals");
+  /** the takes that play (one from each recording) */
+  const playing = vocals.flatMap((t) => groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])).filter((x): x is Take => !!x));
+  const recordedIn = (block: string) => vocals.some((t) => (t.takes ?? []).some((k) => k.at.block === block));
   /** the section whose quick lengths are open */
   const [picking, setPicking] = useState<string | null>(null);
   const change = (fn: (p: Progression) => Progression) => set((s) => ({ ...s, progression: fn(s.progression) }));
-  const open = (blockId: string, pane: Pane) => set((s) => ({ ...s, pane, progression: blockId ? selectBlock(s.progression, blockId) : s.progression }));
+  /** Open a track's page on a section, with that track ready to edit. */
+  const open = (blockId: string, t: Track) =>
+    set((s) => {
+      const p = blockId ? selectBlock(s.progression, blockId) : s.progression;
+      if (t.kind === "vocals") return { ...s, pane: "vocals", progression: p, studio: { ...s.studio, vocal: t.id } };
+      return { ...s, pane: TRACK_PAGE[t.kind], progression: focusTrack(p, t.kind, t.id) };
+    });
   const rows = rowsOf(secs);
   const song = prog.song;
   const nextFree = song ? nextLetter(song.parts) : "B";
@@ -1096,19 +1117,38 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
   const lenOf = (x: Row): Len => (x.current ? here : lengths[x.blockId] ?? here);
   const totalBars = rows.reduce((a, x) => a + lenOf(x).beats / lenOf(x).bar, 0);
   const secsLong = Math.round((rows.reduce((a, x) => a + lenOf(x).beats, 0) * 60) / prog.bpm);
-  /** what a section has in it: chords, a melody, drums */
-  const filled = (x: Row) => {
+  /** what one track holds in a section: how many chords, a melody, a beat, how many recordings */
+  const filled = (x: Row, t: Track): number => {
     const sec = secs.find((y) => y.blockId === x.blockId);
-    const chords = (sec ? sec.chords : prog.chords).filter((c) => !c.rest).length;
-    return { rhythm: chords, melody: hasTune(sec ? sec.melody : prog.melody), drums: sec ? sec.groove?.on ?? beat.on : beat.on };
+    if (t.kind === "vocals") return groupsOf(t.takes).filter((g) => activeTake(t.takes ?? [], g, t.active?.[g])?.at.block === x.blockId).length;
+    if (!isFirst(t.id)) {
+      const l = (sec ? sec.layers : np.layers)?.[t.id];
+      return t.kind === "chords" ? (l?.chords ?? []).filter((c) => !c.rest).length : t.kind === "melody" ? Number(hasTune(l?.melody)) : Number(!!l?.beat?.on);
+    }
+    if (t.kind === "chords") return (sec ? sec.chords : np.chords).filter((c) => !c.rest).length;
+    if (t.kind === "melody") return Number(hasTune(sec ? sec.melody : np.melody));
+    return Number(sec ? sec.groove?.on ?? beat.on : beat.on);
   };
+  const remove = (x: Row) => {
+    if (recordedIn(x.blockId) && !window.confirm(`Vocals were recorded in this ${x.letter}. Remove it anyway? (The recordings stay in Music › M-Theory › Recordings.)`)) return;
+    change((p) => removeBlock(p, x.blockId));
+  };
+  // a recording keeps the tempo and key it was sung in
+  const sungAt = [...new Set(playing.map((k) => k.bpm).filter((b): b is number => !!b))];
+  const offTempo = sungAt.filter((b) => b !== prog.bpm);
+  const sungIn = [...new Set(playing.map((k) => k.key).filter((k): k is string => !!k))];
+  const offKey = sungIn.filter((k) => {
+    const [tonic, scaleId] = k.split("|");
+    return pc(tonic) !== pc(state.key.tonic) || scaleId !== state.key.scaleId;
+  });
   const addNew = () => change((p) => addNewSection(p));
   const again = (partId: string) => change((p) => repeatSection(p, partId || ensureSong(p).song!.parts[0].id));
 
   // ── the way out ──
   const name = idea?.name ?? "";
   const scale = getScale(state.key.scaleId);
-  const hasChords = prog.chords.length > 0 || !!plan?.parts.some((x) => x.sec.chords.length);
+  const chordTracks = tracks.filter((t) => t.kind === "chords" && !isFirst(t.id));
+  const hasChords = np.chords.length > 0 || !!plan?.parts.some((x) => x.sec.chords.length) || chordTracks.some((t) => (plan ? plan.parts.map((x) => x.sec.layers) : [np.layers]).some((l) => l?.[t.id]?.chords?.length));
   const chart = () => {
     const stringNames = tuning.notes.map((m) => ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][(m + state.settings.capo) % 12]);
     const head = `${name || "Untitled"} | ${state.key.tonic} ${scale.name} | ${prog.bpm} bpm${state.settings.capo ? ` | Capo ${state.settings.capo}` : ""}`;
@@ -1117,14 +1157,19 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
       const real = chords.map((c, i) => ({ c, v: vs[i], name: names[i] })).filter((x) => !x.c.rest);
       return ["| " + names.join(" | ") + " |", "  " + chords.map((c) => (c.rest ? "-" : analyzeChord(c.ref, state.key).roman)).join("  "), "", tabText(real.map((x) => x.v), real.map((x) => x.name), stringNames)];
     };
-    if (!plan) return [head, "", ...block(prog.chords, voicings)].join("\n");
+    /** the added chords tracks in a section, each under its name */
+    const added = (layers: Layers | undefined) => chordTracks.flatMap((t) => {
+      const cs = layers?.[t.id]?.chords ?? [];
+      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs))] : [];
+    });
+    if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords)), ...added(np.layers)].join("\n");
     // a song: the running order, then each different section once
     const out = [head, "", plan.parts.map((x) => x.sec.letter).join(" "), ""];
     const done = new Set<string>();
     for (const { sec, voicings: vs } of plan.parts) {
       if (done.has(sec.partId)) continue;
       done.add(sec.partId);
-      out.push(`[${sec.letter}] ${barsOr(sec.bars)} bars`, ...(sec.chords.length ? block(sec.chords, vs) : ["(no chords)"]), "");
+      out.push(`[${sec.letter}] ${barsOr(sec.bars)} bars`, ...(sec.chords.length ? block(sec.chords, vs) : ["(no chords)"]), ...added(sec.layers), "");
     }
     return out.join("\n");
   };
@@ -1138,11 +1183,29 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
       if (r === "failed") toast("Couldn't copy here");
     }
   };
+  const file = (name || "m-theory-idea").replace(/[^\w-]+/g, "-");
   const midi = async () => {
-    const r = await saveFile(progressionToMidi(plan ? plan.items : items, prog.bpm, prog.pattern, name || "M-Theory idea", beat, plan ? null : tune), `${(name || "m-theory-idea").replace(/[^\w-]+/g, "-")}.mid`, "audio/midi");
+    const names = Object.fromEntries(tracks.map((t) => [t.id, t.name]));
+    const r = await saveFile(progressionToMidi(all, prog.bpm, prog.pattern, name || "M-Theory idea", beat, null, names), `${file}.mid`, "audio/midi");
     toast(r === "saved" ? "MIDI saved" : r === "failed" ? "Can't save files here" : "Cancelled");
   };
-  const canExport = plan ? plan.any : items.length > 0;
+  /** the whole song as you hear it, every track and the recorded vocals, through the mixer */
+  const [rendering, setRendering] = useState(false);
+  const wav = async () => {
+    setRendering(true);
+    try {
+      const rate = 48000;
+      const songFrames = Math.round((all.reduce((a, x) => a + x.beats, 0) * 60 * rate) / prog.bpm);
+      const ch = trimEnd(await renderSong(all, { bpm: prog.bpm, pattern: prog.pattern, beat, rate, tail: 6, fold: false }), rate, songFrames);
+      const r = await saveFile(encodeWav(ch, rate, safeGain(ch)), `${file}.wav`, "audio/wav");
+      toast(r === "saved" ? "Song saved as WAV" : r === "failed" ? "Can't save files here" : "Cancelled");
+    } catch (e) {
+      toast(`Couldn't make the WAV: ${String(e)}`);
+    } finally {
+      setRendering(false);
+    }
+  };
+  const canExport = any;
   const setBpm = (n: number) => change((p) => ({ ...p, bpm: Math.max(40, Math.min(200, Math.round(n))) }));
 
   return (
@@ -1156,7 +1219,6 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
           {rows.map((x, i) => {
             const l = lenOf(x);
             const n = Math.round(l.beats / l.bar);
-            const f = filled(x);
             const shared = !!x.partId && rows.filter((y) => y.partId === x.partId).length > 1;
             const id = x.blockId || "a";
             return (
@@ -1170,12 +1232,18 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
                 <span className="fr-tools">
                   {rows.length > 1 && <button aria-label={`Move ${x.letter} earlier`} disabled={i === 0} onClick={() => change((p) => moveBlock(p, x.blockId, -1))}>↑</button>}
                   {rows.length > 1 && <button aria-label={`Move ${x.letter} later`} disabled={i === rows.length - 1} onClick={() => change((p) => moveBlock(p, x.blockId, 1))}>↓</button>}
-                  {secs.length > 0 && <button aria-label={`Remove ${x.letter}`} title="Remove" onClick={() => change((p) => removeBlock(p, x.blockId))}>✕</button>}
+                  {secs.length > 0 && <button aria-label={`Remove ${x.letter}`} title="Remove" onClick={() => remove(x)}>✕</button>}
                 </span>
                 <span className="fr-parts">
-                  <button className={`fr-part${f.rhythm ? " has" : ""}`} title={`${x.letter}: chords and how they are played`} onClick={() => open(x.blockId, "rhythm")}>Chords{f.rhythm ? <small>{f.rhythm}</small> : null}</button>
-                  <button className={`fr-part${f.melody ? " has" : ""}`} title={`${x.letter}: melody`} onClick={() => open(x.blockId, "melody")}>Melody</button>
-                  <button className={`fr-part${f.drums ? " has" : ""}`} title={`${x.letter}: drums`} onClick={() => open(x.blockId, "drums")}>Drums</button>
+                  {tracks.map((t) => {
+                    const n = filled(x, t);
+                    const what = t.kind === "chords" ? `${n} chord${n === 1 ? "" : "s"}` : t.kind === "vocals" ? `${n} recording${n === 1 ? "" : "s"}` : n ? "written" : "empty";
+                    return (
+                      <button key={t.id} className={`fr-part k-${t.kind}${n ? " has" : ""}`} title={`${x.letter} · ${t.name}: ${what}. Open it`} onClick={() => open(x.blockId, t)}>
+                        {t.name}{n && (t.kind === "chords" || t.kind === "vocals") ? <small>{n}</small> : null}
+                      </button>
+                    );
+                  })}
                   {shared && <button className="fr-unlink" title={`This ${x.letter} is the same music as the other ${x.letter}. Give it its own letter so it can differ`} onClick={() => { change((p) => (sharedCount(p, x.blockId) > 1 ? unlinkBlock(p, x.blockId) : p)); toast("Now a section of its own"); }}>Unlink</button>}
                 </span>
                 {picking === id && (
@@ -1196,6 +1264,7 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
       </section>
 
       <KeyBar />
+      {offKey.length > 0 && <p className="small fr-note" role="note">Vocals were sung in {offKey.map((k) => keyName(...(k.split("|") as [string, string]))).join(" and ")}. Recordings don't change key: move the key back with − ½ or + ½ so they fit again.</p>}
 
       <section className="card fr-tempo" aria-label="Tempo">
         <div className="fr-head"><h2>Tempo</h2><b className="mono fr-bpm">{prog.bpm}<small>bpm</small></b></div>
@@ -1204,13 +1273,20 @@ function FramePage({ secs, lengths, here, voicings, items, beat, tune, plan }: {
           <input type="range" min={40} max={200} value={prog.bpm} aria-label="Tempo" onChange={(e) => setBpm(Number(e.target.value))} />
           <button className="btn sm" aria-label="Faster" onClick={() => setBpm(prog.bpm + 1)}>+</button>
         </div>
+        {offTempo.length > 0 && (
+          <p className="small fr-note" role="note">
+            Vocals were recorded at {offTempo.join(" and ")} bpm. Recordings don't change speed, so at {prog.bpm} they drift off the beat.
+            {offTempo.length === 1 && <button className="btn sm" onClick={() => setBpm(offTempo[0])}>Back to {offTempo[0]}</button>}
+          </p>
+        )}
       </section>
 
       <section className="card fr-out" aria-label="Export">
         <div className="fr-head"><h2>Export</h2></div>
         <div className="fr-row">
-          <button className="btn" disabled={!canExport} title="The chords as the harp plays them, the melody and the drums, each on its own track" onClick={midi}>MIDI file</button>
-          <button className="btn" disabled={!hasChords} title="Chord names and guitar tab, as text" onClick={copy}>Copy chords + tab</button>
+          <button className="btn" disabled={!canExport || rendering} title="The whole song as you hear it: every track and the recorded vocals, with the Track page's levels, mute and solo (24-bit WAV)" onClick={() => void wav()}>{rendering ? "Making the WAV…" : "Song as WAV"}</button>
+          <button className="btn" disabled={!canExport} title="Every track as notes, each on its own MIDI track with its name: the chords as the harp plays them, the melodies and the drums (recorded vocals are audio, so they are in the WAV)" onClick={midi}>MIDI file</button>
+          <button className="btn" disabled={!hasChords} title="Chord names and guitar tab, as text (the added chords tracks too)" onClick={copy}>Copy chords + tab</button>
         </div>
       </section>
     </>

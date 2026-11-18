@@ -1,5 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { progressionToMidi } from "./midi";
+import { extraChordItems, progressionToMidi } from "./midi";
+import { DEFAULT_BEAT } from "./beats";
+import { SOUND_DEFAULT } from "./rack";
+import type { ExtraPlay, PlayItem } from "./patterns";
 import { STYLES, styleNotes } from "./patterns";
 
 describe("midi export", () => {
@@ -48,5 +51,34 @@ describe("zip packaging (for sandboxed saves)", () => {
   it("crc32 matches the standard check value", async () => {
     const { crc32 } = await import("./midi");
     expect(crc32(new TextEncoder().encode("123456789"))).toBe(0xcbf43926);
+  });
+});
+
+describe("midi export of added tracks", () => {
+  const items = [
+    { midi: [null, 48, 52, 55, 60, 64], beats: 4 },
+    { midi: [43, 47, 50, 55, 59, 67], beats: 4 },
+  ];
+  it("brings the added tracks along, each on a track of its own with its name", () => {
+    // one section of 8 beats; Chords 2 plays a chord in its second half, Melody 2 a note, Drums 2 a beat
+    const extra: ExtraPlay = {
+      chords: [{ track: "c2", at: 4, beats: 4, midi: [null, 45, 52, 57, 60, 64], style: "ring", sound: SOUND_DEFAULT }],
+      tunes: [{ track: "m2", tune: { m: { div: 1, bars: 1, notes: [{ at: 0, midi: 79 }] }, bar: 4, swing: 0 } }],
+      drums: [{ track: "d2", beat: { ...DEFAULT_BEAT, on: true } }],
+    };
+    const list: PlayItem[] = [{ ...items[0], section: true, extra }, { ...items[1], extra }];
+    const b = progressionToMidi(list, 100, "ring", "x", null, null, { c2: "Chords 2", m2: "Melody 2", d2: "Drums 2" });
+    const tracks = (b[10] << 8) | b[11];
+    expect(tracks).toBe(4); // harp, Chords 2, Melody 2, Drums 2
+    const text = String.fromCharCode(...b);
+    for (const n of ["Chords 2", "Melody 2", "Drums 2"]) expect(text).toContain(n);
+    const bytes = [...b].join(",");
+    expect(bytes).toContain("153,"); // drums on channel 10
+    expect(bytes).toContain(",147,79,"); // Melody 2 on its own channel (4th, after Chords 2 on the 3rd)
+    expect(bytes).toContain(",146,45,"); // Chords 2 on the 3rd
+    // Chords 2 waits for its chord: silence in the first half, the chord at beat 4
+    const own = extraChordItems(list, "c2");
+    expect(own.map((x) => [x.beats, x.midi.length])).toEqual([[4, 0], [4, 6]]);
+    expect(own[0].section).toBe(true);
   });
 });

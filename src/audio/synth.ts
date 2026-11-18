@@ -759,9 +759,10 @@ export class ProgressionPlayer {
  * play under the singer on the interface's own clock. Everything that sounds in the song is
  * in it: the chords, the melody, the drums, the added tracks and recorded takes (except those
  * of `skip`, the track being recorded), each through its own fader. Notes still ringing at the
- * end are folded back onto the start, because the engine plays the song round and round.
+ * end are folded back onto the start, because the engine plays the song round and round
+ * (with `fold: false`, for a file, they are kept after the end instead).
  */
-export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: PatternId; beat: Beat | null; rate: number; skip?: string; tail?: number }): Promise<Float32Array[]> {
+export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: PatternId; beat: Beat | null; rate: number; skip?: string; tail?: number; fold?: boolean }): Promise<Float32Array[]> {
   const spb = 60 / o.bpm;
   const beats = items.reduce((a, x) => a + x.beats, 0);
   const length = Math.max(1, Math.round(beats * spb * o.rate));
@@ -826,6 +827,8 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
     });
   });
   const buf = await off.startRendering();
+  // for a file (not a loop): the song, then what rings on after it
+  if (o.fold === false) return [buf.getChannelData(0).slice(), buf.getChannelData(1).slice()];
   const out: Float32Array[] = [];
   for (let ch = 0; ch < 2; ch++) {
     const d = buf.getChannelData(ch);

@@ -64,7 +64,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const studio = state.studio ?? {};
   const setStudio = (patch: Partial<Studio>) => set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
   const vocals = tracksOf(state.progression, "vocals");
-  const [sel, setSel] = useState<string | null>(null);
+  // which vocal track is shown (the Frame and Track pages can open one)
+  const sel = studio.vocal ?? null;
+  const setSel = (id: string) => setStudio({ vocal: id });
   const track = vocals.find((t) => t.id === sel) ?? vocals[0];
   const fx: VocalFx = track?.fx ?? FX_DEFAULT;
   const desktop = isDesktop();
@@ -203,7 +205,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (wasRecording && r && plan && t) {
         const group = newId();
         const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
-        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx) }));
+        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}` }));
         if (!takes.length) toast("Stopped before the first take");
         else {
           set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));

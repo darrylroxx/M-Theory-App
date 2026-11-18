@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_BEAT } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
-import { addNewSection, commit, ensureSong, mapAllChords, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
+import { addNewSection, commit, ensureSong, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
 import { addTrack, allTracks, focusTrack, nextName, normalize, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
 import { transposeRef } from "../theory/keys";
+import { transposeMelody, type Melody } from "./melody";
 
 const chord = (root: string): ProgChord => ({ id: root + Math.random(), ref: { root, typeId: "maj" }, beats: 4 });
 const base = (roots: string[] = []): Progression => ({ chords: roots.map(chord), bpm: 90, pattern: "ring", loop: true, bars: 4 });
@@ -137,5 +138,21 @@ describe("tracks", () => {
     expect(tracks).toEqual([{ id: "c2", kind: "chords", name: "Pad", style: "strum" }, { id: "v", kind: "vocals", name: "Vocal", input: 2 }]);
     expect(reviveLayers({ c2: { chords: [chord("E"), { ref: null }] }, ghost: { chords: [] } }, tracks)?.c2.chords).toHaveLength(1);
     expect(renameTrack({ ...base(), tracks }, "c2", "  Keys  ").tracks?.[0].name).toBe("Keys");
+  });
+
+  it("moving every melody moves the added melody tracks too, in every section, whichever track is on the page", () => {
+    const tune = (midi: number): Melody => ({ div: 2, bars: 1, notes: [{ at: 0, midi }] });
+    let p = ensureSong({ ...base(["G"]), melody: tune(60) }, id);
+    p = addTrack(p, "melody", "m2").p;
+    p = { ...p, melody: tune(67) }; // A: Melody 2
+    p = addNewSection(p, id);
+    p = { ...p, melody: tune(64) }; // B: Melody 2 (still on the page)
+    const moved = mapAllMelodies(p, (m) => transposeMelody(m, 2));
+    expect(moved.focus).toEqual({ melody: "m2" });
+    expect(moved.melody?.notes[0].midi).toBe(66);
+    const [a, b] = sections(moved);
+    expect(a.melody?.notes[0].midi).toBe(62);
+    expect(a.layers?.m2.melody?.notes[0].midi).toBe(69);
+    expect(b.layers?.m2.melody?.notes[0].midi).toBe(66);
   });
 });

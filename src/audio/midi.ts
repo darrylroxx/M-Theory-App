@@ -28,75 +28,112 @@ const u16 = (n: number) => [(n >>> 8) & 255, n & 255];
 export const GM_DRUM: Record<DrumId, number> = { kick: 36, snare: 38, clap: 39, hat: 42, open: 46, tom: 45, rim: 37, shaker: 70, bell: 56 };
 
 /**
- * The progression as a MIDI file. With a beat switched on, the file has two tracks:
- * harp, and drums on channel 10. Items can carry their own drum rhythm (song sections); a
- * section's pattern starts again from its first bar. A melody gets a track of its own. With no
- * chords, the beat is exported as four bars (or its whole pattern if longer), with the melody.
+ * The progression as a MIDI file: the harp, the melody on a track of its own, and the drums on
+ * channel 10 (each section with its own rhythm, starting again from its first bar). The tracks
+ * added on the Track page come too, each on a track of its own named as in the app (`names`):
+ * chords and melodies on their own channels, drums on channel 10. With no chords, the beat is
+ * exported as four bars (or its whole pattern if longer), with the melody.
  */
-export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null, tune: PlayTune | null = null): Uint8Array {
-  type Ev = { tick: number; data: number[]; order: number };
+export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null, tune: PlayTune | null = null, names: Record<string, string> = {}): Uint8Array {
   const drums = beat?.on ? beat : null;
+  // seconds per tick: the playing styles' small delays are in seconds
+  const spt = 60 / bpm / TPQ;
   if (!items.length) {
     // no chords: the drums (four bars, or their whole pattern) and the melody on their own
     const solo = Math.max(drums ? barBeats(drums) * Math.max(4, barsOf(drums)) : 0, hasTune(tune?.m) ? melodyBeats(tune.m, tune.bar) : 0);
     items = solo ? [{ midi: [], beats: solo }] : [];
   }
-  const events: Ev[] = [];
-  const secPerTick = 60 / bpm / TPQ;
-  const chordStart = Math.round(items.reduce((a, x) => a + x.beats, 0) * TPQ);
-  for (const { at, e, beats } of itemNotes(items, pattern, beat)) {
-    const chordEnd = Math.round((at + beats) * TPQ);
-    const on = Math.round((at + e.beat) * TPQ + e.delay / secPerTick);
-    const lenTicks = Math.min(Number.isFinite(e.length) ? e.length * TPQ : Infinity, e.cut !== undefined ? e.cut / secPerTick : Infinity, chordEnd - on);
-    const off = Math.max(on + 10, Math.min(chordEnd, Math.round(on + lenTicks)));
-    const vel = Math.max(1, Math.min(127, Math.round(e.velocity * 118)));
-    events.push({ tick: off, data: [0x80, e.midi, 0], order: 0 });
-    events.push({ tick: on, data: [0x90, e.midi, vel], order: 1 });
-  }
-  // overlapping identical notes: make sure each note-off precedes the next note-on at the same tick
-  events.sort((a, b) => a.tick - b.tick || a.order - b.order);
-
-  const track: number[] = [];
-  const meta = (type: number, bytes: number[]) => track.push(0, 0xff, type, ...vlq(bytes.length), ...bytes);
-  meta(0x03, str(name));
+  const totalTicks = Math.round(items.reduce((a, x) => a + x.beats, 0) * TPQ);
+  const meta: number[] = [];
+  meta.push(0, 0xff, 0x03, ...vlq(str(name).length), ...str(name));
   const mpq = Math.round(60_000_000 / bpm);
-  meta(0x51, [(mpq >> 16) & 255, (mpq >> 8) & 255, mpq & 255]);
-  meta(0x58, [4, 2, 24, 8]);
-  track.push(0, 0xc0, 46); // Orchestral Harp
+  meta.push(0, 0xff, 0x51, 3, (mpq >> 16) & 255, (mpq >> 8) & 255, mpq & 255);
+  meta.push(0, 0xff, 0x58, 4, 4, 2, 24, 8);
+  const tracks: number[][] = [];
+  // the first track carries the name, tempo and time signature, and the harp
+  tracks.push(harpTrack(items, pattern, beat, spt, 0, null, totalTicks, meta));
+  const melody = tuneTrack(itemTune(items, tune), 1, "Melody", totalTicks);
+  if (melody) tracks.push(melody);
+  if (items.some((x) => (x.drums ?? drums)?.on)) tracks.push(drumTrack(items, drums, "Drums", totalTicks));
+
+  // the added tracks
+  const ids = { chords: new Set<string>(), tunes: new Set<string>(), drums: new Set<string>() };
+  for (const it of items) {
+    it.extra?.chords.forEach((c) => ids.chords.add(c.track));
+    it.extra?.tunes.forEach((t) => ids.tunes.add(t.track));
+    it.extra?.drums.forEach((d) => ids.drums.add(d.track));
+  }
+  let ch = 2;
+  const nextCh = () => {
+    const c = ch === 9 ? ++ch : ch;
+    ch = Math.min(15, c + 1);
+    return c;
+  };
+  for (const id of ids.chords) tracks.push(harpTrack(extraChordItems(items, id), pattern, beat, spt, nextCh(), names[id] ?? "Chords", totalTicks));
+  for (const id of ids.tunes) {
+    const t = tuneTrack(itemTune(items.map((it) => ({ ...it, tune: it.extra?.tunes.find((x) => x.track === id)?.tune ?? null })), null), nextCh(), names[id] ?? "Melody", totalTicks);
+    if (t) tracks.push(t);
+  }
+  for (const id of ids.drums) {
+    const own = items.map((it) => {
+      const b = it.extra?.drums.find((x) => x.track === id)?.beat;
+      return { ...it, drums: b ?? { ...(it.drums ?? beat ?? b!), on: false } };
+    });
+    tracks.push(drumTrack(own, null, names[id] ?? "Drums", totalTicks));
+  }
+  return new Uint8Array([...str("MThd"), ...u32(6), ...u16(tracks.length > 1 ? 1 : 0), ...u16(tracks.length), ...u16(TPQ), ...tracks.flatMap((t) => [...str("MTrk"), ...u32(t.length), ...t])]);
+}
+
+type Ev = { tick: number; data: number[]; order: number };
+
+/** Events in time order, as a track's bytes, ending at `end`. */
+function trackOf(head: number[], events: Ev[], end: number): number[] {
+  events.sort((a, b) => a.tick - b.tick || a.order - b.order);
+  const t = [...head];
   let last = 0;
   for (const e of events) {
-    track.push(...vlq(e.tick - last), ...e.data);
+    t.push(...vlq(e.tick - last), ...e.data);
     last = e.tick;
   }
-  const totalTicks = chordStart;
-  track.push(...vlq(Math.max(0, totalTicks - last)), 0xff, 0x2f, 0x00);
-  const chunk = (t: number[]) => [...str("MTrk"), ...u32(t.length), ...t];
-  // the melody: its own track on channel 2, each note held until the next one
-  const tracks = [track];
-  const hits = itemTune(items, tune).filter((h) => Math.round(h.beat * TPQ) < totalTicks);
-  if (hits.length) {
-    const ev: Ev[] = [];
-    hits.forEach((h, i) => {
-      const on = Math.round(h.beat * TPQ);
-      const after = hits.slice(i + 1).find((x) => x.beat > h.beat + 1e-6);
-      const off = Math.max(on + 10, Math.min(totalTicks, after ? Math.round(after.beat * TPQ) : on + TPQ * 2));
-      ev.push({ tick: off, data: [0x81, h.midi, 0], order: 0 });
-      ev.push({ tick: on, data: [0x91, h.midi, 104], order: 1 });
-    });
-    ev.sort((a, b) => a.tick - b.tick || a.order - b.order);
-    const mt: number[] = [0, 0xff, 0x03, ...vlq(6), ...str("Melody"), 0, 0xc1, 46];
-    let ml = 0;
-    for (const e of ev) {
-      mt.push(...vlq(e.tick - ml), ...e.data);
-      ml = e.tick;
-    }
-    mt.push(...vlq(Math.max(0, totalTicks - ml)), 0xff, 0x2f, 0x00);
-    tracks.push(mt);
-  }
-  if (!drums) return new Uint8Array([...str("MThd"), ...u32(6), ...u16(tracks.length > 1 ? 1 : 0), ...u16(tracks.length), ...u16(TPQ), ...tracks.flatMap(chunk)]);
+  t.push(...vlq(Math.max(0, end - last)), 0xff, 0x2f, 0x00);
+  return t;
+}
+const named = (name: string) => [0, 0xff, 0x03, ...vlq(str(name).length), ...str(name)];
 
-  // which rhythm plays when: each item (or the whole export, with no chords) and where its pattern began
-  const runs: { from: number; to: number; origin: number; b: Beat }[] = [];
+/** A harp track: what the playing style plays over each chord. */
+function harpTrack(items: PlayItem[], pattern: PatternId, beat: Beat | null, spt: number, ch: number, name: string | null, end: number, head: number[] = []): number[] {
+  const events: Ev[] = [];
+  for (const { at, e, beats } of itemNotes(items, pattern, beat)) {
+    const chordEnd = Math.round((at + beats) * TPQ);
+    const on = Math.round((at + e.beat) * TPQ + e.delay / spt);
+    const lenTicks = Math.min(Number.isFinite(e.length) ? e.length * TPQ : Infinity, e.cut !== undefined ? e.cut / spt : Infinity, chordEnd - on);
+    const off = Math.max(on + 10, Math.min(chordEnd, Math.round(on + lenTicks)));
+    if (on >= end) continue;
+    const vel = Math.max(1, Math.min(127, Math.round(e.velocity * 118)));
+    // overlapping identical notes: each note-off comes before the next note-on at the same tick
+    events.push({ tick: off, data: [0x80 | ch, e.midi, 0], order: 0 });
+    events.push({ tick: on, data: [0x90 | ch, e.midi, vel], order: 1 });
+  }
+  return trackOf([...head, ...(name ? named(name) : []), 0, 0xc0 | ch, 46], events, end); // Orchestral Harp
+}
+/** A melody track, each note held until the next one. */
+function tuneTrack(hits: { beat: number; midi: number }[], ch: number, name: string, end: number): number[] | null {
+  hits = hits.filter((h) => Math.round(h.beat * TPQ) < end);
+  if (!hits.length) return null;
+  const ev: Ev[] = [];
+  hits.forEach((h, i) => {
+    const on = Math.round(h.beat * TPQ);
+    const after = hits.slice(i + 1).find((x) => x.beat > h.beat + 1e-6);
+    const off = Math.max(on + 10, Math.min(end, after ? Math.round(after.beat * TPQ) : on + TPQ * 2));
+    ev.push({ tick: off, data: [0x80 | ch, h.midi, 0], order: 0 });
+    ev.push({ tick: on, data: [0x90 | ch, h.midi, 104], order: 1 });
+  });
+  return trackOf([...named(name), 0, 0xc0 | ch, 46], ev, end);
+}
+
+/** A drum track on channel 10: each item's rhythm (or `drums`), counted from where its section began. */
+function drumTrack(items: PlayItem[], drums: Beat | null, name: string, end: number): number[] {
+  const runs: { from: number; to: number; origin: number; b: Beat | null }[] = [];
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
@@ -104,25 +141,48 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     runs.push({ from: at, to: at + item.beats, origin, b: item.drums ?? drums });
     at += item.beats;
   });
-  const dhits: Ev[] = [];
-  const all = runs.flatMap((r) => (r.b.on ? beatHitsBetween(r.b, r.from - r.origin, r.to - r.origin).map((h) => ({ ...h, beat: h.beat + r.origin })) : []));
+  const ev: Ev[] = [];
+  const all = runs.flatMap((r) => (r.b?.on ? beatHitsBetween(r.b, r.from - r.origin, r.to - r.origin).map((h) => ({ ...h, beat: h.beat + r.origin })) : []));
   for (const h of all) {
     const on = Math.round(h.beat * TPQ);
-    if (on >= totalTicks) continue;
+    if (on >= end) continue;
     const vel = Math.max(1, Math.min(127, Math.round(h.velocity * 118)));
-    dhits.push({ tick: on, data: [0x99, GM_DRUM[h.id], vel], order: 1 });
-    dhits.push({ tick: Math.min(totalTicks, on + 60), data: [0x89, GM_DRUM[h.id], 0], order: 0 });
+    ev.push({ tick: on, data: [0x99, GM_DRUM[h.id], vel], order: 1 });
+    ev.push({ tick: Math.min(end, on + 60), data: [0x89, GM_DRUM[h.id], 0], order: 0 });
   }
-  dhits.sort((a, b) => a.tick - b.tick || a.order - b.order);
-  const dtrack: number[] = [0, 0xff, 0x03, ...vlq(5), ...str("Drums")];
-  let dl = 0;
-  for (const e of dhits) {
-    dtrack.push(...vlq(e.tick - dl), ...e.data);
-    dl = e.tick;
+  return trackOf(named(name), ev, end);
+}
+
+/**
+ * What an added chords track plays, as items of its own: section by section, its chords where
+ * they fall in the section, and silence around them, so its playing style counts from the
+ * start of each section as it does in the app.
+ */
+export function extraChordItems(items: PlayItem[], track: string): PlayItem[] {
+  const out: PlayItem[] = [];
+  let i = 0;
+  while (i < items.length) {
+    let j = i + 1;
+    while (j < items.length && !items[j].section && items[j].from === undefined) j++;
+    const sec = items.slice(i, j);
+    const len = sec.reduce((a, x) => a + x.beats, 0);
+    const drums = sec[0].drums;
+    const cs = (sec[0].extra?.chords ?? []).filter((c) => c.track === track && c.at < len - 1e-6).sort((a, b) => a.at - b.at);
+    let at = 0;
+    const push = (x: PlayItem) => out.push({ ...x, drums, section: at === 0 });
+    for (const c of cs) {
+      if (c.at > at + 1e-6) {
+        push({ midi: [], beats: c.at - at });
+        at = c.at;
+      }
+      const beats = Math.min(c.beats, len - c.at);
+      push({ midi: c.midi, beats, style: c.style, feel: c.feel });
+      at += beats;
+    }
+    if (at < len - 1e-6) push({ midi: [], beats: len - at });
+    i = j;
   }
-  dtrack.push(...vlq(Math.max(0, totalTicks - dl)), 0xff, 0x2f, 0x00);
-  tracks.push(dtrack);
-  return new Uint8Array([...str("MThd"), ...u32(6), ...u16(1), ...u16(tracks.length), ...u16(TPQ), ...tracks.flatMap(chunk)]);
+  return out;
 }
 
 // ── Saving files ─────────────────────────────────────────────

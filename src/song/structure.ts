@@ -356,6 +356,18 @@ function mapAllChordsN(p0: Progression, fn: (c: ProgChord) => ProgChord): Progre
   return { ...p, chords, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, chords, layers } : { ...x, chords: x.chords.map(fn), layers: mapLayers(x.layers) })) } };
 }
 
+/** Change every melody in the song (each section's, and the added melody tracks'). */
+function mapAllMelodiesN(p0: Progression, fn: (m: Melody) => Melody): Progression {
+  const p = commit(p0);
+  const one = (m: Melody | undefined) => (m ? fn(m) : m);
+  const mapLayers = (l: Layers | undefined): Layers | undefined => (l ? Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v.melody ? { ...v, melody: fn(v.melody) } : v])) : l);
+  const melody = one(p.melody);
+  const layers = mapLayers(p.layers);
+  if (!p.song) return { ...p, melody, layers };
+  const cur = partOf(p.song, p.song.current);
+  return { ...p, melody, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, melody, layers } : { ...x, melody: one(x.melody), layers: mapLayers(x.layers) })) } };
+}
+
 /**
  * Give one section a length, the way it used to play: as long as its chords, repeated until the
  * drum rhythm and the melody had both finished. The repeats are written out, so it sounds the same.
@@ -464,4 +476,5 @@ export const moveBlock = settled(moveBlockN);
 export const moveBlockTo = settled(moveBlockToN);
 export const unlinkBlock = settled(unlinkBlockN);
 export const mapAllChords = settled(mapAllChordsN);
+export const mapAllMelodies = settled(mapAllMelodiesN);
 export const settle = settled(settleN);

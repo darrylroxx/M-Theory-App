@@ -117,7 +117,8 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
   const open = (block: string, t: Track) =>
     set((s) => {
       const p = block ? selectBlock(s.progression, block) : s.progression;
-      return { ...s, pane: PAGE[t.kind], progression: t.kind === "vocals" ? p : focusTrack(p, t.kind, t.id) };
+      if (t.kind === "vocals") return { ...s, pane: "vocals", progression: p, studio: { ...s.studio, vocal: t.id } };
+      return { ...s, pane: PAGE[t.kind], progression: focusTrack(p, t.kind, t.id) };
     });
   const add = (kind: TrackKind) => {
     const tid = newId();

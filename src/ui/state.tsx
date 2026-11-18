@@ -162,6 +162,8 @@ export interface Studio {
   nudge?: number;
   /** the buffer size to ask the interface's driver for (frames); not set = the driver's own setting */
   buffer?: number;
+  /** the vocal track the Vocals page shows */
+  vocal?: string;
 }
 
 export interface SheetState {
