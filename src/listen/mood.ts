@@ -49,6 +49,21 @@ export function keyOf(chroma: ArrayLike<number>): { tonic: number; major: boolea
   return { ...best, sure: Math.max(0, Math.min(1, best.sure)) * Math.max(0, Math.min(1, (best.sure - second) * 6 + 0.3)) };
 }
 
+/** How well the best major key and the best minor key fit twelve note-strengths (correlations, −1..1), and the key note of the better. */
+export function keyFits(chroma: ArrayLike<number>): { major: number; minor: number; tonic: number } {
+  let major = -2;
+  let minor = -2;
+  let tMaj = 0;
+  let tMin = 0;
+  for (let t = 0; t < 12; t++) {
+    const a = fit(chroma, MAJOR, t);
+    const b = fit(chroma, MINOR, t);
+    if (a > major) [major, tMaj] = [a, t];
+    if (b > minor) [minor, tMin] = [b, t];
+  }
+  return { major, minor, tonic: major >= minor ? tMaj : tMin };
+}
+
 export interface Feeling {
   /** 0 = still and quiet … 1 = loud, busy and bright */
   energy: number;

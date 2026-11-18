@@ -44,6 +44,8 @@ export interface Track {
   fx?: VocalFx;
   takes?: Take[];
   active?: Record<string, string>;
+  /** a chords or melody track written to go with another: the canvas paints it as a harmony line */
+  role?: "harmony";
 }
 
 /** What one track holds in one section (and, for the first track kept aside, its settings too). */
@@ -206,6 +208,7 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
       ...(r.kind === "vocals" && reviveFx(r.fx) ? { fx: reviveFx(r.fx) } : {}),
       ...(r.kind === "vocals" && reviveTakes(r.takes) ? { takes: reviveTakes(r.takes) } : {}),
       ...(r.kind === "vocals" && r.active && typeof r.active === "object" ? { active: Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) } : {}),
+      ...((r.kind === "melody" || r.kind === "chords") && r.role === "harmony" ? { role: "harmony" as const } : {}),
     });
   }
   return out.length ? out : undefined;

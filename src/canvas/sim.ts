@@ -27,6 +27,17 @@
  *
  * The picture shown is the dry painting with the wet paint over it, lit from the upper left
  * by the thickness of the paint, with a shine where it is still wet.
+ *
+ * Paint also knows how deep it lies. Every mark carries a depth (fog and washes underneath,
+ * lines in the middle, impacts on top), and when paint sets under paint that lies above it, it
+ * shows only where that paint is thin: a wash that dries after a spatter of drops goes in
+ * under the drops, as an underpainting would, instead of over them.
+ *
+ * A fourth sheet holds light: a glaze laid on in light rather than pigment (the voice's ribbon)
+ * brightens what is under it, as light does, where pigment would darken it.
+ *
+ * The whole canvas can also drift (the river layout): the sheets are moved along a whole pixel
+ * at a time, so nothing is blurred by the move.
  */
 
 export interface Stamp {
@@ -51,6 +62,8 @@ export interface Stamp {
   /** how crisp its edge is, 0..1, and a number that makes this mark unlike the last */
   hard: number;
   seed: number;
+  /** how deep it lies: 0 = underneath everything … 1 = on top (0.5 when not said) */
+  depth?: number;
 }
 
 export interface SimSettings {
@@ -68,9 +81,12 @@ export interface SimSettings {
   fade: number;
   /** how much the thickness of the paint is lit */
   relief: number;
+  /** how the whole canvas drifts (pixels a second; the river flows left) */
+  driftX: number;
+  driftY: number;
 }
 
-export const SIM_DEFAULTS: SimSettings = { flow: 1, bleed: 1, dry: 1, gravity: 0, stir: 0.4, fade: 0, relief: 1 };
+export const SIM_DEFAULTS: SimSettings = { flow: 1, bleed: 1, dry: 1, gravity: 0, stir: 0.4, fade: 0, relief: 1, driftX: 0, driftY: 0 };
 
 /** Screen colour (0..255 each) to light as it really is (linear, 0..1). */
 export const toLinear = (c: number) => {
@@ -94,8 +110,8 @@ export function mixPaint(a: readonly [number, number, number], b: readonly [numb
   return [0, 1, 2].map((i) => toScreen(reflOf(ka[i] * (1 - t) + kb[i] * t))) as [number, number, number];
 }
 
-const STRIDE = 16;
-const MAX_STAMPS = 4096;
+const STRIDE = 20;
+const MAX_STAMPS = 8192;
 
 const VERT_QUAD = `#version 300 es
 in vec2 aPos;
@@ -120,11 +136,13 @@ layout(location = 1) in vec4 aPlace;   // x, y, radius, angle
 layout(location = 2) in vec4 aPaint;   // k.rgb, amount
 layout(location = 3) in vec4 aPush;    // water, vx, vy, load
 layout(location = 4) in vec4 aMore;    // seed, kind, stretch, hard
+layout(location = 5) in vec4 aExtra;   // depth
 uniform vec2 uRes;
 out vec2 vLocal;
 out vec4 vPaint;
 out vec4 vPush;
 out vec4 vMore;
+out vec4 vExtra;
 out vec2 vAt;
 void main() {
   float c = cos(aPlace.w), s = sin(aPlace.w);
@@ -132,7 +150,7 @@ void main() {
   vec2 l = aCorner * vec2(aMore.z, 1.0) * 1.25;
   vec2 p = aPlace.xy + aPlace.z * vec2(l.x * c - l.y * s, l.x * s + l.y * c);
   vLocal = aCorner * 1.25;
-  vPaint = aPaint; vPush = aPush; vMore = aMore; vAt = p / uRes;
+  vPaint = aPaint; vPush = aPush; vMore = aMore; vExtra = aExtra; vAt = p / uRes;
   gl_Position = vec4(p / uRes * 2.0 - 1.0, 0.0, 1.0);
   gl_Position.y = -gl_Position.y;
 }`;
@@ -143,10 +161,12 @@ in vec2 vLocal;
 in vec4 vPaint;
 in vec4 vPush;
 in vec4 vMore;
+in vec4 vExtra;
 in vec2 vAt;
 uniform sampler2D uPaper;
 layout(location = 0) out vec4 oWet;
 layout(location = 1) out vec4 oFlow;
+layout(location = 2) out vec4 oLight;
 ${COMMON}
 void main() {
   float seed = vMore.x, kind = vMore.y, hard = vMore.w, load = vPush.w;
@@ -174,14 +194,22 @@ void main() {
   } else if (kind < 1.5) {
     // a drop: thicker at its rim, where the paint is left as it dries
     mask *= 0.85 + 0.35 * smoothstep(0.45, 0.95, d);
-  } else {
+  } else if (kind < 2.5) {
     // a bloom: soft, and uneven as water is
     mask *= 0.6 + 0.6 * vnoise(p * 2.3 + seed * 7.0);
+  } else {
+    // a glaze of light: a fine strand, a little uneven along its length
+    float across = p.y * 0.5 + 0.5;
+    mask *= 0.55 + 0.45 * vnoise(vec2(across * 9.0 + seed * 3.0, p.x * 2.0 + seed));
   }
   if (mask <= 0.0005) discard;
-  float a = vPaint.a * mask;
+  float glaze = step(2.5, kind);
+  // a glaze is mostly light, with only a breath of pigment in it
+  float a = vPaint.a * mask * mix(1.0, 0.3, glaze);
+  float depth = vExtra.x;
   oWet = vec4(vPaint.rgb * a, a);
-  oFlow = vec4(vPush.yz * mask, water * mask, 0.0);
+  oFlow = vec4(vPush.yz * mask, water * mask, depth * a);
+  oLight = vec4(reflOf(vPaint.rgb) * vPaint.a * mask * 1.6 * glaze, 0.0);
 }`;
 
 const FRAG_SIM = `#version 300 es
@@ -191,7 +219,9 @@ uniform sampler2D uWet;
 uniform sampler2D uFlow;
 uniform sampler2D uDry;
 uniform sampler2D uPaper;
+uniform sampler2D uLight;
 uniform vec2 uRes;
+uniform vec2 uShift;
 uniform float uDt;
 uniform float uTime;
 uniform float uFlowK;
@@ -204,18 +234,27 @@ uniform vec3 uGround;
 layout(location = 0) out vec4 oWet;
 layout(location = 1) out vec4 oFlow;
 layout(location = 2) out vec4 oDry;
+layout(location = 3) out vec4 oLight;
 ${COMMON}
 void main() {
   vec2 px = 1.0 / uRes;
-  vec4 f = texture(uFlow, vUv);
-  vec4 fl = texture(uFlow, vUv - vec2(px.x, 0.0));
-  vec4 fr = texture(uFlow, vUv + vec2(px.x, 0.0));
-  vec4 fd = texture(uFlow, vUv - vec2(0.0, px.y));
-  vec4 fu = texture(uFlow, vUv + vec2(0.0, px.y));
-  vec4 wl = texture(uWet, vUv - vec2(px.x, 0.0));
-  vec4 wr = texture(uWet, vUv + vec2(px.x, 0.0));
-  vec4 wd = texture(uWet, vUv - vec2(0.0, px.y));
-  vec4 wu = texture(uWet, vUv + vec2(0.0, px.y));
+  // the canvas drifting: everything is read from where it was (whole pixels, so nothing blurs);
+  // what drifts in from beyond the edge is bare ground
+  vec2 at = vUv + uShift;
+  if (at.x < 0.0 || at.x > 1.0 || at.y < 0.0 || at.y > 1.0) {
+    oWet = vec4(0.0); oFlow = vec4(0.0); oDry = vec4(uGround, 0.0); oLight = vec4(0.0);
+    return;
+  }
+  vec4 f = texture(uFlow, at);
+  vec4 fl = texture(uFlow, at - vec2(px.x, 0.0));
+  vec4 fr = texture(uFlow, at + vec2(px.x, 0.0));
+  vec4 fd = texture(uFlow, at - vec2(0.0, px.y));
+  vec4 fu = texture(uFlow, at + vec2(0.0, px.y));
+  vec4 wl = texture(uWet, at - vec2(px.x, 0.0));
+  vec4 wr = texture(uWet, at + vec2(px.x, 0.0));
+  vec4 wd = texture(uWet, at - vec2(0.0, px.y));
+  vec4 wu = texture(uWet, at + vec2(0.0, px.y));
+  // the paper does not drift with the paint
   float paper = texture(uPaper, vUv).r;
 
   // paint stands as high as its water and its pigment, and creeps downhill: from where it is deep
@@ -230,7 +269,7 @@ void main() {
   // the push a brush gave: shared with the neighbours, so a smear spreads, and soon spent
   vec2 v = mix(f.rg, 0.25 * (fl.rg + fr.rg + fd.rg + fu.rg), 0.35) * mob * exp(-5.0 * uDt);
   // the music stirs what is wet: a slow swirl that never repeats
-  vec2 q = vUv * vec2(uRes.x / uRes.y, 1.0) * 3.1 + vec2(uTime * 0.07, -uTime * 0.05);
+  vec2 q = at * vec2(uRes.x / uRes.y, 1.0) * 3.1 + vec2(uTime * 0.07, -uTime * 0.05);
   float e = 0.02;
   float n0 = vnoise(q);
   vec2 curl = vec2(vnoise(q + vec2(0.0, e)) - n0, -(vnoise(q + vec2(e, 0.0)) - n0)) / e;
@@ -241,14 +280,19 @@ void main() {
   if (sp > 420.0) u *= 420.0 / sp;
 
   // carried along
-  vec2 from = vUv - u * uDt * px;
+  vec2 from = at - u * uDt * px;
   vec4 wet = texture(uWet, from);
-  float water = texture(uFlow, from).b;
+  vec4 ff = texture(uFlow, from);
+  float water = ff.b;
+  // how deep the wet paint lies goes with it (kept as depth times amount)
+  float deep = ff.a;
 
   // wet into wet: pigment bleeds between points that are both wet
   vec4 wetAvg = 0.25 * (wl + wr + wd + wu);
   float both = min(water, waterAvg);
-  wet = mix(wet, wetAvg, clamp(uBleed * 9.0 * uDt * smoothstep(0.05, 0.6, both), 0.0, 0.8));
+  float bleed = clamp(uBleed * 9.0 * uDt * smoothstep(0.05, 0.6, both), 0.0, 0.8);
+  wet = mix(wet, wetAvg, bleed);
+  deep = mix(deep, 0.25 * (fl.a + fr.a + fd.a + fu.a), bleed);
   // water evens out over what is wet (a dry point takes none, unless it is being spilled into),
   // never stands deeper than a puddle can, and dries off: fastest where it is thin, so from the edges in
   water = mix(water, waterAvg, clamp(4.0 * uDt * mob, 0.0, 0.5));
@@ -260,23 +304,33 @@ void main() {
   float rate = uDryK * max(0.1, 0.35 + 2.2 * (0.5 - paper)) / (0.02 + water * water * 6.0) + (water < 0.02 ? 14.0 : 0.0);
   float part = 1.0 - exp(-rate * uDt);
   vec4 set = wet * part;
+  float deepSet = deep * part;
   wet -= set;
-  if (wet.a < 0.0004) { set += wet; wet = vec4(0.0); }
+  deep -= deepSet;
+  if (wet.a < 0.0004) { set += wet; deepSet += deep; wet = vec4(0.0); deep = 0.0; }
 
-  vec4 dry = texture(uDry, vUv);
+  vec4 dry = texture(uDry, at);
+  vec4 light = texture(uLight, at);
   if (set.a > 0.00001) {
     float cover = 1.0 - exp(-3.2 * set.a);
+    // paint that lies deeper than what has already set goes in under it, showing only where that is thin
+    float d = clamp(deepSet / set.a, 0.0, 1.0);
+    float under = smoothstep(0.03, 0.15, light.a - d) * (1.0 - exp(-2.5 * dry.a));
+    cover *= 1.0 - 0.88 * under;
     dry.rgb = reflOf(mix(ksOf(dry.rgb), set.rgb / set.a, cover));
+    light.a = d >= light.a ? mix(light.a, d, max(cover, 1.0 - smoothstep(0.0, 0.05, dry.a))) : light.a;
     dry.a += set.a;
   }
-  // old paint sinks back into the ground
+  // old paint sinks back into the ground; light fades a little slower than that, and slowly of itself
   float keep = exp(-uFade * uDt);
   dry.rgb = mix(uGround, dry.rgb, keep);
   dry.a *= keep;
+  light.rgb *= exp(-(0.012 + uFade * 0.8) * uDt);
 
   oWet = max(wet, vec4(0.0));
-  oFlow = vec4(v, water, 0.0);
+  oFlow = vec4(v, water, max(deep, 0.0));
   oDry = dry;
+  oLight = light;
 }`;
 
 const FRAG_SHOW = `#version 300 es
@@ -285,6 +339,7 @@ in vec2 vUv;
 uniform sampler2D uWet;
 uniform sampler2D uFlow;
 uniform sampler2D uDry;
+uniform sampler2D uLight;
 uniform vec2 uRes;
 uniform float uRelief;
 uniform float uFlip;
@@ -297,12 +352,18 @@ void main() {
   vec2 px = 1.0 / uRes;
   vec4 dry = texture(uDry, uv);
   vec4 wet = texture(uWet, uv);
-  float water = texture(uFlow, uv).b;
+  vec4 fl = texture(uFlow, uv);
+  vec4 light = texture(uLight, uv);
+  float water = fl.b;
   vec3 col = dry.rgb;
   if (wet.a > 0.00001) {
     float cover = 1.0 - exp(-3.2 * wet.a);
-    col = reflOf(mix(ksOf(col), wet.rgb / wet.a, cover));
+    // wet paint that lies under the dry paint shows only where that is thin
+    float under = smoothstep(0.03, 0.15, light.a - clamp(fl.a / wet.a, 0.0, 1.0)) * (1.0 - exp(-2.5 * dry.a));
+    col = reflOf(mix(ksOf(col), wet.rgb / wet.a, cover * (1.0 - 0.88 * under)));
   }
+  // light glazed on brightens what is under it, as light does
+  col = 1.0 - (1.0 - col) * (1.0 - clamp(light.rgb, 0.0, 0.95));
   // lit from the upper left by the thickness of the paint
   float hx = height(uv + vec2(px.x, 0.0)) - height(uv - vec2(px.x, 0.0));
   float hy = height(uv + vec2(0.0, px.y)) - height(uv - vec2(0.0, px.y));
@@ -325,6 +386,33 @@ uniform sampler2D uSrc;
 out vec4 oColor;
 void main() { oColor = texture(uSrc, vUv); }`;
 
+/** How much of each cell of a coarse grid is painted: sixteen points looked at in each, counted where the paint stands out from the ground. */
+const FRAG_MEASURE = `#version 300 es
+precision highp float;
+in vec2 vUv;
+uniform sampler2D uWet;
+uniform sampler2D uDry;
+uniform sampler2D uLight;
+uniform vec2 uCells;
+uniform vec3 uGround;
+out vec4 oColor;
+${COMMON}
+void main() {
+  vec2 cell = floor(vUv * uCells);
+  float n = 0.0;
+  for (int i = 0; i < 4; i++) for (int j = 0; j < 4; j++) {
+    vec2 uv = (cell + (vec2(float(i), float(j)) + 0.5) / 4.0) / uCells;
+    vec4 dry = texture(uDry, uv);
+    vec4 wet = texture(uWet, uv);
+    vec3 col = dry.rgb;
+    if (wet.a > 0.00001) col = reflOf(mix(ksOf(col), wet.rgb / wet.a, 1.0 - exp(-3.2 * wet.a)));
+    col = 1.0 - (1.0 - col) * (1.0 - clamp(texture(uLight, uv).rgb, 0.0, 0.95));
+    vec3 d = abs(sqrt(max(col, 0.0)) - sqrt(uGround));
+    n += step(0.045, max(d.r, max(d.g, d.b)));
+  }
+  oColor = vec4(n / 16.0, 0.0, 0.0, 1.0);
+}`;
+
 interface Target {
   tex: WebGLTexture;
 }
@@ -337,6 +425,7 @@ export class Sim {
   private wet: [Target, Target] | null = null;
   private flow: [Target, Target] | null = null;
   private dry: [Target, Target] | null = null;
+  private light: [Target, Target] | null = null;
   private paper: WebGLTexture;
   private fboStamp: WebGLFramebuffer;
   private fboSim: WebGLFramebuffer;
@@ -345,6 +434,12 @@ export class Sim {
   private progSim: WebGLProgram;
   private progShow: WebGLProgram;
   private progCopy: WebGLProgram;
+  private progMeasure: WebGLProgram;
+  private measured: { tex: WebGLTexture; cols: number; rows: number; out: Uint8Array } | null = null;
+  /** how far the canvas has drifted and not yet been moved (less than a pixel) */
+  private driftAcc = { x: 0, y: 0 };
+  /** how far it was moved at the last step (whole pixels) */
+  moved = { x: 0, y: 0 };
   private quad: WebGLVertexArrayObject;
   private stampVao: WebGLVertexArrayObject;
   private stampBuf: WebGLBuffer;
@@ -378,6 +473,7 @@ export class Sim {
     this.progSim = this.program(VERT_QUAD, FRAG_SIM);
     this.progShow = this.program(VERT_QUAD, FRAG_SHOW);
     this.progCopy = this.program(VERT_QUAD, FRAG_COPY);
+    this.progMeasure = this.program(VERT_QUAD, FRAG_MEASURE);
     this.fboStamp = gl.createFramebuffer()!;
     this.fboSim = gl.createFramebuffer()!;
     this.fboOne = gl.createFramebuffer()!;
@@ -388,7 +484,7 @@ export class Sim {
     const qb = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, qb);
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
-    for (const p of [this.progSim, this.progShow, this.progCopy]) gl.bindAttribLocation(p, 0, "aPos");
+    for (const p of [this.progSim, this.progShow, this.progCopy, this.progMeasure]) gl.bindAttribLocation(p, 0, "aPos");
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
@@ -403,7 +499,7 @@ export class Sim {
     this.stampBuf = gl.createBuffer()!;
     gl.bindBuffer(gl.ARRAY_BUFFER, this.stampBuf);
     gl.bufferData(gl.ARRAY_BUFFER, this.data.byteLength, gl.DYNAMIC_DRAW);
-    for (let i = 0; i < 4; i++) {
+    for (let i = 0; i < STRIDE / 4; i++) {
       gl.enableVertexAttribArray(1 + i);
       gl.vertexAttribPointer(1 + i, 4, gl.FLOAT, false, STRIDE * 4, i * 16);
       gl.vertexAttribDivisor(1 + i, 1);
@@ -473,7 +569,7 @@ export class Sim {
     if (w === this.w && h === this.h && this.dry) return;
     const gl = this.gl;
     const oldDry = this.dry;
-    const old = [this.wet, this.flow, this.dry];
+    const old = [this.wet, this.flow, this.dry, this.light];
     this.canvas.width = w;
     this.canvas.height = h;
     this.w = w;
@@ -481,9 +577,10 @@ export class Sim {
     this.wet = [this.target(w, h), this.target(w, h)];
     this.flow = [this.target(w, h), this.target(w, h)];
     this.dry = [this.target(w, h), this.target(w, h)];
+    this.light = [this.target(w, h), this.target(w, h)];
     gl.viewport(0, 0, w, h);
     gl.disable(gl.BLEND);
-    for (const t of [...this.wet, ...this.flow]) this.fill(t, 0, 0, 0, 0);
+    for (const t of [...this.wet, ...this.flow, ...this.light]) this.fill(t, 0, 0, 0, 0);
     for (const t of this.dry) this.fill(t, this.ground[0], this.ground[1], this.ground[2], 0);
     if (oldDry) {
       // the painting so far, at its new size (what was still wet is taken as dry)
@@ -514,9 +611,9 @@ export class Sim {
   }
 
   clear() {
-    if (!this.wet || !this.flow || !this.dry) return;
+    if (!this.wet || !this.flow || !this.dry || !this.light) return;
     this.gl.disable(this.gl.BLEND);
-    for (const t of [...this.wet, ...this.flow]) this.fill(t, 0, 0, 0, 0);
+    for (const t of [...this.wet, ...this.flow, ...this.light]) this.fill(t, 0, 0, 0, 0);
     for (const t of this.dry) this.fill(t, this.ground[0], this.ground[1], this.ground[2], 0);
     this.count = 0;
     this.made = 0;
@@ -544,6 +641,10 @@ export class Sim {
     d[o + 13] = s.kind;
     d[o + 14] = s.stretch;
     d[o + 15] = s.hard;
+    d[o + 16] = s.depth ?? 0.5;
+    d[o + 17] = 0;
+    d[o + 18] = 0;
+    d[o + 19] = 0;
     this.made++;
   }
   /** How many marks are waiting for the next step. */
@@ -554,14 +655,16 @@ export class Sim {
   /** Let `dt` seconds pass: the waiting marks land, the paint moves and dries, and the picture is shown. */
   step(dt: number, moving = true) {
     const gl = this.gl;
-    if (!this.wet || !this.flow || !this.dry) return;
+    if (!this.wet || !this.flow || !this.dry || !this.light) return;
     const [w, h] = [this.w, this.h];
     gl.viewport(0, 0, w, h);
+    this.moved = { x: 0, y: 0 };
     if (this.count > 0) {
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboStamp);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.wet[0].tex, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.flow[0].tex, 0);
-      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, this.light[0].tex, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
       gl.useProgram(this.progStamp);
       gl.uniform2f(this.u(this.progStamp, "uRes"), w, h);
       this.bind(0, this.paper);
@@ -579,21 +682,34 @@ export class Sim {
       const d = Math.min(1 / 30, Math.max(1 / 240, dt));
       this.time += d;
       const s = this.settings;
+      // the canvas drifts a whole pixel at a time (the rest is kept for the next step)
+      this.driftAcc.x += s.driftX * dt;
+      this.driftAcc.y += s.driftY * dt;
+      const mx = Math.trunc(this.driftAcc.x);
+      const my = Math.trunc(this.driftAcc.y);
+      this.driftAcc.x -= mx;
+      this.driftAcc.y -= my;
+      this.moved = { x: mx, y: my };
       gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboSim);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.wet[1].tex, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT1, gl.TEXTURE_2D, this.flow[1].tex, 0);
       gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT2, gl.TEXTURE_2D, this.dry[1].tex, 0);
-      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2]);
+      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT3, gl.TEXTURE_2D, this.light[1].tex, 0);
+      gl.drawBuffers([gl.COLOR_ATTACHMENT0, gl.COLOR_ATTACHMENT1, gl.COLOR_ATTACHMENT2, gl.COLOR_ATTACHMENT3]);
       const p = this.progSim;
       gl.useProgram(p);
       this.bind(0, this.wet[0].tex);
       this.bind(1, this.flow[0].tex);
       this.bind(2, this.dry[0].tex);
       this.bind(3, this.paper);
+      this.bind(4, this.light[0].tex);
       gl.uniform1i(this.u(p, "uWet"), 0);
       gl.uniform1i(this.u(p, "uFlow"), 1);
       gl.uniform1i(this.u(p, "uDry"), 2);
       gl.uniform1i(this.u(p, "uPaper"), 3);
+      gl.uniform1i(this.u(p, "uLight"), 4);
+      // (moved left on the canvas = read from the right; the texture's rows run bottom to top)
+      gl.uniform2f(this.u(p, "uShift"), -mx / w, my / h);
       gl.uniform2f(this.u(p, "uRes"), w, h);
       gl.uniform1f(this.u(p, "uDt"), d);
       gl.uniform1f(this.u(p, "uTime"), this.time);
@@ -609,6 +725,7 @@ export class Sim {
       this.wet.reverse();
       this.flow.reverse();
       this.dry.reverse();
+      this.light.reverse();
     }
     this.show();
   }
@@ -616,7 +733,7 @@ export class Sim {
   /** Draw the painting as it is now. */
   show() {
     const gl = this.gl;
-    if (!this.wet || !this.flow || !this.dry) return;
+    if (!this.wet || !this.flow || !this.dry || !this.light) return;
     gl.bindFramebuffer(gl.FRAMEBUFFER, null);
     gl.viewport(0, 0, this.w, this.h);
     const p = this.progShow;
@@ -624,14 +741,58 @@ export class Sim {
     this.bind(0, this.wet[0].tex);
     this.bind(1, this.flow[0].tex);
     this.bind(2, this.dry[0].tex);
+    this.bind(3, this.light[0].tex);
     gl.uniform1i(this.u(p, "uWet"), 0);
     gl.uniform1i(this.u(p, "uFlow"), 1);
     gl.uniform1i(this.u(p, "uDry"), 2);
+    gl.uniform1i(this.u(p, "uLight"), 3);
     gl.uniform2f(this.u(p, "uRes"), this.w, this.h);
     gl.uniform1f(this.u(p, "uRelief"), this.settings.relief);
     gl.uniform1f(this.u(p, "uFlip"), 0);
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+  }
+
+  /**
+   * How much of the canvas is painted, cell by cell on a coarse grid (`cols` by `rows`, top row
+   * first): for each cell, the part of it where the paint stands out from the ground.
+   */
+  measure(cols: number, rows: number): Float32Array {
+    const gl = this.gl;
+    const out = new Float32Array(cols * rows);
+    if (!this.wet || !this.dry || !this.light) return out;
+    let m = this.measured;
+    if (!m || m.cols !== cols || m.rows !== rows) {
+      if (m) gl.deleteTexture(m.tex);
+      const tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_2D, tex);
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+      m = this.measured = { tex, cols, rows, out: new Uint8Array(cols * rows * 4) };
+    }
+    gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboOne);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, m.tex, 0);
+    gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
+    gl.viewport(0, 0, cols, rows);
+    gl.disable(gl.BLEND);
+    const p = this.progMeasure;
+    gl.useProgram(p);
+    this.bind(0, this.wet[0].tex);
+    this.bind(1, this.dry[0].tex);
+    this.bind(2, this.light[0].tex);
+    gl.uniform1i(this.u(p, "uWet"), 0);
+    gl.uniform1i(this.u(p, "uDry"), 1);
+    gl.uniform1i(this.u(p, "uLight"), 2);
+    gl.uniform2f(this.u(p, "uCells"), cols, rows);
+    gl.uniform3f(this.u(p, "uGround"), this.ground[0], this.ground[1], this.ground[2]);
+    gl.bindVertexArray(this.quad);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+    gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, m.out);
+    gl.viewport(0, 0, this.w, this.h);
+    // (the texture's rows run bottom to top)
+    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) out[(rows - 1 - y) * cols + x] = m.out[(y * cols + x) * 4] / 255;
+    return out;
   }
 
   /** Is any paint still wet? (So the canvas can rest when everything has set.) */

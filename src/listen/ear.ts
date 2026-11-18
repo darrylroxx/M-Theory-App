@@ -20,7 +20,18 @@
  *
  * Levels are read against the loudest thing heard lately, so a quiet recording paints as fully as
  * a loud one, and tilted by 4.5 dB an octave, as analysers are, because music has that much less
- * in it the higher it goes.
+ * in it the higher it goes. Several ears listening to the parts of one mix can share that
+ * reference (`hold`), so a quiet part of a loud mix is heard as quiet.
+ *
+ * Each frame also carries the shape of its spectrum in a few numbers (`shape`): the levels of 24
+ * bands spaced as the ear spaces pitch (the mel scale), how far each of six octave bands' peaks
+ * stand above their valleys (spectral contrast), and how noise-like four broad bands are. These
+ * are what the vibe of a song is measured from (`canvas/vibe.ts`).
+ *
+ * Many ears can run side by side on the audio thread (one for each layer of a song). Each does
+ * its work once every hundredth of a second, all in one go; ears made together would all do it
+ * in the same few milliseconds and could hold up the sound. `phase` staggers them, and `light`
+ * leaves out the following of tones, for a layer whose notes the app already knows exactly.
  */
 import { FFT } from "./fft";
 
@@ -32,6 +43,23 @@ export const HIT_BANDS = 36;
 export const NOISE_BANDS = 27;
 /** How far below the loudest thing a sound can be and still be shown (dB). */
 export const RANGE_DB = 42;
+/** The shape of a spectrum: 24 mel band levels (dB), 6 octave bands' contrast, 4 broad bands' flatness. */
+export const MEL_BANDS = 24;
+export const CONTRAST_BANDS = 6;
+export const FLAT_BANDS = 4;
+export const SHAPE = MEL_BANDS + CONTRAST_BANDS + FLAT_BANDS;
+const CONTRAST_EDGES = [60, 200, 400, 800, 1600, 3200, 8000];
+const FLAT_EDGES = [60, 500, 2000, 6000, 12000];
+/** The mel scale (as the ear spaces pitch): 1127.01048 · ln(1 + f/700). */
+export const mel = (hz: number) => 1127.01048 * Math.log(1 + hz / 700);
+export const melHz = (m: number) => 700 * (Math.exp(m / 1127.01048) - 1);
+
+export interface EarOptions {
+  /** where in its hundredth of a second this ear does its work (0..1): ears that share the audio thread take turns */
+  phase?: number;
+  /** only levels, brightness, hits and noise: no tones followed and no shape (for a layer whose notes are known) */
+  light?: boolean;
+}
 
 export interface Voice {
   id: number;
@@ -80,6 +108,8 @@ export interface Frame {
   flux: number;
   /** how strong each of the twelve notes is (C first), adding up to 1 (all 0 in silence) */
   chroma: Float32Array;
+  /** the shape of the spectrum (see SHAPE); missing from a light ear's frames */
+  shape?: Float32Array;
 }
 
 /** The tilt of music: this many dB are added for a component at `hz` before it is compared with others. */
@@ -105,6 +135,29 @@ interface Peak {
   /** tilted level, for comparing */
   w: number;
   taken: boolean;
+}
+
+/** Triangular mel bands from 60 Hz to 8 kHz over the short look's bins (1024 points). */
+function melPlan(sr: number): { from: number; w: Float32Array }[] {
+  const binHz = sr / 1024;
+  const lo = mel(60);
+  const hi = mel(Math.min(8000, sr / 2 - binHz));
+  const edges = Array.from({ length: MEL_BANDS + 2 }, (_, i) => melHz(lo + ((hi - lo) * i) / (MEL_BANDS + 1)));
+  const out: { from: number; w: Float32Array }[] = [];
+  for (let m = 0; m < MEL_BANDS; m++) {
+    const [a, b, c] = [edges[m], edges[m + 1], edges[m + 2]];
+    const from = Math.max(1, Math.floor(a / binHz));
+    const to = Math.min(511, Math.ceil(c / binHz));
+    const w = new Float32Array(Math.max(1, to - from + 1));
+    for (let k = from; k <= to; k++) {
+      const f = k * binHz;
+      w[k - from] = f <= b ? Math.max(0, (f - a) / (b - a)) : Math.max(0, (c - f) / (c - b));
+    }
+    // a band narrower than a bin still takes the bin it falls in
+    if (w.every((x) => x === 0)) w[Math.min(w.length - 1, Math.round(b / binHz) - from)] = 1;
+    out.push({ from, w });
+  }
+  return out;
 }
 
 /** Which bins make up each of `count` bands, `per` to the octave, for a spectrum of `n` points at `sr`. */
@@ -152,14 +205,27 @@ export class Ear {
   private readonly around = new Float32Array(24);
   /** for each of the last frames: each band's rise, weighted towards the bands that are loud (to say where a hit was) */
   private readonly shapes: Float32Array[] = [];
+  private readonly light: boolean;
+  /** the mel bands: for each, its bins and their weights in the short look */
+  private readonly melPlan: { from: number; w: Float32Array }[];
+  private readonly scratchBins = new Float32Array(512);
 
   /** `ref`: how loud the loudest parts are expected to be (dBFS), if known. Otherwise the first sounds set it. */
-  constructor(sr: number, ref = -54) {
+  constructor(sr: number, ref = -54, opts: EarOptions = {}) {
     this.sr = sr;
     this.hop = Math.round(sr / 100);
     this.ref = ref;
     this.hitPlan = plan(HIT_BANDS, 4, sr, 1024);
     this.noisePlan = plan(NOISE_BANDS, 3, sr, 2048);
+    this.light = !!opts.light;
+    // a later phase: this ear's first frame comes that much of a hop later, and so do all the rest
+    this.sinceHop = -Math.round((((opts.phase ?? 0) % 1) + 1) % 1 * this.hop);
+    this.melPlan = melPlan(sr);
+  }
+
+  /** Share another ear's sense of the loudest thing heard lately (dB, tilted): never read levels against less. */
+  hold(ref: number) {
+    this.ref = Math.max(this.ref, ref);
   }
 
   /** The loudest thing heard lately (dB, tilted): what levels are read against. */
@@ -190,7 +256,7 @@ export class Ear {
   private frame(): Frame {
     const { sr, pLong, pMid, pShort } = this;
     const dt = this.hop / sr;
-    this.long.power(this.ring, this.pos, pLong);
+    if (!this.light) this.long.power(this.ring, this.pos, pLong);
     this.mid.power(this.ring, this.pos, pMid);
     this.short.power(this.ring, this.pos, pShort);
     // the short look is centred half its length back from now
@@ -222,9 +288,11 @@ export class Ear {
     // ── tones: the peaks of the three looks, each in its own range ──
     const peaks = this.peaks;
     peaks.length = 0;
-    this.findPeaks(pLong, 4096, EAR_LO, 700);
-    this.findPeaks(pMid, 2048, 700, 2800);
-    this.findPeaks(pShort, 1024, 2800, EAR_HI);
+    if (!this.light) {
+      this.findPeaks(pLong, 4096, EAR_LO, 700);
+      this.findPeaks(pMid, 2048, 700, 2800);
+      this.findPeaks(pShort, 1024, 2800, EAR_HI);
+    }
     let top = -200;
     for (const p of peaks) top = Math.max(top, p.w);
     const level = new Float32Array(HIT_BANDS);
@@ -376,7 +444,51 @@ export class Ear {
       noise[b] = this.noiseNow[b];
     }
 
-    return { t, voices, ended, hits, noise, level: amp(db + 9), db, centroid, flat, flux, chroma };
+    const f: Frame = { t, voices, ended, hits, noise, level: amp(db + 9), db, centroid, flat, flux, chroma };
+    if (!this.light) f.shape = this.shapeOf(pShort);
+    return f;
+  }
+
+  /** The shape of the spectrum (the short look): mel band levels, octave contrast, broad flatness. */
+  private shapeOf(p: Float32Array): Float32Array {
+    const out = new Float32Array(SHAPE);
+    const binHz = this.sr / 1024;
+    for (let m = 0; m < MEL_BANDS; m++) {
+      const { from, w } = this.melPlan[m];
+      let s = 0;
+      for (let i = 0; i < w.length; i++) s += p[from + i] * w[i];
+      out[m] = dB(s);
+    }
+    const bins = this.scratchBins;
+    for (let b = 0; b < CONTRAST_BANDS; b++) {
+      const k0 = Math.max(1, Math.round(CONTRAST_EDGES[b] / binHz));
+      const k1 = Math.min(511, Math.max(k0 + 2, Math.round(CONTRAST_EDGES[b + 1] / binHz)));
+      const n = k1 - k0;
+      for (let k = 0; k < n; k++) bins[k] = p[k0 + k];
+      const part = bins.subarray(0, n).sort();
+      // the peak and the valley: the loudest and the quietest fifth of the band's points
+      const q = Math.max(1, Math.round(n * 0.2));
+      let lo = 0;
+      let hi = 0;
+      for (let k = 0; k < q; k++) {
+        lo += part[k];
+        hi += part[n - 1 - k];
+      }
+      out[MEL_BANDS + b] = Math.log10((hi + 1e-12) / (lo + 1e-12));
+    }
+    for (let b = 0; b < FLAT_BANDS; b++) {
+      const k0 = Math.max(1, Math.round(FLAT_EDGES[b] / binHz));
+      const k1 = Math.min(512, Math.max(k0 + 2, Math.round(FLAT_EDGES[b + 1] / binHz)));
+      let s = 0;
+      let ls = 0;
+      for (let k = k0; k < k1; k++) {
+        s += p[k];
+        ls += Math.log(p[k] + 1e-14);
+      }
+      const n = k1 - k0;
+      out[MEL_BANDS + CONTRAST_BANDS + b] = s > 1e-12 ? Math.min(1, Math.exp(ls / n) / (s / n)) : 0;
+    }
+    return out;
   }
 
   /** How hard a sound at `hz` has just begun, 0..1: the biggest rise in its band over the last few frames (five, unless told). */
