@@ -5,6 +5,7 @@ mod meter;
 mod dsp;
 mod fx;
 mod engine;
+mod rt;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

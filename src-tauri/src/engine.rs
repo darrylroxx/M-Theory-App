@@ -43,6 +43,9 @@ pub struct Stats {
     pub block: AtomicU64,
     /// the driver asked to be reset (its buffer size or sample rate was changed)
     pub invalid: AtomicBool,
+    /// how late you hear yourself, measured: from the moment the voice reaches the interface to
+    /// the moment it comes out of the headphones (ms, as f32 bits; 0 until known)
+    pub latency: AtomicU32,
     /// when the first frame was heard and the first sample captured, at the last stop
     pub times: Mutex<(Option<f64>, Option<f64>)>,
 }
@@ -65,6 +68,13 @@ pub enum Cmd {
     Backing(Vec<f32>),
     Start { bpm: f64, count_in_beats: u32, per_bar: u32, rec: Option<rtrb::Producer<f32>> },
     Stop,
+}
+
+/// What a message leaves behind once the audio thread has taken it in. It is handed back to
+/// be freed elsewhere: giving memory back can be slow, and the audio thread never waits.
+pub enum Trash {
+    Backing(#[allow(dead_code)] Vec<f32>),
+    Settings(#[allow(dead_code)] Box<Settings>),
 }
 
 /// The part of the engine that runs on the audio thread. It knows nothing of the driver, so it
@@ -99,6 +109,10 @@ pub struct Core {
     play0: Option<f64>,
     cap0: Option<f64>,
     pub dropped: u64,
+    /// when the newest block of voice was captured (seconds, driver clock)
+    last_cap: Option<f64>,
+    /// blocks in a row with more voice waiting than one block: extra delay to be taken out
+    over: u32,
     levels: Arc<Shared>,
     pub stats: Arc<Stats>,
 }
@@ -131,12 +145,14 @@ impl Core {
             play0: None,
             cap0: None,
             dropped: 0,
+            last_cap: None,
+            over: 0,
             levels,
             stats: Arc::new(Stats::default()),
         }
     }
-    /// A message from the app.
-    pub fn apply(&mut self, cmd: Cmd) {
+    /// A message from the app. What it leaves behind comes back, to be freed off the audio thread.
+    pub fn apply(&mut self, cmd: Cmd) -> Option<Trash> {
         match cmd {
             Cmd::Set(s) => {
                 self.monitor = s.monitor;
@@ -147,11 +163,16 @@ impl Core {
                 self.backing_gain = s.backing_gain;
                 self.click_gain = s.click_gain;
                 self.click_on = s.click_on;
+                Some(Trash::Settings(s))
             }
-            Cmd::Backing(b) => self.set_backing(b),
-            Cmd::Start { bpm, count_in_beats, per_bar, rec } => self.start(bpm, count_in_beats, per_bar, rec),
+            Cmd::Backing(b) => Some(Trash::Backing(std::mem::replace(&mut self.backing, b))),
+            Cmd::Start { bpm, count_in_beats, per_bar, rec } => {
+                self.start(bpm, count_in_beats, per_bar, rec);
+                None
+            }
             Cmd::Stop => {
                 self.stop();
+                None
             }
         }
     }
@@ -160,6 +181,7 @@ impl Core {
         self.chain.set(fx);
     }
     /// The song to play under the singer: stereo, interleaved, at the engine's rate.
+    #[cfg(test)]
     pub fn set_backing(&mut self, stereo: Vec<f32>) {
         self.backing = stereo;
     }
@@ -203,6 +225,7 @@ impl Core {
             self.recording = true;
             self.cap0 = Some(captured);
         }
+        self.last_cap = Some(captured);
         for frame in data.chunks(ch) {
             let v = frame[input];
             if self.monitor {
@@ -246,17 +269,40 @@ impl Core {
         }
         let ch = self.out_ch;
         let len = self.backing_frames();
-        // keep the monitor from falling behind (never more than a few blocks of delay), and never
-        // let it run dry in the middle of a block: if the voice has not arrived yet, it is held
-        // back by what is missing (a cushion of at most one block), instead of a gap that pops
         let frames = out.len() / ch;
         self.stats.block.store(frames as u64, Ordering::Relaxed);
-        while self.mon.len() > frames * 3 + 64 {
-            self.mon.pop_front();
+        if self.monitor {
+            // Never let the voice run dry in the middle of a block: if it has not arrived yet, it
+            // is held back by what is missing (a cushion of at most one block) instead of a gap
+            // that pops. And never let delay build up: more than a block waiting, for a while,
+            // is taken out at once with a short crossfade (no click); far too much is dropped.
+            if self.mon.len() > frames * 3 + 64 {
+                while self.mon.len() > frames {
+                    self.mon.pop_front();
+                }
+            }
+            self.over = if self.mon.len() > frames { self.over + 1 } else { 0 };
+            if self.over >= 16 {
+                self.catch_up(frames);
+                self.over = 0;
+            }
+            if self.mon.len() < frames {
+                for _ in self.mon.len()..frames {
+                    self.mon.push_front(0.0);
+                }
+            }
+        } else if !self.mon.is_empty() {
+            // nothing old is kept for when monitoring comes back on
+            self.mon.clear();
+            self.over = 0;
         }
-        if self.monitor && self.mon.len() < frames {
-            for _ in self.mon.len()..frames {
-                self.mon.push_front(0.0);
+        // how late the singer hears themselves: the driver's own in and out delays (from its
+        // timestamps), plus any voice still waiting here
+        if let Some(cap) = self.last_cap {
+            let waiting = if self.monitor { self.mon.len().saturating_sub(frames) } else { 0 };
+            let rtl = heard - cap + waiting as f64 / self.sr as f64;
+            if rtl > 0.0 && rtl < 1.0 {
+                self.stats.latency.store(((rtl * 1000.0) as f32).to_bits(), Ordering::Relaxed);
             }
         }
         for frame in out.chunks_mut(ch) {
@@ -287,6 +333,20 @@ impl Core {
             }
         }
         self.publish();
+    }
+
+    /// Take out the voice that is waiting beyond one block, crossfading over the jump.
+    fn catch_up(&mut self, frames: usize) {
+        let extra = self.mon.len().saturating_sub(frames);
+        if extra == 0 {
+            return;
+        }
+        let fade = frames.min(32);
+        for i in 0..fade {
+            let a = (i + 1) as f32 / (fade + 1) as f32;
+            self.mon[i] = self.mon[i] * (1.0 - a) + self.mon[i + extra] * a;
+        }
+        self.mon.drain(fade..fade + extra);
     }
 
     fn publish(&self) {
@@ -361,6 +421,8 @@ pub struct Status {
     pub xruns: u64,
     /// the buffer size in use (frames per block)
     pub block: u64,
+    /// how late you hear yourself, measured (ms; 0 until known)
+    pub latency: f32,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
@@ -382,6 +444,8 @@ where
     d.build_input_stream::<T, _, _>(
         cfg,
         move |data: &[T], info| {
+            crate::rt::audio_thread();
+            let _nd = crate::rt::NoDenormals::new();
             buf.clear();
             buf.extend(data.iter().map(|s| f32::from_sample(*s)));
             let at = secs(info.timestamp().capture, &link.base);
@@ -396,7 +460,7 @@ where
     .map_err(|e| e.to_string())
 }
 
-fn output_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, link: Arc<Link>) -> Result<cpal::Stream, String>
+fn output_stream<T>(d: &cpal::Device, cfg: cpal::StreamConfig, core: Arc<Mutex<Core>>, link: Arc<Link>, mut trash: rtrb::Producer<Trash>) -> Result<cpal::Stream, String>
 where
     T: SizedSample + FromSample<f32> + Send + 'static,
 {
@@ -405,6 +469,8 @@ where
     d.build_output_stream::<T, _, _>(
         cfg,
         move |data: &mut [T], info| {
+            crate::rt::audio_thread();
+            let _nd = crate::rt::NoDenormals::new();
             buf.clear();
             buf.resize(data.len(), 0.0);
             let at = secs(info.timestamp().playback, &link.base);
@@ -412,7 +478,9 @@ where
                 // messages from the app, if they can be had without waiting
                 if let Ok(mut q) = link.cmds.try_lock() {
                     while let Some(cmd) = q.pop_front() {
-                        c.apply(cmd);
+                        if let Some(t) = c.apply(cmd) {
+                            let _ = trash.push(t);
+                        }
                     }
                 }
                 c.on_output(&mut buf, at);
@@ -462,16 +530,29 @@ fn link() -> Result<(Arc<Link>, u32), String> {
     Ok((l.link.clone(), l.rate))
 }
 
-/// Open the interface (input and output together) and start reporting levels.
+/// Only one thing talks to the audio drivers at a time: listing them, opening, closing. (Two at
+/// once, say a list while the interface is being opened, can upset an ASIO driver.)
+pub static DRIVER: Mutex<()> = Mutex::new(());
+pub fn driver_lock() -> std::sync::MutexGuard<'static, ()> {
+    DRIVER.lock().unwrap_or_else(|e| e.into_inner())
+}
+
+/// Open the interface (input and output together) and start reporting levels. It runs off the
+/// app's main thread, so a slow driver can never freeze the window.
 #[tauri::command]
-pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
+pub async fn engine_open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
+    tauri::async_runtime::spawn_blocking(move || open(host, device_name, buffer, status)).await.map_err(|e| e.to_string())?
+}
+
+fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
+    let _driver = driver_lock();
     crate::meter::stop();
     close_engine();
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel::<Result<(Opened, Arc<Link>), String>>();
     let flag = stop.clone();
     let thread = std::thread::spawn(move || {
-        let made = (|| -> Result<(Vec<cpal::Stream>, Arc<Link>, Arc<Shared>, Opened), String> {
+        let made = (|| -> Result<(Vec<cpal::Stream>, Arc<Link>, Arc<Shared>, Opened, rtrb::Consumer<Trash>), String> {
             let (h, d) = device(&host, &device_name)?;
             let oc = d.default_output_config().map_err(|e| format!("No outputs: {e}"))?;
             let ic = d.default_input_config().map_err(|e| format!("No inputs: {e}"))?;
@@ -493,6 +574,7 @@ pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, statu
             let c = Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone());
             let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new() });
             let core = Arc::new(Mutex::new(c));
+            let (trash_in, trash_out) = rtrb::RingBuffer::<Trash>::new(64);
             let input = match ic.sample_format() {
                 SampleFormat::F32 => input_stream::<f32>(&d, icfg.clone(), core.clone(), link.clone()),
                 SampleFormat::I32 => input_stream::<i32>(&d, icfg.clone(), core.clone(), link.clone()),
@@ -500,22 +582,24 @@ pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, statu
                 other => Err(format!("Inputs send {other} samples, which the engine cannot read yet")),
             }?;
             let output = match oc.sample_format() {
-                SampleFormat::F32 => output_stream::<f32>(&d, ocfg.clone(), core.clone(), link.clone()),
-                SampleFormat::I32 => output_stream::<i32>(&d, ocfg.clone(), core.clone(), link.clone()),
-                SampleFormat::I16 => output_stream::<i16>(&d, ocfg.clone(), core.clone(), link.clone()),
+                SampleFormat::F32 => output_stream::<f32>(&d, ocfg.clone(), core.clone(), link.clone(), trash_in),
+                SampleFormat::I32 => output_stream::<i32>(&d, ocfg.clone(), core.clone(), link.clone(), trash_in),
+                SampleFormat::I16 => output_stream::<i16>(&d, ocfg.clone(), core.clone(), link.clone(), trash_in),
                 other => Err(format!("Outputs take {other} samples, which the engine cannot write yet")),
             }?;
             // input first, so each block of voice is in hand before the block of sound that follows it
             input.play().map_err(|e| e.to_string())?;
             output.play().map_err(|e| e.to_string())?;
             let opened = Opened { host: h.id().name().to_string(), device: d.to_string(), rate, inputs: icfg.channels, outputs: ocfg.channels, format: oc.sample_format().to_string(), min_buffer, max_buffer };
-            Ok((vec![input, output], link, shared, opened))
+            Ok((vec![input, output], link, shared, opened, trash_out))
         })();
         match made {
             Err(e) => {
                 let _ = tx.send(Err(e));
             }
-            Ok((streams, link, shared, opened)) => {
+            Ok((streams, link, shared, opened, mut trash_out)) => {
+                // full speed and no sleep while the interface is open
+                let _session = crate::rt::Session::begin();
                 let _ = tx.send(Ok((opened, link.clone())));
                 let st = &link.stats;
                 while !flag.load(Ordering::Relaxed) {
@@ -533,7 +617,10 @@ pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, statu
                         invalid: st.invalid.load(Ordering::Relaxed),
                         xruns: st.xruns.load(Ordering::Relaxed),
                         block: st.block.load(Ordering::Relaxed),
+                        latency: f32::from_bits(st.latency.load(Ordering::Relaxed)),
                     };
+                    // what the audio thread has finished with is freed here
+                    while trash_out.pop().is_ok() {}
                     if status.send(msg).is_err() {
                         break;
                     }
@@ -557,9 +644,13 @@ pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, statu
 }
 
 #[tauri::command]
-pub fn engine_close() {
-    let _ = engine_stop_inner();
-    close_engine();
+pub async fn engine_close() {
+    let _ = tauri::async_runtime::spawn_blocking(|| {
+        let _driver = driver_lock();
+        let _ = engine_stop_inner();
+        close_engine();
+    })
+    .await;
 }
 
 /// What the singer hears and how: monitoring through the chain, which input, the chain's settings, levels.
@@ -592,7 +683,11 @@ fn recordings_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 
 /// Start: the count-in, then the song round and round; with `record`, everything sung is written to a new file.
 #[tauri::command]
-pub fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
+pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || start(app, bpm, count_in_beats, beats_per_bar, record, name)).await.map_err(|e| e.to_string())?
+}
+
+fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
     let _ = engine_stop_inner();
     let (l, rate) = link()?;
     let mut producer = None;
@@ -862,5 +957,57 @@ mod tests {
         let mut out = vec![0.0f32; 512];
         c.on_output(&mut out, 0.0);
         assert!(c.mon.len() <= 256 * 3 + 64);
+    }
+
+    #[test]
+    fn extra_delay_is_taken_out_smoothly_and_the_delay_heard_is_measured() {
+        let mut c = core();
+        c.monitor = true;
+        c.set_fx(&VocalFx { on: false, ..VocalFx::default() });
+        // a rising ramp, so any jump shows; one extra block of voice is left waiting
+        let mut t = 0.0f32;
+        let mut next = |n: usize| -> Vec<f32> {
+            (0..n).flat_map(|_| {
+                t += 1e-5;
+                [t, 0.0]
+            })
+            .collect()
+        };
+        c.on_input(&next(64), 1.0);
+        let mut out = vec![0.0f32; 128];
+        let mut heard = vec![];
+        for b in 0..40 {
+            let at = 1.0 + b as f64 * 64.0 / SR as f64;
+            c.on_input(&next(64), at);
+            c.on_output(&mut out, at + 0.0079);
+            heard.extend(out.chunks(2).map(|f| f[0]));
+        }
+        assert!(c.mon.len() <= 64, "the extra block is gone");
+        // no jump anywhere: the ramp only ever moves a little from sample to sample
+        let worst = heard.windows(2).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(worst < 64.0 * 1e-5 / 16.0, "smooth, not a click: {worst}");
+        // the driver's delays: 7.9 ms
+        let ms = f32::from_bits(c.stats.latency.load(Ordering::Relaxed));
+        assert!((ms - 7.9).abs() < 0.05, "{ms}");
+    }
+
+    #[test]
+    fn old_voice_is_not_kept_while_monitoring_is_off() {
+        let mut c = core();
+        c.on_input(&vec![0.3; 256], 0.0);
+        let mut out = vec![0.0f32; 256];
+        c.on_output(&mut out, 0.0);
+        c.monitor = true;
+        c.set_fx(&VocalFx { on: false, ..VocalFx::default() });
+        c.on_output(&mut out, 0.0);
+        assert!(out.iter().all(|v| *v == 0.0), "nothing from before monitoring came on");
+    }
+
+    #[test]
+    fn memory_from_messages_is_handed_back_not_freed_on_the_audio_thread() {
+        let mut c = core();
+        assert!(matches!(c.apply(Cmd::Backing(vec![0.1; 400])), Some(Trash::Backing(old)) if old.is_empty()));
+        assert!(matches!(c.apply(Cmd::Backing(vec![0.2; 200])), Some(Trash::Backing(old)) if old.len() == 400));
+        assert!(matches!(c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 0, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false }))), Some(Trash::Settings(_))));
     }
 }

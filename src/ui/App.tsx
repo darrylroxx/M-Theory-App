@@ -3,6 +3,7 @@ import { IdeasPanel } from "./components/IdeasPanel";
 import { DraftBadge, UpdateBar } from "./components/Desktop";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, PANES, useApp, type Pane } from "./state";
+import { useLive } from "./live";
 import { GuitarView } from "./views/GuitarView";
 
 class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
@@ -24,6 +25,7 @@ class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void 
 
 function Shell() {
   const { state, set, idea, dirty, saveIdea, toast, syncNow } = useApp();
+  const live = useLive();
   const [settings, setSettings] = useState(false);
   const [ideas, setIdeas] = useState<false | "open" | "named">(false);
   const save = () => {
@@ -50,7 +52,7 @@ function Shell() {
           <div className="brand"><div className="brand-mark">M</div><span>M-Theory</span><DraftBadge /></div>
           <nav className="tabs" aria-label="Pages">
             {PANES.map((t) => (
-              <button key={t.id} className={`tab${page === t.id ? " active" : ""}`} aria-current={page === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}</button>
+              <button key={t.id} className={`tab${page === t.id ? " active" : ""}`} aria-current={page === t.id ? "page" : undefined} onClick={() => go(t.id)}>{t.label}{t.id === "vocals" && live && <span className="live-dot" title="Your mic is live: you hear yourself through your effects on every page" aria-label="(mic live)" />}</button>
             ))}
           </nav>
           <button className={`btn sm save-btn${dirty ? " primary" : ""}`} onClick={save} disabled={!dirty} title={idea ? `Save "${idea.name}"` : "Save this idea to your library"}>{dirty || !idea ? "Save" : "Saved ✓"}</button>

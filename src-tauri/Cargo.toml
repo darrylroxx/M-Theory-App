@@ -26,6 +26,8 @@ hound = "3.5"
 # On Windows the app talks to audio interfaces through their ASIO drivers (Steinberg ASIO SDK, GPLv3 option).
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.18", features = ["asio"] }
+# the audio thread joins the "Pro Audio" scheduler class; no power throttling or sleep while recording
+windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_System_Power", "Win32_Foundation"] }
 
 [profile.release]
 codegen-units = 1

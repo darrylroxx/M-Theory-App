@@ -69,7 +69,12 @@ pub fn list() -> Vec<Host> {
 /// The UI asks for the list. Opening drivers can be slow, so it runs off the main thread.
 #[tauri::command]
 pub async fn audio_devices() -> Vec<Host> {
-    tauri::async_runtime::spawn_blocking(list).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(|| {
+        let _driver = crate::engine::driver_lock();
+        list()
+    })
+    .await
+    .unwrap_or_default()
 }
 
 #[cfg(test)]

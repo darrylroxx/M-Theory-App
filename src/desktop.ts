@@ -76,11 +76,22 @@ export async function meterStop(): Promise<void> {
 }
 
 // ── the recording engine ──
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number; block: number }
+/** `latency`: how late the singer hears themselves, measured from the driver (ms; 0 until known). */
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number; block: number; latency: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
 
 async function core() {
   return import("@tauri-apps/api/core");
+}
+/**
+ * Opening, closing, starting and stopping happen one after another, in the order they were
+ * asked for: a close from a page that is going away can never land after the open that follows it.
+ */
+let line: Promise<unknown> = Promise.resolve();
+function inTurn<T>(fn: () => Promise<T>): Promise<T> {
+  const p = line.then(fn, fn);
+  line = p.catch(() => undefined);
+  return p;
 }
 /** Open the interface's inputs and outputs together, and hear about levels and position. */
 /** `buffer`: the buffer size to ask the driver for (frames), or null for the driver's own setting. */
@@ -88,11 +99,12 @@ export async function engineOpen(host: string, device: string, buffer: number | 
   const { invoke, Channel } = await core();
   const ch = new Channel<EngineStatus>();
   ch.onmessage = onStatus;
-  return invoke<EngineOpened>("engine_open", { host, deviceName: device, buffer, status: ch });
+  return inTurn(() => invoke<EngineOpened>("engine_open", { host, deviceName: device, buffer, status: ch }));
 }
 export async function engineClose(): Promise<void> {
   if (!isDesktop()) return;
-  await (await core()).invoke("engine_close");
+  const { invoke } = await core();
+  await inTurn(() => invoke("engine_close"));
 }
 export async function engineSet(o: { monitor: boolean; input: number; fx: import("./audio/vocalfx").VocalFx; backingGain: number; clickGain: number; clickOn: boolean }): Promise<void> {
   await (await core()).invoke("engine_set", o);
@@ -107,11 +119,13 @@ export async function engineBacking(left: Float32Array, right: Float32Array): Pr
   return (await core()).invoke<number>("engine_backing", new Uint8Array(inter.buffer));
 }
 export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; record: boolean; name: string }): Promise<string | null> {
-  return (await core()).invoke<string | null>("engine_start", o);
+  const { invoke } = await core();
+  return inTurn(() => invoke<string | null>("engine_start", o));
 }
 /** Stop; a recording is closed and comes back with its version through the vocal chain `fx`. */
 export async function engineStop(fx: import("./audio/vocalfx").VocalFx): Promise<import("./song/takes").Recorded | null> {
-  return (await core()).invoke("engine_stop", { fx });
+  const { invoke } = await core();
+  return inTurn(() => invoke("engine_stop", { fx }));
 }
 /** The vocal chain over a whole recording again (after its settings changed): the new file. */
 export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalFx): Promise<string> {

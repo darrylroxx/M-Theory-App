@@ -11,6 +11,7 @@ import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engine
 import { activeTake, cutTakes, groupsOf, type Take } from "../../song/takes";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
+import { setLive } from "../live";
 
 /** What a recording goes round, and the song to play under it. */
 export interface RecordPlan {
@@ -51,7 +52,7 @@ const KNOBS: { k: keyof VocalFx; label: string; min: number; max: number; step: 
 ];
 const sig = (fx: VocalFx) => JSON.stringify(fx);
 const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
-/** About how long a sound takes to go in and come back out at a buffer size (two blocks, plus the converters). */
+/** Until the driver's own figure is in: about how long a sound takes to go in and come back out at a buffer size. */
 const roundTrip = (block: number, rate: number) => Math.round(((2 * block) / rate) * 1000 + 2);
 
 /**
@@ -90,16 +91,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
 
+  // the list of interfaces: once, and again only after a problem (never while the interface is
+  // being opened, which can upset a driver)
   useEffect(() => {
-    if (!desktop || !active) return;
+    if (!desktop || !active || (hosts && !error)) return;
     void audioDevices().then(setHosts);
-  }, [desktop, active]);
+  }, [desktop, active, !!error]); // eslint-disable-line react-hooks/exhaustive-deps
   const devices = (hosts ?? []).flatMap((h) => h.devices.filter((d) => (d.input?.channels ?? 0) > 0 && (d.output?.channels ?? 0) > 0).map((d) => ({ host: h.name, name: d.name, channels: d.input!.channels })))
     .sort((a, b) => Number(b.host.toUpperCase() === "ASIO") - Number(a.host.toUpperCase() === "ASIO") || Number(/focusrite|scarlett/i.test(b.name)) - Number(/focusrite|scarlett/i.test(a.name)));
   const chosen = devices.find((d) => d.host === studio.host && d.name === studio.device) ?? devices[0];
 
-  // the interface is open while this page is on screen (and while recording)
-  const keepOpen = active || recording;
+  // the interface is open while this page is on screen, while recording, and whenever you hear
+  // yourself through the effects: then it stays open on every page
+  const monitor = (studio.monitor ?? "hardware") === "effects";
+  const keepOpen = active || recording || monitor;
   /** bumped when the driver resets (its buffer size or rate was changed in the Focusrite Notifier): the interface is opened again */
   const [reopen, setReopen] = useState(0);
   useEffect(() => {
@@ -128,7 +133,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (grRef.current) grRef.current.textContent = st.reduction > 0.5 ? `−${st.reduction.toFixed(1)} dB` : "";
       // dropouts: the computer could not keep up at this buffer size
       if (st.xruns !== drops.current.n) drops.current = { n: st.xruns, at: performance.now() };
-      if (blockRef.current && st.block) blockRef.current.textContent = `${st.block} samples · about ${roundTrip(st.block, opened?.rate ?? 48000)} ms round trip`;
+      if (blockRef.current && st.block) blockRef.current.textContent = `${st.block} samples · ${st.latency > 0 ? `${st.latency.toFixed(1)} ms` : `about ${roundTrip(st.block, opened?.rate ?? 48000)} ms`} round trip`;
       if (dropRef.current) dropRef.current.textContent = st.xruns ? `${st.xruns} dropout${st.xruns === 1 ? "" : "s"}` : "no dropouts";
       if (slowRef.current) slowRef.current.hidden = !(st.xruns && performance.now() - drops.current.at < 6000);
       if (countRef.current) {
@@ -143,8 +148,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     return () => { live = false; void engineClose(); setOpened(null); };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useEffect(() => setLive(!!opened && monitor), [opened, monitor]);
+  useEffect(() => () => setLive(false), []);
+
   // what the singer hears follows the page at once
-  const monitor = (studio.monitor ?? "hardware") === "effects";
   useEffect(() => {
     if (!opened) return;
     const t = window.setTimeout(() => void engineSet({ monitor, input: (track?.input ?? 1) - 1, fx, backingGain: studio.backing ?? 1, clickGain: studio.click ?? 0.5, clickOn: !!studio.clickOn }).catch(() => {}), 30);
@@ -314,7 +321,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                   <option value="">Driver's setting</option>
                   {BUFFERS.filter((b) => (opened?.min_buffer ?? 0) <= b && b <= (opened?.max_buffer ?? 4096)).map((b) => <option key={b} value={b}>{b}</option>)}
                 </select>
-                <span ref={blockRef} className="tiny muted" />
+                <span ref={blockRef} className="tiny muted" title="Measured from the driver: from your voice reaching the interface to hearing it in your headphones" />
               </label>
               <span ref={slowRef} className="small vc-err" hidden>Dropouts right now: the computer is not keeping up at this buffer size. Choose a bigger buffer (128 is safe for most computers).</span>
               {error && <span className="small vc-err">{error}</span>}
@@ -334,7 +341,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 <button role="radio" aria-checked={monitor} className={monitor ? "on" : ""} onClick={() => setStudio({ monitor: "effects" })}>Through my effects</button>
               </span>
               {monitor && checks.direct && <span className="small vc-err">Turn Direct Monitor off on the interface (and untick it below), or you will hear yourself twice.</span>}
-              {monitor && !checks.direct && <span className="tiny muted">You hear yourself through the vocal sound below, a few milliseconds late: the buffer size above sets how many (64 is a good start; go up if there are dropouts).</span>}
+              {monitor && !checks.direct && <span className="tiny muted">You hear yourself through the vocal sound below, on every page, a few milliseconds late: the buffer size above sets how many (64 is a good start; go up if there are dropouts).</span>}
               {!monitor && <span className="tiny muted">Press Direct Monitor on the interface to hear yourself, dry and with no delay.</span>}
               <div className="vc-mix">
                 <label className="vc-mini">Song <input type="range" min={0} max={1.5} step={0.05} value={studio.backing ?? 1} onChange={(e) => setStudio({ backing: Number(e.target.value) })} /></label>
