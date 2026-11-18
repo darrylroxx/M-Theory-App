@@ -25,13 +25,13 @@ import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
-import { VocalsPage } from "../components/VocalsPage";
+import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
 import { activeTake, groupsOf, type Take } from "../../song/takes";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
-import { loadTake, takeBuffer } from "../../audio/takebuffers";
+import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
 import { sectionSig, setSig, sigOf } from "../../song/unity";
@@ -143,14 +143,16 @@ export function GuitarView() {
   }, [prog.bars, prog.pattern, prog.feel, tune, bar, meter]);
   const items = fill(prog.chords, voicings, beat);
 
-  // recorded takes are read from disk once, then play with the song
+  // recorded takes are read from disk once (just the take, not the whole recording), then play with the song
   const [takesReady, setTakesReady] = useState(0);
-  const takePaths = useMemo(() => (prog.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])?.wet) : [])).filter((x): x is string => !!x), [prog.tracks]);
+  const playedTakes = useMemo(() => (prog.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])) : [])).filter((x): x is Take => !!x), [prog.tracks]);
+  const playedKey = playedTakes.map(takeKey).join("|");
   useEffect(() => {
     let live = true;
-    for (const p of takePaths) if (!takeBuffer(p)) void loadTake(p).then((b) => live && b && setTakesReady((n) => n + 1));
+    keepTakes(playedTakes);
+    for (const tk of playedTakes) if (!takeBuffer(tk)) void loadTake(tk).then((b) => live && b && setTakesReady((n) => n + 1));
     return () => { live = false; };
-  }, [takePaths]);
+  }, [playedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // The whole song, section after section. A section with no chords is one bar of the beat on its own.
   const secs = useMemo(() => sections(prog), [prog]);
   // Each section plays with its own settings where it has them, and the song's (the first section's) everywhere else.
@@ -189,8 +191,9 @@ export function GuitarView() {
         if (t.kind !== "vocals") continue;
         for (const g of groupsOf(t.takes)) {
           const tk = activeTake(t.takes ?? [], g, t.active?.[g]);
-          const buffer = tk && tk.at.block === sec.blockId ? takeBuffer(tk.wet) : undefined;
-          if (tk && buffer) (ex.takes ??= []).push({ track: t.id, buffer, at: tk.at.bar * secBar, offset: tk.start / tk.rate, dur: tk.frames / tk.rate });
+          const buffer = tk && tk.at.block === sec.blockId ? takeBuffer(tk) : undefined;
+          // the buffer holds just the take, so it plays from its start
+          if (tk && buffer) (ex.takes ??= []).push({ track: t.id, buffer, at: tk.at.bar * secBar, offset: 0, dur: tk.frames / tk.rate });
         }
       }
       return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
@@ -338,6 +341,8 @@ export function GuitarView() {
    * follows along). With a loop: the looped bars, round and round.
    */
   const startPlay = () => {
+    // while the Vocals page records, the song plays through the interface: a second one here would sound over it
+    if (recording) return;
     const list = listRef.current;
     if (!planRef.current.any || !list.items.length) return toast("Add chords, a melody or drums first");
     getAudio();
@@ -387,7 +392,15 @@ export function GuitarView() {
     const list = sliceLoop(span);
     const first = plan.per.find((x) => x.block === span.from.block);
     const beats = list.items.reduce((a, x) => a + x.beats, 0);
-    return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : "and on"}` };
+    // every bar that goes round, for the Vocals page's lane
+    const bars: RecordPlan["bars"] = [];
+    const a = plan.per.findIndex((x) => x.block === span.from.block);
+    const b = plan.per.findIndex((x) => x.block === span.to.block);
+    for (let k = Math.max(0, a); k <= b; k++) {
+      const x = plan.per[k];
+      for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar });
+    }
+    return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : "and on"}`, bars };
   }, [loop, layout, curBlock, nBars, sliceLoop, plan.per, bar, prog.bpm, prog.pattern, firstBeat]);
 
   const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
@@ -597,7 +610,7 @@ export function GuitarView() {
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={link("tuneSound")} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
-          <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} />
+          <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
           <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
@@ -1059,7 +1072,7 @@ function Transport({ locked, per, current, loop, layout, onBar, onLoop, getBar, 
   }, [playing, getBar]);
   return (
     <section className={`song-frame transport${loop ? " looping" : ""}${locked ? " locked" : ""}`} aria-label="Play" title={locked ? "Recording: the loop is locked until you stop" : undefined}>
-      <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : loop ? "Play the loop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>
+      <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : loop ? "Play the loop" : "Play"} disabled={!playing && (!canPlay || !!locked)}>{playing ? "■" : "▶"}</button>
       <button className={`loop-btn${loop ? " on" : ""}`} aria-pressed={!!loop} aria-label={loop ? "Stop looping" : `Loop section ${cur?.label ?? "A"}`} title={loop ? "Stop looping: play straight through" : `Loop section ${cur?.label ?? "A"}. Or tap bars to loop just those`} onClick={onLoop}>↻</button>
       <div className="loopbar" ref={row} role="group" aria-label="The song, bar by bar. Tap a section to go to it; tap bars to loop them">
         {per.map((x) => (
