@@ -131,7 +131,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
         el.style.transform = `translateX(${x}px)`;
         const sc = scrollRef.current;
         if (follow && sc && (x < sc.scrollLeft || x >= sc.scrollLeft + sc.clientWidth - 1)) {
-          const page = Math.max(1, Math.floor(sc.clientWidth / bw)) * bw;
+          const page = Math.max(1, Math.floor(sc.clientWidth / bw + 1e-6)) * bw;
           sc.scrollLeft = Math.floor(x / page) * page;
         }
       } else el.style.display = "none";

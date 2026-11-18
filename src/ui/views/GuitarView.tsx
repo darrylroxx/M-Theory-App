@@ -433,7 +433,12 @@ export function GuitarView() {
   const [pasted, setPasted] = useState(0);
   const onPasted = useCallback(() => setPasted((n) => n + 1), []);
   /** How far into its section the music is, while the section on screen is the one sounding. */
-  const getPos = useCallback(() => (playBlock.current === curRef.current ? player.current?.sectionBeat() ?? null : null), []);
+  // (the section is read from the same moment as the beat: the player says a section has started a
+  // little after the music is in it, and the grids must not take B's first bar for A's)
+  const getPos = useCallback(() => {
+    const pos = player.current?.position();
+    return pos && listRef.current.map[pos.index]?.block === curRef.current ? pos.beat : null;
+  }, []);
   /** Where the music is, for the canvas: which section, and how far into it. */
   const bpmRef = useRef(prog.bpm);
   bpmRef.current = prog.bpm;
@@ -992,7 +997,7 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };
   return (
-    <div className="clip-bar" role="group" aria-label={`The ${what} tracks, copy and paste`}>
+    <div className={`clip-bar${list.length > 1 ? " many" : ""}`} role="group" aria-label={`The ${what} tracks, copy and paste`}>
       <span className={`clip-of ${letterClass(color)}`}><b title={label}>{label}</b></span>
       <span className="seg clip-tracks" role="radiogroup" aria-label={`Which ${what} track`}>
         {list.map((t) => (

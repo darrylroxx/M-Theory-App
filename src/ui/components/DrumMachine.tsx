@@ -286,8 +286,9 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     if (e.pointerType === "mouse" && e.button !== 0) return;
     hold();
     finger.current = e.pointerType === "touch";
+    // a bar's number: the mouse chooses it at once; a finger may be scrolling, so its tap is taken on click
     const num = (e.target as HTMLElement).closest<HTMLElement>("[data-pick]");
-    if (num) return choose(Number(num.dataset.pick));
+    if (num) return finger.current ? undefined : choose(Number(num.dataset.pick));
     const c = cellAt(e.clientX, e.clientY);
     if (!c) return;
     if (!editing) return finger.current ? undefined : locked();
@@ -310,13 +311,14 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const onUp = () => {
     paint.current = null;
   };
-  // Enter or Space on a square (or on a bar's number), from the keyboard; and a finger's tap on the locked grid
+  // Enter or Space on a square (or on a bar's number), from the keyboard; and a finger's tap on a bar's number or the locked grid
   const onKey = (e: React.MouseEvent<HTMLDivElement>) => {
+    const num = (e.target as HTMLElement).closest<HTMLElement>("[data-pick]");
     if (e.detail !== 0) {
-      if (finger.current && !editing && (e.target as HTMLElement).closest("[data-i]")) locked();
+      if (finger.current && num) choose(Number(num.dataset.pick));
+      else if (finger.current && !editing && (e.target as HTMLElement).closest("[data-i]")) locked();
       return;
     }
-    const num = (e.target as HTMLElement).closest<HTMLElement>("[data-pick]");
     if (num) return choose(Number(num.dataset.pick));
     const c = (e.target as HTMLElement).closest<HTMLElement>("[data-i]");
     if (!c || !editing) return;

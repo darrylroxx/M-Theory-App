@@ -1020,6 +1020,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 .clip-tracks { flex-wrap: nowrap; }
 @media (max-width: 620px) {
   .clip-bar { gap: 5px; }
+  /* with more than one track, the tracks have the first line to themselves and the tools go under them */
+  .clip-bar.many { flex-wrap: wrap; row-gap: 8px; }
+  .clip-bar.many .clip-tracks { flex: 1 1 calc(100% - 40px); }
+  .clip-bar.many .bars-ctl { margin-left: auto; }
   .dm-bar > .dm-tabrow { flex-basis: 100%; }
   .bg-steps, .mg-steps { gap: 10px; }
   .bg-bar { gap: 2px; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 2px); }

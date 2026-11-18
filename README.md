@@ -48,7 +48,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 - Until you choose, a wide screen shows 4 bars, a tablet 2 and a phone 1. Your choice is kept, and it is the same on every page.
 - **The music never moves what you are looking at unless Follow is on.** With it off, the bars and the section on screen stay where you put them while the song plays: a line shows where the music is whenever its bar is on screen, and the play bar at the top always marks the bar that is sounding. With Follow on, the view turns a whole page when the music runs off the end of it (with 4 bars on screen: bars 1–4, then 5–8; with 1 bar, bar by bar as before) and goes on to the next section with the song. It waits a moment after you touch the grid, and the drums stay put while you are editing them.
 - The bar tabs choose the bar that ⧉, ✨ and Clear work on (a tap on a square, or on a bar's number, chooses it too). A tab whose bar is off screen brings its page with it; **‹ ›** turn a page.
-- On a phone, more bars than fit scroll sideways inside the grid, with the note and drum names kept in view; the page itself never scrolls sideways. Melody squares stay at least 30 px wide.
+- More bars than fit (on a phone, or **All** on a long section) scroll sideways inside the grid, with the note and drum names kept in view; the page itself never scrolls sideways. On a phone, melody squares stay at least 30 px wide.
 
 **Drum mixer.** On the Drums page, **Mixer** (before Sound and Effects) has a fader, mute and solo for each drum and one fader for the whole kit.
 
