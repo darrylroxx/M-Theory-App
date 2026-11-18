@@ -77,7 +77,7 @@ export async function meterStop(): Promise<void> {
 
 // ── the recording engine ──
 /** `latency`: how late the singer hears themselves, measured from the driver (ms; 0 until known). */
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number; block: number; latency: number }
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
 
 async function core() {

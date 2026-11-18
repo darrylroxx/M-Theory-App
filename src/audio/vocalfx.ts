@@ -2,10 +2,10 @@
  * The live vocal chain's settings, as the engine takes them (see src-tauri/src/fx.rs), and the
  * starting points to choose from. Amounts are 0..1 unless noted.
  */
-export type ColorKind = "clean" | "tube" | "console" | "tape" | "drive";
+export type ColorKind = "clean" | "tube" | "console" | "tape" | "drive" | "silk";
 export type WidthKind = "double" | "micro" | "chorus";
 export type EchoKind = "slap" | "tape" | "analog" | "digital" | "pingpong" | "ambient";
-export type SpaceKind = "plate" | "room" | "hall" | "chamber" | "cloud";
+export type SpaceKind = "plate" | "room" | "hall" | "chamber" | "cloud" | "spring" | "shimmer";
 
 export interface VocalFx {
   on: boolean;
@@ -69,6 +69,7 @@ export const COLORS: { id: ColorKind; name: string; hint: string }[] = [
   { id: "tube", name: "Tube", hint: "Valve warmth: second harmonics that grow as you sing louder" },
   { id: "console", name: "Console", hint: "A transformer-coupled desk: thick, with the hardest edges rounded" },
   { id: "tape", name: "Tape", hint: "Tape: quiet detail lifted, peaks held, the top softened" },
+  { id: "silk", name: "Silk", hint: "A soft, fine-grained thickening that never turns harsh" },
   { id: "drive", name: "Exciter", hint: "Sparkle: harmonics added only above 3 kHz" },
 ];
 export const WIDTHS: { id: WidthKind; name: string; hint: string }[] = [
@@ -86,10 +87,12 @@ export const ECHOES: { id: EchoKind; name: string; hint: string }[] = [
 ];
 export const SPACES: { id: SpaceKind; name: string; hint: string }[] = [
   { id: "plate", name: "Plate", hint: "The classic vocal reverb: bright and dense at once" },
-  { id: "room", name: "Room", hint: "A live room: walls you can hear, a short tail" },
+  { id: "room", name: "Room", hint: "A live room: one dense, dark, short burst with walls you can hear" },
   { id: "hall", name: "Hall", hint: "A concert hall: late, warm, the highs fade first" },
-  { id: "chamber", name: "Chamber", hint: "An echo chamber: dense and bright" },
-  { id: "cloud", name: "Cloud", hint: "A long wash that hangs behind the voice" },
+  { id: "chamber", name: "Chamber", hint: "An echo chamber: bright, and thick within a moment" },
+  { id: "cloud", name: "Cloud", hint: "A long, wide wash that arrives after the voice and hangs behind it" },
+  { id: "spring", name: "Spring", hint: "A guitar amp's spring tank: splashy and boingy, for surf, dub and lo-fi" },
+  { id: "shimmer", name: "Shimmer", hint: "A plate whose tail climbs an octave into a halo above the voice" },
 ];
 /** The air band's corners: the higher, the gentler and silkier. */
 export const AIR_BANDS = [{ hz: 10000, label: "10k" }, { hz: 20000, label: "20k" }, { hz: 40000, label: "40k" }];
@@ -129,6 +132,10 @@ export const PRESETS: { id: string; name: string; hint: string; fx: Partial<Voca
     fx: { color: "tape", warmth: 0.5, mud: 0.4, mud_freq: 300, presence: 2, presence_freq: 2500, air: 0, highcut: 12000, punch: 0.2, smooth: 0.6, deess: 0.35, deess_freq: 6000, verb_type: "chamber", verb: 0.3, verb_size: 0.6, verb_predelay: 0.04, verb_tone: 0.6, echo_type: "tape", echo: 0.2, echo_feedback: 0.35, width: "chorus", double: 0.15 }, echo: "8d" },
   { id: "dream", name: "Dream pop", hint: "A wash: a very long cloud almost as loud as the voice, a long tape echo, chorus",
     fx: { color: "tape", warmth: 0.45, lowcut: 120, mud: 0.6, mud_freq: 300, presence: 2, presence_freq: 5000, air: 0, highcut: 10000, punch: 0, smooth: 0.5, deess: 0.5, verb_type: "cloud", verb: 0.7, verb_size: 0.7, verb_predelay: 0.03, verb_tone: 0.55, duck: 0.2, echo_type: "tape", echo: 0.3, echo_feedback: 0.5, width: "chorus", double: 0.4 }, echo: "4" },
+  { id: "ethereal", name: "Ethereal", hint: "A halo: a long shimmer an octave above the voice, a dotted ambient echo, the voice itself soft and airy",
+    fx: { color: "clean", warmth: 0.2, lowcut: 110, mud: 0.4, mud_freq: 300, presence: 1.5, presence_freq: 4000, air: 4, air_freq: 20000, punch: 0.2, smooth: 0.6, deess: 0.6, verb_type: "shimmer", verb: 0.45, verb_size: 0.75, verb_predelay: 0.04, verb_tone: 0.4, duck: 0.35, echo_type: "ambient", echo: 0.2, echo_feedback: 0.4, width: "micro", double: 0.35 }, echo: "8d" },
+  { id: "surf", name: "Surf / dub", hint: "A spring tank and a dark echo that keeps going: for surf, dub, garage and reggae",
+    fx: { color: "tube", warmth: 0.5, lowcut: 110, mud: 0.3, mud_freq: 350, presence: 2.5, presence_freq: 3000, air: 0, highcut: 11000, punch: 0.5, smooth: 0.35, deess: 0.3, verb_type: "spring", verb: 0.3, verb_size: 0.55, verb_predelay: 0, verb_tone: 0.4, duck: 0.2, echo_type: "analog", echo: 0.25, echo_feedback: 0.5 }, echo: "8d" },
   { id: "folk", name: "Folk / acoustic", hint: "Natural: barely coloured, light optical levelling, a real-sounding room",
     fx: { color: "clean", warmth: 0.3, lowcut: 80, mud: 0.3, mud_freq: 250, presence: 1, presence_freq: 3000, air: 1.5, air_freq: 10000, punch: 0, smooth: 0.35, deess: 0.2, verb_type: "room", verb: 0.2, verb_size: 0.7, verb_predelay: 0.025 } },
   { id: "dance", name: "Dance", hint: "Bright and pumped: the exciter, a big hall that ducks hard under the voice, ping-pong echoes",

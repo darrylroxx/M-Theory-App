@@ -34,6 +34,8 @@ pub struct Stats {
     pub running: AtomicBool,
     /// dB of compression, as f32 bits
     pub reduction: AtomicU32,
+    /// dB the limiter at the end of the vocal chain is holding back, as f32 bits
+    pub limit: AtomicU32,
     /// counts every stop, so a waiting command knows its stop has happened
     pub stops: AtomicU64,
     pub dropped: AtomicU64,
@@ -356,6 +358,7 @@ impl Core {
         st.length.store(self.backing_frames(), Ordering::Relaxed);
         st.running.store(self.running || self.pending, Ordering::Relaxed);
         st.reduction.store(self.chain.reduction().to_bits(), Ordering::Relaxed);
+        st.limit.store(self.chain.limiting().to_bits(), Ordering::Relaxed);
     }
 }
 
@@ -415,6 +418,8 @@ pub struct Status {
     pub running: bool,
     /// dB the compressors are turning the voice down
     pub reduction: f32,
+    /// dB the limiter is holding back (it should rest at 0: if not, the level going in is too high)
+    pub limit: f32,
     /// the driver was reset (its buffer size or rate changed): the interface must be opened again
     pub invalid: bool,
     /// dropouts since the interface was opened (the computer could not keep up at this buffer size)
@@ -614,6 +619,7 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
                         length: st.length.load(Ordering::Relaxed),
                         running: st.running.load(Ordering::Relaxed),
                         reduction: f32::from_bits(st.reduction.load(Ordering::Relaxed)),
+                        limit: f32::from_bits(st.limit.load(Ordering::Relaxed)),
                         invalid: st.invalid.load(Ordering::Relaxed),
                         xruns: st.xruns.load(Ordering::Relaxed),
                         block: st.block.load(Ordering::Relaxed),

@@ -88,6 +88,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const barsRef = useRef<HTMLDivElement>(null);
   const countRef = useRef<HTMLSpanElement>(null);
   const grRef = useRef<HTMLSpanElement>(null);
+  const limRef = useRef<HTMLSpanElement>(null);
   const dropRef = useRef<HTMLSpanElement>(null);
   const slowRef = useRef<HTMLSpanElement>(null);
   const drops = useRef({ n: 0, at: 0 });
@@ -139,6 +140,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
         if (label) label.textContent = Number.isFinite(hold.current[c]) && hold.current[c] > -60 ? `${hold.current[c].toFixed(0)} dB` : "—";
       });
       if (grRef.current) grRef.current.textContent = st.reduction > 0.5 ? `−${st.reduction.toFixed(1)} dB` : "";
+      if (limRef.current) limRef.current.hidden = !((st.limit ?? 0) > 0.5);
       // dropouts: the computer could not keep up at this buffer size
       if (st.xruns !== drops.current.n) drops.current = { n: st.xruns, at: performance.now() };
       if (blockRef.current && st.block) blockRef.current.textContent = st.latency > 0 ? `${st.latency.toFixed(1)} ms` : `~${roundTrip(st.block, opened?.rate ?? 48000)} ms`;
@@ -371,7 +373,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
             </div>
 
             <div className="vc-box">
-              <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" /><label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
+              <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={limRef} className="vc-limit" hidden title="Too loud: the limiter is holding the level back. Turn Level, or the interface's gain, down.">LIMIT</span><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" /><label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
               <label className="vc-preset">
                 <select aria-label="Starting point" disabled={!track} value="" onChange={(e) => { const id = e.target.value; if (id) setTrack((t) => ({ ...t, fx: presetFx(id, bpm) })); }}>
                   <option value="" disabled>Preset…</option>

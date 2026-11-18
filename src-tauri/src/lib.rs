@@ -13,6 +13,10 @@ mod color;
 mod space;
 mod delays;
 mod width;
+mod room;
+mod chamber;
+mod cloud;
+mod spring;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {

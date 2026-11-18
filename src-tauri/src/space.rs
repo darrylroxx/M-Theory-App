@@ -1,18 +1,14 @@
-//! Rooms, halls, chambers and clouds: one reverb engine, four spaces (the plate is its own
-//! design, in `dsp`).
+//! A hall, and the list of spaces the reverb offers (each of the others is its own design, in
+//! its own module: `room`, `chamber`, `cloud`, `spring`, and the plate in `dsp`).
 //!
-//! The engine is the eight-line feedback delay network of Fons Adriaensen's zita-rev1 as
+//! The hall is the eight-line feedback delay network of Fons Adriaensen's zita-rev1 as
 //! extended in freeverb3's "zrev2" (the hall of Dragonfly Reverb; GPL-3.0-or-later): each line is
 //! a delay with an all-pass inside it; the eight outputs are mixed through a Hadamard matrix
 //! (every line feeds every other, equally) and written back. Lows and highs decay at their own
 //! rates (a real hall keeps its warmth longer than its brilliance), the voice is smeared by a
 //! chain of all-passes before it enters, and two slow oscillators move the delays slightly so
 //! long tails never ring on one note. A handful of early reflections (freeverb3's tap pattern)
-//! give the nearer spaces their walls.
-//!
-//! What makes a space, here as in those sources: how long the delay lines are, how much is
-//! diffused before the loop, whether there are early reflections, and how decay varies with
-//! frequency.
+//! put its walls in front of it.
 
 use crate::dsp::{AllPass, Line, OnePole};
 use serde::{Deserialize, Serialize};
@@ -25,6 +21,9 @@ pub enum SpaceKind {
     Hall,
     Chamber,
     Cloud,
+    Spring,
+    /// the plate, with its tail climbing an octave
+    Shimmer,
     /// the Dattorro plate (also what an unknown name becomes)
     #[default]
     #[serde(other)]
@@ -60,22 +59,11 @@ struct Recipe {
     /// how far the delays wander, in milliseconds
     wander: f32,
 }
-fn recipe(k: SpaceKind) -> Recipe {
-    match k {
-        // a small to medium live room: walls you can hear, short tail
-        SpaceKind::Room => Recipe { size: (0.09, 0.2), decay: (0.3, 1.1), low: 1.0, low_hz: 400.0, high: 0.5, high_hz: 6000.0, diffusion: 0.62, early: 0.7, early_size: 0.45, wander: 0.25 },
-        // a concert hall: late, warm, the highs die first
-        SpaceKind::Hall | SpaceKind::Plate => Recipe { size: (0.3, 0.6), decay: (1.2, 4.0), low: 1.3, low_hz: 500.0, high: 0.36, high_hz: 5200.0, diffusion: 0.6, early: 0.3, early_size: 1.0, wander: 0.6 },
-        // an echo chamber: dense at once, bright, no walls to pick out
-        SpaceKind::Chamber => Recipe { size: (0.16, 0.3), decay: (0.7, 2.2), low: 0.9, low_hz: 300.0, high: 0.7, high_hz: 7000.0, diffusion: 0.74, early: 0.0, early_size: 1.0, wander: 0.4 },
-        // a wash that hangs behind the voice: very long, heavily smeared, always moving
-        SpaceKind::Cloud => Recipe { size: (0.7, 1.0), decay: (3.5, 10.0), low: 1.0, low_hz: 400.0, high: 0.45, high_hz: 4200.0, diffusion: 0.78, early: 0.0, early_size: 1.0, wander: 1.6 },
-    }
-}
+/// A concert hall: late, warm, the highs die first.
+const HALL: Recipe = Recipe { size: (0.3, 0.6), decay: (1.2, 4.0), low: 1.3, low_hz: 500.0, high: 0.36, high_hz: 5200.0, diffusion: 0.6, early: 0.3, early_size: 1.0, wander: 0.6 };
 
 pub struct Space {
     sr: f32,
-    kind: SpaceKind,
     pre: Line,
     pub predelay: f32,
     early: Line,
@@ -104,7 +92,6 @@ impl Space {
         let ap = |len: f32| AllPass::new(len, 0.6);
         let mut s = Space {
             sr,
-            kind: SpaceKind::Hall,
             pre: Line::new((sr * 0.26) as usize),
             predelay: 0.02,
             early: Line::new((sr * 0.1) as usize),
@@ -127,15 +114,14 @@ impl Space {
             tone: OnePole::default(),
             tone_r: OnePole::default(),
         };
-        s.set(SpaceKind::Hall, 0.5, 0.3);
+        s.set(0.5, 0.3);
         s
     }
 
-    /// Choose the space, how big it is (0..1: its size and its decay together) and how dark (0..1).
-    pub fn set(&mut self, kind: SpaceKind, size: f32, tone: f32) {
+    /// How big the hall is (0..1: its size and its decay together) and how dark (0..1).
+    pub fn set(&mut self, size: f32, tone: f32) {
         let size = size.clamp(0.0, 1.0);
-        let r = recipe(kind);
-        self.kind = kind;
+        let r = HALL;
         let scale = r.size.0 + (r.size.1 - r.size.0) * size;
         let rt60 = r.decay.0 + (r.decay.1 - r.decay.0) * size * size.max(0.3);
         // darker: the highs die sooner still, and the return is rolled off lower
@@ -152,8 +138,8 @@ impl Space {
             // lows and highs: their own decay times, as a gain against the mids, each trip
             self.lo_g[i] = 10f32.powf(trip * (1.0 / r.low - 1.0)) - 1.0;
             self.hi_g[i] = 10f32.powf(trip * (1.0 / high - 1.0)) - 1.0;
-            self.lo[i] = OnePole::hz(r.low_hz, self.sr);
-            self.hi[i] = OnePole::hz(r.high_hz, self.sr);
+            self.lo[i].tune(r.low_hz, self.sr);
+            self.hi[i].tune(r.high_hz, self.sr);
         }
         for a in self.in_l.iter_mut().chain(self.in_r.iter_mut()) {
             a.g = -(r.diffusion + 0.15).min(0.82);
@@ -162,8 +148,8 @@ impl Space {
         self.er_level = r.early;
         self.wander = r.wander * 0.001 * self.sr;
         let cut = 12000.0 - 8000.0 * tone.clamp(0.0, 1.0);
-        self.tone = OnePole::hz(cut, self.sr);
-        self.tone_r = OnePole::hz(cut, self.sr);
+        self.tone.tune(cut, self.sr);
+        self.tone_r.tune(cut, self.sr);
     }
 
     /// One sample of the voice in, the space's left and right out (wet only).
@@ -230,9 +216,9 @@ mod tests {
 
     const SR: f32 = 48000.0;
     /// A short burst of noise into a space; the energy (both sides) in each 50 ms after it.
-    fn tail(kind: SpaceKind, size: f32, seconds: f32) -> Vec<f64> {
+    fn tail(size: f32, seconds: f32) -> Vec<f64> {
         let mut s = Space::new(SR);
-        s.set(kind, size, 0.3);
+        s.set(size, 0.3);
         s.predelay = 0.0;
         let mut seed = 12345u32;
         let mut out = vec![];
@@ -259,35 +245,21 @@ mod tests {
     }
 
     #[test]
-    fn every_space_rings_and_then_dies_away() {
-        for k in [SpaceKind::Room, SpaceKind::Hall, SpaceKind::Chamber, SpaceKind::Cloud] {
-            for size in [0.0, 0.5, 1.0] {
-                let e = tail(k, size, 14.0);
-                assert!(e[1] > 1e-4, "{k:?} {size}: it sounds");
-                assert!(*e.last().unwrap() < e[1] * 1e-7, "{k:?} {size}: it dies away ({:e} of {:e})", e.last().unwrap(), e[1]);
-            }
+    fn the_hall_rings_for_seconds_longer_when_larger_and_dies_away() {
+        for size in [0.0, 0.5, 1.0] {
+            let e = tail(size, 14.0);
+            assert!(e[1] > 1e-4, "{size}: it sounds");
+            assert!(*e.last().unwrap() < e[1] * 1e-7, "{size}: it dies away ({:e} of {:e})", e.last().unwrap(), e[1]);
         }
-    }
-
-    #[test]
-    fn a_room_is_short_a_hall_long_a_cloud_longer() {
-        let room = rt60(&tail(SpaceKind::Room, 0.5, 14.0));
-        let chamber = rt60(&tail(SpaceKind::Chamber, 0.5, 14.0));
-        let hall = rt60(&tail(SpaceKind::Hall, 0.5, 14.0));
-        let cloud = rt60(&tail(SpaceKind::Cloud, 0.5, 14.0));
-        assert!(room > 0.25 && room < 1.2, "room {room}");
-        assert!(chamber > room && chamber < 2.6, "chamber {chamber}");
-        assert!(hall > chamber && hall < 4.5, "hall {hall}");
-        assert!(cloud > hall, "cloud {cloud} vs hall {hall}");
-        // and the size knob makes each one longer
-        assert!(rt60(&tail(SpaceKind::Hall, 1.0, 14.0)) > hall + 0.5);
-        assert!(rt60(&tail(SpaceKind::Room, 0.0, 14.0)) < room);
+        let hall = rt60(&tail(0.5, 14.0));
+        assert!(hall > 1.2 && hall < 4.5, "hall {hall}");
+        assert!(rt60(&tail(1.0, 14.0)) > hall + 0.5);
     }
 
     #[test]
     fn left_and_right_differ_from_one_voice() {
         let mut s = Space::new(SR);
-        s.set(SpaceKind::Hall, 0.5, 0.3);
+        s.set(0.5, 0.3);
         let (mut same, mut ll, mut rr) = (0.0f64, 0.0f64, 0.0f64);
         for i in 0..48000 {
             let x = if i < 4800 { ((i * 7919) % 200) as f32 / 100.0 - 1.0 } else { 0.0 };
@@ -305,7 +277,7 @@ mod tests {
     fn the_highs_die_before_the_lows_in_a_hall() {
         // one second after a burst, compare what is left above 5 kHz with what is left below 500 Hz
         let mut s = Space::new(SR);
-        s.set(SpaceKind::Hall, 0.6, 0.3);
+        s.set(0.6, 0.3);
         s.predelay = 0.0;
         let mut lo = OnePole::hz(500.0, SR);
         let mut hi = OnePole::hz(5000.0, SR);

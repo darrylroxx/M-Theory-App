@@ -1,15 +1,23 @@
 //! The live vocal chain, in the order a voice meets things in a studio:
-//! preamp colour → low cut → gate → EQ (low shelf, mud) → fast FET compressor → de-esser →
-//! smooth optical compressor → EQ (presence, air, high cut) → width → echo and reverb sends
-//! (filtered, and ducked under the voice) → output level → safety stage.
+//! preamp colour → low cut → gate (a gentle expander) → EQ (low shelf, low mid) → fast FET
+//! compressor → smooth optical compressor → EQ (presence, air) → de-esser → high cut → width →
+//! echo and reverb sends (filtered, and ducked under the voice) → output level → limiter.
+//!
+//! The de-esser comes after the brightening EQ on purpose: it judges how much of the voice is
+//! "s" (not how loud it is), so there it also tames what presence and air add, and the echo and
+//! the reverb are fed a voice whose esses are already under control.
 //! Nothing looks ahead, so the voice is never delayed (the oversampled colour stages cost
-//! about 0.06 ms). Where each part comes from is said in its own module.
+//! about 0.05 ms). Where each part comes from is said in its own module.
 
 use crate::color::{Color, ColorKind};
 use crate::delays::{EchoKind, Echoes};
-use crate::dsp::{db_to_gain, safety, Compressor, DeEsser, OnePole, Plate};
+use crate::chamber::Chamber;
+use crate::cloud::Cloud;
+use crate::dsp::{db_to_gain, Compressor, DeEsser, Expander, Limiter, Line, OnePole, Plate};
 use crate::eqm::{Air, Bq};
+use crate::room::Room;
 use crate::space::{Space, SpaceKind};
+use crate::spring::Spring;
 use crate::width::{Width, WidthKind};
 use serde::{Deserialize, Serialize};
 
@@ -80,13 +88,16 @@ impl Default for VocalFx {
     }
 }
 
+/// What each space's return is multiplied by: plate, room, hall, chamber, cloud, spring, shimmer
+/// (measured: see the `levels` test).
+const LEVELS: [f32; 7] = [1.0, 8.2, 3.0, 37.0, 1.2, 2.2, 0.94];
+
 pub struct Chain {
     sr: f32,
     fx: VocalFx,
     color: Color,
     lowcut: [Bq; 2],
-    gate_env: f32,
-    gate_gain: f32,
+    gate: Expander,
     low: Bq,
     mud: Bq,
     fet: Compressor,
@@ -99,9 +110,16 @@ pub struct Chain {
     echoes: Echoes,
     plate: Plate,
     space: Space,
+    room: Room,
+    chamber: Chamber,
+    cloud: Cloud,
+    spring: Spring,
+    /// the pre-delay of the spaces that have none of their own
+    verb_pre: Line,
     /// the sends' own tone: lows kept out of the echo and the reverb
     send_lo: [OnePole; 2],
     duck: f32,
+    limiter: Limiter,
     /// the EQ as it is now and as it is wanted: it glides there, so a preset can be changed mid-note
     /// (low cut, low dB, low Hz, mid dB, mid Hz, mid Q, presence dB, presence Hz, presence Q, air dB, air Hz, high cut)
     eq_now: [f64; 12],
@@ -118,8 +136,7 @@ impl Chain {
             fx: fx.clone(),
             color: Color::new(sr),
             lowcut: [Bq::default(); 2],
-            gate_env: 0.0,
-            gate_gain: 1.0,
+            gate: Expander::new(sr),
             low: Bq::default(),
             mud: Bq::default(),
             fet,
@@ -132,8 +149,14 @@ impl Chain {
             echoes: Echoes::new(sr),
             plate: Plate::new(sr),
             space: Space::new(sr),
+            room: Room::new(sr),
+            chamber: Chamber::new(sr),
+            cloud: Cloud::new(sr),
+            spring: Spring::new(sr),
+            verb_pre: Line::new((sr * 0.26) as usize),
             send_lo: [OnePole::hz(250.0, sr); 2],
             duck: 0.0,
+            limiter: Limiter::new(sr),
             eq_now: [0.0; 12],
             eq_want: [0.0; 12],
             eq_tick: 0,
@@ -148,7 +171,6 @@ impl Chain {
 
     /// New settings, without resetting what is ringing (no clicks while a knob moves).
     pub fn set(&mut self, fx: &VocalFx) {
-        let sr = self.sr as f64;
         let was = std::mem::replace(&mut self.fx, fx.clone());
         self.color.set(fx.color, fx.warmth);
         self.eq_want = [
@@ -165,10 +187,17 @@ impl Chain {
             fx.air_freq.clamp(3000.0, 40000.0) as f64,
             if fx.highcut < 18000.0 { fx.highcut.clamp(1500.0, 18000.0) as f64 } else { 20000.0 },
         ];
+        // the gate knob moves the level that counts as a gap (−60 … −35 dBFS) and how far gaps
+        // are turned down (6 … 18 dB): never to silence
+        let g = fx.gate.clamp(0.0, 1.0);
+        self.gate.threshold = -60.0 + 25.0 * g;
+        self.gate.range = 6.0 + 12.0 * g;
         let p = fx.punch.clamp(0.0, 1.0);
         self.fet.threshold = -6.0 - 22.0 * p;
         self.fet.ratio = 3.0 + 5.0 * p;
-        self.fet.makeup = -self.fet.curve(-14.0) * 0.6;
+        // make-up is fixed by the settings, never by the singing: four fifths of what the
+        // compressor takes off a loud passage (−12 dBFS), which keeps the voice about as loud
+        self.fet.makeup = -self.fet.curve(-12.0) * 0.8;
         if (was.deess_freq - fx.deess_freq).abs() > 1.0 {
             self.deess = DeEsser::new(self.sr, fx.deess_freq.clamp(3000.0, 10000.0));
         }
@@ -176,15 +205,29 @@ impl Chain {
         let s = fx.smooth.clamp(0.0, 1.0);
         self.opto.threshold = -8.0 - 20.0 * s;
         self.opto.ratio = 2.0 + 2.0 * s;
-        self.opto.makeup = -self.opto.curve(-16.0) * 0.6;
-        let _ = sr;
+        self.opto.makeup = -self.opto.curve(-12.0) * 0.8;
         self.width.kind = fx.width;
         self.echoes.set(fx.echo_type, fx.echo_time, fx.echo_feedback);
-        self.plate.decay = 0.3 + 0.62 * fx.verb_size.clamp(0.0, 1.0);
-        self.plate.predelay = fx.verb_predelay.clamp(0.0, 0.2);
-        self.plate.set_damping(fx.verb_tone);
-        self.space.set(fx.verb_type, fx.verb_size, fx.verb_tone);
-        self.space.predelay = fx.verb_predelay.clamp(0.0, 0.2);
+        // only the space in use is set up (a room is rebuilt when its size changes)
+        let (size, tone) = (fx.verb_size.clamp(0.0, 1.0), fx.verb_tone.clamp(0.0, 1.0));
+        match fx.verb_type {
+            SpaceKind::Plate | SpaceKind::Shimmer => {
+                let shimmer = fx.verb_type == SpaceKind::Shimmer;
+                // a shimmer wants a longer tail to climb in
+                self.plate.decay = if shimmer { 0.5 + 0.42 * size } else { 0.3 + 0.62 * size };
+                self.plate.shimmer = if shimmer { 0.4 } else { 0.0 };
+                self.plate.predelay = fx.verb_predelay.clamp(0.0, 0.2);
+                self.plate.set_damping(tone);
+            }
+            SpaceKind::Hall => {
+                self.space.set(size, tone);
+                self.space.predelay = fx.verb_predelay.clamp(0.0, 0.2);
+            }
+            SpaceKind::Room => self.room.set(size, tone),
+            SpaceKind::Chamber => self.chamber.set(size, tone),
+            SpaceKind::Cloud => self.cloud.set(size, tone),
+            SpaceKind::Spring => self.spring.set(size, tone),
+        }
     }
 
     /// The EQ's filters, from where its settings are right now.
@@ -225,6 +268,11 @@ impl Chain {
     pub fn reduction(&self) -> f32 {
         -(self.fet.reduction() + self.opto.reduction())
     }
+    /// How much the limiter at the very end is holding back (dB, ≥ 0). It should rest at 0:
+    /// if it works often, the level going in is too high.
+    pub fn limiting(&self) -> f32 {
+        self.limiter.reduction()
+    }
 
     /// One sample of the voice in, left and right out.
     #[inline]
@@ -236,28 +284,21 @@ impl Chain {
         let v = self.color.run(x) as f64;
         let v = self.lowcut[0].run(v);
         let mut v = self.lowcut[1].run(v) as f32;
-        // gate: an expander that only turns the quietest moments down (by up to 15 dB)
         if self.fx.gate > 0.0 {
-            let a = v.abs();
-            self.gate_env = if a > self.gate_env { a } else { self.gate_env * 0.9995 };
-            let thr = db_to_gain(-62.0 + 26.0 * self.fx.gate);
-            let want = if self.gate_env >= thr { 1.0 } else { (self.gate_env / thr).max(db_to_gain(-15.0)) };
-            let c = if want > self.gate_gain { 0.995 } else { 0.9998 };
-            self.gate_gain = want + (self.gate_gain - want) * c;
-            v *= self.gate_gain;
+            v = self.gate.run(v);
         }
         let w = self.low.run(v as f64);
         v = self.mud.run(w) as f32;
         if self.fx.punch > 0.0 {
             v = self.fet.run(v);
         }
-        v = self.deess.run(v);
         if self.fx.smooth > 0.0 {
             v = self.opto.run(v);
         }
         let w = self.presence.run(v as f64);
         let w = self.air.run(w);
-        let v = self.highcut.run(w) as f32;
+        let w = self.deess.run(w as f32);
+        let v = self.highcut.run(w as f64) as f32;
         let mut l = v;
         let mut r = v;
         if self.fx.double > 0.0 {
@@ -278,13 +319,58 @@ impl Chain {
             to_verb += 0.25 * (el + er) * self.fx.verb;
         }
         if self.fx.verb > 0.0 {
-            let (pl, pr) = if self.fx.verb_type == SpaceKind::Plate { self.plate.run(to_verb) } else { self.space.run(to_verb) };
+            let (pl, pr) = self.space_run(to_verb);
             // the return's lows are kept out of the mix (they only make mud)
             l += (pl - self.send_lo[0].run(pl)) * duck;
             r += (pr - self.send_lo[1].run(pr)) * duck;
         }
         let g = db_to_gain(self.fx.level.clamp(-24.0, 12.0));
-        (safety(l * g), safety(r * g))
+        self.limiter.run(l * g, r * g)
+    }
+
+    /// The reverb in use: one sample of the send in, left and right back. Each space is scaled
+    /// so that, at the middle of its size knob, a sung phrase comes back about as loud from any
+    /// of them (a long one therefore starts quieter, as it should).
+    #[inline]
+    fn space_run(&mut self, x: f32) -> (f32, f32) {
+        let kind = self.fx.verb_type;
+        let (l, r, g) = match kind {
+            SpaceKind::Plate => {
+                let (l, r) = self.plate.run(x);
+                (l, r, LEVELS[0])
+            }
+            SpaceKind::Shimmer => {
+                let (l, r) = self.plate.run(x);
+                (l, r, LEVELS[6])
+            }
+            SpaceKind::Hall => {
+                let (l, r) = self.space.run(x);
+                (l, r, LEVELS[2])
+            }
+            _ => {
+                self.verb_pre.push(x);
+                let x = self.verb_pre.at((self.fx.verb_predelay.clamp(0.0, 0.2) * self.sr).max(1.0));
+                match kind {
+                    SpaceKind::Room => {
+                        let (l, r) = self.room.run(x);
+                        (l, r, LEVELS[1])
+                    }
+                    SpaceKind::Chamber => {
+                        let (l, r) = self.chamber.run(x);
+                        (l, r, LEVELS[3])
+                    }
+                    SpaceKind::Cloud => {
+                        let (l, r) = self.cloud.run(x);
+                        (l, r, LEVELS[4])
+                    }
+                    _ => {
+                        let (l, r) = self.spring.run(x);
+                        (l, r, LEVELS[5])
+                    }
+                }
+            }
+        };
+        (l * g, r * g)
     }
 
     /// A whole take through the chain at once (for the version that plays back with the song).
@@ -362,16 +448,16 @@ mod tests {
 
     #[test]
     fn every_colour_echo_space_and_width_is_stable_at_full_tilt() {
-        let colors = ["clean", "tube", "console", "tape", "drive"];
+        let colors = ["clean", "tube", "console", "tape", "drive", "silk"];
         let echoes = ["slap", "tape", "analog", "digital", "pingpong", "ambient"];
-        let spaces = ["plate", "room", "hall", "chamber", "cloud"];
+        let spaces = ["plate", "room", "hall", "chamber", "cloud", "spring", "shimmer"];
         let widths = ["double", "micro", "chorus"];
         let mut x = voice(SR as usize);
         x.extend(std::iter::repeat(0.0).take(SR as usize * 2));
-        for k in 0..6 {
+        for k in 0..7 {
             let json = format!(
                 r#"{{"color":"{}","echo_type":"{}","verb_type":"{}","width":"{}","warmth":1,"gate":1,"low":6,"mud":1,"punch":1,"smooth":1,"deess":1,"presence":6,"air":9,"air_freq":40000,"double":1,"echo":1,"echo_feedback":1,"verb":1,"verb_size":1,"level":12}}"#,
-                colors[k % 5], echoes[k], spaces[k % 5], widths[k % 3]
+                colors[k % 6], echoes[k % 6], spaces[k], widths[k % 3]
             );
             let fx: VocalFx = serde_json::from_str(&json).unwrap();
             let mut c = Chain::new(SR, &fx);
@@ -427,6 +513,60 @@ mod tests {
         let out = c.render(&x);
         let ns = t.elapsed().as_nanos() as f64 / x.len() as f64;
         println!("{ns:.0} ns per sample = {:.1}% of one core at 48 kHz; a 64-sample block takes {:.0} of its 1333 microseconds ({})", ns * 48000.0 / 1e7, ns * 64.0 / 1000.0, out.len());
+    }
+
+    /// Only the reverb of a chain: the voice in, what the space gives back (both sides).
+    fn wet(kind: &str, size: f32, x: &[f32]) -> Vec<f32> {
+        let json = format!(r#"{{"verb_type":"{kind}","verb":1,"verb_size":{size},"verb_predelay":0,"duck":0,"warmth":0,"punch":0,"smooth":0,"deess":0,"presence":0,"air":0,"mud":0,"level":-12}}"#);
+        let mut with = Chain::new(SR, &serde_json::from_str(&json).unwrap());
+        let mut without = Chain::new(SR, &serde_json::from_str(&json.replace(r#""verb":1"#, r#""verb":0"#)).unwrap());
+        let (a, b) = (with.render(x), without.render(x));
+        a.iter().zip(&b).map(|(a, b)| a - b).collect()
+    }
+    const KINDS: [&str; 7] = ["plate", "room", "hall", "chamber", "cloud", "spring", "shimmer"];
+
+    /// Prints what `LEVELS` should be (run with `-- --ignored --nocapture levels`).
+    #[test]
+    #[ignore]
+    fn levels() {
+        let x = voice(SR as usize * 8);
+        let rms = |k: &str| {
+            let w = wet(k, 0.5, &x);
+            (w[w.len() / 2..].iter().map(|v| (v * v) as f64).sum::<f64>() / (w.len() / 2) as f64).sqrt()
+        };
+        let plate = rms("plate");
+        for (i, k) in KINDS.iter().enumerate() {
+            println!("{k}: {:.3}", LEVELS[i] as f64 * plate / rms(k));
+        }
+    }
+
+    #[test]
+    fn every_space_comes_back_about_as_loud_and_each_has_its_own_length() {
+        let x = voice(SR as usize * 6);
+        let mut burst = voice(SR as usize / 2);
+        burst.extend(std::iter::repeat(0.0).take(SR as usize * 12));
+        let mut lengths = vec![];
+        let mut plate = 0.0;
+        for k in KINDS {
+            let w = wet(k, 0.5, &x);
+            let rms = (w[w.len() / 2..].iter().map(|v| (v * v) as f64).sum::<f64>() / (w.len() / 2) as f64).sqrt();
+            if k == "plate" {
+                plate = rms;
+            }
+            assert!((rms / plate).log10().abs() * 20.0 < 3.0, "{k} is {:.1} dB from the plate", 20.0 * (rms / plate).log10());
+            // how long after the voice stops until it is 40 dB down
+            let t = wet(k, 0.5, &burst);
+            let e: Vec<f64> = t.chunks(4800).map(|c| c.iter().map(|v| (v * v) as f64).sum()).collect();
+            let start = e[4] + e[5];
+            let gone = e.iter().enumerate().skip(10).find(|(_, v)| **v < start * 0.5e-4).map(|(i, _)| i).unwrap_or(e.len());
+            lengths.push((gone as f32 - 10.0) * 0.05);
+        }
+        let [plate, room, hall, chamber, cloud, spring, shimmer] = lengths[..] else { panic!() };
+        assert!(room < 0.9, "a room is short: {room} s");
+        assert!(chamber > room && chamber < hall, "a chamber lies between: {room} {chamber} {hall}");
+        assert!(cloud > hall && cloud > 3.0, "a cloud hangs longest: {cloud} s (hall {hall})");
+        assert!(plate > room && shimmer > room, "the plates outlast the room: {plate} {shimmer}");
+        assert!(spring > 0.2 && spring < 3.0, "spring {spring}");
     }
 
     #[test]

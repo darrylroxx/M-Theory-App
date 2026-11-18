@@ -1,4 +1,4 @@
-//! Preamp colour: five characters for the front of the vocal chain. Each is a short chain of
+//! Preamp colour: six characters for the front of the vocal chain. Each is a short chain of
 //! filter, curve and a little memory, ported from open-source code whose sound is well known,
 //! and (except Clean) run at twice the sample rate so the harmonics they add never fold back.
 //!
@@ -13,6 +13,9 @@
 //! - **Tape**: the core of Airwindows ToTape6 (MIT): the highs are split off and compress
 //!   themselves, a small low bump, and the Mojo curve, which lifts quiet detail and holds
 //!   peaks.
+//! - **Silk**: Airwindows Weave (MIT), the saturation its author uses on his own voice: one
+//!   smooth curve, `sin(x·√|x|)/√|x|`, that thickens gently, adds only odd harmonics and can
+//!   never turn harsh (it levels off before it could fold over).
 //! - **Drive**: the exciter of Surge XT / chowdsp (GPL-3.0-or-later), the Aphex layout: only
 //!   what is above 3 kHz is distorted, by an amount that follows its own level, and added
 //!   to the untouched voice.
@@ -32,6 +35,7 @@ pub enum ColorKind {
     Console,
     Tape,
     Drive,
+    Silk,
     /// (also what an unknown name becomes)
     #[default]
     #[serde(other)]
@@ -66,6 +70,19 @@ fn tube(x: f64, pf: i32) -> f64 {
         factor = if v == 0.0 { 0.0 } else { factor / v * v.abs() };
     }
     (v - factor / (pad + 1.0)) * (1.0 + 1.0 / pad)
+}
+
+/// Airwindows Weave's curve. (Its small correction from the signal's rate of change is left
+/// out: it was tuned for the base sample rate, and here the curve runs at twice that, which
+/// already keeps the harmonics from folding back.)
+#[inline]
+fn weave(x: f64) -> f64 {
+    if x == 0.0 {
+        return 0.0;
+    }
+    let v = x.clamp(-1.0, 1.0) * 1.27;
+    let w = v.abs().sqrt();
+    (v * w).sin() / w
 }
 
 #[derive(Clone, Debug)]
@@ -132,6 +149,7 @@ impl Color {
             }
             ColorKind::Tape => mojo(x.clamp(-1.0, 1.0)),
             ColorKind::Drive => x,
+            ColorKind::Silk => weave(x),
         }
     }
 
@@ -152,14 +170,10 @@ impl Color {
                 let d = 2.0 * (0.25 + 0.75 * a);
                 self.phat = (d - 1.0).max(0.0);
                 self.density = d.min(1.0);
-                // Neve voicing: ultrasonic low-passes at 28.8 kHz (the first a touch resonant)
-                if 28811.0 < 0.45 * fsw {
-                    self.pre.lowpass(28811.0, 1.618033988749894, fsw);
-                    self.post.lowpass(28811.0, 0.618033988749894, fsw);
-                } else {
-                    self.pre.flat();
-                    self.post.flat();
-                }
+                // (the original's two ultrasonic filters only switch in when a session runs at
+                // 96 kHz; this is the unit as it sounds at 48 kHz, so they stay out)
+                self.pre.flat();
+                self.post.flat();
                 // its "dielectric" low cut: 0.005832 per sample on alternate samples at 44.1 kHz
                 self.li = 0.005832 * 22050.0 / fsw;
                 // its slew threshold is per sample at 44.1/48 kHz: half that at twice the rate
@@ -170,6 +184,8 @@ impl Color {
                 self.roll = (0.8875 / (fsw / 44100.0)).min(1.0);
                 self.bump.bell(85.0, 0.8, 1.5 * a, self.sr);
             }
+            // up to +12 dB into the curve
+            ColorKind::Silk => self.gain = 10f64.powf(12.0 * a / 20.0),
             ColorKind::Drive => {
                 self.gain = 1.0;
                 let tone: f64 = 0.6;
@@ -224,6 +240,7 @@ impl Color {
                 let x = x - highs.signum() * soften;
                 mojo(x.clamp(-1.0, 1.0))
             }
+            ColorKind::Silk => weave(x),
             ColorKind::Drive => {
                 let d = self.hp.run(x * self.drive);
                 // a diode rectifier follows the level of the highs
@@ -265,7 +282,7 @@ mod tests {
     use super::*;
     use crate::testutil::*;
 
-    const KINDS: [ColorKind; 5] = [ColorKind::Clean, ColorKind::Tube, ColorKind::Console, ColorKind::Tape, ColorKind::Drive];
+    const KINDS: [ColorKind; 6] = [ColorKind::Clean, ColorKind::Tube, ColorKind::Console, ColorKind::Tape, ColorKind::Drive, ColorKind::Silk];
     /// A 1 kHz voice-level tone through a colour: (level change, 2nd harmonic, 3rd harmonic), dB re the tone.
     fn harmonics(kind: ColorKind, amount: f32, amp: f64) -> (f64, f64, f64) {
         let mut c = Color::new(48000.0);
@@ -355,5 +372,17 @@ mod tests {
         let k: ColorKind = serde_json::from_str("\"valve-9000\"").unwrap();
         assert_eq!(k, ColorKind::Tube);
         assert_eq!(serde_json::from_str::<ColorKind>("\"tape\"").unwrap(), ColorKind::Tape);
+    }
+
+    #[test]
+    fn silk_is_the_curve_its_source_computes() {
+        // the gains the original gives at these inputs, and its ceiling
+        for (x, want) in [(0.25, 1.263), (0.5, 1.216), (0.75, 1.095), (1.0, 0.879)] {
+            assert!((weave(x) / x - want).abs() < 0.002, "{x}: {}", weave(x) / x);
+        }
+        assert!((weave(5.0) - 0.8787).abs() < 0.001 && weave(-5.0) == -weave(5.0));
+        // odd harmonics only: the third is there, the second is not
+        let (_, h2, h3) = harmonics(ColorKind::Silk, 0.8, 0.3);
+        assert!(h3 > -50.0 && h2 < h3 - 30.0, "second {h2} dB, third {h3} dB");
     }
 }
