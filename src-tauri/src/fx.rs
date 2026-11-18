@@ -25,9 +25,13 @@ pub struct VocalFx {
     pub lowcut: f32,
     /// quiet parts between phrases turned down (0 = off)
     pub gate: f32,
-    /// dB, shelf below 120 Hz (−6..6): body
+    /// dB (−12..12), a shelf below `low_freq`: body
     pub low: f32,
-    /// the boxy area turned down, and where it is (Hz)
+    pub low_freq: f32,
+    /// the low-mid band: dB (−12..12) at `mud_freq`, as wide as `mid_q` says. (`mud`, from older
+    /// sounds, is a cut of up to 5 dB added to it.)
+    pub mid: f32,
+    pub mid_q: f32,
     pub mud: f32,
     pub mud_freq: f32,
     /// fast compression: catches peaks, adds punch
@@ -36,10 +40,11 @@ pub struct VocalFx {
     pub smooth: f32,
     pub deess: f32,
     pub deess_freq: f32,
-    /// dB (−6..6), and where (Hz)
+    /// the presence band: dB (−12..12), where (Hz), and how wide
     pub presence: f32,
     pub presence_freq: f32,
-    /// dB (−6..9) from the air band's corner (Hz: 10000, 20000 or 40000 are the classic ones)
+    pub presence_q: f32,
+    /// dB (−12..12) from the air band's corner (Hz: 10000, 20000 or 40000 are the classic ones)
     pub air: f32,
     pub air_freq: f32,
     /// everything above this is rolled off (Hz; 20000 = off): telephone and lo-fi sounds
@@ -68,8 +73,8 @@ pub struct VocalFx {
 impl Default for VocalFx {
     fn default() -> Self {
         VocalFx {
-            on: true, color: ColorKind::Tube, warmth: 0.2, lowcut: 90.0, gate: 0.0, low: 0.0, mud: 0.3, mud_freq: 320.0, punch: 0.4, smooth: 0.4, deess: 0.4, deess_freq: 6500.0,
-            presence: 2.0, presence_freq: 4000.0, air: 2.0, air_freq: 12000.0, highcut: 20000.0, width: WidthKind::Double, double: 0.0,
+            on: true, color: ColorKind::Tube, warmth: 0.2, lowcut: 90.0, gate: 0.0, low: 0.0, low_freq: 120.0, mid: 0.0, mid_q: 1.4, mud: 0.3, mud_freq: 320.0, punch: 0.4, smooth: 0.4, deess: 0.4, deess_freq: 6500.0,
+            presence: 2.0, presence_freq: 4000.0, presence_q: 0.9, air: 2.0, air_freq: 12000.0, highcut: 20000.0, width: WidthKind::Double, double: 0.0,
             echo_type: EchoKind::Tape, echo: 0.0, echo_time: 0.11, echo_feedback: 0.15, verb_type: SpaceKind::Plate, verb: 0.25, verb_size: 0.5, verb_predelay: 0.03, verb_tone: 0.3, duck: 0.45, level: 0.0,
         }
     }
@@ -98,9 +103,9 @@ pub struct Chain {
     send_lo: [OnePole; 2],
     duck: f32,
     /// the EQ as it is now and as it is wanted: it glides there, so a preset can be changed mid-note
-    /// (low cut, low, mud amount, mud Hz, presence, presence Hz, air, air Hz, high cut)
-    eq_now: [f64; 9],
-    eq_want: [f64; 9],
+    /// (low cut, low dB, low Hz, mid dB, mid Hz, mid Q, presence dB, presence Hz, presence Q, air dB, air Hz, high cut)
+    eq_now: [f64; 12],
+    eq_want: [f64; 12],
     eq_tick: u32,
 }
 
@@ -129,8 +134,8 @@ impl Chain {
             space: Space::new(sr),
             send_lo: [OnePole::hz(250.0, sr); 2],
             duck: 0.0,
-            eq_now: [0.0; 9],
-            eq_want: [0.0; 9],
+            eq_now: [0.0; 12],
+            eq_want: [0.0; 12],
             eq_tick: 0,
         };
         c.fx.deess_freq = -1.0;
@@ -148,13 +153,16 @@ impl Chain {
         self.color.set(fx.color, fx.warmth);
         self.eq_want = [
             fx.lowcut.clamp(20.0, 400.0) as f64,
-            fx.low.clamp(-6.0, 6.0) as f64,
-            fx.mud.clamp(0.0, 1.0) as f64,
-            fx.mud_freq.clamp(150.0, 900.0) as f64,
-            fx.presence.clamp(-6.0, 6.0) as f64,
-            fx.presence_freq.clamp(800.0, 9000.0) as f64,
-            fx.air.clamp(-6.0, 9.0) as f64,
-            fx.air_freq.clamp(5000.0, 40000.0) as f64,
+            fx.low.clamp(-12.0, 12.0) as f64,
+            fx.low_freq.clamp(40.0, 600.0) as f64,
+            (fx.mid - 5.0 * fx.mud.clamp(0.0, 1.0)).clamp(-12.0, 12.0) as f64,
+            fx.mud_freq.clamp(100.0, 2000.0) as f64,
+            fx.mid_q.clamp(0.3, 6.0) as f64,
+            fx.presence.clamp(-12.0, 12.0) as f64,
+            fx.presence_freq.clamp(800.0, 12000.0) as f64,
+            fx.presence_q.clamp(0.3, 6.0) as f64,
+            fx.air.clamp(-12.0, 12.0) as f64,
+            fx.air_freq.clamp(3000.0, 40000.0) as f64,
             if fx.highcut < 18000.0 { fx.highcut.clamp(1500.0, 18000.0) as f64 } else { 20000.0 },
         ];
         let p = fx.punch.clamp(0.0, 1.0);
@@ -186,12 +194,12 @@ impl Chain {
         // a 4th-order Butterworth low cut, as two sections
         self.lowcut[0].highpass(e[0], 0.54, sr);
         self.lowcut[1].highpass(e[0], 1.31, sr);
-        self.low.lowshelf(120.0, e[1], sr);
-        self.mud.bell(e[3], 1.4, -5.0 * e[2], sr);
-        self.presence.bell(e[5], 0.9, e[4], sr);
-        self.air.set(e[7], e[6], sr);
-        if e[8] < 18000.0 {
-            self.highcut.lowpass(e[8], 0.7071, sr);
+        self.low.lowshelf(e[2], e[1], sr);
+        self.mud.bell(e[4], e[5], e[3], sr);
+        self.presence.bell(e[7], e[8], e[6], sr);
+        self.air.set(e[10], e[9], sr);
+        if e[11] < 18000.0 {
+            self.highcut.lowpass(e[11], 0.7071, sr);
         } else {
             self.highcut.flat();
         }
@@ -204,10 +212,10 @@ impl Chain {
             return;
         }
         let step = 1.0 - (-16.0 / (0.004 * self.sr as f64)).exp();
-        for k in 0..9 {
+        for k in 0..12 {
             let d = self.eq_want[k] - self.eq_now[k];
             // frequencies move in proportion, decibels in decibels; close enough is there
-            let near = if matches!(k, 0 | 3 | 5 | 7 | 8) { self.eq_want[k] * 0.002 } else { 0.01 };
+            let near = if matches!(k, 0 | 2 | 4 | 7 | 10 | 11) { self.eq_want[k] * 0.002 } else { 0.01 };
             self.eq_now[k] = if d.abs() < near { self.eq_want[k] } else { self.eq_now[k] + d * step };
         }
         self.eq_apply();
@@ -419,5 +427,26 @@ mod tests {
         let out = c.render(&x);
         let ns = t.elapsed().as_nanos() as f64 / x.len() as f64;
         println!("{ns:.0} ns per sample = {:.1}% of one core at 48 kHz; a 64-sample block takes {:.0} of its 1333 microseconds ({})", ns * 48000.0 / 1e7, ns * 64.0 / 1000.0, out.len());
+    }
+
+    #[test]
+    fn the_eq_is_what_the_page_draws() {
+        use crate::testutil::gain_db;
+        // only the EQ: no colour, dynamics, width or sends
+        let fx = VocalFx { warmth: 0.0, punch: 0.0, smooth: 0.0, deess: 0.0, verb: 0.0, lowcut: 100.0, low: 4.0, low_freq: 150.0, mud: 0.0, mid: -6.0, mud_freq: 500.0, mid_q: 2.0, presence: 5.0, presence_freq: 3000.0, presence_q: 1.5, air: 6.0, air_freq: 12000.0, ..VocalFx::default() };
+        let at = |f: f64| {
+            let mut c = Chain::new(SR, &fx);
+            gain_db(SR as f64, f, |x| c.run(x).0)
+        };
+        // the bells reach their gain at their centres (their neighbours add a little)
+        assert!((at(500.0) - (-6.0)).abs() < 1.0, "mid bell: {}", at(500.0));
+        assert!((at(3000.0) - 5.0).abs() < 1.0, "presence bell: {}", at(3000.0));
+        // the low cut is 3 dB down at its corner (plus what the shelf adds there) and steep below it
+        assert!(at(50.0) < at(100.0) - 15.0, "low cut slope: {} vs {}", at(50.0), at(100.0));
+        // the shelf lifts the lows that the cut leaves, the air band the very top
+        assert!(at(200.0) > 0.5 && at(200.0) < 4.5, "shelf: {}", at(200.0));
+        assert!(at(16000.0) > 3.5 && at(16000.0) < 6.5, "air: {}", at(16000.0));
+        // between the bands it is flat
+        assert!(at(1200.0).abs() < 1.2, "between: {}", at(1200.0));
     }
 }

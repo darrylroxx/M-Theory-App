@@ -843,7 +843,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 
 /* ── Vocals page ── */
 .vocals { display: flex; flex-direction: column; gap: 12px; }
-.vc-grid { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1fr); gap: 12px; }
+.vc-grid { display: grid; grid-template-columns: minmax(0, 0.72fr) minmax(0, 1.28fr); gap: 12px; align-items: start; }
 @media (max-width: 760px) { .vc-grid { grid-template-columns: minmax(0, 1fr); } }
 .vc-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); }
 .vc-title { font-size: 0.8rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--muted); }
@@ -875,6 +875,29 @@ button.dm-strip-name:hover { color: var(--accent); }
 .vc-mix { display: flex; flex-wrap: wrap; gap: 6px 14px; }
 .vc-presets { display: flex; flex-wrap: wrap; gap: 5px; }
 .vc-preset select { width: 100%; }
+.eq { position: relative; display: flex; flex-direction: column; }
+.eq.off { opacity: 0.5; pointer-events: none; }
+.eq svg { width: 100%; height: auto; display: block; touch-action: none; user-select: none; }
+.eq-bg { fill: var(--card); stroke: var(--border); }
+.eq-beyond { fill: color-mix(in srgb, var(--muted) 12%, transparent); }
+.eq-line { stroke: var(--border-2); stroke-width: 0.7; opacity: 0.7; }
+.eq-minor { stroke: var(--border); stroke-width: 0.5; opacity: 0.6; }
+.eq-zero { stroke: var(--muted); stroke-width: 1; opacity: 0.7; }
+.eq-label { font-size: 9px; fill: var(--muted); font-weight: 650; }
+.eq-curve { fill: none; stroke: var(--accent); stroke-width: 2.2; stroke-linejoin: round; }
+.eq-fill { fill: color-mix(in srgb, var(--accent) 16%, transparent); stroke: none; }
+.eq-node { cursor: grab; outline: none; }
+.eq-node:active { cursor: grabbing; }
+.eq-hit { fill: transparent; }
+.eq-dot { fill: var(--nc, var(--accent)); stroke: var(--card); stroke-width: 2; transition: r 0.08s; }
+.eq-node:focus-visible .eq-dot, .eq-node.on .eq-dot { stroke: var(--text); }
+.eq-glyph { font-size: 10px; font-weight: 900; fill: #fff; pointer-events: none; }
+.eq-node.b0, .eq-node.b5 { --nc: var(--muted); }
+.eq-node.b1 { --nc: var(--root, #e8663c); }
+.eq-node.b2 { --nc: var(--fifth, #d9a520); }
+.eq-node.b3 { --nc: var(--third, #3d8bfd); }
+.eq-node.b4 { --nc: var(--ext, #9b6bdf); }
+.eq-read { position: absolute; top: 4px; right: 10px; font-size: 0.7rem; font-weight: 700; color: var(--muted); pointer-events: none; }
 .vc-group-box { display: flex; flex-direction: column; gap: 6px; padding-top: 8px; border-top: 1px solid var(--border); }
 .vc-group-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
 .vc-group-head .vc-title { min-width: 68px; }

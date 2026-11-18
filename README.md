@@ -28,7 +28,7 @@ M-Theory answers the questions that matter when you're writing songs on guitar:
 - **Steady live sound**: the audio thread never waits, allocates or frees memory; reverb tails can't slow it down (denormals are flushed to zero); on Windows it joins the "Pro Audio" scheduler class, the app is never power-throttled, and the computer doesn't sleep while the interface is open. Extra monitoring delay left by a hiccup is taken out with a short crossfade.
 - **Vocal sound** (per vocal track): a studio vocal chain with no look-ahead, so the voice is never delayed. Pick a **preset** by the kind of record (Modern pop, Ballad, R&B / soul, Rap, Melodic rap, Rock, Slapback, Punk / metal, Indie, Dream pop, Folk / acoustic, Dance, Lo-fi, Spoken …), then shape it:
   - **Colour**: Clean, Tube, Console, Tape or Exciter, with one Amount knob that changes the tone and not the volume. The four that bend the waveform run at twice the sample rate (about 0.06 ms), so the harmonics they add never fold back as harshness.
-  - **EQ**: low cut, Body, Mud cut, Presence and an **Air** band (10k / 20k / 40k corners). Bells and the air shelf are analog-matched: at 48 kHz they keep their shape right up to 20 kHz, where ordinary digital EQ is about a decibel out. Settings glide, so a preset can be changed mid-note without a click.
+  - **EQ**: a graph. Frequency runs left to right (20 Hz to 40 kHz, each octave as wide as the next), decibels up and down, and the curve shows everything the EQ is doing. Six points to take hold of: low cut, Body (a low shelf), Low mid and Presence (bells), Air (a gentle shelf whose corner can sit above hearing: the shaded strip) and high cut. Drag a point sideways for its frequency and up or down for its gain; the mouse wheel on a bell makes it wider or narrower; a double-click puts a band back; arrow keys work too. What is drawn is what is heard: the bells and the air shelf are analog-matched, so at 48 kHz they keep their shape right up to 20 kHz, where ordinary digital EQ is about a decibel out. Settings glide, so a preset can be changed mid-note without a click.
   - **Dynamics**: Punch (a feedback FET-style compressor), Smooth (an optical one whose release is fast at first and then takes seconds), De-ess (split-band, only when the highs dominate), Gate.
   - **Width**: Double, Micro (a few cents flat on the left and sharp on the right) or Chorus.
   - **Echo**: Slap, Tape, Analog, Digital, Ping-pong or Ambient, at a slap or at 1/8, dotted 1/8 or 1/4 of the tempo. The time glides when changed.
@@ -194,7 +194,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 364 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the canvas
+npm test          # 370 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the canvas
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

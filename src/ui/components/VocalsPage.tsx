@@ -12,6 +12,7 @@ import { activeTake, cutTakes, groupsOf, type Take } from "../../song/takes";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
+import { EqGraph } from "./EqGraph";
 import { EarIcon } from "../icons";
 import { sigName } from "../../song/meter";
 import { sigOf } from "../../song/unity";
@@ -37,14 +38,8 @@ const CHECKS: { id: keyof NonNullable<Studio["checks"]>; label: string; hint: st
 type Group = "color" | "eq" | "dyn" | "width" | "echo" | "verb" | "out";
 const KNOBS: { k: keyof VocalFx; g: Group; label: string; min: number; max: number; step: number; unit?: string; more?: boolean; hint: string }[] = [
   { k: "warmth", g: "color", label: "Amount", min: 0, max: 1, step: 0.01, hint: "How hard the voice is pushed into the colour (the volume stays put)" },
-  { k: "lowcut", g: "eq", label: "Low cut", min: 20, max: 300, step: 5, unit: "Hz", hint: "Removes rumble and pops below this" },
-  { k: "low", g: "eq", label: "Body", min: -6, max: 6, step: 0.5, unit: "dB", hint: "The weight of the voice, below 120 Hz" },
-  { k: "mud", g: "eq", label: "Mud cut", min: 0, max: 1, step: 0.01, hint: "Takes out the boxy low mids" },
-  { k: "presence", g: "eq", label: "Presence", min: -6, max: 6, step: 0.5, unit: "dB", hint: "Clarity: how far forward the voice sits" },
-  { k: "air", g: "eq", label: "Air", min: -6, max: 9, step: 0.5, unit: "dB", hint: "Breath and sparkle at the very top" },
-  { k: "mud_freq", g: "eq", label: "Mud at", min: 150, max: 900, step: 10, unit: "Hz", more: true, hint: "Where the mud cut is" },
-  { k: "presence_freq", g: "eq", label: "Presence at", min: 800, max: 9000, step: 50, unit: "Hz", more: true, hint: "Where the presence band is" },
-  { k: "highcut", g: "eq", label: "High cut", min: 1500, max: 20000, step: 100, unit: "Hz", more: true, hint: "Rolls off everything above (20000 = off): telephone and lo-fi sounds" },
+  { k: "mid_q", g: "eq", label: "Low-mid width", min: 0.3, max: 6, step: 0.1, more: true, hint: "How narrow the low-mid bell is (higher = narrower). The mouse wheel on its point does the same" },
+  { k: "presence_q", g: "eq", label: "Presence width", min: 0.3, max: 6, step: 0.1, more: true, hint: "How narrow the presence bell is (higher = narrower)" },
   { k: "punch", g: "dyn", label: "Punch", min: 0, max: 1, step: 0.01, hint: "Fast compression (the FET kind): catches peaks, brings the voice forward" },
   { k: "smooth", g: "dyn", label: "Smooth", min: 0, max: 1, step: 0.01, hint: "Slow compression (the optical kind): evens loud and soft phrases out" },
   { k: "deess", g: "dyn", label: "De-ess", min: 0, max: 1, step: 0.01, hint: "Tames sharp s and t sounds" },
@@ -281,9 +276,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     setSel(id);
   };
   /** One part of the vocal sound: its name, its choice of type, its knobs. */
-  const group = (g: Group, title: string, picker: React.ReactNode) => (
+  const group = (g: Group, title: string, picker: React.ReactNode, body?: React.ReactNode) => (
     <div className="vc-group-box" role="group" aria-label={title}>
       <div className="vc-group-head"><b className="vc-title">{title}</b>{picker}</div>
+      {body}
       <div className="vc-knobs">
         {KNOBS.filter((k) => k.g === g && (more || !k.more)).map((k) => (
           <label key={k.k} className="vc-knob" title={k.hint}>
@@ -383,7 +379,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 </select>
               </label>
               {group("color", "Colour", <Pick label="Preamp colour" value={fx.color} options={COLORS} off={!track} onPick={(v) => setFx({ color: v })} />)}
-              {group("eq", "EQ", more ? <span className="seg" role="radiogroup" aria-label="Air band" title="Where the air band starts: the higher, the silkier">{AIR_BANDS.map((b) => <button key={b.hz} role="radio" aria-checked={fx.air_freq === b.hz} className={fx.air_freq === b.hz ? "on" : ""} disabled={!track} onClick={() => setFx({ air_freq: b.hz })}>{b.label}</button>)}</span> : null)}
+              {group("eq", "EQ", more ? <span className="seg" role="radiogroup" aria-label="Air band" title="Where the air band starts: the higher, the silkier">{AIR_BANDS.map((b) => <button key={b.hz} role="radio" aria-checked={fx.air_freq === b.hz} className={fx.air_freq === b.hz ? "on" : ""} disabled={!track} onClick={() => setFx({ air_freq: b.hz })}>{b.label}</button>)}</span> : null, <EqGraph fx={fx} set={setFx} disabled={!track} />)}
               {group("dyn", "Dynamics", null)}
               {group("width", "Width", <Pick label="Width" value={fx.width} options={WIDTHS} off={!track} onPick={(v) => setFx({ width: v })} />)}
               {group("echo", "Echo", <>

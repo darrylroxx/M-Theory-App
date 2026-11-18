@@ -15,9 +15,13 @@ export interface VocalFx {
   /** low cut, Hz */
   lowcut: number;
   gate: number;
-  /** dB, shelf below 120 Hz */
+  /** dB, a shelf below `low_freq` */
   low: number;
-  /** the boxy area turned down, and where it is (Hz) */
+  low_freq: number;
+  /** the low-mid band: dB at `mud_freq`, as wide as `mid_q` says */
+  mid: number;
+  mid_q: number;
+  /** (older sounds: a cut of up to 5 dB in the low-mid band; new ones use `mid`) */
   mud: number;
   mud_freq: number;
   /** fast compression: catches peaks */
@@ -26,9 +30,10 @@ export interface VocalFx {
   smooth: number;
   deess: number;
   deess_freq: number;
-  /** dB, and where (Hz) */
+  /** the presence band: dB, where (Hz), and how wide */
   presence: number;
   presence_freq: number;
+  presence_q: number;
   /** dB, from the air band's corner (Hz) */
   air: number;
   air_freq: number;
@@ -54,8 +59,8 @@ export interface VocalFx {
 }
 
 export const FX_DEFAULT: VocalFx = {
-  on: true, color: "tube", warmth: 0.2, lowcut: 90, gate: 0, low: 0, mud: 0.3, mud_freq: 320, punch: 0.4, smooth: 0.4, deess: 0.4, deess_freq: 6500,
-  presence: 2, presence_freq: 4000, air: 2, air_freq: 12000, highcut: 20000, width: "double", double: 0,
+  on: true, color: "tube", warmth: 0.2, lowcut: 90, gate: 0, low: 0, low_freq: 120, mid: -1.5, mid_q: 1.4, mud: 0, mud_freq: 320, punch: 0.4, smooth: 0.4, deess: 0.4, deess_freq: 6500,
+  presence: 2, presence_freq: 4000, presence_q: 0.9, air: 2, air_freq: 12000, highcut: 20000, width: "double", double: 0,
   echo_type: "tape", echo: 0, echo_time: 0.11, echo_feedback: 0.15, verb_type: "plate", verb: 0.25, verb_size: 0.5, verb_predelay: 0.03, verb_tone: 0.3, duck: 0.45, level: 0,
 };
 
@@ -138,7 +143,9 @@ export const PRESETS: { id: string; name: string; hint: string; fx: Partial<Voca
 /** A preset's full settings at a tempo. */
 export function presetFx(id: string, bpm: number): VocalFx {
   const p = PRESETS.find((x) => x.id === id) ?? PRESETS[0];
-  return { ...FX_DEFAULT, ...p.fx, echo_time: echoSeconds(p.echo ?? "slap", bpm) };
+  // the presets say how much mud to cut (0..1): that is up to 5 dB off the low-mid band
+  const { mud, ...rest } = p.fx;
+  return { ...FX_DEFAULT, ...rest, ...(mud !== undefined ? { mid: -5 * mud } : {}), mud: 0, echo_time: echoSeconds(p.echo ?? "slap", bpm) };
 }
 
 const KINDS: { [K in "color" | "width" | "echo_type" | "verb_type"]: readonly string[] } = {
@@ -156,6 +163,11 @@ export function reviveFx(raw: unknown): VocalFx | undefined {
     else if (k in KINDS) {
       if (typeof v === "string" && KINDS[k as keyof typeof KINDS].includes(v)) (out as unknown as Record<string, unknown>)[k] = v;
     } else if (typeof v === "number" && Number.isFinite(v)) (out as unknown as Record<string, unknown>)[k] = v;
+  }
+  // a sound from before the EQ had a graph: its mud cut becomes the low-mid band's gain
+  if (typeof r.mid !== "number") {
+    out.mid = -5 * Math.max(0, Math.min(1, out.mud));
+    out.mud = 0;
   }
   return out;
 }
