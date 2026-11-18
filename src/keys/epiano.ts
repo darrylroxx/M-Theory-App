@@ -12,7 +12,8 @@
  * table is one 845 KB file (public/keys/epiano/), decoded by hand: no codec touches the loops.
  */
 import type { Instrument } from "../audio/instrument";
-import { Keyboard, type KeyVoice } from "./keyboard";
+import { keepLater } from "./bank";
+import { KEYS_LEVEL, Keyboard, type KeyVoice } from "./keyboard";
 import {
   KEY_GROUPS,
   TINE_RATE,
@@ -50,9 +51,10 @@ interface Voice extends KeyVoice {
 /**
  * mda's output level (0.2) with a trim that puts the electric piano as loud as the grand piano at
  * the strengths chords are usually played (measured on rendered chords and single notes), so a
- * track can swap one for the other without a jump in level.
+ * track can swap one for the other without a jump in level; both then sit at the guitar's level
+ * (KEYS_LEVEL).
  */
-export const EP_VOLUME = 0.2 * 0.84;
+export const EP_VOLUME = 0.2 * 0.84 * 10 ** (KEYS_LEVEL / 20);
 
 /** How quickly a knob change glides (so the treble and the tremolo never click). */
 const GLIDE = 0.03;
@@ -66,7 +68,9 @@ const defaultFetch = async (url: string) => {
 /** The prepared sample table of each pack, fetched once per page and shared by every instrument. */
 const tables = new Map<string, Promise<Float32Array>>();
 
-async function loadTable(base: string, fetchBytes: (url: string) => Promise<ArrayBuffer>): Promise<Float32Array> {
+async function loadTable(base: string, fetchFile: (url: string) => Promise<ArrayBuffer>): Promise<Float32Array> {
+  // fetched before a service worker looks after the page (a first visit): fetched again once it does, so it keeps them
+  const fetchBytes = (url: string) => (keepLater(url, fetchFile), fetchFile(url));
   const m = JSON.parse(new TextDecoder().decode(await fetchBytes(base + "manifest.json"))) as {
     files: { file: string; sha?: string }[];
   };
@@ -152,7 +156,7 @@ export class EPiano extends Keyboard<Voice> implements Instrument {
    */
   set(params: Partial<TineParams>, when = this.ctx.currentTime): void {
     this.p = tineParams({ ...this.p, ...params });
-    this.apply(this.p, Math.max(when, this.ctx.currentTime), GLIDE);
+    this.apply(this.p, this.at(when), GLIDE);
   }
 
   private apply(p: TineParams, at: number, glide = 0) {
@@ -201,7 +205,7 @@ export class EPiano extends Keyboard<Voice> implements Instrument {
   play(midi: number, when: number, velocity: number, length: number, slot?: number): void {
     const b = this.buffers;
     if (!b || this.disposed || !Number.isFinite(midi)) return;
-    const t = Math.max(when, this.ctx.currentTime);
+    const t = this.at(when);
     const vel = Math.max(0, Math.min(1, Number.isFinite(velocity) ? velocity : 0.7));
     const key = Math.round(midi);
     const p = this.p;

@@ -119,6 +119,19 @@ describe("the electric piano's envelopes", () => {
     expect(panOf(72).pan).toBeGreaterThan(0);
     expect(panOf(84, 0).pan).toBeCloseTo(0, 12);
   });
+
+  it("keeps the outermost keys hard to one side at full width, at mda's level there", () => {
+    for (const note of [12, 21, 26, 94, 100, 108]) {
+      const { pan, gain } = panOf(note, 1);
+      const d = 0.03 * (note - 60);
+      expect(Number.isFinite(gain)).toBe(true);
+      expect(Math.abs(pan)).toBeLessThanOrEqual(1);
+      const x = (pan + 1) / 2;
+      const near = gain * (d > 0 ? Math.sin((x * Math.PI) / 2) : Math.cos((x * Math.PI) / 2));
+      expect(near).toBeCloseTo(1 + Math.abs(d), 9);
+      if (Math.abs(d) >= 1) expect(Math.abs(pan)).toBeCloseTo(1, 12);
+    }
+  });
 });
 
 describe("the electric piano's tone and movement", () => {

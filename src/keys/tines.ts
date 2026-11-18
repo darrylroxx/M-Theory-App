@@ -170,8 +170,12 @@ export const ringSeconds = (note: number, velocity: number, p: TineParams = TINE
  */
 export function panOf(note: number, width = TINE_DEFAULT.width): { pan: number; gain: number } {
   const d = 0.03 * width * (clamp(note, 12, 108) - 60);
-  const x = (2 / Math.PI) * Math.atan2(1 + d, 1 - d);
-  return { pan: 2 * x - 1, gain: (1 - d) / Math.cos((x * Math.PI) / 2) };
+  // Past |d| = 1 (Stereo Width above 0.7, the outermost keys) mda turns the far side upside down;
+  // a panner cannot, so those keys sit hard on the near side at mda's level there.
+  const l = Math.max(0, 1 - d);
+  const r = Math.max(0, 1 + d);
+  const x = (2 / Math.PI) * Math.atan2(r, l);
+  return { pan: 2 * x - 1, gain: Math.hypot(l, r) };
 }
 
 /**

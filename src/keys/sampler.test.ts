@@ -2,9 +2,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import pack from "../../public/keys/piano/manifest.json";
 import { Bank, measureLead } from "./bank";
 import { damperTau, fadeSeconds } from "./damper";
+import { KEYS_LEVEL } from "./keyboard";
 import { FakeBuffer, FakeContext, asContext, type FakeGain, type FakeSource } from "./fakeaudio";
-import { layerOf, layerSamples, loadOrder, pick, releaseFor, type PackManifest } from "./pack";
+import { filesFor, layerOf, layerSamples, loadOrder, pick, releaseFor, velocityDb, type PackManifest } from "./pack";
 import { Sampler } from "./sampler";
+import { EPiano } from "./epiano";
+import { TABLE_LENGTH } from "./tines";
 
 const m = pack as unknown as PackManifest;
 const BASE = "https://test.local/keys/piano/";
@@ -13,7 +16,7 @@ const dec = new TextDecoder();
 const byFile = new Map([...m.samples, ...m.releases].map((s) => [s.file, s]));
 
 /** A pretend network: the manifest, and each file as its own name (the decoder turns it into a buffer). */
-function setup(opts: { lead?: number; fail?: Set<string>; rate?: number; budget?: number; offline?: boolean; onFetch?: () => void } = {}) {
+function setup(opts: { lead?: number; fail?: Set<string>; rate?: number; budget?: number; offline?: boolean; onFetch?: () => void; level?: number } = {}) {
   const fetched: string[] = [];
   const decodedAt: number[] = [];
   const fetch = async (url: string) => {
@@ -37,7 +40,7 @@ function setup(opts: { lead?: number; fail?: Set<string>; rate?: number; budget?
     return new FakeBuffer(2, byFile.get(file)!.dur, rate, file) as unknown as AudioBuffer;
   };
   const ctx = new FakeContext(opts.rate ?? 48000);
-  const sampler = new Sampler(asContext(ctx), BASE, { fetch, decode, budget: opts.budget ?? Infinity, offline: opts.offline });
+  const sampler = new Sampler(asContext(ctx), BASE, { fetch, decode, budget: opts.budget ?? Infinity, offline: opts.offline, level: opts.level });
   return { ctx, sampler, fetched, decodedAt, decoded };
 }
 
@@ -115,6 +118,26 @@ describe("loading", () => {
     expect(bank.has(releaseFor(m, 30, 0.1)!.file)).toBe(true);
   });
 
+  it("starts no background loading for a bounce, only for a live instrument", async () => {
+    // a bounce at a rate of its own: the first tier and the song's files, nothing behind them
+    const { sampler, decoded } = setup({ rate: 44100 });
+    const notes = [{ midi: 60, velocity: 0.95 }];
+    await sampler.prepare(notes);
+    const bank = Bank.for(BASE, 44100);
+    await settle(bank);
+    const core = loadOrder(m)[0];
+    const want = new Set([...core, ...filesFor(m, notes)]);
+    expect(sampler.ready()).toBe(true);
+    expect(bank.pending()).toEqual([]);
+    expect(decoded.filter((f) => f !== m.probe.file).every((f) => want.has(f))).toBe(true);
+    // a live instrument on the same bank then fills in the rest behind it
+    const live = new Sampler(asContext(new FakeContext(44100)), BASE, {});
+    await live.load();
+    await settle(bank);
+    expect(layerSamples(m, 2).every((s) => bank.has(s.file))).toBe(true); // the next layer, loaded behind
+    expect(decoded.length).toBeGreaterThan(want.size + 30);
+  });
+
   it("plays a neighbouring layer while the right one loads, and fetches it for next time", async () => {
     const { ctx, sampler } = setup();
     await sampler.load();
@@ -182,6 +205,42 @@ describe("loading", () => {
     expect(fetched.length).toBeLessThan(m.samples.length + m.releases.length);
   });
 
+  it("fetches again through the service worker, once it takes over, what it fetched before it did", async () => {
+    // a first visit: the app (and the piano) start before the worker is installed
+    const listeners: (() => void)[] = [];
+    const sw = { controller: null as object | null, addEventListener: (_: string, f: () => void) => listeners.push(f) };
+    vi.stubGlobal("navigator", { serviceWorker: sw });
+    try {
+      const { sampler, fetched } = setup();
+      await sampler.prepare([{ midi: 60, velocity: 0.7 }]);
+      const before = [...fetched];
+      const epFetched: string[] = [];
+      const ep = new EPiano(asContext(new FakeContext()), "https://test.local/keys/epiano/", {
+        fetch: async (url) => {
+          epFetched.push(url);
+          if (url.endsWith("manifest.json")) return enc.encode(JSON.stringify({ files: [{ file: "tines.bin", sha: "x" }] })).buffer as ArrayBuffer;
+          return new ArrayBuffer(TABLE_LENGTH * 2 + 8);
+        },
+      });
+      await ep.load();
+      expect(listeners.length).toBe(1);
+      // the worker takes over: everything fetched so far goes through it once more (and nothing else)
+      sw.controller = {};
+      listeners.forEach((f) => f());
+      await settle(Bank.for(BASE, 48000));
+      expect(fetched.slice(before.length).sort()).toEqual([...new Set(before)].sort());
+      expect(epFetched.length).toBe(4);
+      // from now on nothing needs fetching twice
+      const n = fetched.length;
+      await sampler.prepare([{ midi: 30, velocity: 0.1 }]);
+      listeners.forEach((f) => f());
+      await settle(Bank.for(BASE, 48000));
+      expect(new Set(fetched.slice(n)).size).toBe(fetched.length - n);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("is silent rather than failing when nothing could be fetched", async () => {
     const fail = new Set(loadOrder(m)[0]);
     const { ctx, sampler } = setup({ fail });
@@ -207,9 +266,30 @@ describe("playing", () => {
     expect(n.buffer!.name).toBe(p.sample.file);
     expect(n.playbackRate.value).toBeCloseTo(p.rate, 12);
     expect(n.started!.when).toBe(2);
-    expect(gainOf(n).at(2)).toBeCloseTo(10 ** (p.db / 20), 9);
+    expect(gainOf(n).at(2)).toBeCloseTo(10 ** ((p.db + KEYS_LEVEL) / 20), 9);
     expect(gainOf(n).at(1.999)).toBe(0); // silent until it starts
     expect(layerOf(m, 0.7)).toBe(p.sample.layer);
+  });
+
+  it("sits at the guitar's level by default, notes and damper sounds alike, or at the level asked for", async () => {
+    const level = async (opts: { level?: number }) => {
+      Bank.reset();
+      const { ctx, sampler } = setup(opts);
+      await sampler.prepare([{ midi: 60, velocity: 0.7 }]);
+      sampler.play(60, 1, 0.7, 0.5);
+      const note = gainOf(notesOf(ctx)[0]).at(1.2);
+      const r = releasesOf(ctx)[0];
+      return { note, damper: gainOf(r).at(r.started!.when) };
+    };
+    const own = await level({ level: 0 });
+    const p = pick(m, 60, 0.7)!;
+    expect(own.note).toBeCloseTo(10 ** (p.db / 20), 9);
+    const rel = releaseFor(m, 60, 0.7)!;
+    expect(own.damper).toBeCloseTo(10 ** ((rel.gain + velocityDb(m, 60, 0.7) - rel.decay * 0.5) / 20), 9);
+    const mix = await level({});
+    expect(KEYS_LEVEL).toBeLessThan(-6);
+    expect(20 * Math.log10(mix.note / own.note)).toBeCloseTo(KEYS_LEVEL, 9);
+    expect(20 * Math.log10(mix.damper / own.damper)).toBeCloseTo(KEYS_LEVEL, 9);
   });
 
   it("darkens a note played softer than its take was recorded, through a gentle lowpass", async () => {
@@ -289,6 +369,28 @@ describe("playing", () => {
     expect(b.stopsAt).toBeCloseTo(7 + fadeSeconds(damperTau(62)), 6);
   });
 
+  it("books a long pedalled song in time order (as a bounce does) with every damper where it belongs", async () => {
+    const { ctx, sampler } = await ready();
+    // legato pedalling: up at each chord, down just after; every note let go before the next change
+    const expected: number[] = [];
+    for (let i = 0; i < 60; i++) {
+      const t = 1 + i;
+      sampler.pedal(false, t);
+      sampler.pedal(true, t + 0.08);
+      for (const [j, midi] of [60, 64, 67].entries()) {
+        sampler.play(midi, t + 0.01 * (j + 1), 0.7, 0.5);
+        expected.push(t + 1); // held by the pedal until it lifts at the next chord, or choked by the same key there
+      }
+    }
+    sampler.pedal(false, 61);
+    const n = notesOf(ctx);
+    expect(n.length).toBe(180);
+    for (let i = 0; i < n.length; i++) {
+      expect(gainOf(n[i]).at(expected[i] - 0.02)).toBeCloseTo(gainOf(n[i]).at(n[i].started!.when + 0.1), 9); // still ringing
+      expect(gainOf(n[i]).at(expected[i] + 0.3)).toBeLessThan(gainOf(n[i]).at(n[i].started!.when + 0.1) * 0.5); // damped
+    }
+  });
+
   it("keeps a note ringing when the pedal goes down after its release was booked", async () => {
     const { ctx, sampler } = await ready();
     sampler.play(60, 1, 0.7, 0.5); // booked to stop just after 1.5
@@ -310,6 +412,19 @@ describe("playing", () => {
     expect(gainOf(a).at(2.3)).toBeLessThan(gainOf(a).at(1.5) * 0.01); // 40 dB down within 0.3 s
     expect(gainOf(a).at(2.0)).toBeGreaterThan(0); // no click: it fades, not cuts
     expect(b.audibleAt(3)).toBe(true);
+  });
+
+  it("plays a key doubled at the same moment (a unison in a voicing) once, not twice as loud", async () => {
+    const { ctx, sampler } = await ready();
+    sampler.play(60, 1, 0.6, 1, 0);
+    sampler.play(60, 1, 0.7, 1, 3);
+    sampler.play(64, 1, 0.7, 1, 1);
+    const [a, b, c] = notesOf(ctx);
+    expect(a.stopsAt).toBeLessThanOrEqual(1); // never sounds
+    expect(releasesOf(ctx).filter((s) => s.audibleAt(s.started!.when + 0.01)).length).toBe(2); // one damper each for 60 and 64
+    expect(b.audibleAt(1.5)).toBe(true);
+    expect(c.audibleAt(1.5)).toBe(true);
+    expect(sampler.sounding(1.5)).toBe(2);
   });
 
   it("lets a slot's previous note go when a new note takes the slot", async () => {
@@ -363,6 +478,19 @@ describe("playing", () => {
     expect(sampler.pedalDown(2.5)).toBe(false);
     // no damper sounds for a stop
     expect(releasesOf(ctx).filter((s) => s.audibleAt(s.started!.when + 0.01)).length).toBe(0);
+  });
+
+  it("books a time that is not a number as now, rather than passing it to Web Audio (which throws)", async () => {
+    const { ctx, sampler } = await ready();
+    ctx.currentTime = 3;
+    sampler.pedal(true, NaN);
+    sampler.play(60, NaN, 0.7, NaN);
+    sampler.play(64, Infinity, 0.7, 1);
+    sampler.stopAll(NaN);
+    const n = notesOf(ctx);
+    expect(n.map((s) => s.started!.when)).toEqual([3, 3]);
+    for (const s of n) expect(Number.isFinite(s.stopsAt)).toBe(true);
+    expect(sampler.pedalDown(3.5)).toBe(false);
   });
 
   it("frees everything on dispose", async () => {

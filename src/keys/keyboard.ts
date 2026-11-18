@@ -31,6 +31,16 @@ export interface KeyVoice extends VoiceTimes {
   cut: boolean;
 }
 
+/**
+ * Where the keyboards sit in the mix, in dB on top of their own calibration (the piano's pack puts
+ * middle C, played mezzo-forte, at -20 LUFS). The guitar plays the same chords and melodies about
+ * 13 dB quieter than that (rendered side by side at velocities 0.7-0.9: 12-14 dB in integrated and
+ * momentary loudness), so both keyboards are brought down to it: a chords track switched between
+ * guitar and piano keeps its level, and a dense pedalled run keeps its headroom (it peaked at
+ * +4 dBFS before).
+ */
+export const KEYS_LEVEL = -13;
+
 /** A key struck again chokes the sound before it this quickly (a hammer re-striking its string). */
 export const CHOKE_TAU = 0.06;
 /** A stolen voice fades this quickly: fast enough to free it, slow enough not to click. */
@@ -65,6 +75,11 @@ export abstract class Keyboard<V extends KeyVoice> {
   /** A damper sound booked for a release that has moved or will not happen: it must not play. */
   protected dropDamper(_v: V): void {}
 
+  /** A time to book at: `when`, or now if it has passed (or is not a number, so nothing bad is booked). */
+  protected at(when: number): number {
+    return Number.isFinite(when) ? Math.max(when, this.ctx.currentTime) : this.ctx.currentTime;
+  }
+
   /** Notes sounding at time `t` (default now). */
   sounding(t = this.ctx.currentTime): number {
     let n = 0;
@@ -83,8 +98,14 @@ export abstract class Keyboard<V extends KeyVoice> {
       const prev = this.slots.get(slot);
       if (prev && !prev.cut && prev.start < t && soundingAt(prev, t)) this.letGo(prev, t);
     }
-    // The same key struck again: the hammer re-strikes the string and the old sound gives way.
-    this.voices.forEach((v) => !v.cut && v.key === key && v.start < t && soundingAt(v, t) && this.cutVoice(v, t, CHOKE_TAU));
+    // The same key struck again: the hammer re-strikes the string and the old sound gives way. Struck
+    // twice at the same moment (a note doubled in a voicing) it is still one key: the later note
+    // takes the place of the earlier, which never sounds (two would play it twice as loud).
+    this.voices.forEach((v) => {
+      if (v.cut || v.key !== key || !soundingAt(v, t)) return;
+      if (v.start < t) this.cutVoice(v, t, CHOKE_TAU);
+      else this.unbook(v);
+    });
     // Too many notes: released ones first, then the oldest (voices already fading out do not count).
     const live = [...this.voices].filter((v) => !v.cut);
     for (const v of victims(live, t, this.polyphony)) this.cutVoice(v, t, STEAL_TAU);
@@ -107,10 +128,12 @@ export abstract class Keyboard<V extends KeyVoice> {
    */
   pedal(down: boolean, when = this.ctx.currentTime): void {
     if (this.disposed) return;
-    const t = Math.max(when, this.ctx.currentTime);
+    const t = this.at(when);
     this.pedalLine.set(down, t);
     this.voices.forEach((v) => {
-      if (!v.damped || v.cut) return;
+      // a change at t cannot move a damper that fell before t, nor touch a note already over (an
+      // offline bounce books the whole song at once: without this every change would revisit it all)
+      if (!v.damped || v.cut || v.release < t || v.end <= t) return;
       const r = damperAt(v.keyUp, this.pedalLine);
       if (r !== v.release) this.scheduleRelease(v, r, true);
     });
@@ -122,15 +145,11 @@ export abstract class Keyboard<V extends KeyVoice> {
   }
 
   stopAll(when = this.ctx.currentTime): void {
-    const t = Math.max(when, this.ctx.currentTime);
+    const t = this.at(when);
     this.pedalLine.liftFrom(t);
     this.voices.forEach((v) => {
       if (v.start >= t) {
-        // booked but not started yet: it never sounds
-        v.cut = true;
-        v.end = v.start;
-        stopAt(v.src, t);
-        this.dropDamper(v);
+        this.unbook(v); // booked but not started yet: it never sounds
         return;
       }
       if (v.release <= t || v.cut) return;
@@ -138,6 +157,16 @@ export abstract class Keyboard<V extends KeyVoice> {
       this.scheduleRelease(v, t, false);
     });
     this.slots.clear();
+  }
+
+  /** A voice booked for later (or for this very moment) that is not to sound at all. */
+  private unbook(v: V) {
+    v.cut = true;
+    v.end = v.start;
+    v.release = Math.min(v.release, v.start);
+    stopAt(v.src, v.start);
+    this.dropDamper(v);
+    if (v.slot !== undefined && this.slots.get(v.slot) === v) this.slots.delete(v.slot);
   }
 
   /** Stop every source now and forget them. */

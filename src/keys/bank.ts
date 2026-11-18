@@ -68,6 +68,31 @@ const defaultFetch: Fetcher = async (url) => {
   return r.arrayBuffer();
 };
 
+/**
+ * Files fetched before a service worker looked after the page. On the first visit the app starts
+ * before its worker is installed, so the worker never sees those files and cannot keep them: the
+ * piano would then not play offline until the app had been opened online once more. When the
+ * worker takes over they are fetched again, through it, so it keeps the whole pack.
+ */
+const unkept = new Map<string, Fetcher>();
+let watching = false;
+
+/** Fetch `url` again once a service worker looks after the page, if none does now. */
+export function keepLater(url: string, fetchBytes: Fetcher) {
+  const sw = typeof navigator !== "undefined" ? navigator.serviceWorker : undefined;
+  if (!sw || sw.controller) return;
+  unkept.set(url, fetchBytes);
+  if (watching) return;
+  watching = true;
+  sw.addEventListener("controllerchange", async () => {
+    if (!sw.controller) return;
+    for (const [u, f] of [...unkept]) {
+      unkept.delete(u);
+      await f(u).catch(() => {}); // one at a time: it is background work
+    }
+  });
+}
+
 /** Decoding goes through a one-frame offline context at the wanted rate: the result is resampled to it. */
 const decoders = new Map<number, BaseAudioContext>();
 const defaultDecode: Decoder = (data, rate) => {
@@ -137,6 +162,11 @@ export class Bank {
   private core: string[] = [];
   private coreSet = new Set<string>();
   private started?: Promise<void>;
+  /** The tiers after the first, once the manifest is in. */
+  private later?: string[][];
+  /** Has an instrument asked for the background loading (a live one has; a bounce has not)? */
+  private wantsBackground = false;
+  private backgroundQueued = false;
   private listeners = new Set<(p: Progress) => void>();
   private users = 0;
   /** Files downloaded but not decoded (over budget): a note that needs one decodes it from the cache. */
@@ -154,7 +184,9 @@ export class Bank {
     readonly sampleRate: number,
     opts: BankOptions,
   ) {
-    this.fetchBytes = opts.fetch ?? defaultFetch;
+    const get = opts.fetch ?? defaultFetch;
+    // offline by default (whenever a worker looks after the page): what it fetched before then is kept later
+    this.fetchBytes = opts.offline === undefined ? (url) => (keepLater(url, get), get(url)) : get;
     this.decode = opts.decode ?? defaultDecode;
     this.offlineOpt = opts.offline;
   }
@@ -179,6 +211,9 @@ export class Bank {
       this.pins.clear();
       this.queue = [];
       this.started = undefined;
+      this.later = undefined;
+      this.wantsBackground = false;
+      this.backgroundQueued = false;
       Bank.banks.forEach((b, k) => b === this && Bank.banks.delete(k));
     }
   }
@@ -188,10 +223,13 @@ export class Bank {
   }
 
   /**
-   * Fetch the manifest, measure the decoder, then load the first tier (resolves when it is in) and
-   * queue the rest in the background. Safe to call again: it starts once.
+   * Fetch the manifest, measure the decoder, then load the first tier (resolves when it is in) and,
+   * with `background`, queue the rest behind it. Safe to call again: it starts once, and the
+   * background starts the first time a call asks for it. A bounce asks for no background: on a
+   * context at another sample rate it would otherwise decode the whole piano again, up to the
+   * budget, for a song that needs a few files of it.
    */
-  start(core = 0.7, releases = true): Promise<void> {
+  start(core = 0.7, releases = true, background = true): Promise<void> {
     if (!this.started) {
       this.started = (async () => {
         const m = await this.loadManifest();
@@ -199,15 +237,30 @@ export class Bank {
         const tiers = loadOrder(m, core, releases);
         this.core = tiers[0] ?? [];
         this.coreSet = new Set(this.core);
+        this.later = tiers.slice(1);
         this.emit();
         // The first tier is queued before the rest, so it is what the first downloads fetch.
         const first = this.want(this.core, 0);
-        tiers.slice(1).forEach((t, i) => this.want(t, BACKGROUND + i).catch(() => {}));
+        if (this.wantsBackground) this.queueLater();
         await first;
       })();
-      this.started.catch(() => (this.started = undefined)); // let a later call try again (back online)
+      this.started.catch(() => {
+        this.started = undefined; // let a later call try again (back online)
+        this.backgroundQueued = false;
+      });
+    }
+    if (background) {
+      this.wantsBackground = true;
+      if (this.later) this.queueLater();
     }
     return this.started;
+  }
+
+  /** Queue the tiers after the first (once). */
+  private queueLater() {
+    if (this.backgroundQueued || !this.later) return;
+    this.backgroundQueued = true;
+    this.later.forEach((t, i) => this.want(t, BACKGROUND + i).catch(() => {}));
   }
 
   private loadManifest(): Promise<PackManifest> {

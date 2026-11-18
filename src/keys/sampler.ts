@@ -19,7 +19,7 @@
 import type { Instrument } from "../audio/instrument";
 import { Bank, defaultBudget, type BankOptions, type Progress } from "./bank";
 import { damperTau } from "./damper";
-import { Keyboard, stopAt, type KeyVoice } from "./keyboard";
+import { KEYS_LEVEL, Keyboard, stopAt, type KeyVoice } from "./keyboard";
 import { filesFor, layerOf, layerSamples, nearestIn, pick, rateFor, releaseFor, velocityDb, type PackManifest } from "./pack";
 
 export interface SamplerOptions extends BankOptions {
@@ -31,6 +31,8 @@ export interface SamplerOptions extends BankOptions {
   core?: number;
   /** Play the dampers' own sound when keys are let go. */
   releases?: boolean;
+  /** Output level in dB on top of the pack's calibration (default KEYS_LEVEL: the guitar's level). */
+  level?: number;
 }
 
 interface Voice extends KeyVoice {
@@ -54,6 +56,8 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
   private bank: Bank;
   private core: number;
   private releases: boolean;
+  /** dB added to every sound it makes (see SamplerOptions.level). */
+  private trim: number;
 
   /**
    * `base` is the folder of the pack (ending in "/"), with its manifest.json. Nothing is fetched
@@ -67,6 +71,7 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
     this.bank.budget = Math.min(this.bank.budget, opts.budget ?? defaultBudget());
     this.core = opts.core ?? 0.7;
     this.releases = opts.releases ?? true;
+    this.trim = opts.level ?? KEYS_LEVEL;
   }
 
   private get m(): PackManifest | undefined {
@@ -84,10 +89,12 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
 
   /**
    * Load exactly what these notes need (for an offline render, which cannot wait for a file mid-way)
-   * and keep it until the next prepare() or dispose(), whatever the memory budget.
+   * and keep it until the next prepare() or dispose(), whatever the memory budget. It loads the
+   * first tier too (so ready() holds and any other note can sound) but starts no background
+   * loading of its own: a bounce at another sample rate than the live piano decodes only that.
    */
   async prepare(notes: Iterable<{ midi: number; velocity: number }>): Promise<void> {
-    await this.load();
+    await this.bank.start(this.core, this.releases, false);
     const files = filesFor(this.m!, notes, this.releases);
     this.bank.pin(this, files);
     await this.bank.want(files, 0);
@@ -111,7 +118,7 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
   play(midi: number, when: number, velocity: number, length: number, slot?: number): void {
     const m = this.m;
     if (!m || this.disposed || !Number.isFinite(midi)) return;
-    const t = Math.max(when, this.ctx.currentTime);
+    const t = this.at(when);
     const vel = Math.max(0, Math.min(1, Number.isFinite(velocity) ? velocity : 0.7));
     const key = Math.round(midi);
 
@@ -130,7 +137,7 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
     src.buffer = buffer;
     src.playbackRate.value = p.rate;
     const amp = c.createGain();
-    const level = dbToGain(p.db);
+    const level = dbToGain(p.db + this.trim);
     amp.gain.value = 0;
     amp.gain.setValueAtTime(level, t);
     if (p.cutoff) {
@@ -195,7 +202,7 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
     src.buffer = buffer;
     src.playbackRate.value = rateFor(m, r, v.midi);
     const amp = c.createGain();
-    amp.gain.value = dbToGain(db);
+    amp.gain.value = dbToGain(db + this.trim);
     src.connect(amp).connect(this.output);
     src.start(at, Math.min(this.bank.lead, buffer.duration / 2));
     src.onended = () => amp.disconnect();
