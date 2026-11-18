@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARAMS, DEFAULT_PLAY, type PlaySettings } from "./params";
-import { type PlayNote, arp, arpOrder, chordsOf, drone, glide, humanise, playNotes, pulse, rateBeats, strum, sustain, voiceForPlay } from "./play";
+import { DRONE_SUSTAIN, type PlayNote, arp, arpOrder, chordsOf, drone, glide, humanise, playNotes, pulse, rateBeats, strum, sustain, voiceForPlay } from "./play";
 
 const chord = (midis: number[], start: number, length: number, velocity = 0.8): PlayNote[] => midis.map((midi) => ({ midi, start, length, velocity }));
 // C major for two beats, then A minor for two beats, at 120 bpm (a beat is half a second)
@@ -139,6 +139,10 @@ describe("ways of playing", () => {
     expect(voiceForPlay({ ...DEFAULT_PARAMS, play: { ...DEFAULT_PLAY, mode: "glide" } }).voice).toBe("legato");
     expect(voiceForPlay({ ...DEFAULT_PARAMS, play: { ...DEFAULT_PLAY, mode: "glide" } }).glide).toBeGreaterThan(0);
     expect(voiceForPlay({ ...DEFAULT_PARAMS, voice: "mono", play: { ...DEFAULT_PLAY, mode: "drone" } }).voice).toBe("poly");
+    // a drone is held: a sound that dies away (a pluck) is kept sounding; one that sustains is left alone
+    expect(voiceForPlay({ ...DEFAULT_PARAMS, sustain: 0, play: { ...DEFAULT_PLAY, mode: "drone" } }).sustain).toBe(DRONE_SUSTAIN);
+    expect(voiceForPlay({ ...DEFAULT_PARAMS, sustain: 0.9, play: { ...DEFAULT_PLAY, mode: "drone" } }).sustain).toBe(0.9);
+    expect(voiceForPlay({ ...DEFAULT_PARAMS, sustain: 0, play: { ...DEFAULT_PLAY, mode: "arp" } }).sustain).toBe(0);
     const s = (mode: PlaySettings["mode"]) => playNotes(song, { ...DEFAULT_PLAY, mode }, ctx).length;
     expect(s("sustain")).toBe(6);
     expect(s("arp")).toBe(16);

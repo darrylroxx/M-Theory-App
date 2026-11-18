@@ -45,6 +45,13 @@ export interface SynthPanelProps {
 export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanelProps) {
   const preset = presetById(params.preset);
   const [cat, setCat] = useState<PresetCategory>(preset?.category ?? "pad");
+  // a sound handed in from outside (another track's, say) brings its own kind with it, so ‹ › and
+  // the chips step through that kind and not the one browsed before
+  const [seen, setSeen] = useState(params.preset);
+  if (params.preset !== seen) {
+    setSeen(params.preset);
+    if (preset) setCat(preset.category);
+  }
   const [list, setList] = useState(!compact);
   const [open, setOpen] = useState(!compact);
   // what is heard: the sound's own knobs pushed by the macros (the panel shows this)

@@ -15,12 +15,15 @@ import { referenceNotes, renderNotes } from "./render";
 
 let ctx: AudioContext | null = null;
 let inst: SynthInstrument | null = null;
+/** hand the panel a sound from outside, as a track switch would (for the browser check) */
+let setOutside: ((p: SynthParams) => void) | null = null;
 
 function Demo() {
   const compact = new URLSearchParams(location.search).has("compact");
   const [params, setParams] = useState<SynthParams>(presetById("warm-pad")!.params);
   const latest = useRef(params);
   latest.current = params;
+  setOutside = setParams;
   useEffect(() => {
     inst?.set(params);
   }, [params]);
@@ -59,6 +62,8 @@ createRoot(document.getElementById("root")!).render(
 /** For the browser check: render through the real worklet in an OfflineAudioContext and measure. */
 const synthCheck = {
   ids: () => PRESETS.map((p) => p.id),
+  /** give the panel another sound, as if another track were selected */
+  setSound: (id: string) => setOutside?.(presetById(id)!.params),
   /** a preset playing its reference phrase: level, peak, NaN, and whether the worklet matched the kernel sample for sample */
   async preset(id: string) {
     const p = presetById(id)!;

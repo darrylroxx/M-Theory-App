@@ -138,7 +138,8 @@ Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels
 - **56 ready-made sounds** in Bass, Lead, Pad, Keys, Pluck, Brass, Strings, Bells, Drone, FX and Arp (and a plain start for each oscillator), all brought to the same loudness. **‹ ›** steps through a kind, **⚄** picks another of the same kind, a dot after the name says the sound has been changed.
 - **Six macros**, big knobs that reshape any sound from where it was made: **Bright**, **Motion**, **Space**, **Grit**, **Width** and **Shape** (tight and short ↔ soft and long). Each moves several sliders at once, and the sliders move with it, so you can see what it did. Double-click a knob (or a slider) to put it back.
 - **Ways of playing** the chords and notes already written: **Hold** (as written), **Arp** (up, down, up-down, random, the whole chord, crawl; ¼ to 1/32 with triplets; 1 to 3 octaves; gate), **Strum** (down, up or alternating, with a spread), **Pulse** (the chord struck again on the beat), **Drone** (the key's home note, its fifth and octave held under everything, with a softer voice moving to each chord) and **Glide** (one line, sliding from note to note). **Loose** humanises any of them.
-- It sounds the same live and in an exported WAV: the same engine plays the same notes, sample for sample.
+- It sounds the same live and in an exported WAV: the same engine plays the same notes, sample for sample. It sounds the same at 44.1, 48 and 96 kHz too, and switching the oscillator keeps the loudness within about a decibel.
+- No clicks when notes start, stop or are struck again harder, or when a whole new chord takes over every voice at once. Choosing **Drone** on a sound that dies away (a pluck, a bell) keeps it sounding under the passage.
 
 ---
 

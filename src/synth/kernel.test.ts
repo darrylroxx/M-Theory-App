@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { SynthKernel, detuneCurve, sin2pi } from "./kernel";
-import { allFinite, cents, foldDb, harmonics, maxStep, partialHz, rms } from "./measure";
+import { SynthKernel, type SynthEvent, detuneCurve, feed, sin2pi } from "./kernel";
+import { allFinite, cents, foldDb, harmonics, loudness, maxStep, partialHz, powerSpectrum, rms } from "./measure";
 import { DEFAULT_PARAMS, type OscType, type SynthParams, attackOf, ratioOf, timeOf } from "./params";
-import { renderNotes } from "./render";
+import { presetById } from "./presets";
+import { referenceNotes, renderNotes } from "./render";
 
 const SR = 48000;
 const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -362,5 +363,126 @@ describe("sound changes", () => {
     expect(allFinite(L)).toBe(true);
     expect(rms(L, SR, 2 * SR)).toBeGreaterThan(0.01);
     expect(Math.max(...L.map(Math.abs))).toBeLessThanOrEqual(1);
+  });
+});
+
+describe("no clicks (harder cases)", () => {
+  it("when a whole new chord takes over every voice at once", () => {
+    // eight notes held on an eight-voice synth, then eight new ones struck together: all eight are
+    // stolen in the same instant, and every one of them must still fade rather than be cut
+    const p = sine({ attack: attackOf(0.05), release: timeOf(3), volume: 0.6 });
+    const held = [36, 40, 43, 47, 48, 50, 52, 55].map((midi) => ({ midi, start: 0.1, length: 3, velocity: 0.8 }));
+    const next = [38, 41, 45, 48, 50, 53, 57, 60].map((midi) => ({ midi, start: 1, length: 1, velocity: 0.8 }));
+    const { L } = renderNotes(p, [...held, ...next], { sampleRate: SR, seconds: 1.5, voices: 8 });
+    const steady = maxStep(L, 0.5 * SR, 0.99 * SR);
+    expect(maxStep(L, 0.99 * SR, 1.1 * SR)).toBeLessThan(1.6 * steady);
+  });
+  it("when a ringing note is struck again much harder (the velocity glides to its new level)", () => {
+    for (const voice of ["poly", "mono"] as const) {
+      const p = sine({ attack: attackOf(0.01), release: timeOf(2), velocity: 1, voice });
+      const { L } = render(p, [[57, 0.1, voice === "poly" ? 0.3 : 0.6, 0.2], [57, 0.6, 0.6, 1]], 1.3);
+      const at = Math.round(0.6 * SR);
+      // the corner where the note is struck again is no sharper than the louder note's own curve
+      expect(maxBend(L, at - 5, at + 400), voice).toBeLessThan(3 * maxBend(L, at + 4000, at + 12000));
+    }
+  });
+  it("in the distortion, even where the wave turns slowly", () => {
+    const p = sine({ fx: "dist", fxDepth: 0.3, fxRate: 1 });
+    const { L } = render(p, [[33, 0, 2]], 1.5);
+    const from = SR / 2;
+    let mean = 0;
+    for (let i = from + 2; i < L.length; i++) mean += Math.abs(L[i] - 2 * L[i - 1] + L[i - 2]);
+    mean /= L.length - from - 2;
+    expect(maxBend(L, from, L.length)).toBeLessThan(5 * mean);
+  });
+});
+
+describe("brightness and sample rates", () => {
+  /** how far the partial nearest `target` Hz of a saw at C4 is below the ideal 1/n, in dB */
+  function droop(sr: number, target: number) {
+    const { L } = renderNotes(clean({ osc: "saw" }), [{ midi: 60, start: 0, length: 2, velocity: 0.8 }], { sampleRate: sr, seconds: 1.5 });
+    const N = 65536;
+    const sp = powerSpectrum(L, Math.round(0.5 * sr), N);
+    const amp = (f: number) => {
+      const b = Math.round(f / (sr / N));
+      let m = 0;
+      for (let k = b - 3; k <= b + 3; k++) m = Math.max(m, sp[k]);
+      return Math.sqrt(m);
+    };
+    const f0 = hz(60);
+    const n = Math.round(target / f0);
+    return 20 * Math.log10(amp(n * f0) / amp(f0)) + 20 * Math.log10(n);
+  }
+  it("a saw through the open filter keeps its top end", () => {
+    // what is left is the four-pole filter's own curve at its highest corner (20.5 kHz)
+    expect(droop(SR, 5000)).toBeGreaterThan(-1);
+    expect(droop(SR, 10000)).toBeGreaterThan(-4);
+    expect(droop(SR, 15000)).toBeGreaterThan(-10);
+  });
+  it("a sound is as loud at 44.1, 48 and 96 kHz (noise, and a filter swept far up by the envelope)", () => {
+    for (const id of ["wind", "sync-lead", "fm-bell"]) {
+      const p = presetById(id)!;
+      const lv = [44100, 48000, 96000].map((sr) => {
+        const { L, R, sampleRate } = renderNotes(p.params, referenceNotes(p.params, p.category), { sampleRate: sr });
+        return loudness(L, R, sampleRate).momentaryMax;
+      });
+      expect(Math.max(...lv) - Math.min(...lv), `${id}: ${lv.map((x) => x.toFixed(2)).join(" / ")}`).toBeLessThan(0.75);
+    }
+  });
+  it("switching the oscillator type on a sound keeps its loudness", () => {
+    const lv = (["saw", "pulse", "sync", "ring", "fm"] as OscType[]).map((osc) => {
+      const { L, R, sampleRate } = renderNotes({ ...DEFAULT_PARAMS, osc, reverb: 0 }, [60, 64, 67].map((midi) => ({ midi, start: 0, length: 2.5, velocity: 0.8 })));
+      return loudness(L, R, sampleRate).momentaryMax;
+    });
+    expect(Math.max(...lv) - Math.min(...lv), lv.map((x) => x.toFixed(1)).join(" ")).toBeLessThan(1.5);
+  });
+});
+
+describe("events", () => {
+  const run = (k: SynthKernel, seconds: number) => {
+    const n = Math.round(seconds * SR);
+    const L = new Float32Array(n);
+    const R = new Float32Array(n);
+    for (let i = 0; i < n; i += 128) k.render(L, R, Math.min(128, n - i), i);
+    return L;
+  };
+  const same = (a: Float32Array, b: Float32Array) => a.length === b.length && a.every((v, i) => v === b[i]);
+  it("a new sound or a sync at the same moment as a note applies to that note, whichever was sent first", () => {
+    const a = clean({ osc: "saw", mod: 0.5, drift: 0.6, lfoDest: "pitch", lfoDepth: 0.3 });
+    const b: SynthParams = { ...a, osc: "pulse", cutoff: 0.5 };
+    const play = (order: "sound first" | "notes first") => {
+      const k = new SynthKernel(SR, { seed: 5 });
+      k.setParams(a);
+      k.snapSmoothing();
+      const evs: SynthEvent[] = [{ type: "params", t: 0.25, params: b }, { type: "sync", t: 0.25 }];
+      const notes: SynthEvent[] = [{ type: "on", t: 0.25, midi: 48, vel: 0.8, id: 1 }, { type: "on", t: 0.25, midi: 55, vel: 0.8, id: 2 }];
+      for (const e of order === "sound first" ? [...evs, ...notes] : [...notes, ...evs]) feed(k, e);
+      return run(k, 0.8);
+    };
+    expect(same(play("sound first"), play("notes first"))).toBe(true);
+  });
+  it("a long live session reuses its event queue instead of allocating a new one", () => {
+    const k = new SynthKernel(SR, { seed: 1 });
+    k.setParams(sine({ release: timeOf(0.05) }));
+    k.snapSmoothing();
+    // a drone held to the end of the song keeps the queue from ever emptying
+    k.noteOn(0, 36, 0.8, 1);
+    k.noteOff(600 * SR, 1);
+    const queue = () => (k as unknown as { evFrame: Float64Array }).evFrame;
+    const first = queue();
+    const L = new Float32Array(128);
+    const R = new Float32Array(128);
+    let id = 2;
+    for (let b = 0; b < 4000; b++) {
+      // a few notes sent a little ahead, as a player does
+      if (b % 4 === 0) {
+        const t = (b + 8) * 128;
+        k.noteOn(t, 60 + (b % 12), 0.7, id);
+        k.noteOff(t + 300, id++);
+      }
+      k.render(L, R, 128);
+    }
+    // the events already played are dropped in place: nothing new is allocated on the audio thread
+    expect(queue()).toBe(first);
   });
 });

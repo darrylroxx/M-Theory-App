@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { allFinite, loudness } from "./measure";
+import { allFinite, loudness, rms } from "./measure";
 import { OSC_TYPES, reviveSynth } from "./params";
 import { CATEGORIES, PRESETS, presetById, presetsIn } from "./presets";
+import { playNotes } from "./play";
 import { referenceNotes, renderNotes } from "./render";
 
 /**
@@ -60,6 +61,16 @@ describe("presets", () => {
       expect(m.peak).toBeLessThan(0.65);
     }
     expect(Math.max(...levels) - Math.min(...levels)).toBeLessThan(3);
+  });
+
+  it("any of them played as a drone keeps sounding to the end of the passage", () => {
+    const chords = [[48, 52, 55], [45, 48, 52], [41, 45, 48], [43, 47, 50]].flatMap((c, i) => c.map((midi) => ({ midi, start: i * 2, length: 2, velocity: 0.8 })));
+    for (const p of PRESETS) {
+      const params = { ...p.params, play: { ...p.params.play, mode: "drone" as const } };
+      const { L } = renderNotes(params, playNotes(chords, params.play, { bpm: 120, tonic: 0 }), { seconds: 8 });
+      // the last second of the passage still sounds (a pluck or a bell would otherwise have died away)
+      expect(rms(L, 7 * 48000, 8 * 48000), p.id).toBeGreaterThan(0.2 * rms(L, 0, 8 * 48000));
+    }
   });
 
   it("never clip or go wrong at full polyphony, played hard", () => {

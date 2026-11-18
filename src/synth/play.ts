@@ -296,13 +296,18 @@ export function humanise<T extends PlayNote>(notes: T[], amount: number, seed = 
     .sort(byStart);
 }
 
+/** The least sustain a drone is played with: a drone is held, so a sound that dies away is kept sounding. */
+export const DRONE_SUSTAIN = 0.6;
+
 /**
  * The voice a way of playing needs: Glide joins notes, so it needs a legato voice (with some
- * portamento if the sound has none); a Drone holds several notes at once, so it needs a poly one.
+ * portamento if the sound has none); a Drone holds several notes at once, so it needs a poly one,
+ * and it must keep sounding (a pluck or a bell chosen as a drone would otherwise fade to nothing
+ * long before the passage ends).
  */
 export function voiceForPlay(p: SynthParams): SynthParams {
   if (p.play.mode === "glide" && p.voice === "poly") return { ...p, voice: "legato", glide: p.glide > 0 ? p.glide : 0.35 };
-  if (p.play.mode === "drone" && p.voice !== "poly") return { ...p, voice: "poly" };
+  if (p.play.mode === "drone" && (p.voice !== "poly" || p.sustain < DRONE_SUSTAIN)) return { ...p, voice: "poly", sustain: Math.max(p.sustain, DRONE_SUSTAIN) };
   return p;
 }
 

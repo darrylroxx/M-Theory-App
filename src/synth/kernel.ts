@@ -2,9 +2,10 @@
  * The synth's sound engine: pure arithmetic on numbers, no DOM, no Web Audio, so the same code
  * runs on the audio thread (synth.worklet.ts), in an offline render and in the tests.
  *
- * Signal path of one voice: oscillator block (one of five) → band-limited steps added → DC blocker
- * (+ noise) → up to twice the sample rate → four-pole ladder low-pass with a saturating input →
- * back down → amplifier → its place between the speakers. All voices are summed, then: the one
+ * Signal path of one voice: oscillator block (one of five) → band-limited steps added (and the
+ * treble their smoothing takes, given back) → DC blocker (+ noise) → up to twice the sample rate
+ * → four-pole ladder low-pass with a saturating input → back down → amplifier → its place
+ * between the speakers. All voices are summed, then: the one
  * effect (distortion, chorus/flanger, phaser or delay) → a stereo widener → a light reverb →
  * volume → a soft ceiling that cannot exceed full scale.
  *
@@ -56,8 +57,11 @@ const BLOCK = 128;
 const VOICE_GAIN = 0.25;
 /** Where successive notes sit between the speakers (times the Width knob), alternating sides. */
 const PANS = [-1, 1, -0.5, 0.5, -0.75, 0.25, 0.75, -0.25];
-/** Voices beyond the polyphony that are kept to let stolen notes fade out. */
-const SPARE = 4;
+/**
+ * Voices beyond the polyphony, kept so stolen notes can fade out: as many as the polyphony, so a
+ * whole new chord can take over a whole old one at once and every stolen note still fades.
+ */
+const SPARE_PER_VOICE = 1;
 
 // ── Small exact helpers ──────────────────────────────────────────────────────────────────────
 
@@ -243,6 +247,9 @@ class Voice {
   c0 = 0;
   /** the decimator of the ring oscillator, which runs at twice the sample rate */
   hb = new Float64Array(10);
+  /** the last two oscillator samples, for the treble lift (see DEDROOP) */
+  eq1 = 0;
+  eq2 = 0;
   /** the filter's way up to twice the sample rate and back down */
   up = new Float64Array(10);
   dn = new Float64Array(10);
@@ -306,7 +313,9 @@ class Dist {
         // F(x) = log cosh x, computed without overflow
         const F = ax + Math.log1p(Math.exp(-2 * ax)) - Math.LN2;
         const dx = x - xp;
-        const y = dx > 1e-5 || dx < -1e-5 ? (F - fp) / dx : tanhA(0.5 * (x + xp));
+        // (nearly equal samples: the limit of the quotient, which is the exact tanh; the rational
+        // approximation here would step by up to 2% each time the signal crossed this threshold)
+        const y = dx > 1e-5 || dx < -1e-5 ? (F - fp) / dx : Math.tanh(0.5 * (x + xp));
         xp = x;
         fp = F;
         // tone: two TPT one-poles
@@ -654,7 +663,27 @@ const FX_INDEX: Record<FxType, number> = { off: -1, dist: 0, chorus: 1, phaser: 
 const DRIVE0 = 0.4;
 /** Where the filter's input saturation flattens out. */
 const SAT = 2;
-const OSC_LEVEL: Record<OscType, number> = { saw: 0.85, pulse: 0.72, sync: 0.85, ring: 1.35, fm: 0.72 };
+/**
+ * The highest the filter opens (Hz). It runs at twice the sample rate, so it can open well past
+ * hearing at any rate; a fixed frequency (not a share of the sample rate) keeps a sound the same at
+ * 44.1, 48 and 96 kHz.
+ */
+const FC_MAX = 40000;
+/**
+ * The band-limited steps above are smoothed by a cubic B-spline, which also dulls the top octave
+ * (sinc⁴: −2.5 dB at 10 kHz, −5.8 dB at 15 kHz at 48 kHz). A gentle symmetric 3-tap lift
+ * [−a, 1+2a, −a] after those oscillators gives it back (−0.2 dB at 10 kHz, −2 dB at 15 kHz). On the
+ * straight and flat parts of a wave it changes nothing, so it acts only around the corners the
+ * steps smoothed: in effect a sharper smoothing kernel, with the same alias rejection relative to
+ * the partials at every frequency. FM has no steps, and Ring runs at twice the rate (its droop is
+ * small), so those two are only delayed by the same one sample.
+ */
+const DEDROOP = 0.2;
+/**
+ * Each oscillator's level, so that switching type on the same sound keeps about the same loudness
+ * (measured on the default sound and on each Init sound: within about 1 dB of each other).
+ */
+const OSC_LEVEL: Record<OscType, number> = { saw: 0.85, pulse: 0.534, sync: 0.954, ring: 1.447, fm: 0.85 };
 
 /** Polyphonic synth engine. Feed it notes (in frames on its own clock) and render blocks of stereo audio. */
 export class SynthKernel {
@@ -753,8 +782,12 @@ export class SynthKernel {
   private readonly cGOn: number;
   private readonly cGOff: number;
   private readonly lfoC: number;
+  private readonly velC: number;
   private readonly walkA: number;
   private readonly walkS: number;
+  /** white noise as loud per hertz at every sample rate */
+  private readonly noiseSr: number;
+  private readonly fcMax: number;
 
   // buffers
   private oscBuf = new Float64Array(CTRL);
@@ -777,7 +810,7 @@ export class SynthKernel {
     this.poly = Math.max(1, Math.min(16, Math.round(opts.voices ?? 8)));
     this.seed = (opts.seed ?? 0x5eed) >>> 0 || 1;
     this.rng = this.seed;
-    this.voices = Array.from({ length: this.poly + SPARE }, () => new Voice());
+    this.voices = Array.from({ length: this.poly * (1 + SPARE_PER_VOICE) }, () => new Voice());
     this.chorus = new ChorusFlanger(sampleRate);
     this.delay = new Delay(sampleRate);
     this.widener = new Widener(sampleRate);
@@ -787,8 +820,11 @@ export class SynthKernel {
     this.cGOn = coef(0.0015, sampleRate);
     this.cGOff = coef(0.003, sampleRate);
     this.lfoC = coef(1 / (2 * Math.PI * 120), sampleRate, CTRL);
+    this.velC = coef(0.004, sampleRate, CTRL);
     this.walkA = (2 * Math.PI * 0.08 * CTRL) / sampleRate;
     this.walkS = Math.sqrt(3 * this.walkA) * 1.2;
+    this.noiseSr = Math.sqrt(sampleRate / 48000);
+    this.fcMax = Math.min(FC_MAX, 0.9 * sampleRate);
     this.setParams(DEFAULT_PARAMS);
     this.snapSmoothing();
   }
@@ -857,11 +893,25 @@ export class SynthKernel {
     return this.p.volume * this.p.volume * Math.pow(10, this.p.trim / 20);
   }
 
-  /** Grow the event queue (only ever called when a message arrives, never while rendering). */
+  /** Make room in the event queue (only ever called when a message arrives, never while rendering). */
   private ensure(n: number) {
     if (this.evTail + n <= this.evFrame.length) return;
-    // compact first
     const live = this.evTail - this.evHead;
+    if (live + n <= this.evFrame.length) {
+      // room enough once the events already played are dropped: move the rest down, allocating nothing
+      // (live, a note held to the end of the song keeps the queue from ever emptying)
+      const h = this.evHead;
+      const t = this.evTail;
+      this.evFrame.copyWithin(0, h, t);
+      this.evType.copyWithin(0, h, t);
+      this.evA.copyWithin(0, h, t);
+      this.evB.copyWithin(0, h, t);
+      this.evC.copyWithin(0, h, t);
+      this.evD.copyWithin(0, h, t);
+      this.evTail = live;
+      this.evHead = 0;
+      return;
+    }
     const cap = Math.max(256, 1 << Math.ceil(Math.log2(live + n + 1)));
     const grow = <T extends Float64Array | Int8Array>(a: T, make: (n: number) => T) => {
       const b = make(cap);
@@ -880,9 +930,11 @@ export class SynthKernel {
 
   private push(frame: number, type: number, a = 0, b = 0, c = 0, d = 0) {
     this.ensure(1);
-    // insert in time order; equal times keep the order they were given in
+    // insert in time order; equal times keep the order they were given in, except that a new sound
+    // or a sync goes ahead of the notes at its own frame (they start with it, whichever was sent first)
+    const first = type === EV_PARAMS || type === EV_SYNC;
     let i = this.evTail;
-    while (i > this.evHead && this.evFrame[i - 1] > frame) i--;
+    while (i > this.evHead && (this.evFrame[i - 1] > frame || (first && this.evFrame[i - 1] === frame && this.evType[i - 1] !== EV_PARAMS && this.evType[i - 1] !== EV_SYNC))) i--;
     for (let j = this.evTail; j > i; j--) {
       this.evFrame[j] = this.evFrame[j - 1];
       this.evType[j] = this.evType[j - 1];
@@ -1037,9 +1089,12 @@ export class SynthKernel {
       if (victim) victim.kill = true;
     }
     for (const v of this.voices) if (!v.active) return v;
-    // every spare is still fading: take the quietest
-    let q = this.voices[0];
-    for (const v of this.voices) if (v.kill && v.killGain < q.killGain) q = v;
+    // more notes stolen within a few milliseconds than there are spares: cut the quietest of the
+    // notes already fading out (never one that is still meant to sound)
+    let q: Voice | null = null;
+    for (const v of this.voices) if (v.kill && (!q || v.killGain < q.killGain)) q = v;
+    if (!q) for (const v of this.voices) if (!q || v.order < q.order) q = v;
+    q = q as Voice;
     q.active = false;
     return q;
   }
@@ -1091,6 +1146,7 @@ export class SynthKernel {
     v.ivFade = 1;
     v.nm2 = v.nm1 = v.cm2 = v.cm1 = v.c0 = 0;
     v.hb.fill(0);
+    v.eq1 = v.eq2 = 0;
     v.up.fill(0);
     v.dn.fill(0);
     v.envVer = -1;
@@ -1253,6 +1309,7 @@ export class SynthKernel {
         for (const v of this.voices) {
           v.nm2 = v.nm1 = v.cm2 = v.cm1 = v.c0 = 0;
           v.hb.fill(0);
+          v.eq1 = v.eq2 = 0;
           v.iv = pulseInterval(this.sTex);
           v.ivMul = semis(v.iv);
         }
@@ -1353,7 +1410,7 @@ export class SynthKernel {
     this.aAmt = Math.min(1, 2 * (1 - this.sBal));
     // Noise: up to half it is mixed in; past half the oscillator fades out, until only noise is left
     const nz = this.sNoise;
-    this.noiseAmt = Math.min(1, 2 * nz) * 0.7;
+    this.noiseAmt = Math.min(1, 2 * nz) * 0.7 * this.noiseSr;
     this.oscAmt = nz > 0.5 ? 2 * (1 - nz) : 1;
   }
 
@@ -1479,7 +1536,7 @@ export class SynthKernel {
     // filter: cutoff in semitones (MIDI scale) from the knob, the keyboard, the envelope, the LFO and velocity
     const fAmt = Math.min(1, 2 * this.sBal);
     const n = 15.486 + 120 * this.sCut + this.sKey * (v.pitch - 60) + fAmt * 48 * v.env + this.lFilt * lfo + v.velCut + dr * 1.2 * v.slopCut;
-    const fc = Math.min(Math.max(midiHz(n), 16), 0.45 * sr);
+    const fc = Math.min(Math.max(midiHz(n), 16), this.fcMax);
     // the filter runs at twice the sample rate
     const g = Math.tan((Math.PI * fc) / (2 * sr));
     const G = g / (1 + g);
@@ -1499,7 +1556,10 @@ export class SynthKernel {
       v.vg = v.vgT;
     }
     v.tremInc = (trem - v.trem) * k;
-    v.vgInc = (v.vgT - v.vg) * k;
+    // a note struck again (or a mono line moving) at another velocity glides to its new level over
+    // a few milliseconds: within one control block the jump would be a click
+    const dv = v.vgT - v.vg;
+    v.vgInc = (dv > -1e-4 && dv < 1e-4 ? dv : dv * this.velC) * k;
 
     // envelope speeds for this note, worked out again only when the sound's times change
     if (v.envVer !== this.envVer) {
@@ -1922,6 +1982,11 @@ export class SynthKernel {
     const mixR = this.mixR;
     const R = this.dcR;
     let dcx = v.dcx;
+    let e1 = v.eq1;
+    let e2 = v.eq2;
+    const steps = this.osc === "saw" || this.osc === "pulse" || this.osc === "sync";
+    const ec1 = steps ? 1 + 2 * DEDROOP : 1;
+    const ec0 = steps ? -DEDROOP : 0;
     let dcy = v.dcy;
     const noise = this.noiseAmt;
     const oscG = this.oscAmt;
@@ -1962,8 +2027,11 @@ export class SynthKernel {
     const gr = v.gr * VOICE_GAIN * level * outG;
     const invSat = 1 / SAT;
     for (let i = 0; i < len; i++) {
-      // DC blocker
-      let s = x[i] * oscG;
+      // the treble lift (see DEDROOP), then the DC blocker
+      const xi = x[i];
+      let s = (ec1 * e1 + ec0 * (xi + e2)) * oscG;
+      e2 = e1;
+      e1 = xi;
       const y0 = s - dcx + R * dcy;
       dcx = s;
       dcy = y0;
@@ -2023,6 +2091,8 @@ export class SynthKernel {
       mixR[i] += out * gr;
     }
     v.dcx = dcx;
+    v.eq1 = e1;
+    v.eq2 = e2;
     v.dcy = flush(dcy);
     v.rng = rng;
     v.s1 = s1;
