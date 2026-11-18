@@ -76,18 +76,19 @@ export async function meterStop(): Promise<void> {
 }
 
 // ── the recording engine ──
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number }
-export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string }
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; invalid: boolean; xruns: number; block: number }
+export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
 
 async function core() {
   return import("@tauri-apps/api/core");
 }
 /** Open the interface's inputs and outputs together, and hear about levels and position. */
-export async function engineOpen(host: string, device: string, onStatus: (s: EngineStatus) => void): Promise<EngineOpened> {
+/** `buffer`: the buffer size to ask the driver for (frames), or null for the driver's own setting. */
+export async function engineOpen(host: string, device: string, buffer: number | null, onStatus: (s: EngineStatus) => void): Promise<EngineOpened> {
   const { invoke, Channel } = await core();
   const ch = new Channel<EngineStatus>();
   ch.onmessage = onStatus;
-  return invoke<EngineOpened>("engine_open", { host, deviceName: device, status: ch });
+  return invoke<EngineOpened>("engine_open", { host, deviceName: device, buffer, status: ch });
 }
 export async function engineClose(): Promise<void> {
   if (!isDesktop()) return;

@@ -50,6 +50,9 @@ const KNOBS: { k: keyof VocalFx; label: string; min: number; max: number; step: 
   { k: "level", label: "Level", min: -12, max: 12, step: 0.5, unit: "dB", more: true, hint: "Output level of the chain" },
 ];
 const sig = (fx: VocalFx) => JSON.stringify(fx);
+const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
+/** About how long a sound takes to go in and come back out at a buffer size (two blocks, plus the converters). */
+const roundTrip = (block: number, rate: number) => Math.round(((2 * block) / rate) * 1000 + 2);
 
 /**
  * Vocals: the vocal tracks, the interface, the live vocal sound, and recording take after take
@@ -79,6 +82,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const dropRef = useRef<HTMLSpanElement>(null);
   const slowRef = useRef<HTMLSpanElement>(null);
   const drops = useRef({ n: 0, at: 0 });
+  const blockRef = useRef<HTMLSpanElement>(null);
   const hold = useRef<number[]>([]);
   const planRef = useRef<RecordPlan | null>(null);
   const trackRef = useRef<Track | null>(null);
@@ -102,7 +106,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     if (!desktop || !keepOpen || !chosen) return;
     let live = true;
     setError(null);
-    engineOpen(chosen.host, chosen.name, (st: EngineStatus) => {
+    engineOpen(chosen.host, chosen.name, studio.buffer ?? null, (st: EngineStatus) => {
       if (!live) return;
       if (st.invalid) {
         live = false;
@@ -124,6 +128,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (grRef.current) grRef.current.textContent = st.reduction > 0.5 ? `−${st.reduction.toFixed(1)} dB` : "";
       // dropouts: the computer could not keep up at this buffer size
       if (st.xruns !== drops.current.n) drops.current = { n: st.xruns, at: performance.now() };
+      if (blockRef.current && st.block) blockRef.current.textContent = `${st.block} samples · about ${roundTrip(st.block, opened?.rate ?? 48000)} ms round trip`;
       if (dropRef.current) dropRef.current.textContent = st.xruns ? `${st.xruns} dropout${st.xruns === 1 ? "" : "s"}` : "no dropouts";
       if (slowRef.current) slowRef.current.hidden = !(st.xruns && performance.now() - drops.current.at < 6000);
       if (countRef.current) {
@@ -136,7 +141,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       }
     }).then((o) => live && setOpened(o)).catch((e) => live && (setOpened(null), setError(String(e))));
     return () => { live = false; void engineClose(); setOpened(null); };
-  }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // what the singer hears follows the page at once
   const monitor = (studio.monitor ?? "hardware") === "effects";
@@ -304,7 +309,14 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 </select>
               )}
               {opened && <span className="tiny muted">{opened.inputs} in · {opened.outputs} out · {opened.rate / 1000} kHz · <span ref={dropRef} title="Each dropout is a moment the computer could not keep up: a click or crackle">no dropouts</span></span>}
-              <span ref={slowRef} className="small vc-err" hidden>Dropouts right now: the computer is not keeping up at this buffer size. In the Focusrite Notifier, choose a bigger buffer (128), or turn Safe Mode on.</span>
+              <label className="vc-mini" title="How much sound the computer handles at a time. Smaller: you hear yourself sooner. Too small: crackles and dropouts">Buffer
+                <select value={studio.buffer ?? ""} disabled={running} onChange={(e) => setStudio({ buffer: e.target.value ? Number(e.target.value) : undefined })}>
+                  <option value="">Driver's setting</option>
+                  {BUFFERS.filter((b) => (opened?.min_buffer ?? 0) <= b && b <= (opened?.max_buffer ?? 4096)).map((b) => <option key={b} value={b}>{b}</option>)}
+                </select>
+                <span ref={blockRef} className="tiny muted" />
+              </label>
+              <span ref={slowRef} className="small vc-err" hidden>Dropouts right now: the computer is not keeping up at this buffer size. Choose a bigger buffer (128 is safe for most computers).</span>
               {error && <span className="small vc-err">{error}</span>}
               <div className="vc-meters" ref={barsRef}>
                 {Array.from({ length: channels }, (_, c) => (
@@ -322,7 +334,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
                 <button role="radio" aria-checked={monitor} className={monitor ? "on" : ""} onClick={() => setStudio({ monitor: "effects" })}>Through my effects</button>
               </span>
               {monitor && checks.direct && <span className="small vc-err">Turn Direct Monitor off on the interface (and untick it below), or you will hear yourself twice.</span>}
-              {monitor && !checks.direct && <span className="tiny muted">You hear yourself through the vocal sound below, a few milliseconds late (set by the buffer size in the Focusrite Notifier: 64 is a good start).</span>}
+              {monitor && !checks.direct && <span className="tiny muted">You hear yourself through the vocal sound below, a few milliseconds late: the buffer size above sets how many (64 is a good start; go up if there are dropouts).</span>}
               {!monitor && <span className="tiny muted">Press Direct Monitor on the interface to hear yourself, dry and with no delay.</span>}
               <div className="vc-mix">
                 <label className="vc-mini">Song <input type="range" min={0} max={1.5} step={0.05} value={studio.backing ?? 1} onChange={(e) => setStudio({ backing: Number(e.target.value) })} /></label>

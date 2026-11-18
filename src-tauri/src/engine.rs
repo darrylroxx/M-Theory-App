@@ -39,6 +39,8 @@ pub struct Stats {
     pub dropped: AtomicU64,
     /// the driver said the computer could not keep up (each one is a little dropout you may hear)
     pub xruns: AtomicU64,
+    /// frames in each block the driver asks for (the buffer size actually in use)
+    pub block: AtomicU64,
     /// the driver asked to be reset (its buffer size or sample rate was changed)
     pub invalid: AtomicBool,
     /// when the first frame was heard and the first sample captured, at the last stop
@@ -248,6 +250,7 @@ impl Core {
         // let it run dry in the middle of a block: if the voice has not arrived yet, it is held
         // back by what is missing (a cushion of at most one block), instead of a gap that pops
         let frames = out.len() / ch;
+        self.stats.block.store(frames as u64, Ordering::Relaxed);
         while self.mon.len() > frames * 3 + 64 {
             self.mon.pop_front();
         }
@@ -335,6 +338,9 @@ pub struct Opened {
     pub inputs: u16,
     pub outputs: u16,
     pub format: String,
+    /// the buffer sizes the driver allows (frames), when it says
+    pub min_buffer: Option<u32>,
+    pub max_buffer: Option<u32>,
 }
 
 /// About thirty times a second: the input levels, where the music is, and the compression.
@@ -353,6 +359,8 @@ pub struct Status {
     pub invalid: bool,
     /// dropouts since the interface was opened (the computer could not keep up at this buffer size)
     pub xruns: u64,
+    /// the buffer size in use (frames per block)
+    pub block: u64,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
@@ -456,7 +464,7 @@ fn link() -> Result<(Arc<Link>, u32), String> {
 
 /// Open the interface (input and output together) and start reporting levels.
 #[tauri::command]
-pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -> Result<Opened, String> {
+pub fn engine_open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
     crate::meter::stop();
     close_engine();
     let stop = Arc::new(AtomicBool::new(false));
@@ -470,7 +478,17 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
             let rate = oc.sample_rate();
             let mut icfg = ic.config();
             icfg.sample_rate = rate;
-            let ocfg = oc.config();
+            let mut ocfg = oc.config();
+            // the buffer size: the app asks the driver for one (within what it allows), or leaves the driver's own
+            let (min_buffer, max_buffer) = match oc.buffer_size() {
+                cpal::SupportedBufferSize::Range { min, max } => (Some(*min), Some(*max)),
+                _ => (None, None),
+            };
+            if let Some(n) = buffer {
+                let n = n.clamp(min_buffer.unwrap_or(16), max_buffer.unwrap_or(4096));
+                icfg.buffer_size = cpal::BufferSize::Fixed(n);
+                ocfg.buffer_size = cpal::BufferSize::Fixed(n);
+            }
             let shared = Arc::new(Shared::new(icfg.channels as usize));
             let c = Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone());
             let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new() });
@@ -490,7 +508,7 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
             // input first, so each block of voice is in hand before the block of sound that follows it
             input.play().map_err(|e| e.to_string())?;
             output.play().map_err(|e| e.to_string())?;
-            let opened = Opened { host: h.id().name().to_string(), device: d.to_string(), rate, inputs: icfg.channels, outputs: ocfg.channels, format: oc.sample_format().to_string() };
+            let opened = Opened { host: h.id().name().to_string(), device: d.to_string(), rate, inputs: icfg.channels, outputs: ocfg.channels, format: oc.sample_format().to_string(), min_buffer, max_buffer };
             Ok((vec![input, output], link, shared, opened))
         })();
         match made {
@@ -514,6 +532,7 @@ pub fn engine_open(host: String, device_name: String, status: Channel<Status>) -
                         reduction: f32::from_bits(st.reduction.load(Ordering::Relaxed)),
                         invalid: st.invalid.load(Ordering::Relaxed),
                         xruns: st.xruns.load(Ordering::Relaxed),
+                        block: st.block.load(Ordering::Relaxed),
                     };
                     if status.send(msg).is_err() {
                         break;
