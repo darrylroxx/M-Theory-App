@@ -86,6 +86,30 @@ where numbers or methods were taken they are used under their licences, with tha
   McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
 - Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
 
+The harmony engine and piano voicings (`src/theory/harmonize.ts`, `src/keys/`) and the keyboard
+diagram (`src/ui/components/KeyboardDiagram.tsx`) are written for this project. Rules, numbers
+and small routines were taken from these, used under their licences, with thanks:
+
+- **Contrapunk** by Contrapunk Audio (MIT, Copyright (c) 2026 Contrapunk Audio): the ladder an
+  outside note falls down when it is harmonised (the parallel modes searched in order of
+  distance, then consonant intervals in its order), its voice registers, and the scoring ideas
+  of its contrary-motion and counterpoint modes (`harmonize.ts`, `voicing.ts`).
+- **music21** (cuthbertLab, BSD-3-Clause): the parallel fifths and octaves test (compound and
+  contrary forms included) and the motion types (`harmonize.ts`, `voicing.ts`).
+- **jazzband** (felixroos, ISC): voice-leading distance as the sum of semitones moved, the
+  required and optional notes of a chord (the 3rd and 7th needed, the root and 5th not) and the
+  available-tension rule behind the avoid notes (`harmonize.ts`, `voicing.ts`).
+- **tonal.js** (tonaljs, MIT): the voicing shapes and the default comping range (`voicing.ts`).
+- **harmony-ts** (Apache-2.0): the melodic intervals a line must not take, the augmented second
+  among them (`harmonize.ts`).
+- **Impro-Visor** (GPL-2.0-or-later): the left- and right-hand ranges, the hand span and the
+  weight of a held note against a moving one (`voicing.ts`).
+- **react-piano** (kevinsqi, MIT, Copyright (c) 2018): the keyboard's geometry: where each
+  black key sits, its width and its height (`keyboard.ts`).
+- **Open Music Theory** (v1, CC BY-SA 4.0): the species-counterpoint rules, applied chords and
+  modal mixture, re-implemented as tests and costs. None of its text is used.
+- The low-interval limits follow common arranging tables, read as strictly as they disagree.
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 
