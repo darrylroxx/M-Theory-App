@@ -30,26 +30,33 @@ export const brightness = (s: Sound) => clamp(Math.log2(Math.max(100, s.centre) 
 
 /**
  * A note or hit as a cue for a layer. `layerOf` says which layer a track is painted in (by its
- * id; the first tracks have their kind's name), `level` how far up its fader is (0..1+), and `id`
- * a number for this sound alone.
+ * id; the first tracks have their kind's name), `level` how far up its fader is (0..1+), `id` a
+ * number for this sound alone, and `handOf` which hand paints the track (its ear's key; the low
+ * strings of a chords track have a hand of their own, the bass's).
  */
-export function cueOfPulse(p: Pulse, id: number, layerOf: (track: string) => LayerKind, level: (track: string) => number): LayerCue {
+export function cueOfPulse(p: Pulse, id: number, layerOf: (track: string) => LayerKind, level: (track: string) => number, handOf: (track: string) => string = (t) => t): LayerCue {
   const track = p.track ?? (p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody");
   const fader = Math.min(1.5, level(track));
   if (p.kind === "drum") {
     const d = p as DrumPulse;
     return {
       layer: "drums",
+      key: handOf(track),
       hit: true,
       cue: { id, t: d.time, hz: Math.max(40, d.sound.centre), amp: clamp(d.velocity * Math.min(1.3, d.gain) * fader), attack: d.sound.attack, bright: brightness(d.sound), rough: noisiness(d.sound), ring: d.sound.ring, len: 0, drum: d.drum },
     };
   }
   const n = p as NotePulse;
   let layer = layerOf(track);
+  let key = handOf(track);
   // the low strings of a chords track are the bass
-  if (layer === "chords" && n.midi <= BASS_TOP_MIDI) layer = "bass";
+  if (layer === "chords" && n.midi <= BASS_TOP_MIDI) {
+    layer = "bass";
+    key = `${key}:bass`;
+  }
   return {
     layer,
+    key,
     cue: {
       id,
       t: n.time,

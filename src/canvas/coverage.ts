@@ -18,7 +18,8 @@
  *   in full while there is room, and thinned and shrunk once there is not (a cell never fills
  *   solid, and the canvas as a whole never passes its target for long);
  * - each layer has a ration of paint a second, in proportion to its own share of the density,
- *   so a busy hi-hat cannot cover the canvas on its own;
+ *   and may hold no more than its share of the target, so a busy hi-hat cannot cover the canvas
+ *   on its own and the other parts always find room;
  * - when the canvas is fuller than the music now calls for (a loud chorus has given way to a quiet
  *   verse), old paint sinks back into the ground until it is not. Nothing new has to be removed:
  *   quiet music simply stops adding, and the ground it leaves bare stays bare.
@@ -57,6 +58,9 @@ export class Budget {
   private spent = new Map<LayerKind, number>();
   /** each layer's share of the density */
   private share = new Map<LayerKind, number>();
+  /** how much of the canvas each layer's paint covers (an estimate, kept in step with what is measured) */
+  private owned = new Map<LayerKind, number>();
+  private shares = 0;
   private mean = 0;
   private accX = 0;
   private accY = 0;
@@ -74,6 +78,7 @@ export class Budget {
   clear() {
     this.cells.fill(0);
     this.spent.clear();
+    this.owned.clear();
     this.mean = 0;
   }
 
@@ -82,7 +87,12 @@ export class Budget {
     const d = densityOf(layers);
     this.target = targetCoverage(d);
     this.share.clear();
-    for (const l of layers) this.share.set(l.layer, l.active ? clamp(l.loud) : 0);
+    this.shares = 0;
+    for (const l of layers) {
+      const sh = l.active ? clamp(l.loud) : 0;
+      this.share.set(l.layer, sh);
+      this.shares += sh;
+    }
   }
 
   /** How much of the canvas is painted (0..1). */
@@ -110,20 +120,25 @@ export class Budget {
    */
   admit(st: Stamp, layer: LayerKind, dt = 1 / 60): number {
     const { area, shows } = this.footprint(st);
-    // the whole canvas: in full while under the target, less and less as it passes it
+    // the whole canvas: in full while under the target, less and less as it passes it, and nothing a little past it
     const over = this.mean - this.target;
-    let allow = over <= 0 ? 1 : clamp(1 - over / (0.22 * this.target + 0.02), 0.08, 1);
+    let allow = over <= 0 ? 1 : clamp(1 - over / (0.12 * this.target + 0.015));
     // the cell: never painted solid; room is shared out by what the music calls for
     const cx = clamp(Math.floor((st.x / this.w) * this.cols), 0, this.cols - 1);
     const cy = clamp(Math.floor((st.y / this.h) * this.rows), 0, this.rows - 1);
     const cap = Math.min(0.94, 0.42 + 0.75 * this.target);
     const here = this.cells[cy * this.cols + cx];
-    if (here > cap) allow *= clamp((cap + 0.08 - here) / 0.08, 0.05, 1);
-    // the layer's ration
+    if (here > cap) allow *= clamp((cap + 0.08 - here) / 0.08);
+    // the layer's share of the target: what is left is kept for the others
     const share = this.share.get(layer) ?? 0.3;
+    const fair = this.target * (this.shares > 0 ? Math.max(share, 0.05) / Math.max(this.shares, share) : 1);
+    const owned = this.owned.get(layer) ?? 0;
+    if (owned > fair) allow *= clamp(1 - (owned - fair) / (0.25 * fair + 0.01));
+    // and its ration of paint a second
     const ration = RATION[layer] * (0.25 + share) * (0.5 + 2.2 * this.target);
     const spent = this.spent.get(layer) ?? 0;
     if (spent > ration) allow *= clamp(ration / spent, 0.1, 1);
+    if (allow <= 0) return 0;
     this.record(st, area * allow, shows, layer, dt);
     return allow;
   }
@@ -149,6 +164,7 @@ export class Budget {
         added += this.cells[i] - before;
       }
     this.mean += added / this.cells.length;
+    this.owned.set(layer, (this.owned.get(layer) ?? 0) + added / this.cells.length);
     // spent: an average over about a second of what was covered, as cover a second
     const k = Math.min(1, dt);
     this.spent.set(layer, (this.spent.get(layer) ?? 0) + added / this.cells.length / Math.max(dt, 1 / 240) * k);
@@ -162,14 +178,18 @@ export class Budget {
       const keep = Math.exp(-fade * dt);
       for (let i = 0; i < this.cells.length; i++) this.cells[i] *= keep;
       this.mean *= keep;
+      for (const [l, v] of this.owned) this.owned.set(l, v * keep);
     }
   }
 
   /** What the painting itself shows (a measured map, the same size): it replaces the estimate. */
   observe(map: ArrayLike<number>) {
     if (map.length !== this.cells.length) return;
+    const before = this.mean;
     for (let i = 0; i < map.length; i++) this.cells[i] = clamp(map[i]);
     this.refresh();
+    // each layer's part is scaled to match
+    if (before > 1e-6) for (const [l, v] of this.owned) this.owned.set(l, (v * this.mean) / before);
   }
 
   /** The canvas moved (the river): `dx`, `dy` in pixels. */
@@ -182,6 +202,7 @@ export class Budget {
     this.accX -= sx * (this.w / this.cols);
     this.accY -= sy * (this.h / this.rows);
     if (!sx && !sy) return 0;
+    const before = this.mean;
     const old = Float32Array.from(this.cells);
     for (let y = 0; y < this.rows; y++)
       for (let x = 0; x < this.cols; x++) {
@@ -190,6 +211,8 @@ export class Budget {
         this.cells[y * this.cols + x] = fx >= 0 && fx < this.cols && fy >= 0 && fy < this.rows ? old[fy * this.cols + fx] : 0;
       }
     this.refresh();
+    // what flowed off the canvas took each layer's paint with it, in proportion
+    if (before > 1e-6) for (const [l, v] of this.owned) this.owned.set(l, (v * this.mean) / before);
     return sx;
   }
 

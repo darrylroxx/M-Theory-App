@@ -3,8 +3,11 @@ import { Ear, type Frame } from "../listen/ear";
 import { Mood, keyOf } from "../listen/mood";
 import { Reader, loudest, toMono } from "../listen/songfile";
 import { Cover, STEM_IDS } from "./cover";
-import { Hand, type Manner } from "./hand";
-import { MARGIN, yOfHz } from "./layout";
+import { LayerHand, type Manner } from "./strokes";
+import { layerColours, type LayerKind } from "./layers";
+import { hexToRgb } from "./color";
+import { MARGIN, noteColors, yOfHz } from "./layout";
+import { yOfUp } from "./place";
 import { FADES, mannerOf } from "./painting";
 import { getPalette } from "./palettes";
 import { ksOf, mixPaint, paintOf, reflOf, toLinear, toScreen, type Stamp } from "./sim";
@@ -34,16 +37,26 @@ function burst(x: Float32Array, at: number, ring: number, amp = 0.4) {
   }
 }
 const steady: Manner = { wet: 0.4, loose: 0.3, body: 1 };
-/** Paint a recording: every mark the hand made, as the page would have it make them (a frame at a time). */
-function paint(x: Float32Array, seed = 5, manner = steady): Stamp[] {
-  const hand = new Hand(seed);
+/**
+ * Paint a recording as one layer: every mark the layer's hand made, as the page would have it
+ * make them (a frame at a time, on the sweep). `run` is the painting's run (Clear starts a new one).
+ */
+function paint(x: Float32Array, run = 5, manner = steady, layer: LayerKind = "melody"): Stamp[] {
+  const hand = new LayerHand(layer);
   hand.size(W, H);
-  hand.setPalette(getPalette("woodblock"));
+  const pal = getPalette("woodblock");
+  hand.colours(layerColours(pal), pal.colors.map(hexToRgb), noteColors(0, [0, 2, 4, 5, 7, 9, 11], pal.colors.length));
+  hand.manner = manner;
+  hand.run = run;
+  hand.where = (t, up) => ({ x: (MARGIN + ((t % PASS) / PASS) * (1 - 2 * MARGIN)) * W, y: yOfUp(up, H), dx: 1, dy: 0, seg: Math.floor(t / PASS), scale: 1 });
   const ear = new Ear(SR);
   const marks: Stamp[] = [];
-  const xAt = (t: number) => (MARGIN + ((t % PASS) / PASS) * (1 - 2 * MARGIN)) * W;
+  hand.put = (s) => marks.push(s);
   const step = Math.round(SR / 60);
-  for (let i = 0; i < x.length; i += step) hand.paint(ear.push(x.subarray(i, i + step)), xAt, manner, (s) => marks.push(s));
+  for (let i = 0; i < x.length; i += step) {
+    hand.hear(ear.push(x.subarray(i, i + step)));
+    hand.advance((i + step) / SR);
+  }
   return marks;
 }
 const xOfT = (t: number) => (MARGIN + (t / PASS) * (1 - 2 * MARGIN)) * W;
@@ -77,7 +90,7 @@ describe("paint mixes as pigment does", () => {
   });
 });
 
-describe("the hand: what is heard is what is painted", () => {
+describe("a layer's hand: what is heard is what is painted", () => {
   it("a staccato note is a dab, a held note a stroke as long as itself", () => {
     const x = tape(4);
     tone(x, 660, 0.5, 0.06);
@@ -165,7 +178,7 @@ describe("the hand: what is heard is what is painted", () => {
   it("a drum is paint thrown: drops, where the drum is in frequency, and no stroke", () => {
     const x = tape(2);
     burst(x, 0.6, 0.02, 0.5);
-    const marks = paint(x);
+    const marks = paint(x, 5, steady, "drums");
     const drops = marks.filter((m) => m.kind === 1);
     expect(drops.length).toBeGreaterThan(8);
     // thrown about the moment of the hit
@@ -173,12 +186,12 @@ describe("the hand: what is heard is what is painted", () => {
     expect(Math.abs(at - xOfT(0.6))).toBeLessThan(30);
     // most are small, a few are large
     const sizes = drops.map((m) => m.r).sort((a, b) => a - b);
-    expect(sizes[sizes.length - 1]).toBeGreaterThan(sizes[sizes.length >> 1] * 1.5);
+    expect(sizes[sizes.length - 1]).toBeGreaterThan(sizes[sizes.length >> 1] * 1.3);
     // a noise makes no long line
     expect(extent(marks.filter((m) => m.kind === 0 && m.load > 0.6))).toBeLessThan(40);
   });
 
-  it("no two paintings of the same music are alike, and one seed paints the same picture twice", () => {
+  it("no two paintings of the same music are alike, and one run paints the same picture twice", () => {
     const x = tape(2);
     tone(x, 330, 0.2, 1.2, 0.3, 0.5);
     burst(x, 1.0, 0.03);

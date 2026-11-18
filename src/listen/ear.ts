@@ -76,6 +76,8 @@ export interface Voice {
   struck: number;
   /** true in the first frame it is reported */
   fresh: boolean;
+  /** the tone this one is an overtone of, when that is known (whoever shares the tones out sets it) */
+  of?: number;
 }
 
 export interface Hit {

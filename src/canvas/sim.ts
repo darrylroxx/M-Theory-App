@@ -64,6 +64,8 @@ export interface Stamp {
   seed: number;
   /** how deep it lies: 0 = underneath everything … 1 = on top (0.5 when not said) */
   depth?: number;
+  /** a glaze of light: how much of it is pigment as well (0.3 when not said; more shows on a light ground, where light alone would not) */
+  pigment?: number;
 }
 
 export interface SimSettings {
@@ -136,7 +138,7 @@ layout(location = 1) in vec4 aPlace;   // x, y, radius, angle
 layout(location = 2) in vec4 aPaint;   // k.rgb, amount
 layout(location = 3) in vec4 aPush;    // water, vx, vy, load
 layout(location = 4) in vec4 aMore;    // seed, kind, stretch, hard
-layout(location = 5) in vec4 aExtra;   // depth
+layout(location = 5) in vec4 aExtra;   // depth, pigment (a glaze)
 uniform vec2 uRes;
 out vec2 vLocal;
 out vec4 vPaint;
@@ -204,12 +206,12 @@ void main() {
   }
   if (mask <= 0.0005) discard;
   float glaze = step(2.5, kind);
-  // a glaze is mostly light, with only a breath of pigment in it
-  float a = vPaint.a * mask * mix(1.0, 0.3, glaze);
+  // a glaze is mostly light, with a little pigment in it (more on a light ground)
+  float a = vPaint.a * mask * mix(1.0, vExtra.y, glaze);
   float depth = vExtra.x;
   oWet = vec4(vPaint.rgb * a, a);
   oFlow = vec4(vPush.yz * mask, water * mask, depth * a);
-  oLight = vec4(reflOf(vPaint.rgb) * vPaint.a * mask * 1.6 * glaze, 0.0);
+  oLight = vec4(reflOf(vPaint.rgb) * vPaint.a * mask * 1.6 * glaze * (1.0 - 0.5 * vExtra.y), 0.0);
 }`;
 
 const FRAG_SIM = `#version 300 es
@@ -353,17 +355,17 @@ void main() {
   vec4 dry = texture(uDry, uv);
   vec4 wet = texture(uWet, uv);
   vec4 fl = texture(uFlow, uv);
-  vec4 light = texture(uLight, uv);
+  vec4 glow = texture(uLight, uv);
   float water = fl.b;
   vec3 col = dry.rgb;
   if (wet.a > 0.00001) {
     float cover = 1.0 - exp(-3.2 * wet.a);
     // wet paint that lies under the dry paint shows only where that is thin
-    float under = smoothstep(0.03, 0.15, light.a - clamp(fl.a / wet.a, 0.0, 1.0)) * (1.0 - exp(-2.5 * dry.a));
+    float under = smoothstep(0.03, 0.15, glow.a - clamp(fl.a / wet.a, 0.0, 1.0)) * (1.0 - exp(-2.5 * dry.a));
     col = reflOf(mix(ksOf(col), wet.rgb / wet.a, cover * (1.0 - 0.88 * under)));
   }
   // light glazed on brightens what is under it, as light does
-  col = 1.0 - (1.0 - col) * (1.0 - clamp(light.rgb, 0.0, 0.95));
+  col = 1.0 - (1.0 - col) * (1.0 - clamp(glow.rgb, 0.0, 0.95));
   // lit from the upper left by the thickness of the paint
   float hx = height(uv + vec2(px.x, 0.0)) - height(uv - vec2(px.x, 0.0));
   float hy = height(uv + vec2(0.0, px.y)) - height(uv - vec2(0.0, px.y));
@@ -642,7 +644,7 @@ export class Sim {
     d[o + 14] = s.stretch;
     d[o + 15] = s.hard;
     d[o + 16] = s.depth ?? 0.5;
-    d[o + 17] = 0;
+    d[o + 17] = s.pigment ?? 0.3;
     d[o + 18] = 0;
     d[o + 19] = 0;
     this.made++;

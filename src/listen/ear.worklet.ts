@@ -1,25 +1,25 @@
 /**
- * The ear, on the audio thread: whatever is connected to this node is listened to as it plays,
- * and what was heard is sent back a frame at a time, stamped with the audio clock.
+ * The ears, on the audio thread: whatever is connected to each input of this node is listened
+ * to as it plays (the first input is the whole mix, the others the song's tracks, see
+ * `bank.ts`), and what was heard is sent back a frame at a time, stamped with the audio clock.
  */
-import { Ear, type Frame } from "./ear";
+import { EarBank, type BankInput, type BankOut } from "./bank";
 
 declare const sampleRate: number;
 declare const currentTime: number;
 declare class AudioWorkletProcessor {
   readonly port: MessagePort;
 }
-declare function registerProcessor(name: string, ctor: new () => AudioWorkletProcessor): void;
+declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { inputs?: BankInput[] } }) => AudioWorkletProcessor): void;
 
-class EarProcessor extends AudioWorkletProcessor {
-  private ear = new Ear(sampleRate);
-  private mono = new Float32Array(128);
+class EarsProcessor extends AudioWorkletProcessor {
+  private bank: EarBank;
   private t0 = -1;
   private on = true;
-  private out: Frame[] = [];
 
-  constructor() {
+  constructor(opts: { processorOptions?: { inputs?: BankInput[] } }) {
     super();
+    this.bank = new EarBank(sampleRate, opts.processorOptions?.inputs ?? [{ key: "mix", light: false }]);
     this.port.onmessage = (e: MessageEvent) => {
       if (e.data === "stop") this.on = false;
     };
@@ -28,31 +28,9 @@ class EarProcessor extends AudioWorkletProcessor {
   process(inputs: Float32Array[][]): boolean {
     if (!this.on) return false;
     if (this.t0 < 0) this.t0 = currentTime;
-    const input = inputs[0];
-    const n = input && input[0] ? input[0].length : 128;
-    if (this.mono.length !== n) this.mono = new Float32Array(n);
-    const mono = this.mono;
-    if (!input || input.length === 0) {
-      // nothing is playing: silence is heard, so that whatever was sounding is heard to stop
-      mono.fill(0);
-    } else if (input.length === 1) {
-      mono.set(input[0]);
-    } else {
-      const k = 1 / input.length;
-      for (let i = 0; i < n; i++) {
-        let s = 0;
-        for (let c = 0; c < input.length; c++) s += input[c][i];
-        mono[i] = s * k;
-      }
-    }
-    const out = this.out;
-    this.ear.push(mono, out);
-    if (out.length) {
-      for (const f of out) f.t += this.t0;
-      this.port.postMessage(out);
-      this.out = [];
-    }
+    const out: BankOut[] = this.bank.process(inputs, this.t0);
+    if (out.length) this.port.postMessage(out);
     return true;
   }
 }
-registerProcessor("m-theory-ear", EarProcessor);
+registerProcessor("m-theory-ears", EarsProcessor);

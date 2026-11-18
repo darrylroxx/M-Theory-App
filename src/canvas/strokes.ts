@@ -75,6 +75,8 @@ export interface Cue {
   hi?: number;
   /** which drum, when known */
   drum?: string;
+  /** the sound this one is an overtone of, when that is known */
+  of?: number;
 }
 
 /** What a layer sounds like just now, measured from its own sound (smoothed): for the marks of sounds whose texture is not otherwise known. */
@@ -127,8 +129,9 @@ interface Stroke {
   over: boolean;
   /** the vocals' strands, each on its own spring */
   strands?: { x: number; y: number; ax: number; ay: number; ease: number; off: number; px: number; py: number }[];
-  /** a wash already laid as far as this time (the chords) */
+  /** a wash already laid as far as this time, and where (the chords) */
   laid: number;
+  laidAt: { x: number; y: number } | null;
   /** for the harmony's hatching: where it has been */
   marks: number;
 }
@@ -142,6 +145,8 @@ const DAMP = 72;
 const JOIN = 0.14;
 /** Shorter than this is a stab: a dab, a slab or a block. */
 const SHORT = 0.16;
+/** How far up the scale a chord's wash may reach above its lowest note (about an octave and a half, where the notes live). */
+const CHORD_SPAN = 0.22;
 
 /** Lighter and a touch more vivid for a bright sound, darker and greyer for a dull one. */
 export function brighten(c: RGB, bright: number, amount = 1): RGB {
@@ -166,6 +171,8 @@ export class LayerHand {
   texture: Texture = { bright: 0.5, rough: 0.2, level: 0.5 };
   /** the melody, for the harmony's hatching */
   partner: LayerHand | null = null;
+  /** how the canvas itself is moving under the brushes (pixels a second; the river flows left): a brush held still draws along the current */
+  flow = { x: 0, y: 0 };
   /** the painting's run: the same run paints the same marks for the same music */
   run = 0;
   /** how many marks have gone down */
@@ -175,8 +182,8 @@ export class LayerHand {
   private strokes = new Map<number, Stroke>();
   /** sounds that begin later than the music has got to (the app's own notes are known ahead) */
   private waiting: Cue[] = [];
-  /** the line so far (melody, harmony, bass): where its brush last was, when it lifted, and whether it was a stab */
-  private line: { x: number; y: number; vx: number; vy: number; t: number; seg: number; load: number; short: boolean; k: [number, number, number]; rgb: RGB } | null = null;
+  /** the line so far (melody, harmony, bass): where its brush last was, at what pitch, when it lifted, and whether it was a stab */
+  private line: { x: number; y: number; vx: number; vy: number; t: number; seg: number; load: number; short: boolean; k: [number, number, number]; rgb: RGB; hz: number } | null = null;
   /** recent points of the line, for hatching */
   readonly trail: { x: number; y: number; t: number }[] = [];
   /** the colours */
@@ -201,6 +208,35 @@ export class LayerHand {
   }
   get down() {
     return this.strokes.size;
+  }
+
+  /**
+   * The canvas moved under the brushes (the river flows): everything the hand remembers of where
+   * it has been moves with the paint, so a brush held still while the canvas flows past it draws
+   * a stroke along the current.
+   */
+  shift(dx: number, dy: number) {
+    for (const s of this.strokes.values()) {
+      s.x += dx;
+      s.y += dy;
+      s.px += dx;
+      s.py += dy;
+      if (s.laidAt) s.laidAt = { x: s.laidAt.x + dx, y: s.laidAt.y + dy };
+      for (const st of s.strands ?? []) {
+        st.x += dx;
+        st.y += dy;
+        st.px += dx;
+        st.py += dy;
+      }
+    }
+    if (this.line) {
+      this.line.x += dx;
+      this.line.y += dy;
+    }
+    for (const p of this.trail) {
+      p.x += dx;
+      p.y += dy;
+    }
   }
 
   /** Every brush off the canvas (the music stopped, or jumped). Sounds not begun are forgotten. */
@@ -252,7 +288,8 @@ export class LayerHand {
 
   /** A sound begins (now, or later: the app's own notes are known a little ahead). */
   start(c: Cue) {
-    if (c.t > this.now + 1e-4 && this.now >= 0) {
+    // (a hand that has not been told the time yet keeps it until it is)
+    if (this.now < 0 || c.t > this.now + 1e-4) {
       this.waiting.push(c);
       return;
     }
@@ -277,7 +314,7 @@ export class LayerHand {
   }
   /** A hit (a drum, or the attack of something struck). */
   hit(c: Cue) {
-    if (c.t > this.now + 1e-4 && this.now >= 0) {
+    if (this.now < 0 || c.t > this.now + 1e-4) {
       this.waiting.push({ ...c, len: c.len ?? 0 });
       return;
     }
@@ -299,7 +336,7 @@ export class LayerHand {
         if (!this.strokes.has(v.id)) {
           if (v.fresh || v.age < 0.05) {
             // a tone already sounding when the hand began listening is joined where it is
-            this.begin({ id: v.id, t: v.fresh ? v.born : f.t, hz: v.hz, amp: v.amp * this.texture.level ** 0.35, attack: v.struck, bright: this.texture.bright, rough: this.texture.rough });
+            this.begin({ id: v.id, t: v.fresh ? v.born : f.t, hz: v.hz, amp: v.amp * this.texture.level ** 0.35, attack: v.struck, bright: this.texture.bright, rough: this.texture.rough, of: v.of });
           }
         } else this.hold(v.id, f.t, v.hz, v.amp * this.texture.level ** 0.35);
       }
@@ -381,14 +418,29 @@ export class LayerHand {
     const p = this.where(c.t, upOfHz(c.hz));
     if (!p) return;
     const u = this.u * p.scale;
-    // an overtone of a tone already being painted (a whole multiple of its pitch, begun with it) is its shimmer
-    let parent: Stroke | null = null;
-    for (const o of this.strokes.values()) {
-      if (o.over || Math.abs(o.cue.t - c.t) > 0.06 || o.hz >= c.hz * 0.6) continue;
-      const ratio = c.hz / o.hz;
-      const whole = Math.round(ratio);
-      if (whole >= 2 && whole <= 12 && Math.abs(ratio - whole) < 0.04 * whole && (!parent || o.hz < parent.hz)) parent = o;
-    }
+    // an overtone of a tone already being painted (a whole multiple of its pitch, heard soon after it began, and no
+    // louder) is its shimmer: an ear hears each overtone of a note as a tone, and some only as the note swells
+    let parent: Stroke | null = c.of !== undefined ? this.strokes.get(c.of) ?? null : null;
+    if (c.of === undefined)
+      for (const o of this.strokes.values()) {
+        if (o.over || c.t - o.cue.t > 0.35 || c.t < o.cue.t - 0.06 || o.hz >= c.hz * 0.6 || c.amp > o.amp * 0.9) continue;
+        const ratio = c.hz / o.hz;
+        const whole = Math.round(ratio);
+        if (whole >= 2 && whole <= 12 && Math.abs(ratio - whole) < 0.04 * whole && (!parent || o.hz < parent.hz)) parent = o;
+      }
+    const overtone = !!parent || c.of !== undefined;
+    // a chord's overtones are in its wash, and a voice's in its glow: they leave no marks of their own
+    if (overtone && (this.layer === "chords" || this.layer === "vocals" || this.layer === "other")) return;
+    // a note heard a moment after its own overtones: they become its shimmer (or, in a chord or a voice, nothing)
+    if (!overtone)
+      for (const [id, o] of this.strokes) {
+        if (o.over || o.cue.t < c.t - 0.12 || o.hz < c.hz * 1.9 || o.amp > c.amp * 0.9) continue;
+        const ratio = o.hz / c.hz;
+        const whole = Math.round(ratio);
+        if (whole < 2 || whole > 12 || Math.abs(ratio - whole) >= 0.04 * whole) continue;
+        if (this.layer === "chords" || this.layer === "vocals" || this.layer === "other") this.strokes.delete(id);
+        else o.over = true;
+      }
     const rgb = parent ? parent.rgb : this.colourOf(c.hz, c.bright, r);
     const until = c.len !== undefined ? c.t + Math.max(0.01, c.len) : Infinity;
     const s: Stroke = {
@@ -408,22 +460,25 @@ export class LayerHand {
       k: paintOf(rgb),
       rgb,
       lean: gauss(r) * 0.2,
-      load: parent ? 0.35 + 0.3 * r() : 0.8 + 0.2 * r(),
+      load: overtone ? 0.35 + 0.3 * r() : 0.8 + 0.2 * r(),
       reach: (150 + 500 * r() * r()) * this.u * (0.6 + 0.8 * c.amp) * this.touch.stroke,
       water: clamp(0.5 + 0.5 * (r() - 0.5)),
       r: 0,
       scale: p.scale,
       rand: r,
       seed: r() * 97,
-      over: !!parent,
+      over: overtone,
       laid: c.t,
+      laidAt: null,
       marks: 0,
     };
     s.py = s.y;
     // a line: a note that follows closely on the last carries on from where that one's brush was
     const lineLayer = this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals";
     const ln = this.line;
-    if (lineLayer && !parent && ln && ln.seg === p.seg && c.t - ln.t < JOIN && c.t >= ln.t - 0.02 && !ln.short) {
+    // (a leap is a new stroke: the line is joined only to a note close by, a step or two away, or a few for a voice)
+    const near = ln ? Math.abs(midiOfHz(c.hz) - midiOfHz(ln.hz)) <= (this.layer === "bass" ? 2.5 : 5.5) : false;
+    if (lineLayer && !overtone && ln && near && ln.seg === p.seg && c.t - ln.t < JOIN && c.t >= ln.t - 0.02 && !ln.short) {
       s.x = ln.x;
       s.y = ln.y;
       s.vx = ln.vx;
@@ -435,7 +490,7 @@ export class LayerHand {
       s.k = paintOf(mixRgb(ln.rgb, rgb, 0.35));
       s.rgb = mixRgb(ln.rgb, rgb, 0.35);
     }
-    if (this.layer === "vocals" && !parent) {
+    if (this.layer === "vocals" && !overtone) {
       const n = 12;
       s.strands = Array.from({ length: n }, () => ({ x: s.x, y: s.y, ax: 0, ay: 0, ease: 0.6 + 0.2 * r(), off: gauss(r), px: s.x, py: s.y }));
     }
@@ -456,7 +511,7 @@ export class LayerHand {
       default:
         this.mark(s, s.x, s.y, s.r * (1 + 0.35 * c.attack), p, 1.25);
     }
-    if (!parent && c.attack > 0.7 && c.amp > 0.45 && this.layer !== "vocals" && this.layer !== "other" && r() < 0.35 + 0.4 * c.rough)
+    if (!overtone && c.attack > 0.7 && c.amp > 0.45 && this.layer !== "vocals" && this.layer !== "other" && r() < 0.35 + 0.4 * c.rough)
       this.spatter(s.x, s.y, s.r * 2.2, Math.round((2 + 5 * r()) * this.touch.density), s.k, 0.45 * s.r, 0.5, -p.dx, -p.dy, m);
   }
 
@@ -520,7 +575,7 @@ export class LayerHand {
       s.t = at;
     }
     if (!s.over && (this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals"))
-      this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short: false, k: s.k, rgb: s.rgb };
+      this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short: false, k: s.k, rgb: s.rgb, hz: s.hz };
   }
 
   /** Leave marks along the way from where the last one was left to where the tip is now. */
@@ -575,8 +630,11 @@ export class LayerHand {
     const { rand: r } = s;
     const m = this.manner;
     const wet = clamp(m.wet * (0.5 + s.water));
-    const speed = Math.hypot(s.vx, s.vy);
-    const ang = speed > 1 ? Math.atan2(s.vy, s.vx) : Math.atan2(p.dy, p.dx);
+    // how the brush moves over the paint (on a flowing canvas, the paint moves under it)
+    const vx = s.vx - this.flow.x;
+    const vy = s.vy - this.flow.y;
+    const speed = Math.hypot(vx, vy);
+    const ang = speed > 1 ? Math.atan2(vy, vx) : Math.atan2(p.dy, p.dx);
     const size = radius * (0.87 + 0.26 * r());
     const side = gauss(r) * radius * 0.07 * (0.5 + m.loose);
     const nx = -Math.sin(ang);
@@ -636,7 +694,7 @@ export class LayerHand {
   private release(s: Stroke) {
     const short = s.cue.len !== undefined ? s.cue.len < SHORT : s.t - s.cue.t < SHORT;
     const lineLayer = this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals";
-    if (lineLayer && !s.over) this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short, k: s.k, rgb: s.rgb };
+    if (lineLayer && !s.over) this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short, k: s.k, rgb: s.rgb, hz: s.hz };
     if (this.layer === "chords") {
       if (short) this.block(s);
       return;
@@ -645,8 +703,10 @@ export class LayerHand {
     // a line that goes straight on into its next note has no tail
     if (lineLayer && !short) return;
     const r = s.rand;
-    const speed = Math.hypot(s.vx, s.vy);
-    const ang = speed > 4 ? Math.atan2(s.vy, s.vx) + gauss(r) * 0.25 : gauss(r) * 0.5;
+    const vx = s.vx - this.flow.x;
+    const vy = s.vy - this.flow.y;
+    const speed = Math.hypot(vx, vy);
+    const ang = speed > 4 ? Math.atan2(vy, vx) + gauss(r) * 0.25 : gauss(r) * 0.5;
     const ring = s.cue.ring ?? 0.4;
     const len = s.r * (1 + 1.4 * r() + Math.min(2, speed / (120 * this.u)) + Math.min(1.5, ring));
     const n = Math.max(2, Math.round(len / Math.max(0.7, s.r * 0.4)));
@@ -670,7 +730,7 @@ export class LayerHand {
     const nx = -p.dy;
     const ny = p.dx;
     const steps = Math.max(1, Math.round(dt * 60));
-    const glow = 0.05 + 0.1 * amp;
+    const glow = 0.08 + 0.16 * amp;
     for (const st of strands) {
       const tx = s.x + nx * st.off * splay;
       const ty = s.y + ny * st.off * splay;
@@ -703,6 +763,7 @@ export class LayerHand {
           kind: 3,
           hard: 0.55,
           seed: s.seed,
+          pigment: this.col?.dark === false ? 0.75 : 0.3,
         });
       }
       st.px += dx * ((n * space) / d);
@@ -748,19 +809,29 @@ export class LayerHand {
    * the rest. The more it clashes, the more thin layers, the greyer and cooler.
    */
   private wash(s: Stroke, t: number, p: Place, amp: number) {
+    // a stabbed chord is a block, laid when it ends, not a wash
+    if (s.cue.len !== undefined && s.cue.len < SHORT) return;
     // one wash for the whole chord: the lowest sounding note lays it
     const notes = this.sounding();
     if (!notes.length || notes.reduce((a, b) => (b.hz < a.hz ? b : a), notes[0]) !== s) return;
-    const step = 0.05 / Math.max(0.5, this.touch.density);
-    if (t - s.laid < step) return;
+    // a new band of wash each time the music has moved on by half a touch (or, where it hardly moves, a few times a second)
+    const here = this.where(t, upOfHz(s.hz));
+    if (!here) return;
+    const touch = 9 * this.u * here.scale;
+    const moved = s.laidAt ? Math.hypot(here.x - s.laidAt.x, here.y - s.laidAt.y) : Infinity;
+    if (moved < touch * 0.6 / Math.max(0.5, this.touch.density) && t - s.laid < 0.25) return;
     s.laid = t;
+    s.laidAt = { x: here.x, y: here.y };
     let lo = Infinity;
     let hi = -Infinity;
     let loud = 0;
     let rgb: RGB = [0, 0, 0];
     let wsum = 0;
+    // a chord's notes lie within an octave and a half or so of its lowest: anything far above is not part of its wash
+    const floor = upOfHz(s.hz);
     for (const n of notes) {
       const up = upOfHz(n.hz);
+      if (up > floor + CHORD_SPAN) continue;
       lo = Math.min(lo, up);
       hi = Math.max(hi, up);
       const a = n.cue.len !== undefined ? this.envelope(n, t) : n.amp;
@@ -790,7 +861,7 @@ export class LayerHand {
         const q = this.where(t, up);
         if (!q) continue;
         const size = (7 + 7 * loud) * this.u * q.scale * (0.75 + 0.5 * r());
-        this.emit({ x: q.x + gauss(r) * 3 * this.u, y: q.y + gauss(r) * 2 * this.u, r: size, angle: Math.atan2(q.dy, q.dx), stretch: 1.3 + 0.5 * r(), k, paint: (0.018 + 0.05 * loud) * this.manner.body, water: (0.08 + 0.35 * wet) * (0.4 + loud), vx: q.dx * 6 * this.u, vy: q.dy * 6 * this.u, load: 1, kind: 2, hard: 0.08, seed: r() * 97 });
+        this.emit({ x: q.x + gauss(r) * 3 * this.u, y: q.y + gauss(r) * 2 * this.u, r: size, angle: Math.atan2(q.dy, q.dx), stretch: 1.3 + 0.5 * r(), k, paint: (0.01 + 0.026 * loud) * this.manner.body, water: (0.08 + 0.35 * wet) * (0.4 + loud), vx: q.dx * 6 * this.u, vy: q.dy * 6 * this.u, load: 1, kind: 2, hard: 0.08, seed: r() * 97 });
       }
     }
     void p;
@@ -801,9 +872,12 @@ export class LayerHand {
     const notes = [s, ...this.sounding().filter((n) => n !== s && Math.abs(n.cue.t - s.cue.t) < 0.05)];
     let lo = Infinity;
     let hi = -Infinity;
+    const floor = Math.min(...notes.map((n) => upOfHz(n.hz)));
     for (const n of notes) {
-      lo = Math.min(lo, upOfHz(n.hz));
-      hi = Math.max(hi, upOfHz(n.hz));
+      const up = upOfHz(n.hz);
+      if (up > floor + CHORD_SPAN) continue;
+      lo = Math.min(lo, up);
+      hi = Math.max(hi, up);
     }
     const r = s.rand;
     const n = Math.max(1, Math.ceil((hi - lo + 0.03) / 0.04));
@@ -937,7 +1011,7 @@ export class LayerHand {
       const k = paintOf(rgb);
       const size = (12 + 20 * s) * u * (0.85 + 0.3 * r());
       const ang = Math.atan2(p.dy, p.dx);
-      this.emit({ x: p.x + gauss(r) * 2 * u, y: p.y + gauss(r) * 2 * u, r: size, angle: ang + Math.PI / 2, stretch: 1.3, k, paint: (0.16 + 0.2 * s) * m.body, water: (0.25 + 0.6 * m.wet) * (0.6 + 0.4 * s), vx: 0, vy: 0, load: 1, kind: 2, hard: 0.15 + 0.5 * c.attack * (1 - 0.5 * m.wet), seed: r() * 97 });
+      this.emit({ x: p.x + gauss(r) * 2 * u, y: p.y + gauss(r) * 2 * u, r: size, angle: ang + Math.PI / 2, stretch: 1.3, k, paint: (0.07 + 0.13 * s) * m.body, water: (0.3 + 0.6 * m.wet) * (0.6 + 0.4 * s), vx: 0, vy: 0, load: 1, kind: 2, hard: 0.08 + 0.4 * c.attack * (1 - 0.5 * m.wet), seed: r() * 97 });
       const halo = Math.min(1.5, c.ring ?? 0.3);
       if (halo > 0.15) this.emit({ x: p.x, y: p.y, r: size * (1.35 + 0.6 * halo), angle: ang + Math.PI / 2, stretch: 1.4, k, paint: 0.05 * s * m.body * halo, water: 0.4 + 0.4 * m.wet, vx: 0, vy: 0, load: 1, kind: 2, hard: 0, seed: r() * 97 });
       this.spatter(p.x, p.y, size * 1.1, Math.round((1 + 5 * s * r()) * this.touch.density), k, 1.5 * u, 0.7, 0, 0, m, r);

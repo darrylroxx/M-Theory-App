@@ -14,9 +14,10 @@
  * - **bloom**: each section opens like a flower from its own point (placed by the golden
  *   angle); inside it, time is the distance from that point and frequency the angle, low notes
  *   down, high notes up, mirrored bar by bar;
- * - **field**: each layer is carried by a slow current that wanders over the whole canvas, back
- *   and forth, and paints where it is; a note's height is still its frequency, bent a little by
- *   the current;
+ * - **field**: each layer is carried by a current of its own across the whole canvas, back and
+ *   forth, bent by a slow swirl (the curl of a noise, so it never gathers in one place), and
+ *   paints where it is: the layers cross and weave over each other; a note's height is still
+ *   its frequency, bent by the current by no more than about an octave;
  * - **lanes**: each layer has its own band of the canvas (the bass low, the chords in the middle,
  *   the melody above them, the drums at the top, the voice across the centre), flowing left like
  *   the river.
@@ -242,12 +243,20 @@ export class Bloom extends Layout {
   }
 }
 
-/** Each layer carried by a slow current that wanders the whole canvas. */
+/** One layer's carrier in the field: where it is across, how far it has strayed up or down, which way it is heading, and its recent path. */
+interface Carrier {
+  x: number;
+  dy: number;
+  heading: number;
+  s: number;
+  trail: { s: number; x: number; dy: number }[];
+}
+
+/** Each layer carried by its own current across the whole canvas. */
 export class Field extends Layout {
   readonly id = "field" as const;
-  /** each layer's carrier: where it is across the canvas, and its recent path (time, place) */
-  private carriers = new Map<LayerKind, { x: number; s: number; trail: { s: number; x: number }[] }>();
-  /** The current at a point: a smooth field of directions with no sinks (the curl of a noise), mostly sideways. */
+  private carriers = new Map<LayerKind, Carrier>();
+  /** The current at a point: a smooth field of directions with no sinks (the curl of a noise). */
   flow(x: number, y: number, s: number): { x: number; y: number } {
     const k = 2.2;
     const px = (x / this.w) * k;
@@ -258,49 +267,64 @@ export class Field extends Layout {
     const cx = (n(px, py + e) - n0) / e;
     const cy = -(n(px + e, py) - n0) / e;
     const m = Math.hypot(cx, cy) || 1;
-    return { x: cx / m, y: (0.35 * cy) / m };
+    return { x: cx / m, y: cy / m };
   }
-  private carrier(layer: LayerKind, s: number) {
+  private carrier(layer: LayerKind, s: number): Carrier {
     let c = this.carriers.get(layer);
     if (!c) {
-      const i = strHash(layer) % 7;
-      c = { x: this.w * (0.12 + 0.76 * ((i * 0.618 + this.seed * 0.1) % 1)), s, trail: [] };
+      const i = LAYER_SEQ.indexOf(layer);
+      // the layers set out from places spread across the canvas, some heading one way, some the other
+      c = { x: this.w * (0.1 + 0.8 * ((i * 0.618 + this.seed * 0.001) % 1)), dy: 0, heading: i % 2 ? -1 : 1, s, trail: [] };
       this.carriers.set(layer, c);
     }
     return c;
   }
+  /** How fast a layer's current runs (pixels a second): about a crossing of the canvas a pass, faster for busy music, each layer at its own pace. */
+  private speedOf(layer: LayerKind, w: When) {
+    const own = 0.75 + 0.5 * hash(LAYER_SEQ.indexOf(layer) * 131 + Math.round(this.seed));
+    return (this.w / Math.max(4, this.crossing(w))) * (0.6 + 0.8 * this.motion) * own;
+  }
   now(w: When, dt: number, motion = 0.5) {
     super.now(w, dt, motion);
-    const speed = (this.w / Math.max(4, this.crossing(w))) * (0.45 + 0.9 * this.motion);
-    for (const layer of ["drums", "bass", "chords", "melody", "harmony", "vocals", "other"] as LayerKind[]) {
+    for (const layer of LAYER_SEQ) {
       const c = this.carrier(layer, w.s);
       // the music jumped: the carrier stays where it is and takes up from there
       if (w.s < c.s || w.s - c.s > 2) {
         c.s = w.s;
         c.trail = [];
       }
-      const y = yOfUp(0.5, this.h);
+      const speed = this.speedOf(layer, w);
+      const lim = this.h / 12;
+      const y0 = this.h * (0.2 + 0.6 * ((LAYER_SEQ.indexOf(layer) * 0.37) % 1));
       while (c.s < w.s) {
         const step = Math.min(1 / 60, w.s - c.s);
-        const f = this.flow(c.x, y + (strHash(layer) % 5) * this.h * 0.08, c.s);
-        let vx = f.x * speed;
-        // the walls turn it back
-        if (c.x < this.w * 0.06) vx = Math.abs(vx) + speed * 0.3;
-        if (c.x > this.w * 0.94) vx = -Math.abs(vx) - speed * 0.3;
+        const f = this.flow(c.x, y0 + c.dy, c.s);
+        // mostly the way it is heading, bent by the current
+        let vx = c.heading + 0.9 * f.x;
+        let vy = 0.9 * f.y;
+        const m = Math.hypot(vx, vy) || 1;
+        vx = (vx / m) * speed;
+        vy = (vy / m) * speed * 0.5;
         c.x += vx * step;
+        // it strays up and down, never far from the height of its own notes (about an octave)
+        c.dy += (vy - 1.5 * c.dy) * step;
+        c.dy = Math.max(-lim, Math.min(lim, c.dy));
+        // the walls turn it back
+        if (c.x < this.w * 0.05) c.heading = 1;
+        if (c.x > this.w * 0.95) c.heading = -1;
         c.s += step;
-        c.trail.push({ s: c.s, x: c.x });
+        c.trail.push({ s: c.s, x: c.x, dy: c.dy });
       }
       if (c.trail.length > 600) c.trail.splice(0, c.trail.length - 600);
     }
   }
   /** Where a layer's carrier was at time `s` (from its trail; before its trail, where the trail begins). */
-  private xAt(layer: LayerKind, s: number): number {
+  private at2(layer: LayerKind, s: number): { x: number; dy: number } {
     const c = this.carrier(layer, s);
     const t = c.trail;
-    if (!t.length) return c.x;
-    if (s >= t[t.length - 1].s) return t[t.length - 1].x;
-    if (s <= t[0].s) return t[0].x;
+    if (!t.length) return { x: c.x, dy: c.dy };
+    if (s >= t[t.length - 1].s) return t[t.length - 1];
+    if (s <= t[0].s) return t[0];
     let lo = 0;
     let hi = t.length - 1;
     while (hi - lo > 1) {
@@ -309,21 +333,20 @@ export class Field extends Layout {
       else hi = mid;
     }
     const f = (s - t[lo].s) / Math.max(1e-6, t[hi].s - t[lo].s);
-    return t[lo].x + (t[hi].x - t[lo].x) * f;
+    return { x: t[lo].x + (t[hi].x - t[lo].x) * f, dy: t[lo].dy + (t[hi].dy - t[lo].dy) * f };
   }
   place(w: When, up: number, layer: LayerKind): Place {
-    const x = this.xAt(layer, w.s);
-    const x1 = this.xAt(layer, w.s + 0.04);
+    const a = this.at2(layer, w.s);
+    const b = this.at2(layer, w.s + 0.04);
     const y0 = yOfUp(up, this.h);
-    // the current bends a note's height, never by more than about an octave either way
-    const bend = (noise2((x / this.w) * 3, (y0 / this.h) * 3 + w.s * 0.02, this.seed + 3) - 0.5) * this.h * 0.12;
-    const bend1 = (noise2((x1 / this.w) * 3, (y0 / this.h) * 3 + (w.s + 0.04) * 0.02, this.seed + 3) - 0.5) * this.h * 0.12;
-    const dx = x1 - x;
-    const dy = bend1 - bend;
-    const m = Math.hypot(dx, dy) || 1;
-    return { x, y: y0 + bend, dx: m > 1e-6 ? dx / m : 1, dy: m > 1e-6 ? dy / m : 0, seg: w.jump, scale: 1 };
+    const dx = b.x - a.x;
+    const dy = b.dy - a.dy;
+    const m = Math.hypot(dx, dy);
+    return { x: a.x, y: y0 + a.dy, dx: m > 1e-6 ? dx / m : 1, dy: m > 1e-6 ? dy / m : 0, seg: w.jump, scale: 1 };
   }
 }
+
+const LAYER_SEQ: LayerKind[] = ["drums", "bass", "chords", "melody", "harmony", "vocals", "other"];
 
 export function makeLayout(id: LayoutId): Layout {
   switch (id) {

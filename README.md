@@ -137,30 +137,57 @@ Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels
 
 ## The Canvas: music paints itself
 
-Open **Canvas** and press ▶, or open **any song from a file** (the folder button, or drop a file on the canvas: WAV, MP3, FLAC, OGG, and whatever else the browser can read) and press its ▶. While the music plays it is painted, live, in wet paint on a woven surface. What is painted is what sounds, and no two paintings come out the same: press **Clear** and play the same song again for a different one.
+Open **Canvas** and press ▶, or open **any song from a file** (the folder button, or drop a file on the canvas: WAV, MP3, FLAC, OGG, and whatever else the browser can read) and press its ▶. While the music plays it is painted, live, in wet paint on a woven surface. The painting is a picture of the sound you are making: every part of the music has its own kind of paint, the canvas fills only as far as the music fills it, and music of one kind paints pictures of one kind. No two paintings come out the same: press **Clear** and play the same song again for new detail on the same picture.
+
+**The layers.** The music is heard as the parts that play together, and each part is painted in a paint you can tell from the others by its shape alone, even in grey. The row of little swatches under the canvas shows each one in the colours in use; it lights up while that part is playing, and a tap hides or shows that part.
+
+- **Drums: impacts.** The kick is a soft round blot low down, a snare a burst of hard little drops, the hats a dry stipple of specks near the top, a cymbal a trail of specks as long as it rings.
+- **Bass: broad, flat, heavy bands** along the bottom. A held note is one band; short notes are stacked slabs.
+- **Chords: washes.** A held chord is a thin, wide wash from its lowest note to its highest, in the colours of its notes; a new chord is a new wash; a stabbed chord is a hard-edged block. The more a chord clashes, the more layers it has and the greyer it goes.
+- **Melody: one continuous line,** as if drawn by one loaded brush. Notes that join are one curve; short notes are a dotted line along the same path; a leap starts a new stroke.
+- **Harmony: a companion line** beside the melody, thinner and lighter, hatched to it where the two run close (more densely the rougher they sound together). A track marked as a harmony is painted this way.
+- **Vocals: a luminous ribbon** of fine strands. Breath splays the strands, loudness makes them glow, a vibrato ripples them. On a dark ground it is laid on as light.
+- **Other: fog,** edge-less haze that drifts (pads, ambience, the room).
+
+They lie in a fixed order, as a painter would lay them: fog and washes underneath, the bass and the lines in the middle, the voice's glaze and the drums on top. A wash that dries after a spatter of drops goes in under the drops.
+
+**The marks answer the sound.** How loud is how big and how heavily loaded. How hard a sound starts is how hard its edge is and whether it throws paint; a sound that swells in has a feathered edge. How long it rings is how long its tail is. How noisy it is is how broken and splayed the mark is, and how far its drops fly. How bright it is is how light its colour. A bend is a slope and a vibrato a ripple. The app knows every note and hit it plays before it is heard, so the marks of your own song land with their sound.
+
+**Layouts** (**Layout**: **Auto**, or one of six). Every layout keeps a sound's height (or, in the round ones, its distance from the middle) for its frequency, so a picture can always be read. What changes is how time is spent:
+
+- **〰 River:** the canvas itself flows slowly to the left and the paint is laid into the current; nothing sweeps across it, and the lines of the music meander a little as a river does.
+- **≋ Field:** each part is carried by a current of its own across the whole canvas, back and forth, bent by a slow swirl, so the parts cross and weave over each other.
+- **◎ Rings:** time goes round, frequency goes out from the middle; one turn every few bars, so the downbeats line up on spokes and a repeated groove draws the same rosette.
+- **✿ Bloom:** each section opens like a flower from its own place on the canvas.
+- **☰ Lanes:** each part in a band of its own (the bass low, the chords in the middle, the melody above them, the drums at the top), flowing left like the river.
+- **→ Sweep:** left to right across a page of bars, page after page, with the bar numbers and the guide: the way to read a song bar by bar.
+
+On **Auto** the music chooses, from its vibe (below): a steady groove tends to the river or the rings, calm held music to blooms, energetic textured music to the field, a dense arrangement of many parts to lanes. It changes its mind only when another layout suits clearly better for a bar or more, and keeps its choice once it knows the song.
+
+**As full as the music.** The canvas fills in proportion to how much is playing, how loud: two quiet parts leave most of it bare ground (about a fifth covered); six loud ones cover about two thirds; some ground is always left. No part can cover the canvas on its own: a busy hi-hat gets its share and no more. When the music gets quieter nothing new is added, and paint that is more than the music now calls for sinks slowly back into the ground, so a long song never turns to mud.
+
+**The vibe.** About seventy numbers are measured from the music as a whole (the shape of its sound, its harmony and key, its rhythm and groove, its dynamics, how its notes are held or clipped, and which parts play and how much), the way music-similarity research measures songs, and read against fixed reference figures. They set how wet the paint runs, how loose the hand is, how fast the currents move, how many marks a sound leaves, how long the strokes are, which way round the palette the parts are cast and which layout Auto chooses. The same song always gets the same vibe; a song with similar parts gets a similar one, whatever its key, tempo or mix, and so a similar painting, while every mark, which follows its own notes, is new. Write a song inspired by a favourite, run both through the canvas, and you can see how close the atmosphere is.
+
+**Songs from files are split into layers** on your own computer, as soon as they are opened, well ahead of where they play: what is sudden is the drums, what is steady and low the bass, what is steady, in the middle of the stereo picture and does not repeat the voice, and the rest is shared out into chords, melody and fog by how its notes behave. This is plain signal processing, not a trained model, so the layers are approximate (a held synth line can pass for a voice). Until the split has caught up, the whole mix is heard and its notes shared out. The vibe of the whole song is known by the time it has been heard through once (a first idea of it after twenty seconds).
 
 **How to read it**
 
-- **Across is time, up is frequency.** The scale runs from 32 Hz at the bottom to 16 kHz at the top and is marked down the left edge (50, 100, 200, 500, 1k, 2k, 5k, 10k); the four octaves the notes of a song live in get the biggest steps. For the app's own song the canvas is as wide as the section's bars (numbered along the bottom). For a song from a file, **Across** sets how much of it one pass holds (8, 15 or 30 seconds, or all of it); when the music reaches the right edge it comes round again and paints over what is there.
-- **Every tone holds a brush to the canvas for exactly as long as it sounds.** The brush comes down when the tone starts, at the height of its frequency; it is pulled along with the music while the tone lasts; it is lifted the moment the tone stops. Nothing is decided in advance. A staccato note is over before the brush has moved, so it leaves a **dab**. A held note leaves a **stroke** as long as itself. A plucked note that dies away leaves a head and a thinning tail. The same note struck again is a new touch.
-- **How hard the brush is pressed is how loud the tone is;** a bend is a slope and a vibrato a ripple, because the brush follows the pitch.
-- **Low notes take a broad brush, high notes a fine one.** A note's overtones are painted too, above it, as a drier shimmer in the note's own colour.
-- **A hit is paint thrown:** drops across the stretch of the scale the hit filled. A thump low down is one soft wet blot; a hiss is a spray of fine drops high up; most drops are small and a few are large, as real spatter is.
-- **Noise that goes on** (a cymbal's wash, breath) is a dry brush scrubbed lightly where the noise is.
-- **Colour follows harmony.** The notes of the key share the palette out between them in the order of the circle of fifths, so a chord is a family of neighbouring colours. For the app's own song the key is the song's; for a song from a file it is heard.
-- **Down the right edge (the app's own song): what the mix covers,** band by band, coloured by how much of it is chords, melody and drums. The **Hz** button puts the guide away and brings it back.
+- **Up is frequency.** The scale runs from 32 Hz at the bottom to 16 kHz at the top and is marked down the left edge (50, 100, 200, 500, 1k, 2k, 5k, 10k) in the layouts where height is frequency; the four octaves the notes of a song live in get the biggest steps. In the sweep, the canvas is as wide as the section's bars (numbered along the bottom). For a song from a file, **Across** sets how much of it one crossing of the canvas holds (8, 15 or 30 seconds, or all of it).
+- **Every tone holds a brush to the canvas for exactly as long as it sounds.** A staccato note is over before the brush has moved, so it leaves a **dab**; a held note leaves a **stroke** as long as itself; a plucked note that dies away leaves a head and a thinning tail.
+- **Colour follows harmony.** The notes of the key share the palette out between them in the order of the circle of fifths, so a chord is a family of neighbouring colours; each part leans to a colour of its own within the palette. For the app's own song the key is the song's; for a song from a file it is heard.
+- **Down the right edge in the sweep (the app's own song): what the mix covers,** band by band, coloured by how much of it is chords, melody and drums. The **Hz** button puts the guide away and brings it back.
 
 **How it is painted**
 
-- **It listens to the sound itself,** not to a list of notes: the app's own mix as it leaves the mixer (after every effect), or the file. A hundred times a second the ear says which tones are sounding and follows each from its start to its end, which sudden starts were hits and where, and what is left over as noise. It takes three looks at once (a long one for the low notes, a short one for the top and for timing), and reads levels against the loudest thing heard lately, so a quiet recording paints as fully as a loud one. A song from a file is read straight from its samples just as far as it has played, so the paint is exactly in time.
+- **It listens to the sound itself:** the whole mix as it leaves the mixer (for the mood, the key and the vibe), and every track through its own fader (so a muted track is not painted), each with an ear of its own. The ears take turns on the audio thread so they never hold up the sound; there are never more than six, and beyond that tracks of one kind share one. For tracks whose notes the app plays, the ear only listens for the texture (how loud, how bright, how noisy) and the notes themselves come exactly, a little ahead. A song from a file is heard layer by layer in the background, ahead of playing, so each mark lands with its sound.
 - **The paint is wet.** The painting is simulated on the graphics card, point by point, sixty times a second: paint flows from where it stands deep to where it is shallow, is carried the way the brush pushed it, bleeds into wet paint beside it, and dries from its edges in; as it dries its pigment settles, more in the hollows of the surface than on its ridges. The edge of a wash holds, as water does on dry paper, unless it is so full that it spills: a bloom, or (with **Drips** on) a run down the canvas.
-- **Colours mix as pigments do, not as lights.** Blue into yellow goes green, not grey (each colour is kept as how much it absorbs against how much it scatters, and those are what add up).
-- **A brush is a brush.** Its hairs leave ridges, deeper the drier the paint; it carries only so much and runs dry as it goes, its fullest hairs marking last and only the tops of the grain taking colour, until the tone swells again. Its tip follows where it is sent the way a real one does, a little late and with a little overshoot, and the hand is never quite steady. No two brushes are alike.
+- **Colours mix as pigments do, not as lights.** Blue into yellow goes green, not grey. Only the voice's glaze is laid on as light, which brightens what is under it.
+- **A brush is a brush.** Its hairs leave ridges, deeper the drier the paint; it carries only so much and runs dry as it goes. Its tip follows where it is sent the way a real one does, a little late and with a little overshoot, and the hand is never quite steady.
 - **The mood of the music sets the manner** (**Paint: Auto**): held, quiet music runs wet and blends; loud, clipped, noisy music goes on thick, dry and loose, with more spatter. **Wash** and **Thick** hold it to one or the other.
-- **Old paint** can stay, or sink back into the canvas smoothly as the music goes on (Slow, Medium, Fast), so the newest pass is the clearest.
+- **Old paint** can stay, or sink back into the canvas smoothly as the music goes on (Slow, Medium, Fast), so the newest is the clearest.
 - **36 colour schemes** in five families (below), three **surfaces** (canvas, linen, rough paper), **Save picture** (a PNG with the surface in it) and **⤢** to fill the screen.
 
-**What it does not show.** Where a sound is from left to right in the stereo field. Notes less than about a semitone apart low down (below 200 Hz the ear's long look cannot separate them). Which instrument a tone came from: a tone is painted for what it is, wherever it came from. The recorded vocal tracks of the Windows app (they play through the recording engine, which the canvas cannot hear); export the song as a WAV and open that to paint everything.
+**What it does not show.** Where a sound is from left to right in the stereo field. Notes less than about a semitone apart low down (below 200 Hz the ear's long look cannot separate them). Which instrument a tone came from, beyond its part. In a song from a file, the parts are only as good as the split (see above). The recorded vocal tracks of the Windows app while they are being recorded (they play through the recording engine, which the canvas cannot hear); once recorded they are painted, and an exported WAV opened here paints everything.
 
 ### The colour schemes, and where they come from
 
@@ -193,7 +220,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 383 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas
+npm test          # 484 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
@@ -345,5 +372,6 @@ What it rests on, and how sure each part is:
 - **Well supported by research:** higher pitch is seen as higher up, smaller and lighter; louder as bigger and heavier; harsh, rough or bright sounds as broken, angular marks; and the mood of a whole piece as colour.
 - **Choices of this app, with no study behind them:** a staccato note as a dab and a held one as a stroke (it follows from holding the brush down exactly as long as the tone lasts), noise as spatter, and calm music as wet paint.
 - **From open-source code** (see `NOTICE.md`): how a brush tip lags and overshoots, how touches overlap along a stroke, how spatter sizes are spread, how a brush runs dry, how wet paint is damped until it stops, and how pigments mix.
+- **The layers, the layouts, the budget and the vibe** follow `research_notes/Synths harmony stems and vibe painting/vibe_painting.md` and `stems.md`. The measures of a song's vibe (timbre, harmony, rhythm, dynamics) are those music-similarity research uses; turning them into a painting smoothly, so that similar music looks similar, and the paint each part is given, are this app's own design, as are the coverage figures (a fifth for two quiet parts, two thirds for six loud ones). Splitting a file into layers uses published signal-processing methods (median-filter harmonic/percussive separation, and REPET-SIM for the voice), not a trained model; a model's stems (from the desktop app, later) can take their place. Marks are laid a hundredth of a second or so before their sound: broadcast practice finds pictures that lead the sound far easier to accept than pictures that lag it.
 
 The full research, with every source read and its licence, is `reports/Realistic paint and sound painting.md`.

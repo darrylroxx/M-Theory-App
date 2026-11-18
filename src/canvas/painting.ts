@@ -57,9 +57,20 @@ export function mannerOf(f: Feeling, style: PaintStyle): Manner {
 /** A note or hit of one layer, known from the app itself (or from a file analysed ahead). */
 export interface LayerCue {
   layer: LayerKind;
+  /** the hand that paints it (a track's own, by default the layer's) */
+  key?: string;
   cue: Cue;
   /** a hit (a drum), not a held sound */
   hit?: boolean;
+}
+
+/** What one ear heard: a track's, a stem's, or a share of one, and the layer it is painted in. */
+export interface EarFrames {
+  key: string;
+  layer: LayerKind;
+  frames: Frame[];
+  /** its notes come as cues: the ear only gives its texture */
+  exact?: boolean;
 }
 
 /** What was heard since the last time. */
@@ -70,32 +81,42 @@ export interface Heard {
   when: (t: number) => When | null;
   /** what the ear on the whole mix heard: the mood, the key and (unless the vibe is known) the vibe come from it */
   mix: Frame[];
-  /** what each layer's own ear heard */
-  layers?: Partial<Record<LayerKind, Frame[]>>;
-  /** the layers whose notes come as cues: their ear only gives their texture */
-  exact?: LayerKind[];
+  /** what each track's (or stem's) own ear heard */
+  ears?: EarFrames[];
   cues?: LayerCue[];
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, x));
+/** Is anything of a layer in this frame? */
+function sounding(f: Frame, layer: LayerKind): boolean {
+  if (f.hits.length || f.voices.some((v) => v.of === undefined && v.amp > 0.05)) return true;
+  if (layer !== "other" && layer !== "drums") return false;
+  let n = 0;
+  for (let i = 0; i < f.noise.length; i++) n += f.noise[i];
+  return n / Math.max(1, f.noise.length) > 0.12;
+}
 /** How long a layer stays "playing" after its last sound, seconds. */
 const ACTIVE_FOR = 2.2;
+/** Seconds of music before a vibe heard live counts in full (until then the look stays near the middle of the road). */
+const SETTLE = 20;
 
 /** The thinking part of the painting: everything but the paint. Marks go to `put`. */
 export class Artist {
-  readonly hands: Record<LayerKind, LayerHand>;
+  /** a hand for every track (or stem) heard, by its key */
+  readonly hands = new Map<string, LayerHand>();
   readonly budget = new Budget();
   readonly mood = new Mood();
   /** the vibe of what has been heard lately (half a minute), when it is not known ahead */
   vibe = new VibeMeter(30);
   look: Look = lookOf(new Float32Array(74));
-  /** a vibe known ahead (a file analysed before it plays): the look comes from it */
+  /** a vibe known ahead (a file heard before it plays): the look comes from it */
   private known: Float32Array | null = null;
   private lookAt = -1;
   layout: Layout = makeLayout("river");
   /** the layout asked for ("auto": the music chooses) */
   choice: LayoutId | "auto" = "auto";
   private chooser = new LayoutChooser();
+  private settled = false;
   /** layers not painted */
   hidden = new Set<LayerKind>();
   style: PaintStyle = "auto";
@@ -111,6 +132,7 @@ export class Artist {
   private tonic = 0;
   private scale = MAJOR_SCALE;
   private colourKey = "";
+  private colours: { c: ReturnType<typeof layerColours>; palette: RGB[]; map: number[] } | null = null;
   /** when each layer last sounded, and how loud it has been lately */
   readonly activity: Record<LayerKind, { last: number; loud: number; cue: number }>;
   private now = -1;
@@ -121,10 +143,44 @@ export class Artist {
   feeling: Feeling = new Mood().feeling;
 
   constructor() {
-    this.hands = Object.fromEntries(LAYERS.map((l) => [l, new LayerHand(l)])) as Record<LayerKind, LayerHand>;
-    this.hands.harmony.partner = this.hands.melody;
     this.activity = Object.fromEntries(LAYERS.map((l) => [l, { last: -99, loud: 0, cue: 0 }])) as Artist["activity"];
-    for (const l of LAYERS) this.hands[l].put = (s) => this.lay(s, l);
+  }
+
+  /** The hand for a key (made the first time it is asked for). */
+  hand(key: string, layer: LayerKind): LayerHand {
+    let h = this.hands.get(key);
+    if (h && h.layer !== layer) {
+      // a track painted in another layer now (marked as a harmony): a new hand
+      this.hands.delete(key);
+      h = undefined;
+    }
+    if (!h) {
+      h = new LayerHand(layer);
+      h.put = (s) => this.lay(s, layer);
+      h.size(this.w, this.h);
+      if (this.colours) h.colours(this.colours.c, this.colours.palette, this.colours.map);
+      h.run = this.run;
+      this.hands.set(key, h);
+      this.partners();
+    }
+    return h;
+  }
+  /** Each harmony line is hatched to the melody it goes with (the first melody heard). */
+  private partners() {
+    let melody: LayerHand | null = null;
+    for (const h of this.hands.values()) if (h.layer === "melody") {
+      melody = h;
+      break;
+    }
+    for (const h of this.hands.values()) if (h.layer === "harmony") h.partner = melody;
+  }
+  /** The moment the music was last painted up to (seconds, on its own clock). */
+  get time() {
+    return this.now;
+  }
+  /** Every hand of one layer. */
+  handsOf(layer: LayerKind): LayerHand[] {
+    return [...this.hands.values()].filter((h) => h.layer === layer);
   }
 
   size(w: number, h: number) {
@@ -132,7 +188,7 @@ export class Artist {
     this.h = h;
     this.budget.size(w, h);
     this.layout.size(w, h);
-    for (const l of LAYERS) this.hands[l].size(w, h);
+    for (const hd of this.hands.values()) hd.size(w, h);
   }
   setPalette(p: Palette) {
     this.pal = p;
@@ -152,11 +208,17 @@ export class Artist {
     this.keyGiven = false;
     this.keyAt = "";
   }
-  /** The vibe of the whole piece, known ahead (from a file analysed before it plays); null: heard as it plays. */
-  knowVibe(fp: Float32Array | null) {
+  /**
+   * The vibe of the whole piece, known ahead (from a file heard before it plays); null: heard
+   * as it plays. `final`: it is the whole piece's, and the layout chosen from it is kept.
+   */
+  knowVibe(fp: Float32Array | null, final = true) {
     this.known = fp;
     this.lookAt = -1;
-    this.chooser.reset();
+    if (final || !fp) {
+      this.chooser.reset();
+      this.settled = final && !!fp;
+    }
   }
 
   private recolour() {
@@ -167,21 +229,24 @@ export class Artist {
     const c = layerColours(this.pal, this.look.turn, this.look.light);
     const palette: RGB[] = this.pal.colors.map(hexToRgb);
     const map = noteColors(this.tonic, this.scale, palette.length);
-    for (const l of LAYERS) this.hands[l].colours(c, palette, map);
+    this.colours = { c, palette, map };
+    for (const h of this.hands.values()) h.colours(c, palette, map);
   }
 
   /** The music stopped or jumped: brushes up. */
   lift() {
-    for (const l of LAYERS) this.hands[l].lift();
+    for (const h of this.hands.values()) h.lift();
   }
-  /** A new piece of music: forget the mood and vibe of the last. */
+  /** A new piece of music: forget the mood and vibe of the last, and its hands. */
   fresh() {
     this.mood.reset();
     this.vibe = new VibeMeter(30);
     this.known = null;
     this.lookAt = -1;
     this.chooser.reset();
+    this.settled = false;
     this.lift();
+    this.hands.clear();
     this.keyAt = "";
   }
   /** A new painting: the canvas is bare, and the next run of marks is a new one. */
@@ -202,14 +267,17 @@ export class Artist {
       s.r *= 0.7 + 0.3 * allow;
     }
     s.depth = LAYER_INFO[layer].depth;
-    this.activity[layer].last = this.now;
+    this.activity[layer].last = Math.max(this.activity[layer].last, this.now);
     this.made++;
     this.put(s, layer);
   }
 
   /** The layout to paint with now. */
   private chooseLayout(t: number, bar: number) {
-    const id = this.choice === "auto" ? this.chooser.pick(this.look.layouts, t, bar, !!this.known || this.vibe.heard > 30) : this.choice;
+    const settle = this.settled || (!this.known && this.vibe.heard > 30);
+    // heard live, the music is let flow by in the river until there has been enough of it to know it by
+    const early = !this.known && this.vibe.heard < SETTLE;
+    const id = this.choice !== "auto" ? this.choice : early ? "river" : this.chooser.pick(this.look.layouts, t, bar, settle);
     if (id !== this.layout.id) {
       this.layout = makeLayout(id);
       this.layout.size(this.w, this.h);
@@ -237,10 +305,14 @@ export class Artist {
         this.colourKey = "";
       }
     }
-    // the look of the whole piece, from its vibe (worked out again twice a second)
+    // the look of the whole piece, from its vibe (worked out again twice a second); a vibe heard
+    // live counts for little until there has been enough music to know it by
     if (this.lookAt < 0 || h.now - this.lookAt > 0.5 || h.now < this.lookAt) {
       this.lookAt = h.now;
-      this.look = lookOf(normalise(this.known ?? this.vibe.fingerprint()));
+      const v = normalise(this.known ?? this.vibe.fingerprint());
+      const trust = this.known ? 1 : clamp(this.vibe.heard / SETTLE);
+      if (trust < 1) for (let i = 0; i < v.length; i++) v[i] *= trust;
+      this.look = lookOf(v);
     }
     this.recolour();
     // the manner: the mood of the moment, steadied by the vibe of the piece
@@ -254,9 +326,14 @@ export class Artist {
     const now = h.when(h.now);
     this.chooseLayout(h.now, now?.bar ?? 2);
     if (now) this.layout.now(now, dt, this.look.motion);
+    // the hands this time: every ear's and every cue's
+    for (const e of h.ears ?? []) this.hand(e.key, e.layer);
+    for (const c of h.cues ?? []) this.hand(c.key ?? c.layer, c.layer);
     const touch = { stroke: this.look.stroke, spread: this.look.spread, density: this.look.density };
-    for (const l of LAYERS) {
-      const hand = this.hands[l];
+    const flow = this.layout.drift();
+    for (const hand of this.hands.values()) {
+      hand.flow = flow;
+      const l = hand.layer;
       hand.where = (t, up) => {
         const w = h.when(t);
         return w ? this.layout.place(w, up, l) : null;
@@ -267,26 +344,32 @@ export class Artist {
     }
     // notes known ahead
     for (const c of h.cues ?? []) {
-      const hand = this.hands[c.layer];
+      const hand = this.hand(c.key ?? c.layer, c.layer);
       if (c.hit) hand.hit(c.cue);
       else hand.start(c.cue);
       const a = this.activity[c.layer];
       a.cue = Math.max(a.cue, c.cue.amp);
-      a.last = Math.max(a.last, c.cue.t);
     }
-    // what each layer's ear heard
-    const exact = new Set(h.exact ?? []);
-    for (const [l, frames] of Object.entries(h.layers ?? {}) as [LayerKind, Frame[]][]) if (frames?.length) this.hands[l].hear(frames, !exact.has(l));
-    for (const l of LAYERS) this.hands[l].advance(h.now);
+    // what each ear heard
+    for (const e of h.ears ?? []) if (e.frames.length) this.hand(e.key, e.layer).hear(e.frames, !e.exact);
+    for (const hand of this.hands.values()) hand.advance(h.now);
     // how much is playing: each layer that sounded lately, as loud as it is
     const levels: Partial<Record<LayerKind, number>> = {};
     const list: { layer: LayerKind; active: boolean; loud: number }[] = [];
+    // (an ear's share of a stem is playing only when it has something in it: a note, a hit, or for the fog, noise that goes on;
+    // the level is the stem's, which its other shares have too)
+    const heardNow = new Map<LayerKind, number>();
+    for (const e of h.ears ?? []) {
+      if (!e.frames.length || !e.frames.some((f) => sounding(f, e.layer))) continue;
+      heardNow.set(e.layer, Math.max(heardNow.get(e.layer) ?? 0, this.hand(e.key, e.layer).texture.level));
+    }
     for (const l of LAYERS) {
       const a = this.activity[l];
       a.cue *= Math.exp(-dt / 1.5);
-      const ear = h.layers?.[l]?.length ? this.hands[l].texture.level : 0;
+      const ear = heardNow.get(l) ?? 0;
       a.loud = Math.max(a.loud * Math.exp(-dt / 1.2), ear, a.cue);
-      const active = !this.hidden.has(l) && (h.now - a.last < ACTIVE_FOR || this.hands[l].down > 0) && a.loud > 0.04;
+      const down = this.handsOf(l).some((hd) => hd.down > 0);
+      const active = !this.hidden.has(l) && (h.now - a.last < ACTIVE_FOR || down) && a.loud > 0.04;
       list.push({ layer: l, active, loud: a.loud });
       if (active) levels[l] = a.loud;
     }
@@ -384,7 +467,10 @@ export class Painting {
       this.sim.step(dt);
       a.budget.tick(dt, fade);
       const mv = this.sim.moved;
-      if (mv.x || mv.y) a.budget.shift(mv.x, mv.y);
+      if (mv.x || mv.y) {
+        a.budget.shift(mv.x, mv.y);
+        for (const h of a.hands.values()) h.shift(mv.x, mv.y);
+      }
       // a few times a second, the budget is told what the painting really shows
       this.measured += dt;
       if (this.measured > 0.3) {

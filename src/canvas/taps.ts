@@ -1,0 +1,79 @@
+/**
+ * Which parts of the app's own song the canvas listens to, and how.
+ *
+ * Every track is heard on its own, through its fader (so a muted track is not painted), by an
+ * ear of its own (`listen/bank.ts`), and painted by a hand of its own: two melody tracks are two
+ * lines, not one line jumping between them. The app also knows every note and hit it plays
+ * (`audio/pulse.ts`), exactly and a little ahead; for those tracks the ear only listens for the
+ * texture (how loud, how bright, how noisy), which costs half as much. Vocal takes are only
+ * heard.
+ *
+ * All the drum tracks play through one drum bus today, so they are heard there, together. A
+ * tap is just an audio node, so when an added drum track has an output of its own it can be
+ * listened to on its own by naming its node here.
+ *
+ * Ears cost time on the audio thread, so there are never more than six: beyond that, tracks
+ * painted in the same layer share an ear (and a hand).
+ */
+import { allTracks, type Track } from "../song/tracks";
+import type { Progression } from "../ui/state";
+import { layerOfTrack, type LayerKind } from "./layers";
+
+export const MAX_TAPS = 6;
+
+export interface TapPlan {
+  /** the ear's and the hand's name */
+  key: string;
+  layer: LayerKind;
+  /** the faders whose sound this ear hears */
+  faders: string[];
+  /** the tracks this hand paints (their notes, when the app knows them) */
+  members: string[];
+  /** the notes are known: the ear listens only for the texture */
+  light: boolean;
+}
+
+/** The ears for a song's tracks. */
+export function planTaps(p: Pick<Progression, "tracks">): TapPlan[] {
+  const plans: TapPlan[] = [];
+  let drums: TapPlan | null = null;
+  for (const t of allTracks(p)) {
+    if (t.kind === "drums") {
+      // every drum track sounds through the one drum bus, after the first drum track's fader
+      if (!drums) plans.push((drums = { key: "drums", layer: "drums", faders: ["drums"], members: [], light: true }));
+      drums.members.push(t.id);
+      continue;
+    }
+    plans.push({ key: t.id, layer: layerOfTrack(t as Track), faders: [t.id], members: [t.id], light: t.kind !== "vocals" });
+  }
+  // too many ears: tracks of one layer share one, the layer with the most first
+  while (plans.length > MAX_TAPS) {
+    const count = new Map<LayerKind, TapPlan[]>();
+    for (const pl of plans) count.set(pl.layer, [...(count.get(pl.layer) ?? []), pl]);
+    const [, same] = [...count.entries()].filter(([, v]) => v.length > 1).sort((a, b) => b[1].length - a[1].length)[0] ?? [];
+    if (!same) break;
+    const [a, b] = same.slice(-2);
+    a.faders.push(...b.faders);
+    a.members.push(...b.members);
+    a.light &&= b.light;
+    plans.splice(plans.indexOf(b), 1);
+  }
+  return plans;
+}
+
+/** Which hand paints a track's notes: the key of the ear that hears it. */
+export function handOf(plans: TapPlan[]): (track: string) => string {
+  const m = new Map<string, string>();
+  for (const pl of plans) for (const id of pl.members) m.set(id, pl.key);
+  return (track) => m.get(track) ?? track;
+}
+
+/** The layer each track is painted in. */
+export function layerOf(plans: TapPlan[]): (track: string) => LayerKind {
+  const m = new Map<string, LayerKind>();
+  for (const pl of plans) for (const id of pl.members) m.set(id, pl.layer);
+  return (track) => m.get(track) ?? (track === "drums" ? "drums" : track === "chords" ? "chords" : "melody");
+}
+
+/** A name for a plan, so the ears are rebuilt only when it changes. */
+export const planKey = (plans: TapPlan[]) => plans.map((p) => `${p.key}=${p.layer}:${p.faders.join("+")}${p.light ? "" : "!"}`).join("|");

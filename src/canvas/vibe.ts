@@ -188,6 +188,8 @@ export class VibeMeter {
   private last = -1;
   /** seconds of music heard (with sound in it) */
   heard = 0;
+  /** the tempo heard last (beats a minute, folded into 85..170), or 0 before one is heard */
+  bpm = 0;
 
   constructor(window = Infinity) {
     this.window = window;
@@ -356,6 +358,7 @@ export class VibeMeter {
     }
     const r = rhythmOf(fl, lv);
     if (!r) return;
+    this.bpm = 120 * Math.pow(2, r.tempo);
     this.add(AT.tempo, r.tempo);
     this.add(AT.pulse, r.pulse);
     this.add(AT.dance, r.dance);
@@ -690,7 +693,10 @@ export function lookOf(v: ArrayLike<number>): Look {
   const leg = z(v[AT.legato]);
   const noisy = z(v[AT.noise]);
   const at = [a.energy, a.valence, a.groove];
-  const pick = (ch: number) => 0.15 * valueNoise(at, ch);
+  const pick = (ch: number) => 0.05 * valueNoise(at, ch);
+  const busy = z(v[AT.onsets]);
+  const lay = z(v[AT.layers]);
+  const val = z(a.valence);
   return {
     axes: a,
     wet: clamp(0.22 + 0.42 * (1 - e) + 0.28 * leg - 0.1 * g),
@@ -699,15 +705,20 @@ export function lookOf(v: ArrayLike<number>): Look {
     density: 0.7 + 0.6 * d,
     stroke: 0.7 + 0.7 * leg,
     spread: 0.7 + 0.7 * e,
-    turn: 8 * valueNoise(at, 1),
+    // which way round the palette the parts are cast: a choice with no reason behind it, so pinned to a coarse grid over
+    // energy and groove (two cells to an axis): music of one kind falls in one cell and is cast alike
+    turn: 3 * valueNoise([a.energy, a.groove], 1, 1),
     light: 0.8 * a.valence,
     seed: 1000 * valueNoise(at, 2),
+    // how well each layout suits the music (after the research's suggestions): a steady groove flows (river) or comes
+    // round (rings, more so the clearer the beat); calm, held music opens in blooms; energetic, textured music with few
+    // parts is carried by the field; a dense arrangement of many parts is laid out in lanes
     layouts: {
-      river: 0.32 + 0.35 * g + 0.2 * leg - 0.2 * d + pick(11),
-      rings: 0.18 + 0.55 * g - 0.15 * e + 0.1 * z(a.valence) + pick(12),
-      bloom: 0.3 + 0.45 * (1 - e) + 0.2 * leg - 0.35 * g + pick(13),
-      field: 0.18 + 0.55 * e + 0.2 * noisy - 0.15 * g + pick(14),
-      lanes: 0.08 + 0.7 * d + 0.1 * e + pick(15),
+      river: 0.3 + 0.35 * g + 0.2 * leg - 0.15 * d + pick(11),
+      rings: 0.1 + 0.8 * g - 0.15 * e + 0.1 * val + pick(12),
+      bloom: 0.3 + 0.45 * (1 - e) + 0.25 * leg + 0.15 * (1 - busy) - 0.35 * g + pick(13),
+      field: 0.18 + 0.55 * e + 0.1 * noisy + 0.1 * (1 - leg) - 0.15 * g - 0.2 * lay + pick(14),
+      lanes: 0.12 + 0.45 * d + 0.4 * lay - 0.3 * g + pick(15),
       sweep: -0.5,
     },
   };

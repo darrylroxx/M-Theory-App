@@ -83,6 +83,8 @@ export interface LayerColours {
   other: RGB;
   /** for the chords' colours: how far round the palette the note colours are turned */
   shift: number;
+  /** the ground is dark (light glazed on shows; on a light ground a glaze needs pigment) */
+  dark: boolean;
 }
 
 export function layerColours(p: Palette, turn = 0, light = 0): LayerColours {
@@ -113,5 +115,6 @@ export function layerColours(p: Palette, turn = 0, light = 0): LayerColours {
     vocals: lean(hexToRgb(vivid)),
     other: mixRgb(hexToRgb(turned[Math.floor(n / 2)] ?? turned[0]), ground, 0.55),
     shift: t,
+    dark,
   };
 }

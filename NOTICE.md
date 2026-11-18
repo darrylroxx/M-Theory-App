@@ -68,12 +68,16 @@ The canvas (`src/canvas/`, `src/listen/`) is written for this project. These inf
 where numbers or methods were taken they are used under their licences, with thanks:
 
 - **ink-stroke-modeler** by Google (Apache-2.0): the spring a brush tip follows (its mass and
-  drag constants) (`hand.ts`).
+  drag constants) (`strokes.ts`).
 - **libmypaint** and **mypaint-brushes** (ISC; brush files CC0): how touches overlap along a
   stroke, how a brush's size and weight vary from touch to touch, and how spatter sizes are
-  spread (`hand.ts`).
+  spread (`strokes.ts`).
 - **Krita**'s bristle brush (GPL-2.0-or-later) and **p5.brush** by Alejandro Campos (MIT): a
-  brush that runs dry hair by hair; pressure that never jumps (`hand.ts`, `sim.ts`).
+  brush that runs dry hair by hair; pressure that never jumps (`strokes.ts`, `sim.ts`).
+- **Harmony**, the procedural drawing tool by Mr.doob (GPL-3.0-or-later): its "ribbon" brush
+  (strands each chasing the pointer on a damped spring: the voice's ribbon) and its "sketchy"
+  brush (links drawn between nearby points of two paths, only their middles: the hatching
+  between a harmony line and the melody) (`strokes.ts`).
 - **Fluid Paint** by David Li (MIT) and **WebGL Fluid Simulation** by Pavel Dobryakov (MIT):
   wet paint as a heavily damped flow on the graphics card, lit by its own thickness (`sim.ts`).
 - Curtis, Anderson, Seims, Fleischer and Salesin, "Computer-Generated Watercolor" (1997), as
@@ -85,6 +89,28 @@ where numbers or methods were taken they are used under their licences, with tha
   the hit detector (the rise of a log-frequency spectrum, picked against what has been usual);
   McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
 - Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
+- **librosa** (ISC, Copyright (c) 2013--2026, librosa development team): harmonic/percussive
+  separation by median filtering with soft masks and margins (after Fitzgerald, DAFx 2010, and
+  Driedger, Müller and Disch, ISMIR 2014); the REPET-SIM vocal separation of its examples
+  (after Rafii and Pardo, 2012); CENS chroma and the tonnetz coordinates (`split.ts`,
+  `vibe.ts`).
+- **Real-Time-HPSS** by Sevag Hanssian (MIT): the sizes of the two median filters and the
+  sliding (real-time) form of the separation (`split.ts`). **nussl** by the Interactive Audio
+  Lab (MIT): how REPET-SIM chooses the moments it compares (`split.ts`).
+- **Musly** by Dominik Schnitzer (MPL-2.0): the mel scale and the mel-cepstrum as a measure of
+  timbre, leaving out the first coefficient (loudness); formulas only, the code is new
+  (`ear.ts`, `vibe.ts`).
+- **rp_extract** by TU Wien (GPL-3.0): the fluctuation-strength weighting of how loudness swings
+  (strongest at 4 Hz) (`vibe.ts`).
+- Formulas only, no code: **essentia** (AGPL-3.0) for danceability by detrended fluctuation
+  analysis (Streich and Herrera), how far loudness strays (dynamic complexity) and octave-band
+  spectral contrast; **MIRtoolbox** (GPL-2.0) for Plomp and Levelt's roughness curve and which
+  way its emotion measures lean (`vibe.ts`).
+- **fieldplay** by Andrei Kashcha (MIT) and Pardesco's generative-art notes: particles carried by
+  a field with no sinks (the curl of a noise) (`place.ts`). Hertzmann's painterly rendering, as
+  in **PyPainterly** (GPL-3.0), and **ofxOilPaint** by Javier Graciá Carpio: paint only where
+  the canvas still differs from what is wanted, and stop where it is already painted (the
+  coverage budget, `coverage.ts`).
 
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
