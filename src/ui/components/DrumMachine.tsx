@@ -4,6 +4,7 @@ import { playDrum, setDrumSolo, syncDrums } from "../../audio/drumbus";
 import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LABEL, defaultParams, getKit, isMachine, renderDrum, type DrumId, type DrumParams, type KitId, type VoiceId } from "../../audio/drums";
 import { SAT_TYPES } from "../../audio/saturation";
 import { RECIPES, getRecipe } from "../../audio/voices";
+import { barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
 import { newId, useApp } from "../state";
 import { LinkChip, type Link } from "./HarpPanel";
 import { Seg } from "./common";
@@ -22,28 +23,34 @@ const choicesFor = (id: DrumId): VoiceId[] => [...RECIPES[id].map((r) => r.id), 
 const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : "0");
 const panText = (v: number) => (Math.abs(v) < 0.025 ? "C" : `${v < 0 ? "L" : "R"}${Math.round(Math.abs(v) * 100)}`);
 const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low" : "High"} ${Math.round(Math.abs(v) * 100)}`);
+/** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
+const HOLD_MS = 1500;
 
 /**
  * The drum machine, always on the page under the chords.
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, kitLink, grooveLink, frame, getPos }: {
+export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, kitLink, grooveLink, frame, getPos, shown, follow, active }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
   playing: boolean;
-  /** how many bars the section has: the grid shows every one of them */
+  /** how many bars the section has: the grid has every one of them */
   frame: number;
-  /** how many beats into the section the music is (null = stopped) */
+  /** how many beats into the section the music is (null = stopped, or another section is sounding) */
   getPos: () => number | null;
-  /** The player calls this with the step that is sounding (−1 = stopped) */
-  stepSink: { current: ((step: number) => void) | null };
   /** whether this section's drum sound and drum rhythm are the song's or its own */
   kitLink?: Link;
   grooveLink?: Link;
   /** changes when something is pasted: an edit in progress is let go */
   fresh?: number;
+  /** bars on screen (0 = all of them) */
+  shown: BarsShown;
+  /** the view turns a page when the music runs off it */
+  follow: boolean;
+  /** the page is on screen (a hidden page does no work while the music plays) */
+  active: boolean;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.myBeats;
@@ -60,7 +67,8 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   /** an edit in progress: where it started, and every step since */
   const [edit, setEdit] = useState<{ start: Snap; past: Snap[] } | null>(null);
   const [nudge, setNudge] = useState(false);
-  /** the bar shown in the grid */
+  /** the first bar on screen, as last set; and the bar the bar tools (✨ ⧉ Clear) act on */
+  const [start, setStart] = useState(0);
   const [bar, setBar] = useState(0);
   // the grid shows the section bar for bar. A rhythm shorter than the section comes round again
   // until a bar is changed; from then on every bar is written out and stands on its own.
@@ -68,18 +76,47 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   const view = useMemo(() => spreadBeat(beat, bars), [beat, bars]);
   const spread = (b: Beat) => spreadBeat(b, bars);
   const shownBar = Math.min(bar, bars - 1);
-  const live = useRef({ bar: shownBar, editing: false, steps: beat.steps, div: beat.div, bars });
-  live.current = { bar: shownBar, editing: !!edit, steps: beat.steps, div: beat.div, bars };
+  // the window always holds the chosen bar: a change to the number of bars keeps it on screen
+  const w0 = barWindow(bars, shown, start);
+  const win: BarWindow = inWindow(w0, shownBar) ? w0 : { start: pageStart(shownBar, w0.count, bars), count: w0.count };
+  const paged = win.count < bars;
+  /** the bar to bring into sight in the grid once it is drawn (after a bar is chosen or a page turned) */
+  const show = useRef<number | null>(null);
+  /** Move the window; the chosen bar comes along when it would be left off screen. */
+  const moveTo = (s: number) => {
+    const w = barWindow(bars, shown, s);
+    setStart(w.start);
+    show.current = inWindow(w, shownBar) ? shownBar : w.start;
+    if (!inWindow(w, shownBar)) setBar(w.start);
+  };
+  const live = useRef({ editing: false, steps: beat.steps, div: beat.div, bars, win, follow, held: 0, gen: 0, moveTo });
+  live.current = { ...live.current, editing: !!edit, steps: beat.steps, div: beat.div, bars, win, follow, gen: live.current.gen + 1, moveTo };
+  /** Someone is working here: Follow waits a moment before it turns the page. */
+  const hold = () => {
+    live.current.held = performance.now();
+  };
+  /** Choose a bar (its tab or its number): it is brought on screen if it is not. */
+  const choose = (b: number) => {
+    hold();
+    setBar(b);
+    setStart(reveal(win, b, bars));
+    show.current = b;
+  };
   const tabsRef = useRef<HTMLDivElement>(null);
-  // keep the bar on screen in view in its row (sideways only)
+  const stepsRef = useRef<HTMLDivElement>(null);
+  // keep the chosen bar in view in its row of tabs, and in the grid (sideways only)
   useEffect(() => {
     const r = tabsRef.current;
     const el = r?.querySelector<HTMLElement>(`[data-bar="${shownBar}"]`);
-    if (!r || !el) return;
-    if (el.offsetLeft < r.scrollLeft) r.scrollLeft = el.offsetLeft - 8;
-    else if (el.offsetLeft + el.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = el.offsetLeft + el.offsetWidth - r.clientWidth + 8;
-  }, [shownBar]);
-  const stepsRef = useRef<HTMLDivElement>(null);
+    if (r && el) {
+      if (el.offsetLeft < r.scrollLeft) r.scrollLeft = el.offsetLeft - 8;
+      else if (el.offsetLeft + el.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = el.offsetLeft + el.offsetWidth - r.clientWidth + 8;
+    }
+    const box = stepsRef.current;
+    const g = show.current === null ? null : box?.querySelector<HTMLElement>(`[data-gbar="${show.current}"]`);
+    show.current = null;
+    if (box && g && (g.offsetLeft < box.scrollLeft || g.offsetLeft + g.offsetWidth > box.scrollLeft + box.clientWidth + 1)) box.scrollLeft = g.offsetLeft;
+  }, [shownBar, win.start]);
   const paint = useRef<{ id: DrumId; level: StepLevel; last: number } | null>(null);
   const heard = useRef({ at: 0, timer: 0 });
   const bpm = state.progression.bpm;
@@ -87,25 +124,63 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   const editing = !!edit;
   const list = group === "mine" ? mine : BEAT_LIBRARY.filter((p) => p.group === group);
 
-  // moving playhead, without re-rendering the grid on every step
+  // the moving playhead, on the bar that is sounding, without redrawing the grid on every frame.
+  // With Follow on, a page is turned when the music runs off the end of the bars on screen
+  // (never while editing: the grid stays where the pencil is).
   useEffect(() => {
-    stepSink.current = (n) => {
-      const el = stepsRef.current;
-      if (!el) return;
-      const { bar: on, editing: busy, steps, div, bars: count } = live.current;
-      // which bar of the section is sounding (the step only says where in the pattern)
+    const box = stepsRef.current;
+    if (!playing || !active || !box) return;
+    let raf = 0;
+    let key = "";
+    let gen = -1;
+    let mark: HTMLElement | null = null;
+    let turned = -1;
+    const tabs = () => box.closest(".drums")?.querySelectorAll<HTMLElement>("[data-bar]") ?? [];
+    const clear = () => {
+      mark?.classList.remove("playing");
+      mark = null;
+    };
+    const tick = () => {
       const pos = getPos();
-      const at = n < 0 ? -1 : Math.min(count - 1, pos !== null ? Math.max(0, Math.floor(pos / (steps / div) + 1e-6)) : Math.floor(n / steps));
-      // while listening, the grid follows the bar that is playing; while editing it stays put
-      if (at >= 0 && at !== on && !busy) setBar(at);
-      el.classList.toggle("playing", n >= 0 && (at === on || !busy));
-      if (n >= 0) el.style.setProperty("--now", String(n % steps));
-      el.closest(".drums")?.querySelectorAll<HTMLElement>("[data-bar]").forEach((t) => t.classList.toggle("sounding", Number(t.dataset.bar) === at));
+      const l = live.current;
+      const len = l.steps / l.div;
+      let next = "";
+      let at = -1;
+      let step = -1;
+      if (pos !== null && len > 0) {
+        at = Math.max(0, Math.min(l.bars - 1, Math.floor(pos / len + 1e-6)));
+        step = Math.max(0, Math.min(l.steps - 1, Math.floor((pos - at * len) * l.div + 1e-6)));
+        next = `${at}:${step}`;
+        if (l.follow && !l.editing && !inWindow(l.win, at) && turned !== at && performance.now() > l.held + HOLD_MS) {
+          turned = at;
+          l.moveTo(pageStart(at, l.win.count, l.bars));
+        }
+      }
+      if (next !== key || gen !== l.gen) {
+        const barChanged = next.split(":")[0] !== key.split(":")[0];
+        key = next;
+        gen = l.gen;
+        const el = at >= 0 ? box.querySelector<HTMLElement>(`[data-gbar="${at}"]`) : null;
+        if (el !== mark) clear();
+        if (el) {
+          mark = el;
+          el.classList.add("playing");
+          el.style.setProperty("--now", String(step));
+          // the bars on screen may be wider than the screen (a phone): with Follow, keep the sounding one in sight
+          if (l.follow && barChanged && !l.editing && (el.offsetLeft < box.scrollLeft || el.offsetLeft + el.offsetWidth > box.scrollLeft + box.clientWidth + 1)) box.scrollLeft = el.offsetLeft;
+        }
+        // (set again after a redraw: a tab drawn again loses the dot)
+        tabs().forEach((t) => t.classList.toggle("sounding", Number(t.dataset.bar) === at));
+      }
+      raf = requestAnimationFrame(tick);
     };
+    raf = requestAnimationFrame(tick);
     return () => {
-      stepSink.current = null;
+      cancelAnimationFrame(raf);
+      clear();
+      tabs().forEach((t) => t.classList.remove("sounding"));
     };
-  }, [stepSink, getPos]);
+  }, [playing, getPos, active]);
   // follow the rhythm when it is changed from elsewhere (opening a saved idea)
   useEffect(() => {
     if (current) setGroup(current.group);
@@ -115,6 +190,7 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   useEffect(() => {
     setEdit(null);
     setBar(0);
+    setStart(0);
   }, [state.ideaId, section, fresh]);
   useEffect(() => {
     setDrumSolo(solo);
@@ -205,18 +281,28 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
     setNudge(true);
     window.setTimeout(() => setNudge(false), 700);
   };
+  /** a finger on the locked grid may be scrolling it sideways: it points at Edit only once it is clearly a tap */
+  const finger = useRef(false);
   const onDown = (e: React.PointerEvent<HTMLDivElement>) => {
     if (e.pointerType === "mouse" && e.button !== 0) return;
+    hold();
+    finger.current = e.pointerType === "touch";
+    // a bar's number: the mouse chooses it at once; a finger may be scrolling, so its tap is taken on click
+    const num = (e.target as HTMLElement).closest<HTMLElement>("[data-pick]");
+    if (num) return finger.current ? undefined : choose(Number(num.dataset.pick));
     const c = cellAt(e.clientX, e.clientY);
     if (!c) return;
-    if (!editing) return locked();
+    if (!editing) return finger.current ? undefined : locked();
+    // the bar tools now act on the bar that was touched
+    setBar(Math.floor(c.i / beat.steps));
     paint.current = { id: c.id, level: press(c.id, c.i), last: c.i };
     e.currentTarget.setPointerCapture(e.pointerId);
   };
-  // drag along a row to paint (or erase) several steps
+  // drag along a row to paint (or erase) several steps, from one bar into the next
   const onMove = (e: React.PointerEvent<HTMLDivElement>) => {
     const p = paint.current;
     if (!p) return;
+    hold();
     const c = cellAt(e.clientX, e.clientY);
     if (c && c.id === p.id && c.i !== p.last) {
       p.last = c.i;
@@ -225,6 +311,21 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
   };
   const onUp = () => {
     paint.current = null;
+  };
+  // Enter or Space on a square (or on a bar's number), from the keyboard; and a finger's tap on a bar's number or the locked grid
+  const onKey = (e: React.MouseEvent<HTMLDivElement>) => {
+    const num = (e.target as HTMLElement).closest<HTMLElement>("[data-pick]");
+    if (e.detail !== 0) {
+      if (finger.current && num) choose(Number(num.dataset.pick));
+      else if (finger.current && !editing && (e.target as HTMLElement).closest("[data-i]")) locked();
+      return;
+    }
+    if (num) return choose(Number(num.dataset.pick));
+    const c = (e.target as HTMLElement).closest<HTMLElement>("[data-i]");
+    if (!c || !editing) return;
+    hold();
+    setBar(Math.floor(Number(c.dataset.i) / beat.steps));
+    press(c.dataset.d as DrumId, Number(c.dataset.i));
   };
 
   // ── Kits ──
@@ -352,8 +453,8 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
             <button className="btn sm" onClick={undo} disabled={!edit.past.length} aria-label="Undo">↶ Undo</button>
             <Seg value={brush} options={[{ value: 1 as StepLevel, label: "Soft" }, { value: 2 as StepLevel, label: "Normal" }, { value: 3 as StepLevel, label: "Loud" }]} onChange={setBrush} label="How hard new hits are" />
             <button className="btn sm" title="A small random change" aria-label="Vary" onClick={() => { remember(); setBeat((b) => ({ ...varyBeat(spread(b), Math.random, shownBar), on: true })); }}>✨</button>
-            {bars > 1 && shownBar > 0 && <button className="btn sm" title={`Copy bar ${shownBar} into this one`} aria-label="Copy the bar before" onClick={() => { remember(); setBeat((b) => ({ ...copyBar(spread(b), shownBar - 1, shownBar), on: true })); }}>⧉</button>}
-            <button className="btn sm danger" title={bars > 1 ? "Empty this bar: it plays nothing" : "Empty the grid"} onClick={() => { remember(); setBeat((b) => clearBeat(spread(b), shownBar)); }}>Clear</button>
+            {bars > 1 && shownBar > 0 && <button className="btn sm" title={`Copy bar ${shownBar} into bar ${shownBar + 1}`} aria-label="Copy the bar before" onClick={() => { remember(); setBeat((b) => ({ ...copyBar(spread(b), shownBar - 1, shownBar), on: true })); }}>⧉</button>}
+            <button className="btn sm danger" title={bars > 1 ? `Empty bar ${shownBar + 1}: it plays nothing` : "Empty the grid"} onClick={() => { remember(); setBeat((b) => clearBeat(spread(b), shownBar)); }}>Clear</button>
             <span className="spacer" />
             <button className="btn sm" onClick={cancel}>Cancel</button>
             <button className="btn sm primary" onClick={save}>✓ Save</button>
@@ -367,36 +468,31 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
       </div>
 
       {bars > 1 && (
-        <div className="dm-bars" role="tablist" aria-label="Bars" ref={tabsRef}>
+        <div className="dm-tabrow">
           <span className="kb-label">Bar</span>
-          {Array.from({ length: bars }, (_, i) => (
-            <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={`${i === shownBar ? "on" : ""}${barHasHits(view, i) ? "" : " hollow"}`} title={barHasHits(view, i) ? undefined : "Empty: plays nothing"} onClick={() => setBar(i)}>{i + 1}</button>
-          ))}
+          {paged && <button className="btn sm dm-page" aria-label="Earlier bars" disabled={win.start === 0} onClick={() => { hold(); moveTo(turnPage(win, -1, bars)); }}>‹</button>}
+          <div className="dm-bars" role="tablist" aria-label="Bars" ref={tabsRef}>
+            {Array.from({ length: bars }, (_, i) => (
+              <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={`${i === shownBar ? "on" : ""}${barHasHits(view, i) ? "" : " hollow"}${paged && inWindow(win, i) ? " inview" : ""}`} title={barHasHits(view, i) ? undefined : "Empty: plays nothing"} onClick={() => choose(i)}>{i + 1}</button>
+            ))}
+          </div>
+          {paged && <button className="btn sm dm-page" aria-label="Later bars" disabled={win.start + win.count >= bars} onClick={() => { hold(); moveTo(turnPage(win, 1, bars)); }}>›</button>}
         </div>
       )}
 
-      <div className={`beat-grid${editing ? "" : " locked"}`} style={{ "--steps": beat.steps } as CSSProperties}>
+      <div className={`beat-grid${editing ? "" : " locked"}${win.count > 1 ? " many" : ""}`} style={{ "--steps": beat.steps, "--count": win.count } as CSSProperties}>
         <div className="bg-labels">
+          {win.count > 1 && <span className="bg-numpad" />}
           {DRUM_IDS.map((id) => (
             <button key={id} className={`bg-label d-${id}${panel === "sound" && sel === id ? " on" : ""}${muted(id) ? " muted" : ""}`} aria-pressed={panel === "sound" && sel === id} title={`${soundName(voiceOf(beat, id))}: tap to hear it and shape its sound`}
               onClick={() => { hit(id); setSel(id); setPanel("sound"); }}>{DRUM_LABEL[id]}</button>
           ))}
         </div>
-        <div className="bg-steps" ref={stepsRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp}>
-          <div className="bg-now" />
-          {DRUM_IDS.map((id) => (
-            <div key={id} className={`bg-row d-${id}${muted(id) ? " muted" : ""}`}>
-              {Array.from({ length: beat.steps }, (_, k) => {
-                const i = shownBar * beat.steps + k;
-                const lv = levelAt(view.rows, id, i);
-                return (
-                  <button key={k} className={`bg-cell l${lv}${k % beat.div === 0 ? " beat" : ""}`} data-d={id} data-i={i} aria-pressed={lv > 0} tabIndex={editing ? 0 : -1} aria-disabled={!editing}
-                    aria-label={`${DRUM_LABEL[id]} step ${k + 1}${bars > 1 ? ` of bar ${shownBar + 1}` : ""}${lv ? [" ", " soft", "", " loud"][lv] : " off"}`}
-                    onClick={(e) => { if (e.detail === 0 && editing) press(id, i); }} />
-                );
-              })}
-            </div>
-          ))}
+        <div className="bg-steps" ref={stepsRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onClick={onKey}>
+          {Array.from({ length: win.count }, (_, n) => {
+            const b = win.start + n;
+            return <DrumBar key={b} b={b} steps={beat.steps} div={beat.div} hits={DRUM_IDS.map((id) => view.rows[id]?.slice(b * beat.steps, (b + 1) * beat.steps) ?? "").join("|")} quiet={DRUM_IDS.filter(muted).join()} editing={editing} head={win.count > 1} sel={win.count > 1 && b === shownBar} named={bars > 1} />;
+          })}
         </div>
       </div>
 
@@ -511,7 +607,48 @@ export function DrumMachine({ fresh, beat, setBeat, onPick, playing, stepSink, k
       )}
     </section>
   );
-}
+});
+
+/**
+ * One bar of the grid: its number, a row of steps for every drum, and its own playhead.
+ * It is drawn again only when its own hits change (or the grid is locked, unlocked or muted).
+ */
+const DrumBar = memo(function DrumBar({ b, steps, div, hits, quiet, editing, head, sel, named }: {
+  b: number;
+  steps: number;
+  div: number;
+  /** this bar's steps for each drum, in the order of DRUM_IDS, joined by "|" */
+  hits: string;
+  /** the muted drums, joined by "," */
+  quiet: string;
+  editing: boolean;
+  /** the bar's number over it (when more than one bar is on screen) */
+  head: boolean;
+  sel: boolean;
+  /** the squares say which bar they are in (when the section has more than one) */
+  named: boolean;
+}) {
+  const rows = hits.split("|");
+  const muted = quiet.split(",");
+  return (
+    <div className={`bg-bar${sel ? " sel" : ""}`} data-gbar={b}>
+      {head && <button className="bg-num" data-pick={b} aria-pressed={sel} aria-label={`Bar ${b + 1}`}>{b + 1}</button>}
+      <div className="bg-now" />
+      {DRUM_IDS.map((id, r) => (
+        <div key={id} className={`bg-row d-${id}${muted.includes(id) ? " muted" : ""}`}>
+          {Array.from({ length: steps }, (_, k) => {
+            const i = b * steps + k;
+            const lv = (Number(rows[r]?.[k] ?? 0) || 0) as StepLevel;
+            return (
+              <button key={k} className={`bg-cell l${lv}${k % div === 0 ? " beat" : ""}`} data-d={id} data-i={i} aria-pressed={lv > 0} tabIndex={editing ? 0 : -1} aria-disabled={!editing}
+                aria-label={`${DRUM_LABEL[id]} step ${k + 1}${named ? ` of bar ${b + 1}` : ""}${lv ? [" ", " soft", "", " loud"][lv] : " off"}`} />
+            );
+          })}
+        </div>
+      ))}
+    </div>
+  );
+});
 
 /** The longest each drum can ring, in seconds: the full width of its picture. */
 const WAVE_SEC: Record<DrumId, number> = { kick: 2.8, snare: 0.5, clap: 0.75, hat: 0.19, open: 1.7, tom: 0.98, rim: 0.19, shaker: 0.55, bell: 2.4 };
