@@ -330,6 +330,11 @@ export function GuitarView() {
   const { shown, follow } = useBarsView();
   const followRef = useRef(follow);
   followRef.current = follow;
+  // Follow switched on while the music is in another section: the page goes to where the music is
+  useEffect(() => {
+    const at = playBlock.current;
+    if (follow && playingRef.current && at && at !== curRef.current) set((s) => (s.progression.song && s.progression.song.current !== at ? { ...s, progression: selectBlock(s.progression, at) } : s));
+  }, [follow, set]);
 
   useEffect(() => {
     if (player.current?.playing) player.current.update(playList.items, prog.bpm, prog.pattern, playList.loop, firstBeat, null);
@@ -1340,7 +1345,8 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
         </div>
         </div>
         <div className="dock-foot">
-          <BarRuler chords={chords} bar={bar} length={length} label={label} onFit={onFit} nowIdx={nowIdx} onChange={onLengths} shown={shown} follow={follow} />
+          {/* another section opens at its first bar, as the melody and the drums do */}
+          <BarRuler key={state.progression.song?.current ?? ""} chords={chords} bar={bar} length={length} label={label} onFit={onFit} nowIdx={nowIdx} onChange={onLengths} shown={shown} follow={follow} />
           <button className="rest-add" title="Add a bar of silence after the last chord" onClick={addRest}>+ Rest</button>
           {chords.length > 0 && <button className="rest-add clear" title="Take every chord out of this section" onClick={() => set((s) => ({ ...s, progression: { ...s.progression, chords: [] } }))}>Clear</button>}
         </div>

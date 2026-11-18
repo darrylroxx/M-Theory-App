@@ -169,7 +169,8 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
           // the bars on screen may be wider than the screen (a phone): with Follow, keep the sounding one in sight
           if (l.follow && barChanged && !l.editing && (el.offsetLeft < box.scrollLeft || el.offsetLeft + el.offsetWidth > box.scrollLeft + box.clientWidth + 1)) box.scrollLeft = el.offsetLeft;
         }
-        if (barChanged) tabs().forEach((t) => t.classList.toggle("sounding", Number(t.dataset.bar) === at));
+        // (set again after a redraw: a tab drawn again loses the dot)
+        tabs().forEach((t) => t.classList.toggle("sounding", Number(t.dataset.bar) === at));
       }
       raf = requestAnimationFrame(tick);
     };

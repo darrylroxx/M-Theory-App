@@ -145,6 +145,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     let gen = -1;
     let mark: HTMLElement | null = null;
     let turned = -1;
+    const tabs = () => tabsRef.current?.querySelectorAll<HTMLElement>('[role="tab"]') ?? [];
     const clear = () => {
       mark?.style.setProperty("--now", "-1");
       mark?.classList.remove("sounding");
@@ -180,6 +181,8 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
           // the bars on screen may be wider than the screen (a phone): with Follow, keep the sounding one in sight
           if (l.follow && barChanged && (el.offsetLeft < box.scrollLeft || el.offsetLeft + el.offsetWidth > box.scrollLeft + box.clientWidth + 1)) box.scrollLeft = el.offsetLeft;
         }
+        // the tab of the bar that is sounding has a dot, on screen or not (set again after a redraw, which drops it)
+        tabs().forEach((t, i) => t.classList.toggle("sounding", i === b));
       }
       raf = requestAnimationFrame(tick);
     };
@@ -187,6 +190,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     return () => {
       cancelAnimationFrame(raf);
       clear();
+      tabs().forEach((t) => t.classList.remove("sounding"));
     };
   }, [playing, getPos, active]);
 
