@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, cutTakes, groupsOf, reviveTakes, type Recorded } from "./takes";
+import { activeTake, cutTakes, groupsOf, passAt, passToMark, reviveTakes, shownTakes, takeBars, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -39,5 +39,93 @@ describe("takes", () => {
     const takes = cutTakes(rec(300 + 96000 + 192000), { group: "g", at, id });
     expect(reviveTakes(JSON.parse(JSON.stringify(takes)))).toEqual(takes);
     expect(reviveTakes([{ id: "x" }, 4])).toBeUndefined();
+  });
+});
+
+describe("a flow session: pass after pass until stopped", () => {
+  // an hour round a 4-second loop: 900 passes in one file
+  const LOOP = 192000;
+  const long = (passes: number, tail = 0): Recorded => ({ ...rec(300 + 96000 + LOOP * passes + tail), loop_frames: LOOP });
+
+  it("knows the pass being sung and how far into it, from the engine's position", () => {
+    expect(passAt(50_000, 96_000, LOOP)).toBeNull(); // the count-in
+    expect(passAt(96_000, 96_000, LOOP)).toEqual({ n: 1, frac: 0 });
+    expect(passAt(96_000 + LOOP * 6 + LOOP / 4, 96_000, LOOP)).toEqual({ n: 7, frac: 0.25 });
+    expect(passAt(10, 0, 0)).toBeNull(); // nothing to go round yet
+    // the pass number agrees with the takes cut at Stop
+    const takes = cutTakes(long(7, LOOP / 4), { group: "g", at, id });
+    expect(takes[takes.length - 1].n).toBe(passAt(96_000 + LOOP * 7 + LOOP / 4, 96_000, LOOP)?.n);
+  });
+
+  it("K keeps the pass being sung, or just after a seam the one that has just ended", () => {
+    expect(passToMark({ n: 7, frac: 0.5 }, 0.1)).toBe(7);
+    expect(passToMark({ n: 7, frac: 0.05 }, 0.1)).toBe(6);
+    expect(passToMark({ n: 1, frac: 0.01 }, 0.1)).toBe(1); // there is no pass before the first
+  });
+
+  it("marking and unmarking passes", () => {
+    let m = toggled(new Set(), 3);
+    m = toggled(m, 9);
+    expect([...m].sort()).toEqual([3, 9]);
+    m = toggled(m, 3);
+    expect([...m]).toEqual([9]);
+    const before = new Set([1]);
+    toggled(before, 2);
+    expect([...before]).toEqual([1]); // the old set is left as it was
+  });
+
+  it("passes marked ★ while singing are flagged, and the last of them plays", () => {
+    const takes = cutTakes(long(900, 1000), { group: "g", at, id, kept: [12, 487, 3] });
+    expect(takes).toHaveLength(900);
+    expect(takes.filter((t) => t.keep).map((t) => t.n)).toEqual([3, 12, 487]);
+    expect(takes.filter((t) => !t.keep).every((t) => !("keep" in t))).toBe(true);
+    expect(activeTake(takes, "g")?.n).toBe(487);
+    // a take chosen by hand still wins
+    expect(activeTake(takes, "g", takes[899].id)?.n).toBe(900);
+    // with nothing marked: the last full pass, as before
+    expect(activeTake(cutTakes(long(900, 1000), { group: "h", at, id }), "h")?.n).toBe(900);
+  });
+
+  it("a pass marked as it was cut short still counts", () => {
+    const takes = cutTakes(long(4, 20_000), { group: "g", at, id, kept: [5] });
+    expect(takes[4]).toMatchObject({ n: 5, short: true, keep: true });
+    expect(activeTake(takes, "g")?.n).toBe(5);
+    // a mark on a pass that was never reached is let go
+    expect(cutTakes(long(2), { group: "g", at, id, kept: [9] }).some((t) => t.keep)).toBe(false);
+  });
+
+  it("the ★ survives a reload; anything else stored there is let go; old songs load as they were", () => {
+    const takes = cutTakes(long(3), { group: "g", at, id, kept: [2] });
+    expect(reviveTakes(JSON.parse(JSON.stringify(takes)))).toEqual(takes);
+    const odd = reviveTakes([{ ...takes[0], keep: "yes" }, { ...takes[1], keep: 1 }])!;
+    expect(odd.every((t) => !("keep" in t))).toBe(true);
+    // a take saved before ★ existed (and before it had a number)
+    const old = { id: "o", group: "g", dry: "a.wav", wet: "a-wet-1.wav", rate: 48000, start: 10, frames: 20, at };
+    expect(reviveTakes([old])).toEqual([{ ...old, n: 1 }]);
+  });
+
+  it("hundreds of passes: the list shows the keepers, the one playing and the newest, the rest behind +N", () => {
+    const takes = cutTakes(long(300, 20_000), { group: "g", at, id, kept: [5, 120] });
+    takes.push(...cutTakes(long(2), { group: "other", at, id }));
+    const active = activeTake(takes, "g")!;
+    const { shown, more } = shownTakes(takes, "g", { active: active.id });
+    expect(shown.map((t) => t.n)).toEqual([5, 120, 293, 294, 295, 296, 297, 298, 299, 300]);
+    expect(more).toBe(290);
+    // the short tail is hidden unless asked for
+    expect(shownTakes(takes, "g", { active: active.id, shorts: true }).shown.map((t) => t.n).slice(-2)).toEqual([300, 301]);
+    // a take chosen from deep in the list shows too
+    expect(shownTakes(takes, "g", { active: takes[40].id }).shown.map((t) => t.n)).toContain(41);
+    // "+N" opened: every one
+    expect(shownTakes(takes, "g", { all: true }).shown).toHaveLength(300);
+    expect(shownTakes(takes, "g", { all: true, shorts: true }).shown).toHaveLength(301);
+    // a short recording shows whole
+    const few = cutTakes(long(3), { group: "f", at, id });
+    expect(shownTakes(few, "f")).toEqual({ shown: few, more: 0 });
+  });
+
+  it("a take is as many bars long as its sound at the tempo", () => {
+    const t = { frames: 192000, rate: 48000 } as Take;
+    expect(takeBars(t, 120, 4)).toBe(2); // 4 s at 120 bpm: 8 beats
+    expect(takeBars(t, 90, 3)).toBe(2); // 6 beats of 3
   });
 });

@@ -76,8 +76,13 @@ export async function meterStop(): Promise<void> {
 }
 
 // ── the recording engine ──
-/** `latency`: how late the singer hears themselves, measured from the driver (ms; 0 until known). */
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number }
+/**
+ * `latency`: how late the singer hears themselves, measured from the driver (ms; 0 until known).
+ * While recording: `recorded` frames are in the file, `room` more fit before it is as big as a
+ * WAV can be, `free` bytes are left on the disk, and `full` says it has stopped taking sound.
+ * `render`: how far the vocal sound is in being put on a recording (0..1; 0 when it is not).
+ */
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number; recorded?: number; room?: number; free?: number | null; full?: boolean; render?: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
 
 async function core() {
@@ -101,10 +106,14 @@ export async function engineOpen(host: string, device: string, buffer: number | 
   ch.onmessage = onStatus;
   return inTurn(() => invoke<EngineOpened>("engine_open", { host, deviceName: device, buffer, status: ch }));
 }
-export async function engineClose(): Promise<void> {
-  if (!isDesktop()) return;
+/**
+ * Close the interface. A recording still going (the driver was reset mid-session) comes back,
+ * dry, so its takes can be kept: put the vocal sound on it with `fxRender`.
+ */
+export async function engineClose(): Promise<import("./song/takes").Recorded | null> {
+  if (!isDesktop()) return null;
   const { invoke } = await core();
-  await inTurn(() => invoke("engine_close"));
+  return (await inTurn(() => invoke<import("./song/takes").Recorded | null>("engine_close"))) ?? null;
 }
 export async function engineSet(o: { monitor: boolean; input: number; fx: import("./audio/vocalfx").VocalFx; backingGain: number; clickGain: number; clickOn: boolean }): Promise<void> {
   await (await core()).invoke("engine_set", o);
@@ -133,4 +142,8 @@ export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalF
 }
 export async function readTake(path: string): Promise<ArrayBuffer> {
   return (await core()).invoke<ArrayBuffer>("read_take", { path });
+}
+/** One take of a recording: `frames` frames from `start`, as a small WAV of its own. */
+export async function readTakeRange(path: string, start: number, frames: number): Promise<ArrayBuffer> {
+  return (await core()).invoke<ArrayBuffer>("read_take_range", { path, start: Math.max(0, Math.round(start)), frames: Math.max(0, Math.round(frames)) });
 }

@@ -6,11 +6,14 @@
 //! - records the voice, dry, to a WAV file from the first click until Stop.
 //! The take is lined up with the song from the driver's own timestamps: the moment the first
 //! frame of the song is heard, and the moment each recorded sample was captured.
+//!
+//! A flow session can go round the loop for an hour or more. So the file is kept in step with
+//! the song sample for sample: wherever voice is lost (the recorder could not keep up, a block
+//! never arrived), silence takes its place and every later pass stays exactly where it was
+//! sung. If the driver resets in the middle, the recording is closed and handed back, not lost.
 
 use std::collections::VecDeque;
-use std::fs::File;
-use std::io::BufWriter;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 use std::thread::JoinHandle;
@@ -23,6 +26,7 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 
 use crate::fx::{Chain, VocalFx};
 use crate::meter::Shared;
+use crate::recfile::{self, Writing, MAX_FRAMES, RENDER};
 
 /// What the audio thread reports. Only the audio thread writes it, and nobody ever has to lock
 /// anything the audio thread needs, so the screen can never make the sound drop out.
@@ -38,7 +42,10 @@ pub struct Stats {
     pub limit: AtomicU32,
     /// counts every stop, so a waiting command knows its stop has happened
     pub stops: AtomicU64,
+    /// samples of voice that never reached the file
     pub dropped: AtomicU64,
+    /// samples of silence the file holds in their place, so later passes keep their time
+    pub padded: AtomicU64,
     /// the driver said the computer could not keep up (each one is a little dropout you may hear)
     pub xruns: AtomicU64,
     /// frames in each block the driver asks for (the buffer size actually in use)
@@ -48,8 +55,19 @@ pub struct Stats {
     /// how late you hear yourself, measured: from the moment the voice reaches the interface to
     /// the moment it comes out of the headphones (ms, as f32 bits; 0 until known)
     pub latency: AtomicU32,
-    /// when the first frame was heard and the first sample captured, at the last stop
-    pub times: Mutex<(Option<f64>, Option<f64>)>,
+    /// when the first frame of the count-in was heard and the first recorded sample captured
+    /// (seconds on the driver's clock, as f64 bits; NaN until known). They are kept the moment
+    /// they happen, so a stop the audio thread never answers (the device is gone) knows them too.
+    pub play0: AtomicU64,
+    pub cap0: AtomicU64,
+    /// the file being written
+    pub writing: Writing,
+}
+
+/// A moment kept as f64 bits, if it is known.
+fn moment(a: &AtomicU64) -> Option<f64> {
+    let v = f64::from_bits(a.load(Ordering::Relaxed));
+    v.is_finite().then_some(v)
 }
 
 /// What the singer hears and how (see `engine_set`).
@@ -110,7 +128,21 @@ pub struct Core {
     /// when the first frame of the count-in is heard, and when the first recorded sample was captured (seconds, driver clock)
     play0: Option<f64>,
     cap0: Option<f64>,
+    /// samples of voice that never reached the file, and samples of silence written for them
     pub dropped: u64,
+    pub padded: u64,
+    /// the song's position (output frames) when recording began, and the samples the file holds
+    /// since: the two are kept equal, so the file never runs early or late against the song
+    rec_pos0: u64,
+    kept: u64,
+    /// silence still to be written for voice that was lost while the recorder was full
+    owed: u64,
+    /// voice still to be left out because the file had run ahead of the song
+    trim: u64,
+    /// the biggest blocks seen coming in and going out (frames): how far the two sides may
+    /// wander apart from one block to the next without anything being lost
+    block_in: usize,
+    block_out: usize,
     /// when the newest block of voice was captured (seconds, driver clock)
     last_cap: Option<f64>,
     /// blocks in a row with more voice waiting than one block: extra delay to be taken out
@@ -147,6 +179,13 @@ impl Core {
             play0: None,
             cap0: None,
             dropped: 0,
+            padded: 0,
+            rec_pos0: 0,
+            kept: 0,
+            owed: 0,
+            trim: 0,
+            block_in: 0,
+            block_out: 0,
             last_cap: None,
             over: 0,
             levels,
@@ -200,20 +239,29 @@ impl Core {
         self.armed = false;
         self.play0 = None;
         self.cap0 = None;
+        self.stats.play0.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        self.stats.cap0.store(f64::NAN.to_bits(), Ordering::Relaxed);
         self.dropped = 0;
+        self.padded = 0;
+        self.kept = 0;
+        self.owed = 0;
+        self.trim = 0;
         self.pending = true;
     }
     /// Stop playing and recording. Returns (heard-at, captured-at) of the first frames, if recorded.
     pub fn stop(&mut self) -> (Option<f64>, Option<f64>) {
+        // the silence still owed goes in now, if there is room; what cannot is not in the file
+        self.pay_silence();
+        self.padded -= self.owed.min(self.padded);
+        self.owed = 0;
+        self.trim = 0;
         self.running = false;
         self.pending = false;
         self.armed = false;
         self.recording = false;
         self.rec = None;
-        if let Ok(mut t) = self.stats.times.lock() {
-            *t = (self.play0, self.cap0);
-        }
         self.stats.dropped.store(self.dropped, Ordering::Relaxed);
+        self.stats.padded.store(self.padded, Ordering::Relaxed);
         self.stats.running.store(false, Ordering::Relaxed);
         self.stats.stops.fetch_add(1, Ordering::Release);
         (self.play0, self.cap0)
@@ -223,11 +271,20 @@ impl Core {
         self.levels.feed(data);
         let ch = self.in_ch;
         let input = self.input.min(ch - 1);
+        self.block_in = self.block_in.max(data.len() / ch);
         if self.armed && !self.recording {
             self.recording = true;
             self.cap0 = Some(captured);
+            self.stats.cap0.store(captured.to_bits(), Ordering::Relaxed);
+            self.rec_pos0 = self.pos;
+            self.kept = 0;
         }
         self.last_cap = Some(captured);
+        let rec = self.recording && self.rec.is_some();
+        if rec {
+            self.keep_time();
+            self.pay_silence();
+        }
         for frame in data.chunks(ch) {
             let v = frame[input];
             if self.monitor {
@@ -236,13 +293,80 @@ impl Core {
                 }
                 self.mon.push_back(v);
             }
-            if self.recording {
-                if let Some(p) = self.rec.as_mut() {
-                    if p.push(v).is_err() {
-                        self.dropped += 1;
-                    }
+            if rec {
+                self.keep(v);
+            }
+        }
+    }
+
+    /// Voice the engine never got to see: a block from the driver that came while the other
+    /// callback had the engine, or that the driver lost. `frames` of silence stand in for it,
+    /// so what follows stays at its place in time.
+    pub fn missed(&mut self, frames: u64) {
+        if !(self.recording && self.rec.is_some()) || frames == 0 {
+            return;
+        }
+        self.kept += frames;
+        self.owed += frames;
+        self.padded += frames;
+        self.dropped += frames;
+    }
+
+    /// One sample of voice into the file. While silence is still owed (the recorder was full),
+    /// voice cannot go in ahead of it: it is lost, and silence stands in for it too.
+    fn keep(&mut self, v: f32) {
+        if self.trim > 0 {
+            self.trim -= 1;
+            self.dropped += 1;
+            return;
+        }
+        self.kept += 1;
+        if self.owed == 0 {
+            if let Some(p) = self.rec.as_mut() {
+                if p.push(v).is_ok() {
+                    return;
                 }
             }
+        }
+        self.owed += 1;
+        self.padded += 1;
+        self.dropped += 1;
+    }
+
+    /// Write the silence that is owed, as far as the recorder has room: at most 64k samples a
+    /// block, in one go, so the audio thread is never kept long.
+    fn pay_silence(&mut self) {
+        if self.owed == 0 {
+            return;
+        }
+        let Some(p) = self.rec.as_mut() else { return };
+        let n = (self.owed as usize).min(p.slots()).min(1 << 16);
+        if n == 0 {
+            return;
+        }
+        if let Ok(chunk) = p.write_chunk_uninit(n) {
+            self.owed -= chunk.fill_from_iter(std::iter::repeat(0.0f32)) as u64;
+        }
+    }
+
+    /// The file must hold one sample for every frame of song played since recording began:
+    /// that is what lets the takes be cut at whole passes, however long the session. On an
+    /// ASIO driver the voice and the song come and go together, block for block, so the two
+    /// never differ. Should whole blocks of voice go missing while the song plays on (another
+    /// kind of driver, a dropout), the gap is filled with silence; should the song stall while
+    /// the voice goes on, the extra voice is left out. Only a difference of more than a block
+    /// and a half counts, so the ordinary to and fro of two separate callbacks never touches a note.
+    fn keep_time(&mut self) {
+        if self.trim > 0 {
+            return;
+        }
+        let song = self.pos.saturating_sub(self.rec_pos0) as i64;
+        let ahead = song - self.kept as i64;
+        let slack = (self.block_in.max(self.block_out) * 3 / 2 + 32) as i64;
+        if ahead > slack {
+            self.missed(ahead as u64);
+        } else if -ahead > slack {
+            self.trim = (-ahead) as u64;
         }
     }
 
@@ -267,11 +391,13 @@ impl Core {
             self.running = true;
             self.pos = 0;
             self.play0 = Some(heard);
+            self.stats.play0.store(heard.to_bits(), Ordering::Relaxed);
             self.armed = self.rec.is_some();
         }
         let ch = self.out_ch;
         let len = self.backing_frames();
         let frames = out.len() / ch;
+        self.block_out = self.block_out.max(frames);
         self.stats.block.store(frames as u64, Ordering::Relaxed);
         if self.monitor {
             // Never let the voice run dry in the middle of a block: if it has not arrived yet, it
@@ -359,6 +485,8 @@ impl Core {
         st.running.store(self.running || self.pending, Ordering::Relaxed);
         st.reduction.store(self.chain.reduction().to_bits(), Ordering::Relaxed);
         st.limit.store(self.chain.limiting().to_bits(), Ordering::Relaxed);
+        st.dropped.store(self.dropped, Ordering::Relaxed);
+        st.padded.store(self.padded, Ordering::Relaxed);
     }
 }
 
@@ -388,10 +516,27 @@ struct Live {
 struct Recording {
     dry: PathBuf,
     stop: Arc<AtomicBool>,
-    thread: Option<JoinHandle<Result<u64, String>>>,
+    /// the frames written, and why the writer stopped early, if it did
+    thread: Option<JoinHandle<(u64, Option<String>)>>,
+    rate: u32,
+    /// the reports of the engine it was recorded on (kept here, so it can be closed even after
+    /// that engine is gone)
+    stats: Arc<Stats>,
 }
 static LIVE: Mutex<Option<Live>> = Mutex::new(None);
 static REC: Mutex<Option<Recording>> = Mutex::new(None);
+/// A recording that was closed without anyone to hand it to (the interface was opened again
+/// over it): the next stop or close hands it back, so a session is never left behind on disk.
+static LAST: Mutex<Option<Recorded>> = Mutex::new(None);
+
+fn stash(r: Recorded) {
+    if let Ok(mut g) = LAST.lock() {
+        *g = Some(r);
+    }
+}
+fn unstash() -> Option<Recorded> {
+    LAST.lock().ok().and_then(|mut g| g.take())
+}
 
 #[derive(Serialize, Clone)]
 pub struct Opened {
@@ -428,6 +573,16 @@ pub struct Status {
     pub block: u64,
     /// how late you hear yourself, measured (ms; 0 until known)
     pub latency: f32,
+    /// frames in the recording's file so far
+    pub recorded: u64,
+    /// frames the recording can still take before its file is as big as a WAV can be
+    pub room: u64,
+    /// bytes free on the disk the recording is going to (null until known)
+    pub free: Option<u64>,
+    /// the recording has stopped taking sound (the file is full, or the disk is): stop and save
+    pub full: bool,
+    /// how far the version through the vocal chain has got (0..1; 0 when none is being made)
+    pub render: f32,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
@@ -446,6 +601,9 @@ where
 {
     let mut buf: Vec<f32> = Vec::with_capacity(16384);
     let bad = link.clone();
+    let channels = (cfg.channels as usize).max(1);
+    // frames of voice that came while the core was busy, and so never reached it
+    let mut missed = 0u64;
     d.build_input_stream::<T, _, _>(
         cfg,
         move |data: &[T], info| {
@@ -454,9 +612,14 @@ where
             buf.clear();
             buf.extend(data.iter().map(|s| f32::from_sample(*s)));
             let at = secs(info.timestamp().capture, &link.base);
-            // only the two audio callbacks ever touch the core, one after the other: this never waits
+            // only the two audio callbacks ever touch the core, one after the other: this never
+            // waits. A block that finds the other callback in there is lost, but its length is
+            // counted, so the recording keeps its place in time.
             if let Ok(mut c) = core.try_lock() {
+                c.missed(std::mem::take(&mut missed));
                 c.on_input(&buf, at);
+            } else {
+                missed += (data.len() / channels) as u64;
             }
         },
         move |e| report(&bad, e),
@@ -552,6 +715,12 @@ pub async fn engine_open(host: String, device_name: String, buffer: Option<u32>,
 fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<Status>) -> Result<Opened, String> {
     let _driver = driver_lock();
     crate::meter::stop();
+    // a recording still going is closed properly first, and kept for whoever stops next
+    if REC.lock().map(|g| g.is_some()).unwrap_or(false) {
+        if let Ok(Some(r)) = engine_stop_inner() {
+            stash(r);
+        }
+    }
     close_engine();
     let stop = Arc::new(AtomicBool::new(false));
     let (tx, rx) = std::sync::mpsc::channel::<Result<(Opened, Arc<Link>), String>>();
@@ -611,6 +780,8 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
                     std::thread::sleep(Duration::from_millis(33));
                     // reports are read from atomics: the audio thread is never kept waiting
                     let l = shared.take();
+                    let recorded = st.writing.written.load(Ordering::Relaxed);
+                    let free = st.writing.free.load(Ordering::Relaxed);
                     let msg = Status {
                         peak: l.peak,
                         rms: l.rms,
@@ -624,6 +795,11 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
                         xruns: st.xruns.load(Ordering::Relaxed),
                         block: st.block.load(Ordering::Relaxed),
                         latency: f32::from_bits(st.latency.load(Ordering::Relaxed)),
+                        recorded,
+                        room: MAX_FRAMES.saturating_sub(recorded),
+                        free: (free > 0).then_some(free),
+                        full: st.writing.full.load(Ordering::Relaxed),
+                        render: f32::from_bits(RENDER.load(Ordering::Relaxed)),
                     };
                     // what the audio thread has finished with is freed here
                     while trash_out.pop().is_ok() {}
@@ -649,14 +825,20 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
     }
 }
 
+/// Close the interface. A recording still going (the driver was reset in the middle of a
+/// session) is closed properly and handed back, dry: the page cuts its takes and has the vocal
+/// sound put on separately, so the interface can be opened again straight away.
 #[tauri::command]
-pub async fn engine_close() {
-    let _ = tauri::async_runtime::spawn_blocking(|| {
+pub async fn engine_close() -> Option<Recorded> {
+    tauri::async_runtime::spawn_blocking(|| {
         let _driver = driver_lock();
-        let _ = engine_stop_inner();
+        let r = engine_stop_inner().ok().flatten();
         close_engine();
+        r
     })
-    .await;
+    .await
+    .ok()
+    .flatten()
 }
 
 /// What the singer hears and how: monitoring through the chain, which input, the chain's settings, levels.
@@ -694,7 +876,10 @@ pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, 
 }
 
 fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
-    let _ = engine_stop_inner();
+    // a recording still going is closed and kept, never thrown away
+    if let Ok(Some(r)) = engine_stop_inner() {
+        stash(r);
+    }
     let (l, rate) = link()?;
     let mut producer = None;
     let mut path = None;
@@ -702,45 +887,24 @@ fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u3
         let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' }).collect();
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let dry = recordings_dir(&app)?.join(format!("{safe}-{stamp}.wav"));
-        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(rate as usize * 20);
+        // twenty seconds of voice can wait here while the disk is busy
+        let (p, cons) = rtrb::RingBuffer::<f32>::new(rate as usize * 20);
         let spec = hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-        let mut w = hound::WavWriter::create(&dry, spec).map_err(|e| e.to_string())?;
+        let w = hound::WavWriter::create(&dry, spec).map_err(|e| e.to_string())?;
         let stop = Arc::new(AtomicBool::new(false));
         let flag = stop.clone();
-        let thread = std::thread::spawn(move || -> Result<u64, String> {
-            let mut n = 0u64;
-            let mut since = 0u64;
-            loop {
-                let avail = cons.slots();
-                if avail == 0 {
-                    if flag.load(Ordering::Relaxed) || cons.is_abandoned() {
-                        if cons.slots() == 0 {
-                            break;
-                        }
-                        continue;
-                    }
-                    std::thread::sleep(Duration::from_millis(5));
-                    continue;
-                }
-                let chunk = cons.read_chunk(avail).map_err(|e| e.to_string())?;
-                for v in chunk.into_iter() {
-                    w.write_sample(v).map_err(|e| e.to_string())?;
-                    n += 1;
-                }
-                since += avail as u64;
-                // a crash never loses more than a second or so
-                if since > rate as u64 {
-                    w.flush().map_err(|e| e.to_string())?;
-                    since = 0;
-                }
-            }
-            w.finalize().map_err(|e| e.to_string())?;
-            Ok(n)
-        });
+        let st = l.stats.clone();
+        st.writing.written.store(0, Ordering::Relaxed);
+        st.writing.free.store(0, Ordering::Relaxed);
+        st.writing.full.store(false, Ordering::Relaxed);
+        st.play0.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        st.cap0.store(f64::NAN.to_bits(), Ordering::Relaxed);
+        let dir = dry.parent().map(Path::to_path_buf);
+        let thread = std::thread::spawn(move || recfile::write_voice(cons, w, &flag, &st.writing, rate, MAX_FRAMES, || dir.as_deref().and_then(recfile::free_space)));
         producer = Some(p);
         path = Some(dry.to_string_lossy().to_string());
         if let Ok(mut g) = REC.lock() {
-            *g = Some(Recording { dry, stop, thread: Some(thread) });
+            *g = Some(Recording { dry, stop, thread: Some(thread), rate, stats: l.stats.clone() });
         }
     }
     l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, rec: producer });
@@ -758,85 +922,105 @@ pub struct Recorded {
     pub offset: i64,
     pub count_in: u64,
     pub loop_frames: u64,
+    /// samples of voice that never reached the file
     pub dropped: u64,
+    /// samples of silence the file holds in their place (so every later pass keeps its time)
+    pub padded: u64,
+    /// why the recording stopped taking sound early, or why it has no vocal sound on it, if so
+    pub note: Option<String>,
 }
 
+/// Stop the music and close the recording, if there is one. The music is stopped on the
+/// interface if it is still there; the recording is closed whether or not it is, from what was
+/// kept as it happened. With no recording going, one that was closed earlier with nobody to
+/// hand it to comes back instead.
 fn engine_stop_inner() -> Result<Option<Recorded>, String> {
-    let Ok((l, rate)) = link() else { return Ok(None) };
-    let st = l.stats.clone();
-    let before = st.stops.load(Ordering::Acquire);
-    l.send(Cmd::Stop);
-    // the audio thread stops at its next block; wait for it (a second at most, in case the device is gone)
-    for _ in 0..500 {
-        if st.stops.load(Ordering::Acquire) != before {
-            break;
+    if let Ok((l, _)) = link() {
+        let st = &l.stats;
+        let before = st.stops.load(Ordering::Acquire);
+        l.send(Cmd::Stop);
+        // the audio thread stops at its next block; wait for it (a second at most, in case the device is gone)
+        for _ in 0..500 {
+            if st.stops.load(Ordering::Acquire) != before {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
         }
-        std::thread::sleep(Duration::from_millis(2));
     }
-    let times = st.times.lock().map(|t| *t).unwrap_or((None, None));
-    let count_in = st.count_in.load(Ordering::Relaxed);
-    let loop_frames = st.length.load(Ordering::Relaxed);
-    let dropped = st.dropped.load(Ordering::Relaxed);
     let rec = REC.lock().ok().and_then(|mut g| g.take());
-    let Some(mut rec) = rec else { return Ok(None) };
+    let Some(mut rec) = rec else { return Ok(unstash()) };
+    let st = rec.stats.clone();
+    let rate = rec.rate;
     rec.stop.store(true, Ordering::Relaxed);
-    let frames = rec.thread.take().map(|t| t.join().map_err(|_| "the writer stopped".to_string()).and_then(|r| r)).unwrap_or(Ok(0))?;
-    let offset = match times {
+    let (frames, note) = rec.thread.take().map(|t| t.join().unwrap_or((0, Some("the writer stopped".into())))).unwrap_or((0, None));
+    let offset = match (moment(&st.play0), moment(&st.cap0)) {
         (Some(heard), Some(captured)) => ((heard - captured) * rate as f64).round() as i64,
         _ => 0,
     };
-    Ok(Some(Recorded { dry: rec.dry.to_string_lossy().to_string(), wet: String::new(), rate, frames, offset, count_in, loop_frames, dropped }))
+    Ok(Some(Recorded {
+        dry: rec.dry.to_string_lossy().to_string(),
+        wet: String::new(),
+        rate,
+        frames,
+        offset,
+        count_in: st.count_in.load(Ordering::Relaxed),
+        loop_frames: st.length.load(Ordering::Relaxed),
+        dropped: st.dropped.load(Ordering::Relaxed),
+        padded: st.padded.load(Ordering::Relaxed),
+        note,
+    }))
 }
 
 /// Stop playing; if recording, close the file and make the version with the vocal chain on it.
+/// If that version cannot be made (no room left on the disk), the takes are kept dry: they
+/// play as sung, and the vocal sound can be put on later.
 #[tauri::command]
 pub async fn engine_stop(fx: VocalFx) -> Result<Option<Recorded>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<Recorded>, String> {
         let Some(mut r) = engine_stop_inner()? else { return Ok(None) };
-        r.wet = render_wet(&PathBuf::from(&r.dry), &fx)?;
+        match recfile::render_wet(Path::new(&r.dry), &fx) {
+            Ok(w) => r.wet = w,
+            Err(e) => {
+                r.wet = r.dry.clone();
+                r.note = Some(match r.note.take() {
+                    Some(n) => format!("{n}; no vocal sound ({e})"),
+                    None => format!("no vocal sound ({e})"),
+                });
+            }
+        }
         Ok(Some(r))
     })
     .await
     .map_err(|e| e.to_string())?
 }
 
-/// The take through the vocal chain, written next to it (`…-wet-N.wav`, stereo).
-fn render_wet(dry: &PathBuf, fx: &VocalFx) -> Result<String, String> {
-    let mut r = hound::WavReader::open(dry).map_err(|e| e.to_string())?;
-    let spec = r.spec();
-    let samples: Vec<f32> = r.samples::<f32>().filter_map(|s| s.ok()).collect();
-    let mut chain = Chain::new(spec.sample_rate as f32, fx);
-    let wet = chain.render(&samples);
-    let stem = dry.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
-    let mut n = 1;
-    let mut out = dry.with_file_name(format!("{stem}-wet-{n}.wav"));
-    while out.exists() {
-        n += 1;
-        out = dry.with_file_name(format!("{stem}-wet-{n}.wav"));
-    }
-    let spec2 = hound::WavSpec { channels: 2, sample_rate: spec.sample_rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-    let mut w = hound::WavWriter::new(BufWriter::new(File::create(&out).map_err(|e| e.to_string())?), spec2).map_err(|e| e.to_string())?;
-    for v in wet {
-        w.write_sample(v).map_err(|e| e.to_string())?;
-    }
-    w.finalize().map_err(|e| e.to_string())?;
-    Ok(out.to_string_lossy().to_string())
-}
-
-/// Make the version with the vocal chain again, after its settings were changed.
+/// Make the version with the vocal chain again, after its settings were changed (or for a
+/// recording handed back without it).
 #[tauri::command]
 pub async fn fx_render(dry: String, fx: VocalFx) -> Result<String, String> {
-    tauri::async_runtime::spawn_blocking(move || render_wet(&PathBuf::from(dry), &fx)).await.map_err(|e| e.to_string())?
+    tauri::async_runtime::spawn_blocking(move || recfile::render_wet(Path::new(&dry), &fx)).await.map_err(|e| e.to_string())?
 }
 
-/// A recording, as bytes (to be played with the song).
+/// A whole recording, as bytes. (Takes are read with `read_take_range`; this stays for
+/// anything that wants a whole file.)
 #[tauri::command]
 pub async fn read_take(path: String) -> Result<Response, String> {
     let p = PathBuf::from(&path);
-    if p.extension().map(|e| e != "wav").unwrap_or(true) {
+    if !recfile::is_recording(&p) {
         return Err("only recordings can be read".into());
     }
     tauri::async_runtime::spawn_blocking(move || std::fs::read(p)).await.map_err(|e| e.to_string())?.map(Response::new).map_err(|e| e.to_string())
+}
+
+/// One take of a recording, as a small WAV of its own: `frames` frames from `start`. Only
+/// that part of the file is read, so a take from an hour-long session costs no more than any other.
+#[tauri::command]
+pub async fn read_take_range(path: String, start: u64, frames: u64) -> Result<Response, String> {
+    let p = PathBuf::from(&path);
+    if !recfile::is_recording(&p) {
+        return Err("only recordings can be read".into());
+    }
+    tauri::async_runtime::spawn_blocking(move || recfile::read_range(&p, start, frames)).await.map_err(|e| e.to_string())?.map(Response::new)
 }
 
 #[cfg(test)]
@@ -1007,6 +1191,143 @@ mod tests {
         c.set_fx(&VocalFx { on: false, ..VocalFx::default() });
         c.on_output(&mut out, 0.0);
         assert!(out.iter().all(|v| *v == 0.0), "nothing from before monitoring came on");
+    }
+
+    // ── keeping time over a long session ──
+
+    const B: usize = 64;
+
+    /// A recording made block by block, as an ASIO driver calls the engine: each period, a
+    /// block of voice in, then a block of song out. The voice counts up (its value is the
+    /// sample's place in time), so wherever it lands in the file shows whether it kept its time.
+    /// `period` says, for each period, whether the input and the output happen, and whether
+    /// the writer reads what has arrived (it does not while the disk is busy).
+    fn session(periods: usize, ring: usize, mut period: impl FnMut(usize, &mut Core) -> (bool, bool, bool)) -> (Core, Vec<f32>) {
+        let mut c = core();
+        c.set_backing(vec![0.0; 2 * 4000]);
+        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(ring);
+        c.start(120.0, 0, 4, Some(p));
+        let mut out = vec![0.0f32; B * 2];
+        let mut file = vec![];
+        for k in 0..periods {
+            let (inp, outp, read) = period(k, &mut c);
+            if inp {
+                let block: Vec<f32> = (0..B).flat_map(|i| [(k * B + i) as f32, -1.0]).collect();
+                c.on_input(&block, k as f64 * B as f64 / SR as f64);
+            }
+            if outp {
+                c.on_output(&mut out, k as f64 * B as f64 / SR as f64 + 0.005);
+            }
+            if read {
+                while let Ok(v) = cons.pop() {
+                    file.push(v);
+                }
+            }
+        }
+        c.stop();
+        while let Ok(v) = cons.pop() {
+            file.push(v);
+        }
+        (c, file)
+    }
+    /// Recording begins with the second block of voice (the first output block starts the
+    /// count-in), so file index `j` is the voice captured at moment `B + j`.
+    fn in_time(file: &[f32], from: usize) -> bool {
+        file.iter().enumerate().skip(from).all(|(j, v)| *v == (B + j) as f32)
+    }
+
+    #[test]
+    fn voice_the_driver_lost_is_filled_with_silence_so_every_later_pass_keeps_its_time() {
+        // three blocks of voice never arrive (a dropout) while the song plays on
+        let (c, file) = session(60, 1 << 16, |k, _| (!(10..13).contains(&k), true, true));
+        assert_eq!(file.len(), 59 * B, "one sample for every frame of song since recording began");
+        assert!(file[9 * B..12 * B].iter().all(|v| *v == 0.0), "silence where the voice was lost");
+        assert!(in_time(&file[..9 * B], 0) && in_time(&file, 12 * B), "everything after it is where it was sung");
+        assert_eq!((c.padded, c.dropped), (3 * B as u64, 3 * B as u64));
+        assert_eq!(c.stats.padded.load(Ordering::Relaxed), 3 * B as u64, "and it is reported");
+    }
+
+    #[test]
+    fn a_block_that_found_the_engine_busy_is_counted_and_filled() {
+        // the input callback could not get in once (the output callback had the engine): it says so
+        let (c, file) = session(40, 1 << 16, |k, c| {
+            if k == 20 {
+                c.missed(B as u64);
+            }
+            (k != 20, true, true)
+        });
+        assert_eq!(file.len(), 39 * B);
+        assert!(file[19 * B..20 * B].iter().all(|v| *v == 0.0));
+        assert!(in_time(&file, 20 * B));
+        assert_eq!(c.padded, B as u64);
+    }
+
+    #[test]
+    fn when_the_disk_falls_behind_the_lost_voice_becomes_silence_in_its_place() {
+        // a recorder with room for eight blocks, and a disk that is busy through block 13: the
+        // first eight wait, the next five are lost, and silence is written for them once there is room
+        let (c, file) = session(40, 8 * B, |k, _| (true, true, !(1..13).contains(&k)));
+        assert_eq!((c.dropped, c.padded), (5 * B as u64, 5 * B as u64), "the lost voice is all filled");
+        assert_eq!(file.len(), 39 * B, "the file still has one sample per frame of song");
+        assert!(in_time(&file[..8 * B], 0), "what waited went in, in order");
+        assert!(file[8 * B..13 * B].iter().all(|v| *v == 0.0), "silence in place of what was lost");
+        assert!(in_time(&file, 13 * B), "and after it, every sample is where it was sung");
+    }
+
+    #[test]
+    fn when_the_song_stalls_the_extra_voice_is_left_out_so_the_passes_stay_in_time() {
+        // three blocks of song are never asked for while the voice keeps coming
+        let (c, file) = session(60, 1 << 16, |k, _| (true, !(10..13).contains(&k), true));
+        assert_eq!(c.padded, 0);
+        assert_eq!(c.dropped, 3 * B as u64);
+        // the song is three blocks behind the clock from then on; so is the file
+        assert!(file.iter().enumerate().skip(12 * B).all(|(j, v)| *v == (j + 4 * B) as f32));
+        assert_eq!(file.len(), (60 - 3 - 1) * B);
+    }
+
+    #[test]
+    fn the_ordinary_to_and_fro_of_two_callbacks_is_never_mistaken_for_a_loss() {
+        // another kind of driver: input and output on their own threads, sometimes two in a row
+        let mut c = core();
+        c.set_backing(vec![0.0; 2 * 4000]);
+        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        c.start(120.0, 0, 4, Some(p));
+        let mut out = vec![0.0f32; B * 2];
+        let block = vec![0.5f32; B * 2];
+        // each period has one block each way, in either order, as two threads would have it
+        let mut seed = 7u32;
+        for _ in 0..500 {
+            seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+            if seed >> 16 & 1 == 0 {
+                c.on_input(&block, 0.0);
+                c.on_output(&mut out, 0.0);
+            } else {
+                c.on_output(&mut out, 0.0);
+                c.on_input(&block, 0.0);
+            }
+        }
+        c.stop();
+        let mut n = 0;
+        while cons.pop().is_ok() {
+            n += 1;
+        }
+        assert_eq!((c.padded, c.dropped), (0, 0), "nothing filled or left out");
+        assert!(n >= 498 * B);
+    }
+
+    #[test]
+    fn the_moments_a_take_is_lined_up_by_are_kept_as_they_happen() {
+        // if the device is gone, the stop never reaches the audio thread: the moments must already be known
+        let mut c = core();
+        c.set_backing(vec![0.0; 2000]);
+        let (p, _cons) = rtrb::RingBuffer::<f32>::new(10000);
+        c.start(120.0, 4, 4, Some(p));
+        assert!(moment(&c.stats.play0).is_none() && moment(&c.stats.cap0).is_none());
+        let mut out = vec![0.0f32; 512];
+        c.on_output(&mut out, 2.5);
+        c.on_input(&[0.1; 512], 2.49);
+        assert_eq!(moment(&c.stats.play0), Some(2.5));
+        assert_eq!(moment(&c.stats.cap0), Some(2.49));
     }
 
     #[test]

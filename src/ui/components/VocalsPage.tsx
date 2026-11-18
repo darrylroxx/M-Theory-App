@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
@@ -8,7 +8,8 @@ import { audioContext } from "../../audio/context";
 import { fader } from "../../audio/mix";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { activeTake, cutTakes, groupsOf, type Take } from "../../song/takes";
+import { activeTake, cutTakes, groupsOf, passAt, passToMark, shownTakes, toggled, type Recorded, type Take } from "../../song/takes";
+import { TakeLane, type LaneBar } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
@@ -27,6 +28,8 @@ export interface RecordPlan {
   pattern: PatternId;
   beat: Beat;
   label: string;
+  /** every bar that goes round, in order (for the lane of takes) */
+  bars?: LaneBar[];
 }
 
 const CHECKS: { id: keyof NonNullable<Studio["checks"]>; label: string; hint: string }[] = [
@@ -59,12 +62,35 @@ const sig = (fx: VocalFx) => JSON.stringify(fx);
 const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
 /** Until the driver's own figure is in: about how long a sound takes to go in and come back out at a buffer size. */
 const roundTrip = (block: number, rate: number) => Math.round(((2 * block) / rate) * 1000 + 2);
+/** A long session is noted from this many minutes on (small, beside the pass number). */
+const LONG_MIN = 30;
+/** Less than this much room on the disk is noted too (bytes). */
+const LOW_DISK = 2e9;
+/** And less than this many minutes before the file is as big as a WAV can be. */
+const ROOM_MIN = 10;
+/** The first moments of a pass in which K marks the pass that has just ended: at most this long (s), and at most an eighth of the pass. */
+const GRACE_S = 2;
+const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && (el.tagName === "INPUT" || el.tagName === "SELECT" || el.tagName === "TEXTAREA" || el.isContentEditable);
 
 /**
  * Vocals: the vocal tracks, the interface, the live vocal sound, and recording take after take
  * over a loop. Everything that touches the interface runs in the Windows app.
+ *
+ * Recording is made for staying in the flow: the loop goes round and round, as long as the
+ * singer wants, until ■. The pass being sung is shown big, a thin line fills as it goes by,
+ * and every pass already sung waits in a row: tap one (or press K) to keep it ★. Nothing
+ * pops up and nothing moves while singing.
  */
-export function VocalsPage({ active, recordPlan, onRecording, recording }: { active: boolean; recordPlan: () => RecordPlan | null; onRecording: (on: boolean) => void; recording: boolean }) {
+export function VocalsPage({ active, recordPlan, onRecording, recording, playing, getWhere }: {
+  active: boolean;
+  recordPlan: () => RecordPlan | null;
+  onRecording: (on: boolean) => void;
+  recording: boolean;
+  /** the song is playing in the app (not through the interface) */
+  playing: boolean;
+  /** which section is sounding and how far into it, while the song plays in the app */
+  getWhere: () => { block: string; beat: number } | null;
+}) {
   const { state, set, toast } = useApp();
   const studio = state.studio ?? {};
   const setStudio = (patch: Partial<Studio>) => set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
@@ -82,6 +108,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const [opened, setOpened] = useState<EngineOpened | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "preparing" | "rehearsing" | "recording" | "saving">("idle");
+  const rate = useRef(48000);
   const [more, setMore] = useState(false);
   const [shorts, setShorts] = useState(false);
   const [busy, setBusy] = useState<string | null>(null);
@@ -96,6 +123,31 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const hold = useRef<number[]>([]);
   const planRef = useRef<RecordPlan | null>(null);
   const trackRef = useRef<Track | null>(null);
+  // ── the flow while recording ──
+  /** the pass being sung (0 in the count-in, or when not recording); it changes once a pass */
+  const [pass, setPass] = useState(0);
+  /** passes marked ★ in this recording */
+  const [marks, setMarks] = useState<Set<number>>(() => new Set());
+  const marksRef = useRef(marks);
+  marksRef.current = marks;
+  /** a pass just marked with K, shown for a moment */
+  const [flash, setFlash] = useState(0);
+  /** the last report from the engine, and when it came (the line between reports is worked out from the rate) */
+  const status = useRef<{ pos: number; count_in: number; length: number; at: number } | null>(null);
+  const warnRef = useRef<HTMLSpanElement>(null);
+  const renderRef = useRef<HTMLSpanElement>(null);
+  const rowRef = useRef<HTMLDivElement>(null);
+  const phaseRef = useRef("idle");
+  const fullRef = useRef(false);
+  /** the recording begun last has been cut into takes (it is never saved twice, nor lost between a stop and a reset) */
+  const savedRef = useRef(true);
+  const stopRef = useRef<() => Promise<void>>(async () => {});
+  const salvageRef = useRef<(r: Recorded) => void>(() => {});
+  const fxRef = useRef<VocalFx>(fx);
+  fxRef.current = fx;
+  phaseRef.current = phase;
+  /** recordings whose takes are all listed ("+N" was opened) */
+  const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
@@ -146,16 +198,42 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       if (blockRef.current && st.block) blockRef.current.textContent = st.latency > 0 ? `${st.latency.toFixed(1)} ms` : `~${roundTrip(st.block, opened?.rate ?? 48000)} ms`;
       if (dropRef.current) dropRef.current.textContent = st.xruns ? `${st.xruns} dropout${st.xruns === 1 ? "" : "s"}` : "no dropouts";
       if (slowRef.current) slowRef.current.hidden = !(st.xruns && performance.now() - drops.current.at < 6000);
+      const going = phaseRef.current === "recording" || phaseRef.current === "rehearsing";
+      status.current = going && st.running ? { pos: st.pos, count_in: st.count_in, length: st.length, at: performance.now() } : null;
+      const at = going && st.running ? passAt(st.pos, st.count_in, st.length) : null;
       if (countRef.current) {
         const p = planRef.current;
         if (!st.running || !p) countRef.current.textContent = "";
         else if (st.pos < st.count_in) {
+          // the count-in, once, at the very start
           const beatLen = st.count_in / Math.max(1, (studio.countIn ?? 1) * p.beatsPerBar);
           countRef.current.textContent = `${Math.ceil((st.count_in - st.pos) / beatLen)}`;
-        } else countRef.current.textContent = `Take ${Math.floor((st.pos - st.count_in) / Math.max(1, st.length)) + 1}`;
+        } else if (at) countRef.current.textContent = `Pass ${at.n}`;
       }
-    }).then((o) => live && setOpened(o)).catch((e) => live && (setOpened(null), setError(String(e))));
-    return () => { live = false; void engineClose(); setOpened(null); };
+      // the row of passes grows once a pass (the only thing that redraws while singing)
+      const n = phaseRef.current === "recording" && at ? at.n : 0;
+      setPass((was) => (was === n ? was : n));
+      if (warnRef.current) {
+        // small notes for a long session: how long it has run, and what room is left
+        const r = rate.current;
+        const min = st.running && phaseRef.current === "recording" ? st.pos / r / 60 : 0;
+        const notes: string[] = [];
+        if (min >= LONG_MIN) notes.push(`${Math.floor(min)} min`);
+        if (phaseRef.current === "recording" && st.free != null && st.free < LOW_DISK) notes.push(`⚠ ${(st.free / 1e9).toFixed(1)} GB free`);
+        if (phaseRef.current === "recording" && st.room != null && st.recorded && st.room / r < ROOM_MIN * 60) notes.push(`⚠ ${Math.max(0, Math.floor(st.room / r / 60))} min left`);
+        const text = notes.join(" · ");
+        if (warnRef.current.textContent !== text) warnRef.current.textContent = text;
+        warnRef.current.classList.toggle("warn", notes.some((x) => x.startsWith("⚠")));
+      }
+      if (renderRef.current) renderRef.current.textContent = st.render ? `${Math.round(st.render * 100)}%` : "";
+      // the file cannot take any more (it is as big as a WAV can be, or the disk is full): stop and keep what there is
+      if (st.full && phaseRef.current === "recording" && !fullRef.current) {
+        fullRef.current = true;
+        void stopRef.current();
+      }
+    }).then((o) => { if (live) { rate.current = o.rate; setOpened(o); } }).catch((e) => live && (setOpened(null), setError(String(e))));
+    // closing: a recording still going (the driver was reset mid-session) comes back, and its takes are kept
+    return () => { live = false; void engineClose().then((r) => r && salvageRef.current(r)); setOpened(null); };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => setLive(!!opened && monitor), [opened, monitor]);
@@ -189,6 +267,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     const t = record ? ensureTrack() : track;
     planRef.current = plan;
     trackRef.current = t ?? null;
+    fullRef.current = false;
+    savedRef.current = !record;
+    atEnd.current = true;
+    setMarks(new Set());
+    setPass(0);
     onRecording(true);
     setPhase("preparing");
     try {
@@ -203,25 +286,38 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
     }
   };
 
+  /**
+   * A recording that has ended, cut into one take per pass. The passes marked ★ are the
+   * keepers, and the last of them is the one that plays (else the last full pass).
+   */
+  const save = (r: Recorded, lead = "") => {
+    const plan = planRef.current;
+    const t = trackRef.current;
+    const kept = marksRef.current;
+    setMarks(new Set());
+    setPass(0);
+    if (!plan || !t || savedRef.current) return;
+    savedRef.current = true;
+    const group = newId();
+    const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
+    // with no vocal sound on it (no room for that file), a take plays dry and "Apply sound" is offered
+    const sound = r.wet === r.dry ? "" : sig(fxRef.current);
+    const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId, kept }).map((x) => ({ ...x, sound, bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sigOf(state.progression)) }));
+    if (!takes.length) return toast("Stopped before the first take");
+    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
+    const full = takes.filter((x) => !x.short).length || takes.length;
+    const stars = takes.filter((x) => x.keep).length;
+    const filled = (r.padded ?? 0) / r.rate;
+    const lost = filled > 0 ? ` · ${filled < 1 ? `${Math.round(filled * 1000)} ms` : `${filled.toFixed(1)} s`} lost and filled with silence, timing kept: try a bigger buffer` : r.dropped ? " (some audio was lost: try a bigger buffer)" : "";
+    toast(`${lead}${full} take${full === 1 ? "" : "s"} recorded${stars ? ` · ★ ${stars}` : ""}${lost}${r.note ? ` (${r.note})` : ""}`);
+  };
+
   const stop = async () => {
     const wasRecording = phase === "recording";
     setPhase("saving");
     try {
       const r = await engineStop(fx);
-      const plan = planRef.current;
-      const t = trackRef.current;
-      if (wasRecording && r && plan && t) {
-        const group = newId();
-        const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
-        const takes = cutTakes(r, { group, at: plan.at, nudge, id: newId }).map((x) => ({ ...x, sound: sig(fx), bpm: plan.bpm, key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sigOf(state.progression)) }));
-        if (!takes.length) toast("Stopped before the first take");
-        else {
-          set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === t.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
-          const full = takes.filter((x) => !x.short).length;
-          toast(`${full || takes.length} take${(full || takes.length) === 1 ? "" : "s"} recorded${r.dropped ? " (some audio was lost: try a bigger buffer)" : ""}`);
-          void loadTake(r.wet);
-        }
-      }
+      if (wasRecording && r) save(r);
     } catch (e) {
       toast(String(e));
     } finally {
@@ -229,10 +325,70 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       onRecording(false);
     }
   };
+  stopRef.current = stop;
+
+  /**
+   * The driver was reset in the middle of a recording, and the interface closed under it: the
+   * recording came back (dry), so the session is kept. The vocal sound is put on it here, while
+   * the interface opens again.
+   */
+  const salvage = async (r: Recorded) => {
+    if (!planRef.current || !trackRef.current || savedRef.current) return;
+    setPhase("saving");
+    let wet = r.dry;
+    let note = r.note ?? null;
+    try {
+      wet = await fxRender(r.dry, fxRef.current);
+    } catch (e) {
+      note = `no vocal sound (${String(e)})`;
+    }
+    save({ ...r, wet, note }, "The interface reset; the recording is kept: ");
+    setPhase("idle");
+    onRecording(false);
+  };
+  salvageRef.current = (r) => void salvage(r);
+
+  // ── marking passes ★ ──
+  const mark = useCallback((n: number, on?: boolean) => {
+    if (n < 1) return;
+    setMarks((m) => (on === undefined || m.has(n) !== on ? toggled(m, n) : m));
+  }, []);
+  /** K: keep the pass being sung, or, in its first moments, the one that has just ended */
+  const markNow = useCallback(() => {
+    const s = status.current;
+    const at = s && passAt(s.pos, s.count_in, s.length);
+    if (!s || !at) return;
+    const n = passToMark(at, Math.min(0.125, (GRACE_S * rate.current) / Math.max(1, s.length)));
+    mark(n, true);
+    setFlash(n);
+  }, [mark]);
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(0), 700);
+    return () => window.clearTimeout(t);
+  }, [flash]);
+  useEffect(() => {
+    if (phase !== "recording") return;
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.key !== "k" && e.key !== "K") || e.ctrlKey || e.metaKey || e.altKey || e.repeat || isTyping(e.target)) return;
+      e.preventDefault();
+      markNow();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [phase, markNow]);
+  // the newest pass stays in view, unless the row was scrolled back to find an older one
+  const atEnd = useRef(true);
+  useEffect(() => {
+    const el = rowRef.current;
+    if (el && atEnd.current) el.scrollLeft = el.scrollWidth;
+  }, [pass]);
 
   // ── takes ──
   const groups = groupsOf(track?.takes).reverse();
   const choose = (g: string, id: string) => setTrack((t) => ({ ...t, active: { ...t.active, [g]: id } }));
+  /** ★ a take afterwards (or take the ★ off) */
+  const setKeep = (id: string, keep: boolean) => setTrack((t) => ({ ...t, takes: (t.takes ?? []).map((x) => (x.id !== id ? x : keep ? { ...x, keep: true } : (({ keep: _, ...rest }) => rest)(x))) }));
   const removeGroup = (g: string) => {
     if (!window.confirm("Remove this recording and all its takes? (The files stay in Music › M-Theory › Recordings.)")) return;
     setTrack((t) => ({ ...t, takes: (t.takes ?? []).filter((x) => x.group !== g), active: Object.fromEntries(Object.entries(t.active ?? {}).filter(([k]) => k !== g)) }));
@@ -240,13 +396,14 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const listen = useRef<AudioBufferSourceNode | null>(null);
   const preview = async (tk: Take) => {
     listen.current?.stop();
-    const buf = await loadTake(tk.wet);
+    // just this take is read from the recording, so it plays from its own start
+    const buf = await loadTake(tk);
     if (!buf) return toast("Could not read the recording");
     const c = audioContext();
     const src = c.createBufferSource();
     src.buffer = buf;
     src.connect(fader(track?.id ?? "vocals", c));
-    src.start(c.currentTime + 0.02, tk.start / tk.rate, tk.frames / tk.rate);
+    src.start(c.currentTime + 0.02, 0, tk.frames / tk.rate);
     listen.current = src;
   };
   const stale = (track?.takes ?? []).some((t) => t.sound !== sig(fx));
@@ -257,7 +414,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
       const drys = [...new Set(track.takes.filter((t) => t.sound !== sig(fx)).map((t) => t.dry))];
       const made: Record<string, string> = {};
       for (const d of drys) made[d] = await fxRender(d, fx);
-      await Promise.all(Object.values(made).map((p) => loadTake(p)));
+      // the takes that play are read again (just them) once the song sees their new files
       setTrack((t) => ({ ...t, takes: (t.takes ?? []).map((x) => (made[x.dry] ? { ...x, wet: made[x.dry], sound: sig(fx) } : x)) }));
       toast("Takes updated");
     } catch (e) {
@@ -296,6 +453,38 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
   const checks = studio.checks ?? {};
   const running = phase !== "idle";
   const plan = recordPlan();
+  // the lane: the bars being recorded over (while recording, exactly those the engine goes round)
+  const laneBars = (running ? planRef.current?.bars : undefined) ?? plan?.bars ?? [];
+  const laneRef = useRef(laneBars);
+  laneRef.current = laneBars;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const laneTakes = groups.map((g, gi) => ({ g, gi, tk: activeTake(track?.takes ?? [], g, track?.active?.[g]) }))
+    .filter((x): x is { g: string; gi: number; tk: Take } => !!x.tk)
+    .map(({ gi, tk }) => ({ take: tk, label: `● ${groups.length - gi} · ${tk.keep ? "★" : ""}${tk.n}` }));
+  /** How far across the lane the music is: from the engine while singing over the loop, from the app's player while the song plays. */
+  const where = useCallback((): number | null => {
+    const s = status.current;
+    if (s) {
+      // between the engine's reports, the music has moved on at its rate
+      const pos = s.pos + Math.min(0.1, (performance.now() - s.at) / 1000) * rate.current;
+      const at = passAt(pos, s.count_in, s.length);
+      return at ? at.frac : null;
+    }
+    if (!playingRef.current) return null;
+    const w = getWhere();
+    const bars = laneRef.current;
+    const per = w ? bars.find((b) => b.block === w.block)?.beats : undefined;
+    if (!w || !per) return null;
+    const k = Math.floor(w.beat / per + 1e-9);
+    const i = bars.findIndex((b) => b.block === w.block && b.bar === k);
+    return i < 0 ? null : (i + (w.beat / per - k)) / bars.length;
+  }, [getWhere]);
+
+  const takesBox = track && groups.length > 0 ? (
+    <TakeList track={track} groups={groups} running={running} stale={stale} busy={busy} shorts={shorts} setShorts={setShorts} open={open} setOpen={setOpen}
+      applySound={() => void applySound()} choose={choose} setKeep={setKeep} preview={(t) => void preview(t)} removeGroup={removeGroup} />
+  ) : null;
 
   return (
     <section className="card vocals" aria-label="Vocals">
@@ -315,8 +504,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
             <button className="btn sm" disabled={!opened || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
             <span className="vc-state">
               <b ref={countRef} className="vc-count" />
-              <span className="small muted">{phase === "preparing" || phase === "saving" ? "…" : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : ""}</span>
+              <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>… <span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>
             </span>
+            {/* always in its place (hidden until recording), so nothing shifts when recording starts */}
+            <button className={`vc-star${marks.has(pass) ? " on" : ""}`} style={phase === "recording" ? undefined : { visibility: "hidden" }} disabled={phase !== "recording" || !pass} aria-pressed={marks.has(pass)} aria-label={`Keep pass ${pass || ""} (K)`} title="Keep this pass ★ (K; in the first moments of a pass, K keeps the one just sung)" onClick={() => mark(pass)}>★</button>
             <span className="spacer" />
             <label className="vc-mini">Count-in
               <select value={studio.countIn ?? 1} disabled={running} onChange={(e) => setStudio({ countIn: Number(e.target.value) as 0 | 1 | 2 })}>
@@ -325,6 +516,21 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
             </label>
             <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click</label>
           </div>
+
+          {laneBars.length > 0 && <TakeLane bars={laneBars} takes={laneTakes} bpm={bpm} where={where} live={playing || phase === "recording" || phase === "rehearsing"} onPick={(t) => void preview(t)} />}
+          {phase === "recording" && (
+            // every pass sung so far, and the one being sung: tap to keep ★. One row that scrolls, never grows.
+            <div className="vc-passes" ref={rowRef} role="group" aria-label="Passes: tap to keep" onScroll={(e) => { const el = e.currentTarget; atEnd.current = el.scrollWidth - el.scrollLeft - el.clientWidth < 60; }}>
+              {Array.from({ length: pass }, (_, i) => i + 1).map((n) => (
+                <button key={n} className={`vc-pass${marks.has(n) ? " on" : ""}${n === pass ? " sing" : ""}${flash === n ? " just" : ""}`} aria-pressed={marks.has(n)} aria-label={`Pass ${n}${n === pass ? ", being sung" : ""}`} onClick={() => mark(n)}>
+                  {marks.has(n) ? "★" : ""}{n}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* the takes, right under the lane: what was just sung is the first thing to hear */}
+          {takesBox}
 
           <div className="vc-grid">
             <div className="vc-box">
@@ -399,31 +605,55 @@ export function VocalsPage({ active, recordPlan, onRecording, recording }: { act
         </>
       )}
 
-      {track && groups.length > 0 && (
-        <div className="vc-takes">
-          <div className="row">
-            <b className="vc-title">Takes</b>
-            <span className="spacer" />
-            {stale && <button className="btn sm" disabled={!!busy} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound above on them">{busy ? "…" : "↻ Apply sound"}</button>}
-            {(track.takes ?? []).some((t) => t.short) && <label className="toggle vc-mini"><input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} /> Short takes</label>}
-          </div>
-          {groups.map((g, gi) => {
-            const takes = (track.takes ?? []).filter((t) => t.group === g && (shorts || !t.short));
-            const on = activeTake(track.takes ?? [], g, track.active?.[g]);
-            return (
-              <div key={g} className="vc-group">
-                <span className="small"><b>● {groups.length - gi}</b></span>
-                <span className="seg" role="radiogroup" aria-label="Which take plays">
-                  {takes.map((t) => <button key={t.id} role="radio" aria-checked={on?.id === t.id} className={on?.id === t.id ? "on" : ""} title="Play this take with the song; double-click to hear it alone" onClick={() => choose(g, t.id)} onDoubleClick={() => void preview(t)}>Take {t.n}{t.short ? "·" : ""}</button>)}
-                </span>
-                <button className="icon-btn" aria-label="Hear the chosen take alone" title="Hear the chosen take alone" onClick={() => on && void preview(on)}>▶</button>
-                <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" onClick={() => removeGroup(g)}>✕</button>
-              </div>
-            );
-          })}
-        </div>
-      )}
+      {!desktop && takesBox}
     </section>
+  );
+}
+
+/** The recordings on a track and their takes (one per pass), each recording on a line. */
+function TakeList({ track, groups, running, stale, busy, shorts, setShorts, open, setOpen, applySound, choose, setKeep, preview, removeGroup }: {
+  track: Track;
+  groups: string[];
+  running: boolean;
+  stale: boolean;
+  busy: string | null;
+  shorts: boolean;
+  setShorts: (on: boolean) => void;
+  open: Set<string>;
+  setOpen: (fn: (o: Set<string>) => Set<string>) => void;
+  applySound: () => void;
+  choose: (g: string, id: string) => void;
+  setKeep: (id: string, keep: boolean) => void;
+  preview: (t: Take) => void;
+  removeGroup: (g: string) => void;
+}) {
+  return (
+    <div className="vc-takes">
+      <div className="row">
+        <b className="vc-title">Takes</b>
+        <span className="spacer" />
+        {stale && <button className="btn sm" disabled={!!busy || running} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound above on them">{busy ? "…" : "↻ Apply sound"}</button>}
+        {(track.takes ?? []).some((t) => t.short) && <label className="toggle vc-mini"><input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} /> Short takes</label>}
+      </div>
+      {groups.map((g, gi) => {
+        const on = activeTake(track.takes ?? [], g, track.active?.[g]);
+        // a long session leaves many passes: the keepers, the one playing and the newest show; "+N" for the rest
+        const all = open.has(g);
+        const { shown, more } = shownTakes(track.takes ?? [], g, { active: on?.id, shorts, all });
+        return (
+          <div key={g} className="vc-group">
+            <span className="small"><b>● {groups.length - gi}</b></span>
+            <span className="seg vc-takelist" role="radiogroup" aria-label="Which take plays">
+              {shown.map((t) => <button key={t.id} role="radio" aria-checked={on?.id === t.id} aria-label={`Take ${t.n}${t.keep ? ", kept" : ""}${t.short ? ", short" : ""}`} className={`${on?.id === t.id ? "on" : ""}${t.keep ? " keep" : ""}`} title="Play this take with the song; double-click to hear it alone" onClick={() => choose(g, t.id)} onDoubleClick={() => preview(t)}>{t.keep ? "★" : ""}{t.n}{t.short ? "·" : ""}</button>)}
+              {(more > 0 || all) && <button className="vc-more" aria-label={all ? "Show fewer takes" : `Show ${more} more takes`} onClick={() => setOpen((o) => { const n = new Set(o); if (all) n.delete(g); else n.add(g); return n; })}>{all ? "−" : `+${more}`}</button>}
+            </span>
+            <button className={`icon-btn vc-keep${on?.keep ? " on" : ""}`} aria-pressed={!!on?.keep} aria-label="Keep the chosen take ★" title="Keep ★" disabled={!on} onClick={() => on && setKeep(on.id, !on.keep)}>★</button>
+            <button className="icon-btn" aria-label="Hear the chosen take alone" title="Hear the chosen take alone" onClick={() => on && preview(on)}>▶</button>
+            <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
+          </div>
+        );
+      })}
+    </div>
   );
 }
 
