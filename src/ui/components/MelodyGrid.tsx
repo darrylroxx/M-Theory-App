@@ -9,6 +9,7 @@ import type { HarpSound } from "../../audio/rack";
 import { SoundControls, type Link, type ToneProps } from "./HarpPanel";
 import type { ProgChord } from "../state";
 import { Seg } from "./common";
+import { HarmonizeButton } from "./HarmonyPicker";
 
 /** The chord under one step: its notes, and its name where it comes in (null = no chord, or a rest). */
 type Fit = { pcs: Set<number>; name: string } | null;
@@ -23,7 +24,7 @@ const HOLD_MS = 1500;
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  * As many bars as are chosen sit side by side, each with its own steps, its number and its line.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, shown, follow, active, inst }: {
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, shown, follow, active, inst, onHarmonize, harmonizing }: {
   /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
   /** the melody track's instrument */
@@ -52,6 +53,9 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
   follow: boolean;
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
+  /** open (or close) the sheet that writes a new track to go with this melody */
+  onHarmonize?: (el: HTMLElement | null) => void;
+  harmonizing?: boolean;
 }) {
   /** the first bar on screen, as last set; and the bar the bar tools act on */
   const [start, setStart] = useState(0);
@@ -290,9 +294,12 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     <section className="card melody" aria-label="Melody">
       <div className="dm-head">
         {count > 0 && <button className={`chip${on ? " on" : ""}`} role="switch" aria-checked={on} title="Play the melody with the chords" onClick={() => setMelody((m) => ({ ...m, on: !on }))}>{on ? "On" : "Off"}</button>}
+        {count > 0 && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} title="A new track that goes with this melody" />}
         <span className="spacer" />
-        <span className="kb-label" title="How many steps there are to a beat">Grid</span>
-        <Seg value={melody.div} options={GRIDS.map((g) => ({ value: g.value, label: g.label }))} onChange={(v) => setMelody((m) => ({ ...m, div: v }))} label="Steps to a beat" />
+        <span className="dm-grid">
+          <span className="kb-label" title="How many steps there are to a beat">Grid</span>
+          <Seg value={melody.div} options={GRIDS.map((g) => ({ value: g.value, label: g.label }))} onChange={(v) => setMelody((m) => ({ ...m, div: v }))} label="Steps to a beat" />
+        </span>
       </div>
 
       <div className="dm-bar">

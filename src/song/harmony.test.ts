@@ -8,7 +8,7 @@ import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { addTrack, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
-import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
+import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonizeFrom, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { reviveIdea, sameMusic } from "./library";
 import { copySection, pasteSection, reviveClips, undoFits } from "./clip";
 import { keysVoicings, reviveTones } from "../audio/tone";
@@ -539,5 +539,25 @@ describe("a re-harmonisation pasted into another idea", () => {
     const into = pasteSection(other, "x", clip, C, id);
     expect(into.tracks!.some((x) => x.name === "Borrowed")).toBe(true);
     expect(into.mix?.chords?.mute).toBeFalsy();
+  });
+});
+
+describe("the Harmonize button on a page", () => {
+  it("writes from the track the page is editing, of the page's own kind", () => {
+    const p0 = song();
+    expect(harmonizeFrom(p0, "chords")).toBe("chords");
+    expect(harmonizeFrom(p0, "melody")).toBe("melody");
+    // a second melody brought forward on the Melody page: that one; the Chords page still has its own
+    let p = addHarmony(p0, C, { kind: "melody", from: "melody", option: "third-above" }, "h").p;
+    p = focusTrack(p, "melody", "h");
+    expect(harmonizeFrom(p, "melody")).toBe("h");
+    expect(harmonizeFrom(p, "chords")).toBe("chords");
+    p = addHarmony(p, C, { kind: "chords", from: "chords", option: "pad" }, "k").p;
+    p = focusTrack(p, "chords", "k");
+    expect(harmonizeFrom(p, "chords")).toBe("k");
+  });
+  it("a page whose track has gone falls back to the first of its kind", () => {
+    const p = { ...song(), focus: { melody: "gone" } };
+    expect(harmonizeFrom(p, "melody")).toBe("melody");
   });
 });
