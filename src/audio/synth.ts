@@ -287,6 +287,8 @@ interface Anchor {
   end: number;
   /** where that run starts, in beats into its section (a loop's start) */
   run: number;
+  /** which list the index is in (see ProgressionPlayer.gen) */
+  gen: number;
 }
 
 /** A drums track on its own grid: the first one ("drums") and each one added on the Track page. */
@@ -328,7 +330,7 @@ export class ProgressionPlayer {
   private passBeat = 0;
   private origin = 0;
   private endAt: number | null = null;
-  private marks: { time: number; index: number }[] = [];
+  private marks: { time: number; index: number; gen: number }[] = [];
   // drums: every drums track on a grid of its own
   private beat: Beat | null = null;
   private lanes = new Map<string, Lane>();
@@ -346,7 +348,20 @@ export class ProgressionPlayer {
   private fresh = true;
   /** the synth tracks' notes, section by section */
   private synthNotes: SynthCache = new Map();
-  onStep: (index: number) => void = () => {};
+  /**
+   * The list being played, counted: every ▶ starts a new one, and so does a list that takes over
+   * while playing (see `queue`). An index the player reports is an index in the list of its `gen`.
+   */
+  gen = 0;
+  /** a list waiting for the end of the section that is playing, to take over from there */
+  private pending: { items: PlayItem[]; loop: boolean; entry: (next: number) => number } | null = null;
+  /** Is a list waiting to take over? */
+  get queued(): boolean {
+    return !!this.pending;
+  }
+  /** the list played before the one playing took over (its last chords may still be sounding) */
+  private before: PlayItem[] = [];
+  onStep: (index: number, gen: number) => void = () => {};
   /** Called as each drum step sounds (step index inside the bar), or with −1 when playback stops. */
   onDrumStep: (step: number) => void = () => {};
   onEnd: () => void = () => {};
@@ -361,8 +376,13 @@ export class ProgressionPlayer {
     return beats ? [{ midi: [], beats }] : [];
   }
 
+  /** The item a chord's start is in: in the list playing, or (for the last moments of the one before a list took over) in that one. */
+  private itemOf(a: Anchor): PlayItem | undefined {
+    return (a.gen === this.gen ? this.items : this.before)[a.index];
+  }
+
   private tuneAt(a: Anchor): PlayTune | null {
-    const own = this.items[a.index]?.tune;
+    const own = this.itemOf(a)?.tune;
     return own === undefined ? this.tune : own;
   }
 
@@ -371,18 +391,18 @@ export class ProgressionPlayer {
     return this.position()?.beat ?? null;
   }
 
-  /** What is sounding right now: which item of the list, and how many beats into its section (null when stopped). */
-  position(): { index: number; beat: number } | null {
+  /** What is sounding right now: which item of which list (`gen`), and how many beats into its section (null when stopped). */
+  position(): { index: number; beat: number; gen: number } | null {
     if (!this.playing) return null;
     const now = getAudio().currentTime;
     let at: Anchor | null = null;
     for (const s of this.spans) if (s.time <= now) at = s;
-    return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb } : null;
+    return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb, gen: at.gen } : null;
   }
 
   /** A drums track's beat under an item: the first track's (the item's own, or the player's), or an added track's. */
   private beatOf(track: string, a: Anchor): Beat | null {
-    const item = this.items[a.index];
+    const item = this.itemOf(a);
     if (track === FIRST_DRUMS) return item?.drums ?? this.beat;
     return item?.extra?.drums.find((d) => d.track === track)?.beat ?? null;
   }
@@ -394,6 +414,7 @@ export class ProgressionPlayer {
 
   start(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, fromIndex = 0, tune: PlayTune | null = null) {
     this.stop();
+    this.gen++;
     this.beat = beat;
     this.tune = tune;
     const list = this.fill(items);
@@ -432,7 +453,13 @@ export class ProgressionPlayer {
   update(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, tune: PlayTune | null = null) {
     this.beat = beat;
     this.tune = tune;
-    this.setItems(this.fill(items));
+    // (a list waiting to take over is the one these items are: the one playing keeps its own until then)
+    if (this.pending) {
+      this.pending.items = this.fill(items);
+      this.pending.loop = loop || !items.length;
+      items = this.items;
+      loop = this.loop;
+    } else this.setItems(this.fill(items));
     // a new tempo: every drums track's desk (its echo) follows at once, not only when its beat changes
     if (bpm !== this.bpm) for (const [track, lane] of this.lanes) if (lane.synced) syncDrums(lane.synced, bpm, track);
     this.bpm = bpm;
@@ -445,15 +472,49 @@ export class ProgressionPlayer {
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
 
+  /**
+   * Another list to play (the loop changed while playing), from the end of the section that is
+   * playing now: what is sounding plays on to that end, and the new list goes on from there with
+   * no gap, in time. `entry` says where in the new list, given the item the old one would have played
+   * next (its length: it came round). Returns the `gen` the new list will have.
+   */
+  queue(items: PlayItem[], loop: boolean, entry: (next: number) => number): number {
+    this.pending = { items: this.fill(items), loop: loop || !items.length, entry };
+    return this.gen + 1;
+  }
+
+  /** Is the next item to schedule the start of a section (or past the end of the list)? */
+  private atBoundary(): boolean {
+    const i = this.nextIndex;
+    return i <= 0 || i >= this.items.length || Math.abs(this.secs.origin[i] - this.secs.origin[i - 1]) > 1e-6;
+  }
+
+  /** The list that was waiting takes over, from where its `entry` says. */
+  private takeOver() {
+    const p = this.pending!;
+    this.pending = null;
+    const at = Math.max(0, Math.min(p.items.length - 1, Math.round(p.entry(this.nextIndex))));
+    this.gen++;
+    this.before = this.items;
+    this.setItems(p.items);
+    this.loop = p.loop;
+    this.nextIndex = at;
+    this.passBeat = p.items.slice(0, at).reduce((a, x) => a + x.beats, 0);
+    // (it may go on in the middle of a section: the drums and the melody count from that section's start)
+    this.origin = this.secs.origin[at] ?? this.passBeat;
+    this.fresh = true;
+  }
+
   private schedule() {
     const c = getAudio();
     const horizon = c.currentTime + 0.25;
     const spb = 60 / this.bpm;
     while (this.playing && this.nextTime < horizon) {
+      if (this.pending && this.atBoundary()) this.takeOver();
       if (this.nextIndex >= this.items.length) {
         if (!this.loop || !this.items.length) {
           this.endAt = this.nextTime;
-          this.marks.push({ time: this.nextTime, index: -1 });
+          this.marks.push({ time: this.nextTime, index: -1, gen: this.gen });
           this.playing = false;
           break;
         }
@@ -465,7 +526,7 @@ export class ProgressionPlayer {
       const item = this.items[i];
       const t = this.nextTime;
       this.origin = sectionStart(item, i, this.passBeat, this.origin);
-      this.marks.push({ time: t, index: i });
+      this.marks.push({ time: t, index: i, gen: this.gen });
       const s0 = this.passBeat - this.origin;
       // where this item's section started, on the clock: the synth plays a whole section its way
       const t0 = t - s0 * spb;
@@ -475,7 +536,7 @@ export class ProgressionPlayer {
         return a;
       };
       const run = s0 - this.items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0);
-      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: i, origin: this.origin, end: t + (this.secs.rest[i] ?? item.beats) * spb, run };
+      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: i, origin: this.origin, end: t + (this.secs.rest[i] ?? item.beats) * spb, run, gen: this.gen };
       this.tAnchors.push(anchor);
       this.spans.push(anchor);
       if (this.spans.length > 24) this.spans.shift();
@@ -557,7 +618,7 @@ export class ProgressionPlayer {
       const at = (beat: number) => cur.time + (cur.origin + beat - cur.beat) * cur.spb;
       // the first melody track and every added one, each on its own voice
       const t = this.tuneAt(cur);
-      const tunes: { id: string; t: PlayTune }[] = [...(t ? [{ id: "melody", t }] : []), ...(this.items[cur.index]?.extra?.tunes ?? []).map((x) => ({ id: x.track, t: x.tune }))];
+      const tunes: { id: string; t: PlayTune }[] = [...(t ? [{ id: "melody", t }] : []), ...(this.itemOf(cur)?.extra?.tunes ?? []).map((x) => ({ id: x.track, t: x.tune }))];
       for (const { id, t: tune } of tunes) {
         if (tune.m.on === false || !tune.m.notes.length) continue;
         const v = voiceOf(id, "melody", tune.sound);
@@ -583,7 +644,7 @@ export class ProgressionPlayer {
   /** A melody on the piano with its pedal on changes pedal with every chord, as the chords' own pianist does. */
   private repedalTunes(a: Anchor) {
     voices.get("melody")?.repedal(a.time);
-    for (const x of this.items[a.index]?.extra?.tunes ?? []) voices.get(x.track)?.repedal(a.time);
+    for (const x of this.itemOf(a)?.extra?.tunes ?? []) voices.get(x.track)?.repedal(a.time);
   }
 
   /** Every drums track, each on its own short look-ahead, so edits to a grid are heard on the very next step. */
@@ -658,12 +719,13 @@ export class ProgressionPlayer {
         this.onEnd();
         return;
       }
-      this.onStep(m.index);
+      this.onStep(m.index, m.gen);
     }
   }
 
   stop() {
     this.playing = false;
+    this.pending = null;
     if (this.timer !== null) window.clearInterval(this.timer);
     if (this.stepTimer !== null) window.clearInterval(this.stepTimer);
     this.timer = this.stepTimer = null;
