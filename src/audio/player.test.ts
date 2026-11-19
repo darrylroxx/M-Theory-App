@@ -17,7 +17,7 @@ import { DEFAULT_PLAY } from "../synth/params";
 
 /** The live context: made by the app as `new AudioContext()`. */
 let live: FakeAudio;
-const starts: { ctx: FakeAudio; buffer: unknown; when: number; offset: number; dur?: number; loop: boolean }[] = [];
+const starts: { ctx: FakeAudio; buffer: unknown; when: number; offset: number; dur?: number; loop: boolean; src: FakeSource }[] = [];
 /** Every buffer source a context starts, with how long it was asked to play. */
 function watch(c: FakeAudio) {
   const make = c.createBufferSource.bind(c);
@@ -25,7 +25,7 @@ function watch(c: FakeAudio) {
     const s = make() as unknown as FakeSource;
     const go = s.start.bind(s);
     s.start = (when = 0, offset = 0, dur?: number) => {
-      starts.push({ ctx: c, buffer: s.buffer, when, offset, dur, loop: s.loop });
+      starts.push({ ctx: c, buffer: s.buffer, when, offset, dur, loop: s.loop, src: s });
       go(when, offset);
     };
     return s as never;
@@ -161,6 +161,23 @@ describe("the drum desks", () => {
     notes();
     await S.renderSong([{ midi: [], beats: 4, section: true }], { bpm: 120, pattern: "ring", beat: beat({ noise: "vinyl", noiseAmt: 0.6 }), rate: 8000 });
     expect(starts.filter((s) => s.ctx === renders[0] && s.loop).length).toBe(1);
+  });
+  it("in a render, an added drums track's noise bed stops where a section without it starts, and comes back with it", async () => {
+    notes();
+    const bed = beat({ noise: "tape", noiseAmt: 0.6 });
+    const withD2: ExtraPlay = { chords: [], tunes: [], drums: [{ track: "d2", beat: bed }] };
+    const none: ExtraPlay = { chords: [], tunes: [], drums: [] };
+    // three one-bar sections at 120 (two seconds each): the added track drums in the first and the last
+    const items: PlayItem[] = [
+      { midi: [], beats: 4, section: true, extra: withD2 },
+      { midi: [], beats: 4, section: true, extra: none },
+      { midi: [], beats: 4, section: true, extra: withD2 },
+    ];
+    await S.renderSong(items, { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
+    expect(beds.map((s) => s.when)).toEqual([0, 4]);
+    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
+    expect(beds[1].src.stopsAt).toBe(Infinity);
   });
   it("a new tempo while playing moves an added drums track's echo to it", () => {
     notes();

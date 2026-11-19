@@ -781,6 +781,12 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
           }));
       // every drums track on its own desk, each section's drum sound from where the section starts
       const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
+      // an added track with no drums here goes quiet, its noise bed too, as it does live
+      for (const track of [...synced.keys()])
+        if (track !== FIRST_DRUMS && !drums.some((d) => d.track === track)) {
+          synced.delete(track);
+          setBedPlaying(false, null, track, t);
+        }
       for (const d of drums) {
         const b = d.beat;
         syncAt(d.track, b, t);

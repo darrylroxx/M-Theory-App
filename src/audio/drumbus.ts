@@ -455,7 +455,7 @@ export function setBedPlaying(on: boolean, beat: Beat | null, track?: string, at
     for (const [id, d] of set ?? []) {
       if (track !== undefined && id !== track) continue;
       d.bedOn = false;
-      stopBed(d);
+      stopBed(d, at);
     }
     return;
   }

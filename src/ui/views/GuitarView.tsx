@@ -466,7 +466,8 @@ export function GuitarView() {
     p.start(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, from);
     setPlaying(true);
   };
-  const togglePlay = () => (playing || waiting.current ? stopPlay() : startPlay());
+  // (▶ pressed again while it waits for a piano shows no ■ yet: it is the same press, not a stop)
+  const togglePlay = () => (playing ? stopPlay() : startPlay());
   // the loop was changed while playing: start again with the new bars
   const loopKey = loop ? `${loop.from.block}:${loop.from.bar}-${loop.to.block}:${loop.to.bar}` : "";
   const lastLoop = useRef(loopKey);
