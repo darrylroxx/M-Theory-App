@@ -141,3 +141,31 @@ describe("the artist: how much is playing sets how much is painted", () => {
     expect(strokes()).toBeGreaterThan(before);
   });
 });
+
+describe("a model's guitar and piano: sources of their own", () => {
+  const chords = (key: string | undefined, t: number): LayerCue[] => [60, 64, 67].map((m) => note("chords", t, m, 0.45, 0.7, key));
+  const cues = (): LayerCue[] => Array.from({ length: 8 }, (_, k) => [...chords("guitar:chords", 0.2 + k * 0.5), ...chords(undefined, 0.2 + k * 0.5)]).flat();
+
+  it("each has its own hands and its own level for the legend", () => {
+    const { a, run } = artist();
+    run(2, cues());
+    expect(a.hands.has("guitar:chords")).toBe(true);
+    a.hear({ now: 2.3, when: fileWhen(16, 2, 1), mix: [], cues: chords("guitar:chords", 2.25) });
+    expect(a.sourceLevel("guitar")).toBeGreaterThan(0);
+    expect(a.sourceLevel("piano")).toBe(0);
+  });
+
+  it("hidden, it lays no paint, while the layer it paints in goes on", () => {
+    const shown = artist();
+    shown.run(4, cues());
+    const hidden = artist();
+    hidden.a.hiddenSources.add("guitar");
+    hidden.run(4, cues());
+    const only = artist();
+    only.run(4, cues().filter((c) => c.key !== "guitar:chords"));
+    expect(hidden.marks.length).toBeGreaterThan(0);
+    expect(hidden.marks.length).toBeLessThan(shown.marks.length);
+    // what is left is about what the chords alone lay
+    expect(Math.abs(hidden.marks.length - only.marks.length)).toBeLessThan(0.25 * only.marks.length);
+  });
+});

@@ -20,6 +20,9 @@ import { FileLayers } from "../../listen/filelayers";
 import { listenLive, type Listening } from "../../listen/live";
 import { VoiceRouter } from "../../listen/route";
 import { Player, Reader, openSong, type Song } from "../../listen/songfile";
+import { StemLink, type LinkView, type SongFile } from "../../listen/stemlink";
+import { sizeLabel } from "../../listen/neuralstems";
+import { isDesktop } from "../../desktop";
 import { DEFAULT_PALETTE, PALETTES, PALETTE_GROUPS, getPalette, roles, trio } from "../../canvas/palettes";
 import { SURFACES, surfaceRows, type Surface } from "../../canvas/weave";
 import type { Key } from "../../theory/keys";
@@ -45,6 +48,45 @@ const PASSES = [{ value: 8, label: "8 s" }, { value: 15, label: "15 s" }, { valu
 
 /** Marks land this long (seconds) before their sound is heard: the eye forgives paint a little early, never late. */
 const LEAD = 0.012;
+
+/** A six-stem model's own sources: each has a legend entry of its own when the split makes it. */
+const SOURCES = ["guitar", "piano"] as const;
+
+/**
+ * The better split's one control, beside the song's name: the download it needs (its size), the
+ * download going (its progress; pressed, it stops), a mark while the model's stems are in use,
+ * or a way to try again. Where it cannot run, nothing in the browser; in the desktop app, a dim
+ * mark whose hover says why.
+ */
+function Better({ view, link }: { view: LinkView; link: { current: StemLink | null } }) {
+  const { phase, reason } = view;
+  if (phase === "off") return reason && isDesktop() ? <span className="cv-better dim" title={reason} aria-label={reason}>◇</span> : null;
+  if (phase === "need") {
+    const size = sizeLabel(view.bytes);
+    return (
+      <button className="cv-better" title={reason ?? "Better layers"} aria-label={`Better layers: download ${size}`} onClick={() => void link.current?.fetch()}>
+        ⤓ {size}
+      </button>
+    );
+  }
+  if (phase === "fetching")
+    return (
+      <button className="cv-better" title="Stop" aria-label={`Downloading, ${Math.round(view.fetched * 100)}%: stop`} onClick={() => link.current?.cancelFetch()}>
+        <span className="cv-better-bar"><i style={{ width: `${Math.round(view.fetched * 100)}%` }} /></span>✕
+      </button>
+    );
+  if (phase === "failed")
+    return (
+      <button className="cv-better dim" title={reason ?? "Try again"} aria-label="Try the better layers again" onClick={() => link.current?.retry()}>
+        ↻
+      </button>
+    );
+  if (phase === "splitting" || phase === "paused" || phase === "done") {
+    const pct = view.seconds ? Math.round(Math.min(1, view.read / view.seconds) * 100) : 0;
+    return <span className={`cv-better on${phase === "done" ? "" : " busy"}`} title="Better layers" aria-label={phase === "done" ? "Better layers" : `Better layers: ${pct}%`}>≋</span>;
+  }
+  return null;
+}
 
 /**
  * The canvas: while music plays, it paints itself.
@@ -113,6 +155,16 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const filePlayer = useRef<Player | null>(null);
   const reader = useRef<Reader | null>(null);
   const fileLayers = useRef<FileLayers | null>(null);
+  /** the file the song was opened from (the neural split is handed it), and the link to that split */
+  const songFile = useRef<SongFile | null>(null);
+  const stems = useRef<StemLink | null>(null);
+  const [better, setBetter] = useState<LinkView | null>(null);
+  /** a model's guitar and piano stems: which are hidden, and how loud each is now (for the legend) */
+  const [hideSrc, setHideSrc] = useState<string[]>([]);
+  const [srcLv, setSrcLv] = useState<Record<string, number>>({});
+  /** the song's time line: how far it has played, and how far the better layers reach */
+  const lineAt = useRef<HTMLElement>(null);
+  const lineBetter = useRef<HTMLElement>(null);
   const router = useRef(new VoiceRouter({ bass: true, drums: true, fog: "other" }));
   const pick = useRef<HTMLInputElement>(null);
   /** which weaving of the cloth is the current one (a newer one stops an older one) */
@@ -183,7 +235,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     a.drips = drips;
     a.choice = layoutPref;
     a.hidden = hidden;
-  }, [style, drips, layoutPref, hidden]);
+    a.hiddenSources = new Set(hideSrc);
+  }, [style, drips, layoutPref, hidden, hideSrc]);
   // new colours: a new canvas
   const first = useRef(true);
   useEffect(() => {
@@ -294,6 +347,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     let last = performance.now();
     let drawn = 0;
     let told = 0;
+    let lined = 0;
     let gone = false;
     /** the ears on the app's own sound, and the plan they were made for */
     let asking = "";
@@ -417,7 +471,21 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
             out[l] = on ? Math.round(Math.min(1, act.loud) * 10) / 10 : 0;
           }
           setLayerLv((old) => (LAYER_ORDER.every((l) => old[l] === out[l]) ? old : out));
+          const src: Record<string, number> = {};
+          for (const k of SOURCES) src[k] = moving ? Math.round(Math.min(1, a.sourceLevel(k)) * 10) / 10 : 0;
+          setSrcLv((old) => (SOURCES.every((k) => old[k] === src[k]) ? old : src));
           recast();
+        }
+        // the song's time line: where it is, and how far the better layers have been heard
+        if (lv.song && now - lined > 100) {
+          lined = now;
+          const d = Math.max(0.01, lv.song.duration);
+          const span = fileLayers.current?.stemsSpan;
+          if (lineAt.current) lineAt.current.style.transform = `scaleX(${Math.min(1, Math.max(0, (pos ?? 0) / d))})`;
+          if (lineBetter.current) {
+            lineBetter.current.style.left = `${((span?.from ?? 0) / d) * 100}%`;
+            lineBetter.current.style.width = `${span ? (Math.max(0, Math.min(d, span.to) - span.from) / d) * 100 : 0}%`;
+          }
         }
         // the guide: which bars this canvas holds, and (a few times a second) what the mix covers
         const where = spot ?? lv.rest;
@@ -469,7 +537,9 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
       painter.current?.fresh();
       fileLayers.current?.close();
       // heard layer by layer, ahead, from the moment it is opened
+      stems.current?.stop();
       fileLayers.current = new FileLayers(s);
+      songFile.current = file;
       setSong(s);
     } catch {
       toast("Can't read that file as sound");
@@ -477,6 +547,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     setOpening(false);
   };
   const closeSong = () => {
+    stems.current?.stop();
+    songFile.current = null;
     stopSong();
     setSong(null);
     fileLayers.current?.close();
@@ -491,8 +563,24 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   useEffect(() => {
     if (!active) stopSong();
   }, [active, stopSong]);
+  // the neural split, for a song from a file, while the page is on screen (in the desktop app, where it can run): it
+  // starts by itself if all it needs is here, and stops when the song is closed, another is opened or the page is left
+  useEffect(() => {
+    const file = songFile.current;
+    const layers = fileLayers.current;
+    if (!active || !song || !file || !layers) return;
+    const link = new StemLink(file, layers, { onChange: (v) => setBetter(v) });
+    stems.current = link;
+    void link.start();
+    return () => {
+      link.stop();
+      if (stems.current === link) stems.current = null;
+      setBetter(null);
+    };
+  }, [active, song]);
   useEffect(
     () => () => {
+      stems.current?.stop();
       filePlayer.current?.stop();
       fileLayers.current?.close();
     },
@@ -539,6 +627,12 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
         }}
       >
         <div className="cv-host" ref={host} />
+        {song && (
+          <div className="cv-line" aria-hidden="true">
+            <i className="cv-line-at" ref={lineAt} />
+            <i className="cv-line-better" ref={lineBetter} />
+          </div>
+        )}
         <canvas className="cv-tex" ref={tex} />
         <div className="cv-edge" />
         {guide && ruler && (
@@ -559,6 +653,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           <div className="cv-song">
             <button className={`play-btn sm${songOn ? " stop" : ""}`} onClick={() => (songOn ? stopSong() : playSong(song))} aria-label={songOn ? "Stop the song" : "Play the song"}>{songOn ? "■" : "▶"}</button>
             <span className="cv-song-name" title={song.name}>{song.name}</span>
+            {better && <Better view={better} link={stems} />}
             <button className="icon-btn" aria-label="Close the song" title="Close the song" onClick={closeSong}>✕</button>
           </div>
         )}
@@ -579,6 +674,18 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
               <button key={l} className={`cv-layer${off ? " off" : ""}${lvl > 0 ? " live" : ""}`} aria-pressed={!off} title={LAYER_INFO[l].name} aria-label={`${LAYER_INFO[l].name}: ${off ? "hidden" : "shown"}`} style={{ ["--lv" as string]: String(lvl), background: pal.ground }} onClick={() => setPrefs({ hide: off ? (hidePref ?? []).filter((x) => x !== l) : [...(hidePref ?? []), l] })}>
                 {swatches[l] ? <img className="cv-layer-sw" src={swatches[l]} alt="" draggable={false} /> : <span className="cv-layer-sw" />}
                 <span className="cv-layer-name" style={{ color: pal.ink }}>{LAYER_INFO[l].name}</span>
+                <i className="cv-layer-lv" style={{ background: pal.ink }} />
+              </button>
+            );
+          })}
+          {SOURCES.filter((k) => better?.stems.includes(k)).map((k) => {
+            const off = hideSrc.includes(k);
+            const lvl = srcLv[k] ?? 0;
+            const name = k === "guitar" ? "Guitar" : "Piano";
+            return (
+              <button key={k} className={`cv-layer${off ? " off" : ""}${lvl > 0 ? " live" : ""}`} aria-pressed={!off} title={name} aria-label={`${name}: ${off ? "hidden" : "shown"}`} style={{ ["--lv" as string]: String(lvl), background: pal.ground }} onClick={() => setHideSrc(off ? hideSrc.filter((x) => x !== k) : [...hideSrc, k])}>
+                {swatches.chords ? <img className="cv-layer-sw" src={swatches.chords} alt="" draggable={false} /> : <span className="cv-layer-sw" />}
+                <span className="cv-layer-name" style={{ color: pal.ink }}>{name}</span>
                 <i className="cv-layer-lv" style={{ background: pal.ink }} />
               </button>
             );

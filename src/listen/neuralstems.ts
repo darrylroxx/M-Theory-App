@@ -378,10 +378,17 @@ export function deinterleave(buf: ArrayBuffer, channels: number): Float32Array[]
  * shorter (check `readableFrames` first to ask only for what is there).
  */
 export async function readStem(path: string, start: number, frames: number): Promise<Float32Array[]> {
+  return deinterleave(await readStemRaw(path, start, frames), 2);
+}
+
+/**
+ * `readStem` as the native side hands it over: left and right interleaved, 32-bit floats. For
+ * handing straight on to a worker (which takes it apart there), so the page does no work on it.
+ */
+export async function readStemRaw(path: string, start: number, frames: number): Promise<ArrayBuffer> {
   const why = neuralUnavailable(isDesktop());
   if (why) throw new Error(why);
-  const buf = await (await core()).invoke<ArrayBuffer>("stems_read", { path, start: Math.max(0, Math.round(start)), frames: Math.max(0, Math.round(frames)) });
-  return deinterleave(buf, 2);
+  return (await core()).invoke<ArrayBuffer>("stems_read", { path, start: Math.max(0, Math.round(start)), frames: Math.max(0, Math.round(frames)) });
 }
 
 /** Delete every kept stem (the cache); returns the bytes freed. */
