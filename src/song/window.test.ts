@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BARS_SHOWN, barAtBeat, barAtFrac, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, scrolledWindow, shownCount, turnPage, widePage } from "./window";
+import { BARS_SHOWN, barAtBeat, barAtFrac, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, scrolledWindow, showSection, shownCount, turnPage, widePage } from "./window";
 
 describe("bars on screen", () => {
   it("offers 1, 2, 4, 8 bars or the whole section", () => {
@@ -144,5 +144,27 @@ describe("the whole width of the screen", () => {
     expect(widePage("track", 1, 4)).toBe(false);
     expect(widePage("frame", 8, 4)).toBe(false);
     expect(widePage("canvas", 8, 4)).toBe(false);
+  });
+});
+
+describe("the Track page shows the section being worked on", () => {
+  it("stays put while the section is in view", () => {
+    expect(showSection(0, 4, 0, 4)).toBe(0);
+    expect(showSection(4, 8, 8, 4)).toBe(4);
+    expect(showSection(2.5, 8, 4, 4)).toBe(2.5);
+  });
+  it("goes to a section that is off to either side", () => {
+    // four bars on screen at the song's start: section C (bars 8 to 11) is brought in
+    expect(showSection(0, 4, 8, 4)).toBe(8);
+    expect(showSection(8, 4, 0, 4)).toBe(0);
+  });
+  it("goes to a section only partly in view, when all of it fits", () => {
+    expect(showSection(0, 4, 2, 4)).toBe(2);
+    expect(showSection(3, 4, 0, 4)).toBe(0);
+  });
+  it("a section longer than the screen: its start is enough", () => {
+    expect(showSection(0, 4, 0, 8)).toBe(0);
+    expect(showSection(1, 4, 0, 8)).toBe(0);
+    expect(showSection(0, 4, 2, 8)).toBe(0);
   });
 });

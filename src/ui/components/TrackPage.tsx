@@ -10,7 +10,7 @@ import { activeTake, groupsOf } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
-import { shownCount, type BarsShown } from "../../song/window";
+import { showSection, shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
 import { newId, useApp, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
@@ -147,13 +147,46 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
   }, [playing, active, follow, getWhere, sections, starts, bw]);
-  // a section chosen (here or on another page) is brought into view if it is off to one side
-  useEffect(() => {
+  // The section on screen is brought into view if it is off to one side: when it is chosen (here
+  // or on another page) and whenever the page is opened, so what was just written on another page
+  // (a track added there, its chords or notes) is what the page shows.
+  useLayoutEffect(() => {
     const sc = scrollRef.current;
     const x = starts.at[current || "a"];
-    if (!sc || x === undefined || !sc.clientWidth) return;
-    if (x < sc.scrollLeft || x >= sc.scrollLeft + sc.clientWidth - 1) sc.scrollLeft = x;
-  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
+    const sec = sections.find((s) => (s.block || "a") === (current || "a"));
+    if (!active || !sc || x === undefined || !sec || !sc.clientWidth) return;
+    // (the first time the page is shown its bars are not measured yet: how many fit is worked out
+    // from its width now, and once the bars are drawn that wide the lanes go to the same bar again)
+    const left = sc.scrollLeft / bw;
+    const fit = sc.clientWidth / Math.max(MIN_BAR, sc.clientWidth / count);
+    const to = showSection(left, fit, x / bw, sec.bars);
+    if (to !== left) {
+      sc.scrollLeft = to * bw;
+      leftBar.current = to;
+    }
+  }, [current, active]); // eslint-disable-line react-hooks/exhaustive-deps
+  // a track added since the page was last open (on the Chords, Melody, Drums or Vocals page) is
+  // brought into view too, and lit for a moment, so it is seen at once
+  // (another idea opened is not a track added: its tracks are just the ones it has)
+  const seen = useRef<{ idea: string | null | undefined; ids: Set<string> } | null>(null);
+  seen.current ??= { idea: state.ideaId, ids: new Set(tracks.map((t) => t.id)) };
+  const [fresh, setFresh] = useState<string[]>([]);
+  useLayoutEffect(() => {
+    if (!active) return;
+    const before = seen.current;
+    seen.current = { idea: state.ideaId, ids: new Set(tracks.map((t) => t.id)) };
+    const added = before && before.idea === state.ideaId ? tracks.filter((t) => !before.ids.has(t.id)).map((t) => t.id) : [];
+    if (!added.length) return;
+    setFresh(added);
+    const head = scrollRef.current?.closest(".tv")?.querySelector<HTMLElement>(`.tv-head[data-track="${CSS.escape(added[added.length - 1])}"]`);
+    const r = head?.getBoundingClientRect();
+    if (head && r && (r.bottom > window.innerHeight || r.top < 0)) head.scrollIntoView({ block: "nearest" });
+  }, [active, tracks]);
+  useEffect(() => {
+    if (!fresh.length) return;
+    const t = window.setTimeout(() => setFresh([]), 1600);
+    return () => window.clearTimeout(t);
+  }, [fresh]);
 
   const setTrack = (id: TrackId, patch: Partial<TrackMix>) =>
     set((s) => {
@@ -204,7 +237,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
             const on = audible(mix, t.id);
             const db = m?.db ?? 0;
             return (
-              <div key={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}${t.harmony ? " hz" : ""}`} role="group" aria-label={`${t.name} track`}>
+              <div key={t.id} data-track={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}${t.harmony ? " hz" : ""}${fresh.includes(t.id) ? " fresh" : ""}`} role="group" aria-label={`${t.name} track`}>
                 {/* one line: what plays it, its name (a long one is cut short), and ✕ for an added track */}
                 <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
                   {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(state.progression, t.id).inst} />}
@@ -244,7 +277,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
               ))}
             </div>
             {tracks.map((t) => (
-              <div key={t.id} className={`tv-row k-${t.kind}${audible(mix, t.id) ? "" : " quiet"}`}>
+              <div key={t.id} className={`tv-row k-${t.kind}${audible(mix, t.id) ? "" : " quiet"}${fresh.includes(t.id) ? " fresh" : ""}`}>
                 {sections.map((s0) => {
                   const s = content(t, s0);
                   return (
