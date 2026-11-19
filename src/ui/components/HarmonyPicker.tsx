@@ -99,8 +99,8 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
     onClose();
   };
 
-  const layered = menu.filter((x) => !x.option.instead);
-  const instead = menu.filter((x) => x.option.instead);
+  const layered = menu.filter((x) => !x.instead);
+  const instead = menu.filter((x) => x.instead);
   const chip = (x: (typeof menu)[number]) => (
     <button key={x.option.id} className={`chip hz-opt${option === x.option.id ? " on" : ""}${track?.harmony?.option === x.option.id ? " now" : ""}`} disabled={!x.useful} aria-pressed={option === x.option.id} title={x.option.hint} onClick={() => pick(x.option.id)}>
       {x.option.label}
@@ -133,7 +133,7 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
           <div className="hz-opts" role="group" aria-label="With">{layered.map(chip)}</div>
           {instead.length > 0 && (
             <div className="hz-opts hz-instead" role="group" aria-label="Instead of it">
-              <span className="hz-tag" title="Played instead of the track it is written from: that track is muted">Instead</span>
+              <span className="hz-tag" title="Played instead of the chords: they are muted">Instead</span>
               {instead.map(chip)}
             </div>
           )}

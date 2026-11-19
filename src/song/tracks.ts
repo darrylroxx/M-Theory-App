@@ -212,8 +212,26 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
   // tracks written from it keep their notes, but can no longer be written again from it
   const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t) : t));
+  // a re-harmonisation that went: the chords it played instead of are heard again (unless another still replaces them)
+  const gone = p.tracks?.find((t) => t.id === id);
+  const target = gone && insteadTarget(gone, p.tracks ?? []);
+  if (mix && target && mix[target]?.mute && !tracks.some((t) => insteadTarget(t, tracks) === target)) mix[target] = { ...mix[target], mute: false };
   // its instrument goes with it
   return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: mix && Object.keys(mix).length ? mix : undefined }, id), focus);
+}
+
+/**
+ * The chords track a harmony track plays instead of: a re-harmonisation (an Instead option)
+ * replaces the chords it was written from (from a melody: the song's chords, which it re-voices),
+ * and Best fit chooses chords of its own for the tune, so it replaces the song's chords too.
+ * Undefined for a track that plays with its source.
+ */
+export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
+  const h = t.harmony;
+  if (t.kind !== "chords" || !h) return undefined;
+  const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === h.option);
+  if (!opt || !(opt.instead || opt.id === "fit")) return undefined;
+  return h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords";
 }
 
 /** A harmony track without its source (it stays a harmony line; it just can no longer be written again). */
