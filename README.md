@@ -162,6 +162,39 @@ Open **Canvas** and press ▶, or open **any song from a file** (the folder butt
 
 **What it does not show.** Where a sound is from left to right in the stereo field. Notes less than about a semitone apart low down (below 200 Hz the ear's long look cannot separate them). Which instrument a tone came from: a tone is painted for what it is, wherever it came from. The recorded vocal tracks of the Windows app (they play through the recording engine, which the canvas cannot hear); export the song as a WAV and open that to paint everything.
 
+### Stems: a song split into its layers (Windows app)
+
+The Windows app can split a song you open from a file into its **stems**, on your own computer:
+**vocals, drums, bass** and **other** (everything else), or, with the six-stem model, **guitar** and
+**piano** as well (the piano stem is rough). Each layer can then be painted from its own sound
+instead of from the whole mix.
+
+- **What does it.** Demucs v4, a neural network made by Meta's research lab and released as open
+  source (MIT licence), run by Microsoft's ONNX Runtime. It is among the best free separators there
+  are, but stems are never studio-clean: expect a little bleed (a touch of cymbal in the vocals, a
+  little voice in "other"). For seeing what each layer does, that is plenty.
+- **Downloaded once, when you ask.** The model is not in the installer. The first time, the app
+  fetches ONNX Runtime (about 25 MB, from Microsoft's own package) and the model (about 166 MB for
+  four stems, 136 MB for six; builds of the same network range from about 80 to 320 MB), checks each
+  against its fingerprint (SHA-256) and keeps them. A download that is interrupted carries on where
+  it stopped. If it fails, or you never ask, nothing else changes.
+- **How long it takes.** On an ordinary 4-core laptop processor, roughly as long as the song itself
+  (somewhere between half and the whole of its length); with a graphics card Windows can use for it
+  (DirectML, which most recent PCs have), several times faster. The song is worked through from the
+  start, 7.8 seconds at a time, and every stem can be used up to where the work has got, so the
+  painting can start long before the whole song is done.
+- **It keeps out of the music's way.** It uses at most half of the processor, at low priority, and
+  stops completely while you record a take, carrying on when the take is over.
+- **Kept for next time.** Stems are kept in the app's cache folder (32-bit WAV, about 90 MB per stem
+  for a four-minute song), so the same song is ready at once the next time, whatever its file is
+  called. When they take more than about 4 GB, the songs split longest ago make room.
+- **Files it reads:** WAV, MP3, FLAC, OGG (Vorbis) and M4A (AAC or Apple Lossless). Not Opus.
+- **Only in the desktop app.** The web version and the phone app cannot run it; there (and until
+  the model is downloaded) the Canvas uses its quick splits, approximate layers worked out from the
+  sound as it plays.
+- The stems come from your own file and stay on your computer; use them to study and paint. Your
+  rights in the recording are what they were before. Licences and credits: `NOTICE.md`.
+
 ### The colour schemes, and where they come from
 
 | Family | Schemes | Source |

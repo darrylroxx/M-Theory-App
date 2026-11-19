@@ -86,6 +86,38 @@ where numbers or methods were taken they are used under their licences, with tha
   McAulay and Quatieri's partial tracking: following each tone from frame to frame (`ear.ts`).
 - Krumhansl and Kessler's key profiles: hearing the key (`mood.ts`).
 
+Neural stems (`src-tauri/src/stems.rs` and `src-tauri/src/stems/`, `src/listen/neuralstems.ts`)
+are written for this project. The network and the runtime that runs it are **not part of the
+app or its installer**: the desktop app downloads them only when the user asks, checks each
+against its SHA-256, and keeps them in its local data folder. With thanks to their authors:
+
+- **Demucs** (Hybrid Transformer Demucs, v4) by Meta Platforms, Inc. (MIT licence, "Copyright (c)
+  Meta Platforms, Inc."): the network that splits a song into stems. Its trained weights carry no
+  licence text of their own; they were trained on the MUSDB18-HQ set and further songs of its
+  authors'. They are downloaded on request, as exported to ONNX by the **demucs-onnx** project
+  (StemSplit, MIT), from its Hugging Face repositories `StemSplitio/htdemucs-onnx` (four stems)
+  and `StemSplitio/htdemucs-6s-onnx` (six stems). The way a song is cut into 7.8-second
+  stretches, a quarter overlapping and cross-faded, follows Demucs and demucs-onnx.
+- **ONNX Runtime** by Microsoft (MIT licence, "Copyright (c) Microsoft Corporation"): runs the
+  network. Downloaded on request from Microsoft's own packages on the Python Package Index
+  (`onnxruntime-directml` on Windows, which also holds **DirectML.dll**, Microsoft's library for
+  running it on the graphics card, under Microsoft's own terms); its licence and third-party
+  notices are kept beside it.
+- **ort** by pyke.io (MIT OR Apache-2.0): the Rust binding through which the app opens ONNX
+  Runtime. It is built into the app; ONNX Runtime itself is never linked in, only opened at run time.
+- **Symphonia** (MPL-2.0): reading MP3, FLAC, OGG Vorbis, M4A (AAC, ALAC) and WAV files. It is
+  used unmodified, as a library; its source is at https://github.com/pdeljanov/Symphonia.
+- **zip** (MIT) and **sha2** (MIT OR Apache-2.0): unpacking the runtime's package and checking
+  downloads.
+- **stem-splitter-core** by Gentrit Jashari (MIT OR Apache-2.0) was studied for how a Rust
+  program can fetch, check and run this model; none of its code is used.
+- Julius O. Smith III's description of band-limited interpolation ("Digital Audio Resampling"),
+  with a Kaiser window: how a song's sample rate is changed to the network's and back. No code
+  was taken.
+
+The stems are made from the user's own file, on the user's own computer, for the user's own
+study and painting. Rights in the original recording are not changed by splitting it.
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 
