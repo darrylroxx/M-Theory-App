@@ -8,7 +8,7 @@ import { FakeAudio } from "./fakectx";
 import { Harp } from "./plucked";
 import { TrackVoice } from "./trackvoice";
 import { setMix } from "./mix";
-import type { PlayItem } from "./patterns";
+import type { ExtraPlay, PlayItem } from "./patterns";
 import { entryAfter } from "../song/loops";
 
 let live: FakeAudio;
@@ -253,7 +253,6 @@ describe("where the music jumps (a run of the loop that is not next to the one b
     };
     return out;
   }
-  const take = (dur: number) => ({ chords: [], tunes: [], drums: [], takes: [{ track: "v1", buffer: { duration: dur } as unknown as AudioBuffer, at: 0, offset: 0, dur }] });
 
   it("two bits of A whose beats happen to line up (bars 1-2 of the first A, 3-4 of the second): a change still comes in where the first bit ends", () => {
     const read = heard();
@@ -275,51 +274,91 @@ describe("where the music jumps (a run of the loop that is not next to the one b
     expect(notesOf(got)).toEqual([60, 61, 70, 71]);
   });
 
-  it("a take sung over B and on past it stops where B's run ends, so it is not heard over C", () => {
+  /**
+   * A take laid in the song as the page lays it: listed in every section it lies under, at where it
+   * starts counted from that section's start (before it, for the sections after the first), on
+   * every item of each section (the page gives a section's items one `extra`). `from`: the
+   * section it starts in; `dur` in seconds at 120 (2 beats a second).
+   */
+  function lay(items: PlayItem[], map: { block: string }[], from: string, dur: number, buffer = { duration: dur } as unknown as AudioBuffer) {
+    let pos = 0;
+    const startOf: Record<string, number> = {};
+    for (const s of SECS) {
+      startOf[s.block] = pos;
+      pos += s.bars * s.bar;
+    }
+    const extras: Record<string, ExtraPlay> = {};
+    for (const s of SECS) {
+      const rel = startOf[from] - startOf[s.block];
+      if (rel < s.bars * s.bar && rel + dur * 2 > 0) extras[s.block] = { chords: [], tunes: [], drums: [], takes: [{ track: "v1", buffer, at: rel, offset: 0, dur, id: "tk" }] };
+    }
+    return items.map((x, i) => (extras[map[i].block] ? { ...x, extra: extras[map[i].block] } : x));
+  }
+  /** How far into the take each source sounding at `t` is (a stop at 0 is ■, after the test). */
+  const into = (srcs: ReturnType<typeof takes>, t: number) =>
+    srcs.filter((s) => t >= s.when - 1e-9 && t < Math.min(s.when + (s.dur ?? Infinity), ...s.src.stops.filter((w) => w > 0)) - 1e-9).map((s) => s.offset + (t - s.when));
+  const twenty = (srcs: ReturnType<typeof takes>) => srcs.filter((s) => (s.buffer as { duration: number })?.duration === 20);
+
+  it("a take sung over B and on (B to C with the A between, as Vocals records it): B's part over B, stopped where B's run ends, then C's part over C", () => {
     heard();
     const p = new S.ProgressionPlayer();
-    start();
+    const t0 = start();
     const srcs = takes();
     const l = loopOf("b", "c");
-    // a 20 s take that starts with B (sung over B and the A after it)
-    l.items[0] = { ...l.items[0], extra: take(20) };
     l.items[2] = { ...l.items[2], jump: true };
-    p.start(l.items, 120, "ring", true);
+    // a 20 s take from the start of B: B is 6 beats (3 s), the A after it 8 (4 s), so C's part is from 7 s in
+    p.start(lay(l.items, l.map, "b", 20), 120, "ring", true);
+    runTo(t0 + 7.5 + 1);
     p.stop();
-    const tk = srcs.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
-    // B is 6 beats: 3 s at 120
-    expect(tk.dur).toBeCloseTo(3, 6);
+    const tk = twenty(srcs);
+    expect(tk[0]).toMatchObject({ when: t0, offset: 0 });
+    expect(tk[0].dur).toBeCloseTo(3, 6);
+    // where the music jumps to C: the part sung over C, to the loop's end (9 beats, 4.5 s)
+    expect(tk[1].when).toBeCloseTo(t0 + 3, 6);
+    expect(tk[1].offset).toBeCloseTo(7, 6);
+    expect(tk[1].dur).toBeCloseTo(4.5, 6);
+    // round again: from its start, with B
+    expect(tk[2].when).toBeCloseTo(t0 + 7.5, 6);
+    expect(tk[2].offset).toBeCloseTo(0, 6);
+    // never two at once
+    for (let t = t0; t < t0 + 8.5; t += 0.01) expect(into(tk, t).length).toBeLessThanOrEqual(1);
   });
 
-  it("the loop changed while a take sounds: where the music jumps the take stops; where it goes straight on it carries on", () => {
+  it("the loop changed while a take sounds: where the music jumps the take stops; where it goes straight on it carries on, in its place", () => {
     heard();
     const p = new S.ProgressionPlayer();
     const t0 = start();
     const srcs = takes();
     const all = song();
     // playing straight through from B, whose take runs on over the second A
-    all.items[2] = { ...all.items[2], extra: take(20) };
-    p.start(all.items, 120, "ring", false, null, 2);
+    const withTake = lay(all.items, all.map, "b", 20);
+    p.start(withTake, 120, "ring", false, null, 2);
     runTo(t0 + 0.5);
-    const tk = srcs.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
-    // B alone loops now: at B's end it goes round to B again, and the take stops there (B is 3 s)
-    p.queue(loopOf("b").items, true, () => ({ at: 0, on: false }));
+    const tk = twenty(srcs)[0];
+    // B alone loops now: at B's end it goes round to B again, and the take stops there (B is 3 s) and starts again with B
+    const b = loopOf("b");
+    p.queue(lay(b.items, b.map, "b", 20), true, () => ({ at: 0, on: false }));
     runTo(t0 + 3.5);
     expect(tk.src.stops.some((w) => Math.abs(w - (t0 + 3)) < 1e-6)).toBe(true);
+    const again = twenty(srcs);
+    expect(again).toHaveLength(2);
+    expect(again[1].when).toBeCloseTo(t0 + 3, 6);
+    expect(again[1].offset).toBeCloseTo(0, 6);
     p.stop();
 
-    // B looping, the loop let go: on into the second A, straight on: the take is left to play
+    // B looping, the loop let go: on into the second A, straight on: the take goes on from where it is
     const srcs2 = takes();
     const t1 = (live.currentTime = 30) + 0.08;
-    const b = loopOf("b");
-    b.items[0] = { ...b.items[0], extra: take(20) };
-    p.start(b.items, 120, "ring", true);
+    p.start(lay(b.items, b.map, "b", 20), 120, "ring", true);
     runTo(t1 + 0.5);
-    const tk2 = srcs2.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
-    const before = tk2.src.stops.length;
-    p.queue(all.items.map((x, i) => (i === 2 ? b.items[0] : x)), false, () => ({ at: 4, on: true }));
+    p.queue(withTake, false, () => ({ at: 4, on: true }));
     runTo(t1 + 3.5);
-    expect(tk2.src.stops.length).toBe(before);
     p.stop();
+    // heard once all the way, each moment from its own place in the take
+    for (let t = t1; t < t1 + 3.45; t += 0.01) {
+      const got = into(twenty(srcs2), t);
+      expect(got).toHaveLength(1);
+      expect(got[0]).toBeCloseTo(t - t1, 6);
+    }
   });
 });

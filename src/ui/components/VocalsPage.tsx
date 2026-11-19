@@ -3,9 +3,7 @@ import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
 import { renderSong } from "../../audio/synth";
-import { loadTake } from "../../audio/takebuffers";
-import { audioContext } from "../../audio/context";
-import { fader } from "../../audio/mix";
+import { hearAlone, stopAlone } from "../../audio/takeplay";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
 import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
@@ -84,7 +82,7 @@ const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el i
  * and every pass already sung waits in a row: tap one (or press K) to keep it ★. Nothing
  * pops up and nothing moves while singing.
  */
-export function VocalsPage({ active, recordPlan, onRecording, recording, playing, getWhere }: {
+export function VocalsPage({ active, recordPlan, onRecording, recording, playing, getWhere, onAlone }: {
   active: boolean;
   recordPlan: () => RecordPlan | null;
   onRecording: (on: boolean) => void;
@@ -93,6 +91,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   playing: boolean;
   /** which section is sounding and how far into it, while the song plays in the app */
   getWhere: () => { block: string; beat: number } | null;
+  /** a take is about to be heard alone: the song stops */
+  onAlone: () => void;
 }) {
   const { state, set, toast } = useApp();
   const studio = state.studio ?? {};
@@ -293,6 +293,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     atEnd.current = true;
     setMarks(new Set());
     setPass(0);
+    stopAlone();
     onRecording(true);
     setPhase("preparing");
     try {
@@ -434,19 +435,19 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     if (!window.confirm("Remove this recording and all its takes? (The files stay in Music › M-Theory › Recordings.)")) return;
     setTrack((t) => ({ ...t, takes: (t.takes ?? []).filter((x) => x.group !== g), active: Object.fromEntries(Object.entries(t.active ?? {}).filter(([k]) => k !== g)) }));
   };
-  const listen = useRef<AudioBufferSourceNode | null>(null);
+  /** Hear a take alone: the song stops, and so does any take heard alone before (only one is ever heard). */
   const preview = async (tk: Take) => {
-    listen.current?.stop();
+    // (not over a song the interface is playing)
+    if (phaseRef.current !== "idle") return;
+    onAlone();
     // just this take is read from the recording, so it plays from its own start
-    const buf = await loadTake(tk);
-    if (!buf) return toast("Could not read the recording");
-    const c = audioContext();
-    const src = c.createBufferSource();
-    src.buffer = buf;
-    src.connect(fader(track?.id ?? "vocals", c));
-    src.start(c.currentTime + 0.02, 0, tk.frames / tk.rate);
-    listen.current = src;
+    if ((await hearAlone(tk, track?.id ?? "vocals")) === false) toast("Could not read the recording");
   };
+  // a take heard alone stops when the page is left (or goes away)
+  useEffect(() => {
+    if (!active) stopAlone();
+  }, [active]);
+  useEffect(() => () => stopAlone(), []);
   const stale = (track?.takes ?? []).some((t) => !sameSound(t, fx));
   const applySound = async () => {
     if (!track?.takes?.length) return;

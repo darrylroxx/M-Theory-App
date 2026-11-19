@@ -13,6 +13,7 @@ import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune }
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
 import { fader } from "./mix";
+import { TakeRuns } from "./takeplay";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import type { HarpString } from "./harp";
@@ -351,10 +352,8 @@ export class ProgressionPlayer {
   private tTick = 0;
   /** where recent chords started, to tell how far into its section the music is */
   private spans: Anchor[] = [];
-  /** recorded takes that are playing */
-  private sources = new Set<AudioBufferSourceNode>();
-  /** the next item scheduled starts a pass (play pressed, or the loop came round): takes already under way start part-way */
-  private fresh = true;
+  /** recorded takes: each one heard once, where it lies under the music (see TakeRuns) */
+  private takes = new TakeRuns();
   /** the synth tracks' notes, section by section */
   private synthNotes: SynthCache = new Map();
   /**
@@ -505,17 +504,10 @@ export class ProgressionPlayer {
     const p = this.pending!;
     this.pending = null;
     const e = p.entry(this.nextIndex);
-    const { at: want, on } = typeof e === "number" ? { at: e, on: false } : e;
+    const want = typeof e === "number" ? e : e.at;
     const at = Math.max(0, Math.min(p.items.length - (p.loop ? 1 : 0), Math.round(want)));
-    // the music jumps: a take sung over what came before is not heard over what comes now
-    if (!on)
-      for (const src of this.sources) {
-        try {
-          src.stop(this.nextTime);
-        } catch {
-          /* already ended */
-        }
-      }
+    // (where the music jumps, a take sung over what came before stops there, and where it goes straight on, one
+    // under way carries on: the next item scheduled says which takes lie under it, and where)
     this.gen++;
     this.before = this.items;
     this.setItems(p.items);
@@ -524,7 +516,6 @@ export class ProgressionPlayer {
     this.passBeat = p.items.slice(0, at).reduce((a, x) => a + x.beats, 0);
     // (it may go on in the middle of a section: the drums and the melody count from that section's start)
     this.origin = this.secs.origin[at] ?? this.passBeat;
-    this.fresh = true;
   }
 
   private schedule() {
@@ -542,7 +533,6 @@ export class ProgressionPlayer {
         }
         this.nextIndex = 0;
         this.passBeat = 0;
-        this.fresh = true;
       }
       const i = this.nextIndex;
       const item = this.items[i];
@@ -585,25 +575,12 @@ export class ProgressionPlayer {
               t0,
               chords: run.filter((x) => x.track === ch.track),
             }));
-        // recorded takes: from their start, or part-way in when playing starts in the middle of one
-        for (const tk of ex.takes ?? []) {
-          const starts = tk.at >= s0 - 1e-6 && tk.at < s1 - 1e-6;
-          const under = this.fresh && tk.at < s0 - 1e-6 && tk.at + tk.dur / spb > s0;
-          if (!starts && !under) continue;
-          const src = c.createBufferSource();
-          src.buffer = tk.buffer;
-          src.connect(fader(tk.track, c));
-          const skip = starts ? 0 : (s0 - tk.at) * spb;
-          // going round, a take stops where the loop ends (the next time round starts it again), or where the music jumps
-          let ahead = 0;
-          for (let j = i; j < items.length && (j === i || !items[j].jump); j++) ahead += items[j].beats;
-          const left = this.loop ? (ahead - (starts ? tk.at - s0 : 0)) * spb : Infinity;
-          src.start(Math.max(c.currentTime, t + (starts ? (tk.at - s0) * spb : 0)), tk.offset + skip, Math.max(0.01, Math.min(tk.dur - skip, left)));
-          this.sources.add(src);
-          src.onended = () => this.sources.delete(src);
-        }
       }
-      this.fresh = false;
+      // recorded takes: whatever lies under this item, each heard once, in its place; going round, none runs past
+      // where the loop ends (the next time round starts it again), nor past where the music jumps
+      let ahead = 0;
+      for (let j = i; j < items.length && (j === i || !items[j].jump); j++) ahead += items[j].beats;
+      this.takes.item(c, ex?.takes, { t, s0, s1: s0 + item.beats, spb, now: c.currentTime, until: this.loop ? t + ahead * spb : Infinity });
       // every drums track's grid re-locks to each chord; an added one joins when it first has a beat
       if (!this.lanes.has(FIRST_DRUMS)) this.lanes.set(FIRST_DRUMS, { anchors: [], cur: null, step: 0, div: this.beat?.div ?? 4, synced: this.beat });
       for (const d of ex?.drums ?? []) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div, synced: null });
@@ -760,15 +737,7 @@ export class ProgressionPlayer {
     this.lanes.clear();
     // (a fresh cache: what each section's melody was played up to goes with it)
     this.synthNotes = new Map();
-    this.fresh = true;
-    for (const src of this.sources) {
-      try {
-        src.stop();
-      } catch {
-        /* already ended */
-      }
-    }
-    this.sources.clear();
+    this.takes.stopAll();
     this.drumMarks = [];
     this.onDrumStep(-1);
     dropPulses();
@@ -818,6 +787,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       return v;
     };
     const cache: SynthCache = new Map();
+    const takes = new TakeRuns();
     const secs = sectionsOf(items);
     const synced = new Map<string, Beat>();
     const syncAt = (track: string, b: Beat | null, at: number) => {
@@ -905,19 +875,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       }
       // the takes, as the live player plays them: one under way where the loop starts comes in part-way,
       // and going round (folded) none runs past the end, where it would come round again over itself
-      for (const tk of ex?.takes ?? []) {
-        if (tk.track === o.skip) continue;
-        const starts = tk.at >= s0 - 1e-6 && tk.at < s1 - 1e-6;
-        const under = i === 0 && tk.at < s0 - 1e-6 && tk.at + tk.dur / spb > s0;
-        if (!starts && !under) continue;
-        const skip = starts ? 0 : (s0 - tk.at) * spb;
-        const when = t + (starts ? (tk.at - s0) * spb : 0);
-        const left = o.fold === false ? Infinity : beats * spb - when;
-        const src = off.createBufferSource();
-        src.buffer = tk.buffer;
-        src.connect(fader(tk.track, off));
-        src.start(when, tk.offset + skip, Math.max(0.01, Math.min(tk.dur - skip, left)));
-      }
+      takes.item(off, ex?.takes, { t, s0, s1, spb, now: 0, until: o.fold === false ? Infinity : beats * spb, skip: o.skip });
       at += item.beats;
     });
     // every noise bed stops where the song ends, as live: a looping bed would otherwise hiss on
