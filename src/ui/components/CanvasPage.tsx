@@ -158,6 +158,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
       return;
     }
     painter.current = p;
+    // (while developing, the painter can be looked at from outside the page: the scripts that test the canvas in a browser do)
+    if (import.meta.env.DEV) (window as unknown as { __canvas: unknown }).__canvas = { painter: p, files: fileLayers };
     return () => {
       p.destroy();
       painter.current = null;

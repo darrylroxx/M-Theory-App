@@ -1,44 +1,31 @@
 /**
  * The page's side of hearing a song from a file layer by layer: the song is handed to a worker
  * (`layers.worker.ts`) as soon as it is opened, and what each layer did comes back, well ahead
- * of where the song is playing, and is kept here until the painting asks for it.
+ * of where the song is playing, and is kept (`store.ts`) until the painting asks for it.
+ *
+ * A trained model's stems (the desktop app's engine writes each stem to a file and says how far
+ * all of them are ready) can take over at any time: `useStems` says which stems, at what rate,
+ * and from which second of the song; `pushStems` hands over each stretch as it is read from the
+ * files (in order, every stem the same length); `endStems` says they are complete. Wherever
+ * they have been heard, the painting is made from them instead of the quick split.
  */
 import type { Frame } from "./ear";
-import type { LayerFrames } from "./layers";
+import type { StemStretch } from "./pushed";
 import type { Song } from "./songfile";
+import type { StemName } from "./split";
+import { LayerStore } from "./store";
 import type { FromWorker, ToWorker } from "./layers.worker";
 import type { LayerKind } from "../canvas/layers";
 import LayersWorker from "./layers.worker.ts?worker";
 
 let next = 1;
 
-/** Frames kept in time order, handed out by time. */
-class Track {
-  frames: Frame[] = [];
-  /** where the last asking ended */
-  private cursor = 0;
-  constructor(readonly key: string, readonly layer: LayerKind) {}
-  /** The frames after `from` up to `to` (seconds). */
-  between(from: number, to: number): Frame[] {
-    const fs = this.frames;
-    // the song went back: look again from the start
-    if (this.cursor > 0 && (this.cursor > fs.length || fs[this.cursor - 1].t > from)) this.cursor = 0;
-    let i = this.cursor;
-    while (i < fs.length && fs[i].t <= from) i++;
-    const out: Frame[] = [];
-    while (i < fs.length && fs[i].t <= to) out.push(fs[i++]);
-    this.cursor = i;
-    return out;
-  }
-}
-
 export class FileLayers {
   private readonly worker: Worker | null;
   private readonly id = next++;
-  private readonly mix = new Track("mix", "other");
-  private readonly tracks = new Map<string, Track>();
-  /** how far into the song everything has been heard (seconds) */
-  heardTo = 0;
+  private readonly store = new LayerStore();
+  /** which handing over of a model's stems is the current one */
+  private pass = 0;
   /** the song's vibe, as far as it is known, and whether it is the whole song's */
   vibe: Float32Array | null = null;
   vibeFinal = false;
@@ -62,8 +49,11 @@ export class FileLayers {
     const b = song.buffer;
     const left = b.getChannelData(0).slice();
     const right = (b.numberOfChannels > 1 ? b.getChannelData(1) : b.getChannelData(0)).slice();
-    const msg: ToWorker = { type: "open", id: this.id, sr: b.sampleRate, left, right, ref: song.ref };
-    w.postMessage(msg, [left.buffer, right.buffer]);
+    this.post({ type: "open", id: this.id, sr: b.sampleRate, left, right, ref: song.ref }, [left.buffer, right.buffer]);
+  }
+
+  private post(m: ToWorker, transfer: Transferable[] = []) {
+    this.worker?.postMessage(m, transfer);
   }
 
   private take(m: FromWorker) {
@@ -73,32 +63,56 @@ export class FileLayers {
       this.vibe = m.fp;
       this.vibeFinal = m.final;
       this.bpm = m.bpm;
-    } else if (m.type === "heard") {
-      for (const f of m.mix) this.mix.frames.push(f);
-      for (const lf of m.layers as LayerFrames[]) {
-        let t = this.tracks.get(lf.key);
-        if (!t) this.tracks.set(lf.key, (t = new Track(lf.key, lf.layer)));
-        for (const f of lf.frames) t.frames.push(f);
-      }
-      this.heardTo = m.to;
-    }
+    } else if (m.type === "heard") this.store.addFirst(m.mix, m.layers, m.to);
+    else if (m.type === "better" && m.pass === this.pass) this.store.addBetter(m.layers, m.to);
+  }
+
+  /** How far into the song everything has been heard (seconds). */
+  get heardTo() {
+    return this.store.heardTo;
+  }
+  /** How far a model's stems have been heard, from where they took over (null: none). */
+  get stemsSpan() {
+    return this.store.betterSpan;
+  }
+
+  /**
+   * A trained model's stems take over from `from` seconds of the song (0: all of it): `names` are
+   * the stems that will be handed over, `rate` their sample rate (the song's, as the engine
+   * decoded it; it may differ from the page's).
+   */
+  useStems(names: StemName[], rate: number, from = 0) {
+    this.pass++;
+    this.store.beginBetter(Math.max(0, from));
+    this.post({ type: "stems", id: this.id, pass: this.pass, names, rate, from: Math.max(0, from) });
+  }
+  /**
+   * The model's stems from frame `at` (at their own rate) on, each as its channels (left and
+   * right): every stem the same number of frames, handed over in order as the engine makes
+   * them. (The arrays are handed to the worker: they are not usable here afterwards.)
+   */
+  pushStems(at: number, stretch: StemStretch) {
+    const transfer: Transferable[] = [];
+    for (const ch of Object.values(stretch)) for (const c of ch ?? []) if (!transfer.includes(c.buffer)) transfer.push(c.buffer);
+    this.post({ type: "stem-data", id: this.id, at, stretch }, transfer);
+  }
+  /** Every stem of the model has been handed over. */
+  endStems() {
+    this.post({ type: "stems-end", id: this.id });
   }
 
   /** Is everything up to `t` seconds heard? */
   ready(t: number) {
-    return !this.failed && this.heardTo >= t;
+    return !this.failed && this.store.ready(t);
   }
 
   /** What was heard after `from` up to `to` seconds: the whole mix, and each layer. */
   between(from: number, to: number): { mix: Frame[]; ears: { key: string; layer: LayerKind; frames: Frame[] }[] } {
-    return {
-      mix: this.mix.between(from, to),
-      ears: [...this.tracks.values()].map((t) => ({ key: t.key, layer: t.layer, frames: t.between(from, to) })),
-    };
+    return this.store.between(from, to);
   }
 
   close() {
-    this.worker?.postMessage({ type: "close" } satisfies ToWorker);
+    this.post({ type: "close" });
     this.worker?.terminate();
   }
 }

@@ -218,6 +218,9 @@ export class Rings extends Layout {
   }
 }
 
+/** How far a flower turns as it grows to its full size (radians). */
+const TWIST = 1.1;
+
 /** Each section opens from its own point. */
 export class Bloom extends Layout {
   readonly id = "bloom" as const;
@@ -228,16 +231,24 @@ export class Bloom extends Layout {
     const rho = 0.3 * Math.sqrt((k + 0.5) / 9);
     return { x: this.w * (0.5 + rho * Math.cos(a)), y: this.h * (0.5 + 0.8 * rho * Math.sin(a)) };
   }
-  place(w: When, up: number): Place {
+  /** Where a moment of a section goes in its flower, `into` seconds into it. */
+  private spot(w: When, into: number, up: number) {
     const { x: cx, y: cy } = this.anchor(w.index);
-    const grown = Math.sqrt(clamp(w.into / Math.max(1, w.length)));
+    const grown = Math.sqrt(clamp(into / Math.max(1, w.length)));
     const R = 0.42 * Math.min(this.w, this.h) * (0.85 + 0.3 * hash(w.index * 31 + 7));
     const r = R * (0.07 + 0.93 * grown);
-    // low notes point down, high notes up, on one side and then the other, bar by bar
-    const barNo = Math.floor(w.into / Math.max(0.2, w.bar));
+    // low notes point down, high notes up, on one side and then the other, bar by bar; and the whole flower turns a
+    // little as it grows, so a held note curls out like a petal rather than shooting out straight
+    const barNo = Math.floor(into / Math.max(0.2, w.bar));
     const side = barNo % 2 === 0 ? 1 : -1;
-    const th = Math.PI / 2 + side * Math.PI * clamp(up);
-    return { x: cx + r * Math.cos(th), y: cy + r * Math.sin(th), dx: Math.cos(th), dy: Math.sin(th), seg: w.jump * 4096 + w.index * 64 + barNo, scale: 0.5 + 0.5 * grown };
+    const th = Math.PI / 2 + side * Math.PI * clamp(up) + TWIST * grown;
+    return { x: cx + r * Math.cos(th), y: cy + r * Math.sin(th), barNo, grown };
+  }
+  place(w: When, up: number): Place {
+    const a = this.spot(w, w.into, up);
+    const b = this.spot(w, w.into + 0.05, up);
+    const d = Math.hypot(b.x - a.x, b.y - a.y) || 1;
+    return { x: a.x, y: a.y, dx: (b.x - a.x) / d, dy: (b.y - a.y) / d, seg: w.jump * 4096 + w.index * 64 + a.barNo, scale: 0.5 + 0.5 * a.grown };
   }
   get ruler() {
     return false;

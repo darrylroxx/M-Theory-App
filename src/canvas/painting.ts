@@ -118,6 +118,8 @@ export class Artist {
   choice: LayoutId | "auto" = "auto";
   private chooser = new LayoutChooser();
   private settled = false;
+  /** 1 just after the layout changed, dying away over a few seconds: the old layout's paint sinks back meanwhile */
+  private turnover = 0;
   /** layers not painted */
   hidden = new Set<LayerKind>();
   style: PaintStyle = "auto";
@@ -280,6 +282,8 @@ export class Artist {
     const early = !this.known && this.vibe.heard < SETTLE;
     const id = this.choice !== "auto" ? this.choice : early ? "river" : this.chooser.pick(this.look.layouts, t, bar, settle);
     if (id !== this.layout.id) {
+      // (what was painted in the old layout sinks back for a few seconds, under the new one: a ghost, not a muddle)
+      if (this.made > 0) this.turnover = 1;
       this.layout = makeLayout(id);
       this.layout.size(this.w, this.h);
       this.lift();
@@ -290,8 +294,14 @@ export class Artist {
   /** Paint what was heard. */
   hear(h: Heard) {
     if (!this.w) return;
+    if (this.now >= 0 && h.now < this.now - 0.5) {
+      // the music went back (a song from a file, played again): what played later has not played yet
+      this.lift();
+      for (const l of LAYERS) this.activity[l] = { last: -99, loud: 0, cue: 0 };
+    }
     const dt = this.now < 0 ? 1 / 60 : clamp(h.now - this.now, 0, 0.25);
     this.now = h.now;
+    this.turnover *= Math.exp(-dt / 5);
     for (const f of h.mix) {
       this.mood.take(f);
       if (!this.known) this.vibe.take(f);
@@ -378,9 +388,9 @@ export class Artist {
     if (!this.known) this.vibe.roles(levels, dt);
   }
 
-  /** How fast old paint should fade now: the chosen fade, and the sinking the budget calls for. */
+  /** How fast old paint should fade now: the chosen fade, the sinking the budget calls for, and a layout just left. */
   fadeRate(chosen: number) {
-    return chosen + this.budget.sink();
+    return chosen + this.budget.sink() + 0.18 * this.turnover;
   }
 }
 
@@ -476,7 +486,8 @@ export class Painting {
       this.measured += dt;
       if (this.measured > 0.3) {
         this.measured = 0;
-        a.budget.observe(this.sim.measure(a.budget.cols, a.budget.rows));
+        const seen = this.sim.measure(a.budget.cols, a.budget.rows);
+        if (seen) a.budget.observe(seen);
       }
     }
     return busy;

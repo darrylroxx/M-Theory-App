@@ -24,7 +24,7 @@ describe("a bank of ears on the audio thread", () => {
     expect(worst.staggered).toBeLessThanOrEqual(2);
   });
 
-  it("every ear still hears a frame every hundredth of a second, stamped on the audio clock", () => {
+  it("every ear hears a frame every hundredth of a second (one that gives only a texture, every other), stamped on the audio clock", () => {
     const bank = new EarBank(SR, [{ key: "mix", light: false }, { key: "drums", light: true }, { key: "v1", light: false }]);
     const count = new Map<string, number>();
     let last = -1;
@@ -40,8 +40,9 @@ describe("a bank of ears on the audio thread", () => {
         }
       }
     }
-    // two seconds of sound: about two hundred frames each (less the first look's worth)
-    for (const k of ["mix", "drums", "v1"]) expect(count.get(k)).toBeGreaterThan(190);
+    // two seconds of sound: about two hundred frames each (less the first look's worth), a hundred for the light ear
+    for (const k of ["mix", "v1"]) expect(count.get(k)).toBeGreaterThan(190);
+    expect(count.get("drums")).toBeGreaterThan(95);
   });
 
   it("a track is heard against the loudness of the whole mix: a quiet part of a loud song is quiet", () => {

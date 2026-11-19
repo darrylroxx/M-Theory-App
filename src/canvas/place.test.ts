@@ -102,6 +102,12 @@ describe("layouts: where each moment of each layer goes", () => {
     };
     expect(dist(12)).toBeGreaterThan(dist(4));
     expect(dist(4)).toBeGreaterThan(dist(0.2));
+    // a held note curls out like a petal: within one bar its way round the flower turns, it does not run straight out
+    const angle = (into: number) => {
+      const p = b.place({ ...sec, into, bar: 4 }, 0.5);
+      return Math.atan2(p.y - anchors[2].y, p.x - anchors[2].x);
+    };
+    expect(Math.abs(angle(3.9) - angle(0.4))).toBeGreaterThan(0.25);
   });
 
   it("the field: every layer is carried across the whole canvas by a current of its own, so they cross and weave", () => {

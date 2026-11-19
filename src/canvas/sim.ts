@@ -419,6 +419,9 @@ interface Target {
   tex: WebGLTexture;
 }
 
+/** Can this device run the paint (asked once)? */
+let canRun: boolean | null = null;
+
 export class Sim {
   readonly canvas: HTMLCanvasElement;
   private gl: WebGL2RenderingContext;
@@ -437,7 +440,7 @@ export class Sim {
   private progShow: WebGLProgram;
   private progCopy: WebGLProgram;
   private progMeasure: WebGLProgram;
-  private measured: { tex: WebGLTexture; cols: number; rows: number; out: Uint8Array } | null = null;
+  private measured: { tex: WebGLTexture; bufs: { buf: WebGLBuffer; fence: WebGLSync | null }[]; next: number; cols: number; rows: number; out: Uint8Array } | null = null;
   /** how far the canvas has drifted and not yet been moved (less than a pixel) */
   private driftAcc = { x: 0, y: 0 };
   /** how far it was moved at the last step (whole pixels) */
@@ -456,13 +459,17 @@ export class Sim {
 
   /** Can this browser run the paint at all? */
   static supported(): boolean {
+    // (asked once: every asking makes a graphics context of its own, and a page may only have a few)
+    if (canRun !== null) return canRun;
     try {
       const c = document.createElement("canvas");
       const gl = c.getContext("webgl2");
-      return !!gl && !!(gl.getExtension("EXT_color_buffer_float") || gl.getExtension("EXT_color_buffer_half_float"));
+      canRun = !!gl && !!(gl.getExtension("EXT_color_buffer_float") || gl.getExtension("EXT_color_buffer_half_float"));
+      gl?.getExtension("WEBGL_lose_context")?.loseContext();
     } catch {
-      return false;
+      canRun = false;
     }
+    return canRun;
   }
 
   constructor(canvas: HTMLCanvasElement) {
@@ -758,21 +765,59 @@ export class Sim {
   /**
    * How much of the canvas is painted, cell by cell on a coarse grid (`cols` by `rows`, top row
    * first): for each cell, the part of it where the paint stands out from the ground.
+   *
+   * Reading pixels back from the graphics card at once would make the page wait for everything
+   * the card has still to draw (a stall the browser warns of). So the grid is drawn and copied
+   * into a buffer of the card's own, and read a call later, once the card says it is done (two
+   * buffers taken in turn): a call answers with the grid that has come back since the last call
+   * (null if none has).
    */
-  measure(cols: number, rows: number): Float32Array {
+  measure(cols: number, rows: number): Float32Array | null {
     const gl = this.gl;
-    const out = new Float32Array(cols * rows);
-    if (!this.wet || !this.dry || !this.light) return out;
+    if (!this.wet || !this.dry || !this.light) return null;
     let m = this.measured;
+    let back: Float32Array | null = null;
     if (!m || m.cols !== cols || m.rows !== rows) {
-      if (m) gl.deleteTexture(m.tex);
+      if (m) {
+        gl.deleteTexture(m.tex);
+        for (const b of m.bufs) {
+          gl.deleteBuffer(b.buf);
+          if (b.fence) gl.deleteSync(b.fence);
+        }
+      }
       const tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_2D, tex);
       gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, cols, rows, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
       gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
-      m = this.measured = { tex, cols, rows, out: new Uint8Array(cols * rows * 4) };
+      // (two buffers, taken in turn: one is read while the other is being filled)
+      const bufs = [0, 1].map(() => {
+        const buf = gl.createBuffer()!;
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+        gl.bufferData(gl.PIXEL_PACK_BUFFER, cols * rows * 4, gl.STREAM_READ);
+        return { buf, fence: null as WebGLSync | null };
+      });
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      m = this.measured = { tex, bufs, next: 0, cols, rows, out: new Uint8Array(cols * rows * 4) };
     }
+    // the grid asked for longest ago: back yet? (if not, nothing new is asked for either)
+    const old = m.bufs[(m.next + 1) % 2];
+    if (old.fence) {
+      const st = gl.clientWaitSync(old.fence, 0, 0);
+      if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) return null;
+      gl.deleteSync(old.fence);
+      old.fence = null;
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, old.buf);
+      gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, m.out);
+      gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+      const out = new Float32Array(cols * rows);
+      // (the texture's rows run bottom to top)
+      for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) out[(rows - 1 - y) * cols + x] = m.out[(y * cols + x) * 4] / 255;
+      back = out;
+    }
+    const now = m.bufs[m.next];
+    if (now.fence) return back;
+    // ask for the next one
     gl.bindFramebuffer(gl.FRAMEBUFFER, this.fboOne);
     gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, m.tex, 0);
     gl.drawBuffers([gl.COLOR_ATTACHMENT0]);
@@ -790,11 +835,14 @@ export class Sim {
     gl.uniform3f(this.u(p, "uGround"), this.ground[0], this.ground[1], this.ground[2]);
     gl.bindVertexArray(this.quad);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
-    gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, m.out);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, now.buf);
+    gl.readPixels(0, 0, cols, rows, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    now.fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    m.next = (m.next + 1) % 2;
     gl.viewport(0, 0, this.w, this.h);
-    // (the texture's rows run bottom to top)
-    for (let y = 0; y < rows; y++) for (let x = 0; x < cols; x++) out[(rows - 1 - y) * cols + x] = m.out[(y * cols + x) * 4] / 255;
-    return out;
+    return back;
   }
 
   /** Is any paint still wet? (So the canvas can rest when everything has set.) */
@@ -807,6 +855,11 @@ export class Sim {
   }
   touched() {
     this.idle = 0;
+  }
+
+  /** Has the graphics card taken its context back (it can, under pressure)? */
+  get lost() {
+    return this.gl.isContextLost();
   }
 
   destroy() {

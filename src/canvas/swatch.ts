@@ -69,7 +69,7 @@ function phrase(layer: LayerKind, hand: LayerHand, step: (t: number) => void) {
     }
     case "vocals": {
       // a voice, heard as an ear hears it: a pitch that wavers, and its breath
-      hand.texture = { bright: 0.55, rough: 0.35, level: 0.7 };
+      hand.texture = { bright: 0.55, rough: 0.35, level: 0.7, floor: 0.7 };
       events.push(at(0.1, () => hand.start({ id: 50, t: 0.1, hz: hzOfMidi(64), amp: 0.8, attack: 0.2, bright: 0.55, rough: 0.35 })));
       for (let t = 0.12; t < 1.8; t += 1 / 60) {
         const hz = hzOfMidi(64 + (t > 1 ? 2 : 0)) * (1 + 0.012 * Math.sin(2 * Math.PI * 5.5 * t) * Math.min(1, t * 2));
@@ -79,7 +79,7 @@ function phrase(layer: LayerKind, hand: LayerHand, step: (t: number) => void) {
       break;
     }
     case "other":
-      hand.texture = { bright: 0.5, rough: 0.3, level: 0.75 };
+      hand.texture = { bright: 0.5, rough: 0.3, level: 0.75, floor: 0.75 };
       break;
   }
   events.sort((a, b) => a.t - b.t);
@@ -96,18 +96,24 @@ function phrase(layer: LayerKind, hand: LayerHand, step: (t: number) => void) {
  */
 export function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scale = [0, 2, 4, 5, 7, 9, 11]): Record<LayerKind, HTMLCanvasElement> | null {
   if (typeof document === "undefined" || !Sim.supported()) return null;
-  const strip = document.createElement("canvas");
-  let sim: Sim;
-  try {
-    sim = new Sim(strip);
-  } catch {
-    return null;
+  // (one strip of wet paint is kept for every painting of the swatches: making a graphics context each time is slow,
+  // and a page may only have a few)
+  if (!kept || kept.sim.lost) {
+    const strip = document.createElement("canvas");
+    try {
+      kept = { strip, sim: new Sim(strip) };
+    } catch {
+      kept = null;
+      return null;
+    }
   }
+  const { strip, sim } = kept;
   const n = LAYER_ORDER.length;
   const W = SWATCH_W;
   const H = SWATCH_H;
   sim.size(W * n, H);
   sim.setGround(hexToRgb(pal.ground));
+  sim.clear();
   const c = layerColours(pal, turn, light);
   const palette: RGB[] = pal.colors.map(hexToRgb);
   const map = noteColors(tonic, scale, palette.length);
@@ -145,6 +151,8 @@ export function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scal
     cv.getContext("2d")!.drawImage(strip, k * W, 0, W, H, 0, 0, W, H);
     out[layer] = cv;
   });
-  sim.destroy();
   return out;
 }
+
+/** The strip the swatches are painted on, kept from one painting of them to the next. */
+let kept: { strip: HTMLCanvasElement; sim: Sim } | null = null;

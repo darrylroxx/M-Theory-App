@@ -59,6 +59,10 @@ export interface EarOptions {
   phase?: number;
   /** only levels, brightness, hits and noise: no tones followed and no shape (for a layer whose notes are known) */
   light?: boolean;
+  /** the second of the stream its first sample is (an ear that begins part way through a song keeps the song's clock) */
+  start?: number;
+  /** a frame every this many hundredths of a second (an ear that only gives a track's texture need not hear it a hundred times a second) */
+  every?: number;
 }
 
 export interface Voice {
@@ -182,6 +186,8 @@ export class Ear {
   private readonly ring = new Float32Array(8192);
   private pos = 0;
   private count = 0;
+  /** the count it began at */
+  private first = 0;
   private sinceHop = 0;
   private readonly long = new FFT(4096);
   private readonly mid = new FFT(2048);
@@ -215,7 +221,7 @@ export class Ear {
   /** `ref`: how loud the loudest parts are expected to be (dBFS), if known. Otherwise the first sounds set it. */
   constructor(sr: number, ref = -54, opts: EarOptions = {}) {
     this.sr = sr;
-    this.hop = Math.round(sr / 100);
+    this.hop = Math.round(sr / 100) * Math.max(1, Math.round(opts.every ?? 1));
     this.ref = ref;
     this.hitPlan = plan(HIT_BANDS, 4, sr, 1024);
     this.noisePlan = plan(NOISE_BANDS, 3, sr, 2048);
@@ -223,6 +229,7 @@ export class Ear {
     // a later phase: this ear's first frame comes that much of a hop later, and so do all the rest
     this.sinceHop = -Math.round((((opts.phase ?? 0) % 1) + 1) % 1 * this.hop);
     this.melPlan = melPlan(sr);
+    this.count = this.first = Math.max(0, Math.round((opts.start ?? 0) * sr));
   }
 
   /** Share another ear's sense of the loudest thing heard lately (dB, tilted): never read levels against less. */
@@ -249,7 +256,7 @@ export class Ear {
       this.count++;
       if (++this.sinceHop >= this.hop) {
         this.sinceHop = 0;
-        if (this.count >= 1024) out.push(this.frame());
+        if (this.count - this.first >= 1024) out.push(this.frame());
       }
     }
     return out;

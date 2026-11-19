@@ -109,4 +109,35 @@ describe("the artist: how much is playing sets how much is painted", () => {
     run(5, [], 4);
     expect(a.layout.id).toBe("rings");
   });
+
+  it("when the layout changes, what was painted in the old one sinks back for a few seconds under the new", () => {
+    const { a, run } = artist();
+    // (beyond what the budget sinks of itself when the canvas is fuller than the music calls for)
+    const turnover = () => a.fadeRate(0) - a.budget.sink();
+    a.choice = "river";
+    run(4, song(["chords", "melody"], 0.7, 4));
+    expect(turnover()).toBeLessThan(0.01);
+    a.choice = "rings";
+    run(4.2, song(["chords", "melody"], 0.7, 4.2), 4);
+    expect(turnover()).toBeGreaterThan(0.12);
+    run(20, [], 4.2);
+    expect(turnover()).toBeLessThan(0.01);
+  });
+
+  it("a song played again from the start begins afresh: nothing it played later counts as playing now", () => {
+    const { a, marks, run } = artist();
+    run(6, song(["drums", "melody"], 0.8, 6));
+    expect(a.activity.drums.last).toBeGreaterThan(5);
+    // back to the start, with nothing playing yet
+    a.hear({ now: 0.05, when: fileWhen(16, 2, 2), mix: [] });
+    expect(a.activity.drums.last).toBeLessThan(0);
+    expect(a.activity.melody.loud).toBe(0);
+    expect([...a.hands.values()].every((h) => h.down === 0)).toBe(true);
+    // and its hands paint again as it plays again
+    void marks;
+    const strokes = () => [...a.hands.values()].reduce((n, h) => n + h.made, 0);
+    const before = strokes();
+    run(2, song(["melody"], 0.8, 2), 0.1);
+    expect(strokes()).toBeGreaterThan(before);
+  });
 });

@@ -5,11 +5,12 @@ import { reviveTracks } from "../song/tracks";
 import { hexToRgb, luminance } from "./color";
 import { cueOfPulse } from "./cues";
 import { LAYERS, LAYER_INFO, LAYER_ORDER, layerColours, layerOfTrack, type LayerKind } from "./layers";
-import { MARGIN, hzOfMidi, noteColors, yOfHz } from "./layout";
+import { MARGIN, hzOfMidi, noteColors, upOfHz, yOfHz } from "./layout";
 import { PALETTES, getPalette } from "./palettes";
 import { yOfUp } from "./place";
 import { reflOf, type Stamp } from "./sim";
 import { LayerHand, type Cue, type Manner } from "./strokes";
+import { NOISE_BANDS, noiseHz, type Frame, type Voice } from "../listen/ear";
 
 const W = 1000;
 const H = 560;
@@ -143,7 +144,7 @@ describe("each layer paints in its own kind of paint", () => {
   const vocals = play("vocals", [note(0.2, 64, 1.8, { attack: 0.2, rough: 0.4 })], 2.4);
   const fog = (() => {
     const { h, marks } = hand("other");
-    h.texture = { bright: 0.5, rough: 0.3, level: 0.7 };
+    h.texture = { bright: 0.5, rough: 0.3, level: 0.7, floor: 0.7 };
     for (let t = 0; t < 3; t += 1 / 60) h.advance(t);
     return marks;
   })();
@@ -308,6 +309,97 @@ describe("the marks answer the sound", () => {
     const key = (m: Stamp[]) => m.slice(0, 30).map((s) => `${s.x.toFixed(1)},${s.y.toFixed(1)},${s.r.toFixed(2)}`).join(" ");
     expect(key(a)).not.toBe(key(b));
     expect(Math.abs(mean(a.map((m) => m.y)) - mean(b.map((m) => m.y)))).toBeLessThan(6);
+  });
+});
+
+describe("what an ear hears, painted", () => {
+  /** A frame as an ear gives it: its tones, how loud it is, and its noise (0..1 in the bands below `noiseTop` hertz). */
+  const heard = (t: number, voices: Partial<Voice>[], o: { db?: number; noise?: number; noiseTop?: number } = {}): Frame => ({
+    t,
+    voices: voices.map((v) => ({ id: 1, hz: 440, amp: 0.7, peak: 0.7, born: t, struck: 0.5, fresh: false, ...v, age: t - (v.born ?? t) })),
+    ended: [],
+    hits: [],
+    noise: Float32Array.from({ length: NOISE_BANDS }, (_, b) => (noiseHz(b) < (o.noiseTop ?? 20000) ? o.noise ?? 0 : 0)),
+    level: 0.6,
+    db: o.db ?? -20,
+    centroid: 1200,
+    flat: 0.1,
+    flux: 0,
+    chroma: new Float32Array(12),
+  });
+  /** Hand a hand the frames of a tone that lives from `from` to `to` (seconds), and anything else in `more`. */
+  function sound(h: LayerHand, from: number, to: number, voice: Partial<Voice>, more: (t: number) => Partial<Voice>[] = () => []) {
+    for (let t = from; t <= to + 1e-9; t += 0.01) h.hear([heard(t, [{ ...voice, born: from, fresh: t - from < 0.005 }, ...more(t)])]);
+  }
+
+  it("an overtone the ear follows as a tone of its own leaves no mark of its own: it is part of its note", () => {
+    const { h, marks } = hand("melody");
+    sound(h, 0.2, 0.8, { id: 1, hz: 220, amp: 0.8 }, (t) => (t >= 0.21 ? [{ id: 2, hz: 440, amp: 0.55, born: 0.21, fresh: t < 0.215 }] : []));
+    expect(h.down).toBe(1);
+    const y440 = yOfUp(upOfHz(440), H);
+    expect(marks.filter((m) => Math.abs(m.y - y440) < 6).length).toBe(0);
+  });
+
+  it("a tone the ear loses for a moment and finds again carries on its stroke: it is not set down afresh", () => {
+    const run = (gap: number) => {
+      const { h, marks } = hand("melody");
+      sound(h, 0.2, 0.6, { id: 1, hz: 440, amp: 0.7 });
+      h.hear([heard(0.61, [])]);
+      const before = marks.length;
+      sound(h, 0.6 + gap, 1.2, { id: 2, hz: 441, amp: 0.7 });
+      // the biggest mark laid as the tone comes back
+      const back = marks.slice(before, before + 6);
+      const along = marks.slice(before + 10);
+      return { first: Math.max(...back.map((m) => m.r)), usual: mean(along.map((m) => m.r)), k: back[0]?.k, k0: marks[before - 1]?.k };
+    };
+    const again = run(0.04);
+    const fresh = run(0.4);
+    // a new note is set down with weight; the same note picked up again is not, and keeps its paint
+    expect(fresh.first).toBeGreaterThan(fresh.usual * 1.15);
+    expect(again.first).toBeLessThan(again.usual * 1.15);
+    expect(again.k).toEqual(again.k0);
+  });
+
+  it("fog comes from noise that goes on (air, breath, a room), not from a stem's loudness, nor from a hat's hiss", () => {
+    const fogOf = (o: { noise: number; noiseTop?: number }) => {
+      const { h, marks } = hand("other");
+      for (let t = 0; t < 4; t += 0.01) {
+        h.hear([heard(t, [], { db: -16, ...o })], false);
+        h.advance(t);
+      }
+      return marks.filter((m) => m.r > 25).length;
+    };
+    expect(fogOf({ noise: 0 })).toBe(0);
+    expect(fogOf({ noise: 0.45, noiseTop: 20000 })).toBeGreaterThan(5);
+    // a hiss only up among the cymbals is the drums'
+    const hiss = (() => {
+      const { h, marks } = hand("other");
+      for (let t = 0; t < 4; t += 0.01) {
+        h.hear([heard(t, [], { db: -16, noise: 0, noiseTop: 0 })], true);
+        h.advance(t);
+      }
+      return marks.length;
+    })();
+    expect(hiss).toBe(0);
+  });
+
+  it("a hit an ear hears that reaches right down and is not noisy is a kick: a soft blot laid where its thump is, not its click", () => {
+    const { h, marks } = hand("drums");
+    h.advance(0.1);
+    h.hear([{ ...heard(0.2, []), hits: [{ strength: 0.9, lo: 70, hi: 16000, hz: 1900, noisy: 0.05 }] }]);
+    const blots = marks.filter((m) => m.kind === 2 && m.r > 15);
+    expect(blots.length).toBeGreaterThan(0);
+    for (const m of blots) expect(m.y).toBeGreaterThan(yOfHz(150, H));
+  });
+
+  it("an ear that stops being heard (the painting has moved on to other stems) leaves no brush down", () => {
+    const { h } = hand("melody");
+    sound(h, 0.2, 0.5, { id: 1, hz: 440, amp: 0.7 });
+    expect(h.down).toBe(1);
+    h.advance(0.8);
+    expect(h.down).toBe(1);
+    h.advance(1.2);
+    expect(h.down).toBe(0);
   });
 });
 

@@ -34,6 +34,10 @@ import { ComplexFFT } from "./fft";
 
 export type StemId = "drums" | "bass" | "vocals" | "other";
 export const STEM_IDS: StemId[] = ["drums", "bass", "vocals", "other"];
+/** The stems any source may give: the split's four, and the two more of a six-stem model. */
+export type StemName = StemId | "guitar" | "piano";
+export const STEM_NAMES: StemName[] = ["drums", "bass", "vocals", "other", "guitar", "piano"];
+export const isStemName = (x: unknown): x is StemName => typeof x === "string" && (STEM_NAMES as string[]).includes(x);
 
 /** The slices the sound is looked at in (samples), and how far apart they start. */
 export const N = 2048;
@@ -53,28 +57,43 @@ interface Pieces {
   parts: Record<StemId, Float32Array[]>;
 }
 
-/** A stretch of stems: each a mono recording, starting at sample `from` of the song. */
+/**
+ * A stretch of stems: each a mono recording at the song's own rate, starting at sample `from` of
+ * the song, `length` samples long. A source gives the stems it has (see `StemSource.stems`).
+ */
 export interface StemChunk {
   from: number;
   length: number;
+  stems: Partial<Record<StemName, Float32Array>>;
+}
+/** A stretch of the split's own four stems. */
+export interface SplitChunk extends StemChunk {
   stems: Record<StemId, Float32Array>;
 }
 
 /**
  * Where a song's stems come from. The signal-processing split below is one; a trained model's
- * (vocals, drums, bass, other, from the desktop app's engine) can be another: whatever paints
- * the layers asks only for this.
+ * (vocals, drums, bass, other, and with six stems guitar and piano, from the desktop app's
+ * engine: `pushed.ts` takes them as they are made) can be another: whatever paints the layers
+ * asks only for this.
  */
 export interface StemSource {
   readonly id: string;
   /** true for a split by signal processing (a rough guess), false for a trained model */
   readonly approx: boolean;
+  /** the stems it gives (the split's four when not said) */
+  readonly stems?: readonly StemName[];
   /** Get ready for a song: whatever has to look at the whole of it first. `progress` 0..1. */
   prepare(song: Stereo, progress?: (f: number) => void): Promise<void>;
   /** Give stems from sample `from` of the song on. */
   seek(from: number): void;
-  /** The next stretch of stems, of at most about `max` samples (null: the song is over). */
+  /**
+   * The next stretch of stems, of at most about `max` samples (null: the song is over). A source
+   * still making its stems answers once it has the next stretch (it may give less than `max`).
+   */
   next(max: number): Promise<StemChunk | null>;
+  /** How far from the start of the song (seconds) it can give stems without waiting (Infinity: all of it). */
+  ready?(): number;
 }
 
 const clamp = (x: number, lo = 0, hi = 1) => Math.max(lo, Math.min(hi, x));
@@ -365,7 +384,7 @@ export class Splitter {
   }
 
   /** Take in more of the song (left and right, the same length). The stems for every sample now final come out. */
-  push(left: Float32Array, right: Float32Array): StemChunk | null {
+  push(left: Float32Array, right: Float32Array): SplitChunk | null {
     if (this.ended) return null;
     const out = this.empty();
     this.take(left, right, out);
@@ -373,7 +392,7 @@ export class Splitter {
   }
 
   /** The song is over: everything still waiting comes out. */
-  flush(): StemChunk | null {
+  flush(): SplitChunk | null {
     if (this.ended) return null;
     const total = this.v - (N - HOP);
     const out = this.empty();
@@ -406,7 +425,7 @@ export class Splitter {
     return { from: this.start + this.emitted, length: 0, parts: { drums: [], bass: [], vocals: [], other: [] } };
   }
   /** The pieces handed out, as one stretch. */
-  private done(out: Pieces): StemChunk | null {
+  private done(out: Pieces): SplitChunk | null {
     if (!out.length) return null;
     const stems = {} as Record<StemId, Float32Array>;
     for (const s of STEM_IDS) {
@@ -550,6 +569,7 @@ export class Splitter {
 export class SignalStems implements StemSource {
   readonly id = "signal";
   readonly approx = true;
+  readonly stems = STEM_IDS;
   private song: Stereo | null = null;
   private bg: Background | null = null;
   private splitter: Splitter | null = null;
@@ -569,7 +589,11 @@ export class SignalStems implements StemSource {
     this.splitter = new Splitter(this.song.sr, { from: this.at, background: this.bg });
   }
 
-  async next(max: number): Promise<StemChunk | null> {
+  ready() {
+    return Infinity;
+  }
+
+  async next(max: number): Promise<SplitChunk | null> {
     const s = this.song;
     const sp = this.splitter;
     if (!s || !sp) return null;

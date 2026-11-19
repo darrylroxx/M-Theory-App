@@ -33,6 +33,7 @@
  */
 import type { Frame, Hit } from "../listen/ear";
 import { NOISE_BANDS, noiseHz } from "../listen/ear";
+import { overtoneOf } from "../listen/route";
 import { mix as mixRgb, rgbToHsl, hslToRgb, type RGB } from "./color";
 import type { LayerColours, LayerKind } from "./layers";
 import { colorIndex, midiOfHz, upOfHz } from "./layout";
@@ -85,6 +86,10 @@ export interface Texture {
   rough: number;
   /** how loud the layer is, 0..1, against a loud mix (absolute, not relative to itself) */
   level: number;
+  /** how loud it stays: its level between its peaks (a pad's is its level; a drum's ring leaking into a stem has next to none) */
+  floor: number;
+  /** how much of it is noise that goes on (air, a room, a hiss), 0..1 */
+  air?: number;
 }
 
 /** Things about the music as a whole that change the brushes (from its vibe): all near 1 for a middling song. */
@@ -94,6 +99,22 @@ export interface Touch {
   spread: number;
   /** how many marks a sound leaves */
   density: number;
+}
+
+/** Where a brush was lifted, and how it was loaded. */
+interface Lifted {
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  t: number;
+  seg: number;
+  load: number;
+  short: boolean;
+  k: [number, number, number];
+  rgb: RGB;
+  hz: number;
+  strands?: Stroke["strands"];
 }
 
 interface Stroke {
@@ -125,8 +146,6 @@ interface Stroke {
   scale: number;
   rand: Rng;
   seed: number;
-  /** a tone sounding with another, at a whole multiple of its pitch: that tone's shimmer */
-  over: boolean;
   /** the vocals' strands, each on its own spring */
   strands?: { x: number; y: number; ax: number; ay: number; ease: number; off: number; px: number; py: number }[];
   /** a wash already laid as far as this time, and where (the chords) */
@@ -143,6 +162,8 @@ const SPRING = 54.3;
 const DAMP = 72;
 /** Notes closer together than this (seconds) are one gesture: the line carries on. */
 const JOIN = 0.14;
+/** The noise bands up among the cymbals (above about 5 kHz). */
+const HIGH_BANDS = Array.from({ length: NOISE_BANDS }, (_, b) => noiseHz(b)).filter((hz) => hz >= 5000).length;
 /** Shorter than this is a stab: a dab, a slab or a block. */
 const SHORT = 0.16;
 /** How far up the scale a chord's wash may reach above its lowest note (about an octave and a half, where the notes live). */
@@ -168,7 +189,7 @@ export class LayerHand {
   put: (s: Stamp) => void = () => {};
   manner: Manner = { wet: 0.4, loose: 0.3, body: 1 };
   touch: Touch = { stroke: 1, spread: 1, density: 1 };
-  texture: Texture = { bright: 0.5, rough: 0.2, level: 0.5 };
+  texture: Texture = { bright: 0.5, rough: 0.2, level: 0.5, floor: 0 };
   /** the melody, for the harmony's hatching */
   partner: LayerHand | null = null;
   /** how the canvas itself is moving under the brushes (pixels a second; the river flows left): a brush held still draws along the current */
@@ -183,15 +204,18 @@ export class LayerHand {
   /** sounds that begin later than the music has got to (the app's own notes are known ahead) */
   private waiting: Cue[] = [];
   /** the line so far (melody, harmony, bass): where its brush last was, at what pitch, when it lifted, and whether it was a stab */
-  private line: { x: number; y: number; vx: number; vy: number; t: number; seg: number; load: number; short: boolean; k: [number, number, number]; rgb: RGB; hz: number } | null = null;
+  private line: Lifted | null = null;
+  /** brushes lifted in the last moment, any layer: a tone heard again at once picks its brush up again */
+  private lifted: Lifted[] = [];
   /** recent points of the line, for hatching */
   readonly trail: { x: number; y: number; t: number }[] = [];
   /** the colours */
   private col: LayerColours | null = null;
   private palette: RGB[] = [[60, 60, 60]];
   private map: number[] = new Array(12).fill(0);
-  /** the last moment the hand was told of */
+  /** the last moment the hand was told of, and the last an ear told it of its tones */
   private now = -1;
+  private heardAt = -1;
   private fogT = -1;
 
   constructor(layer: LayerKind) {
@@ -229,9 +253,9 @@ export class LayerHand {
         st.py += dy;
       }
     }
-    if (this.line) {
-      this.line.x += dx;
-      this.line.y += dy;
+    for (const l of this.line ? [this.line, ...this.lifted] : this.lifted) {
+      l.x += dx;
+      l.y += dy;
     }
     for (const p of this.trail) {
       p.x += dx;
@@ -239,12 +263,19 @@ export class LayerHand {
     }
   }
 
-  /** Every brush off the canvas (the music stopped, or jumped). Sounds not begun are forgotten. */
+  /**
+   * Every brush off the canvas (the music stopped, or jumped). Sounds not begun are forgotten, and
+   * so is the time: the music may start again from further back (a song from a file, played again).
+   */
   lift() {
     this.strokes.clear();
     this.waiting = [];
     this.line = null;
+    this.lifted = [];
     this.trail.length = 0;
+    this.now = -1;
+    this.heardAt = -1;
+    this.fogT = -1;
   }
 
   /** A fixed chance for this sound: its layer, when it began (to a hundredth of a second), its pitch, and the run. */
@@ -327,6 +358,7 @@ export class LayerHand {
    * itself, the ear's frames give only the texture.)
    */
   hear(frames: Frame[], notesToo = true) {
+    if (notesToo && frames.length) this.heardAt = frames[frames.length - 1].t;
     for (const f of frames) {
       this.feel(f);
       if (!notesToo) continue;
@@ -360,7 +392,15 @@ export class LayerHand {
       tx.rough += (clamp(f.flat * 2.5) - tx.rough) * k;
     }
     // loudness on a fixed scale: −50 dBFS is nothing, −14 is loud
-    tx.level += (clamp((f.db + 50) / 36) - tx.level) * (f.db > -75 ? 0.05 : 0.02);
+    const lv = clamp((f.db + 50) / 36);
+    tx.level += (lv - tx.level) * (f.db > -75 ? 0.05 : 0.02);
+    // what it stays at: it drops at once and climbs back over about a second
+    tx.floor += (lv - tx.floor) * (lv < tx.floor ? 0.3 : 0.012);
+    // (noise below the cymbals: air, breath, a room; a hat's hiss that leaks into a stem is the drums')
+    let n = 0;
+    let bands = 0;
+    for (let b = 0; b < f.noise.length && noiseHz(b) < 5000; b++, bands++) n += f.noise[b];
+    tx.air = (tx.air ?? 0) + (clamp((n / Math.max(1, bands) - 0.06) / 0.2) - (tx.air ?? 0)) * 0.03;
   }
 
   private cueOfHit(h: Hit, t: number): Cue {
@@ -380,6 +420,9 @@ export class LayerHand {
         else this.begin(c);
       }
     }
+    // an ear that has gone quiet (its stem is no longer heard: the painting moved on to another source) leaves no brush down
+    if (this.heardAt >= 0 && t - this.heardAt > 0.4)
+      for (const s of this.strokes.values()) if (s.cue.len === undefined && s.until === Infinity) s.until = Math.max(s.t, this.heardAt);
     for (const s of [...this.strokes.values()]) this.move(s, Math.min(t, s.until));
     for (const [id, s] of this.strokes) {
       if (s.until <= t) {
@@ -417,31 +460,31 @@ export class LayerHand {
     const r = rng(seed);
     const p = this.where(c.t, upOfHz(c.hz));
     if (!p) return;
+    // an overtone of a tone already being painted (a whole multiple of its pitch, heard soon after it began, and
+    // quiet enough; in a line, a voice or a bass, any whole multiple) is part of that tone's sound: an ear hears each
+    // overtone of a note as a tone, but a painter paints the note. (The app's own notes are known exactly: none of
+    // them is an overtone, and an octave in a chord is a note of the chord.)
     const u = this.u * p.scale;
-    // an overtone of a tone already being painted (a whole multiple of its pitch, heard soon after it began, and no
-    // louder) is its shimmer: an ear hears each overtone of a note as a tone, and some only as the note swells
-    let parent: Stroke | null = c.of !== undefined ? this.strokes.get(c.of) ?? null : null;
-    if (c.of === undefined)
+    const heard = c.len === undefined;
+    const oneLine = this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals";
+    if (c.of !== undefined) return;
+    if (heard)
       for (const o of this.strokes.values()) {
-        if (o.over || c.t - o.cue.t > 0.35 || c.t < o.cue.t - 0.06 || o.hz >= c.hz * 0.6 || c.amp > o.amp * 0.9) continue;
-        const ratio = c.hz / o.hz;
-        const whole = Math.round(ratio);
-        if (whole >= 2 && whole <= 12 && Math.abs(ratio - whole) < 0.04 * whole && (!parent || o.hz < parent.hz)) parent = o;
+        if (o.cue.len !== undefined || c.t - o.cue.t > 0.35 || c.t < o.cue.t - 0.06) continue;
+        if (overtoneOf(c.hz, c.amp, o.hz, o.amp, oneLine)) return;
       }
-    const overtone = !!parent || c.of !== undefined;
-    // a chord's overtones are in its wash, and a voice's in its glow: they leave no marks of their own
-    if (overtone && (this.layer === "chords" || this.layer === "vocals" || this.layer === "other")) return;
-    // a note heard a moment after its own overtones: they become its shimmer (or, in a chord or a voice, nothing)
-    if (!overtone)
+    // a note heard a moment after its own overtones: they were part of it all along
+    if (heard)
       for (const [id, o] of this.strokes) {
-        if (o.over || o.cue.t < c.t - 0.12 || o.hz < c.hz * 1.9 || o.amp > c.amp * 0.9) continue;
-        const ratio = o.hz / c.hz;
-        const whole = Math.round(ratio);
-        if (whole < 2 || whole > 12 || Math.abs(ratio - whole) >= 0.04 * whole) continue;
-        if (this.layer === "chords" || this.layer === "vocals" || this.layer === "other") this.strokes.delete(id);
-        else o.over = true;
+        if (o.cue.len !== undefined || o.cue.t < c.t - 0.12) continue;
+        if (overtoneOf(o.hz, o.amp, c.hz, c.amp, oneLine)) this.strokes.delete(id);
       }
-    const rgb = parent ? parent.rgb : this.colourOf(c.hz, c.bright, r);
+    // a tone that stopped a moment ago at this pitch, heard again (an ear loses a tone for a few hundredths of a second
+    // when something passes over it): the same brush carries on, without being set down afresh
+    const back = heard ? this.lifted.findIndex((l) => l.seg === p.seg && c.t - l.t < 0.09 && c.t >= l.t - 0.02 && Math.abs(midiOfHz(c.hz) - midiOfHz(l.hz)) < 0.7) : -1;
+    const again = back >= 0;
+    const ln = again ? this.lifted.splice(back, 1)[0] : this.line;
+    const rgb = this.colourOf(c.hz, c.bright, r);
     const until = c.len !== undefined ? c.t + Math.max(0.01, c.len) : Infinity;
     const s: Stroke = {
       cue: c,
@@ -460,25 +503,23 @@ export class LayerHand {
       k: paintOf(rgb),
       rgb,
       lean: gauss(r) * 0.2,
-      load: overtone ? 0.35 + 0.3 * r() : 0.8 + 0.2 * r(),
+      load: 0.8 + 0.2 * r(),
       reach: (150 + 500 * r() * r()) * this.u * (0.6 + 0.8 * c.amp) * this.touch.stroke,
       water: clamp(0.5 + 0.5 * (r() - 0.5)),
       r: 0,
       scale: p.scale,
       rand: r,
       seed: r() * 97,
-      over: overtone,
       laid: c.t,
       laidAt: null,
       marks: 0,
     };
     s.py = s.y;
     // a line: a note that follows closely on the last carries on from where that one's brush was
-    const lineLayer = this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals";
-    const ln = this.line;
+    const lineLayer = oneLine;
     // (a leap is a new stroke: the line is joined only to a note close by, a step or two away, or a few for a voice)
     const near = ln ? Math.abs(midiOfHz(c.hz) - midiOfHz(ln.hz)) <= (this.layer === "bass" ? 2.5 : 5.5) : false;
-    if (lineLayer && !overtone && ln && near && ln.seg === p.seg && c.t - ln.t < JOIN && c.t >= ln.t - 0.02 && !ln.short) {
+    if (ln && (again || (lineLayer && near && ln.seg === p.seg && c.t - ln.t < JOIN && c.t >= ln.t - 0.02 && !ln.short))) {
       s.x = ln.x;
       s.y = ln.y;
       s.vx = ln.vx;
@@ -486,16 +527,21 @@ export class LayerHand {
       s.px = ln.x;
       s.py = ln.y;
       s.load = Math.max(s.load * 0.85, ln.load);
-      // the line keeps one paint: a new note tints it, it does not change it
-      s.k = paintOf(mixRgb(ln.rgb, rgb, 0.35));
-      s.rgb = mixRgb(ln.rgb, rgb, 0.35);
+      // the line keeps one paint: a new note tints it, it does not change it (and the same note picked up again is the same paint)
+      s.rgb = again ? ln.rgb : mixRgb(ln.rgb, rgb, 0.35);
+      s.k = again ? ln.k : paintOf(s.rgb);
     }
-    if (this.layer === "vocals" && !overtone) {
+    if (this.layer === "vocals") {
       const n = 12;
-      s.strands = Array.from({ length: n }, () => ({ x: s.x, y: s.y, ax: 0, ay: 0, ease: 0.6 + 0.2 * r(), off: gauss(r), px: s.x, py: s.y }));
+      s.strands = again && ln?.strands ? ln.strands : Array.from({ length: n }, () => ({ x: s.x, y: s.y, ax: 0, ay: 0, ease: 0.6 + 0.2 * r(), off: gauss(r), px: s.x, py: s.y }));
     }
     this.strokes.set(c.id, s);
     s.r = this.radius(s, c.amp);
+    // picked up again: nothing is set down
+    if (again) {
+      s.r = Math.max(s.r, 0.6);
+      return;
+    }
     const m = this.manner;
     const short = c.len !== undefined && c.len < SHORT;
     // set down: a struck sound lands with weight, and may throw a few drops
@@ -511,14 +557,14 @@ export class LayerHand {
       default:
         this.mark(s, s.x, s.y, s.r * (1 + 0.35 * c.attack), p, 1.25);
     }
-    if (!overtone && c.attack > 0.7 && c.amp > 0.45 && this.layer !== "vocals" && this.layer !== "other" && r() < 0.35 + 0.4 * c.rough)
+    if (c.attack > 0.7 && c.amp > 0.45 && this.layer !== "vocals" && this.layer !== "other" && r() < 0.35 + 0.4 * c.rough)
       this.spatter(s.x, s.y, s.r * 2.2, Math.round((2 + 5 * r()) * this.touch.density), s.k, 0.45 * s.r, 0.5, -p.dx, -p.dy, m);
   }
 
   /** How wide the brush marks right now (real pixels of radius): pressed as hard as the sound is loud. */
   private radius(s: Stroke, amp: number): number {
     const press = 0.2 + 0.95 * Math.pow(clamp(amp), 1.4);
-    return Math.max(0.6, s.size * press * this.u * s.scale * (s.over ? 0.75 : 1));
+    return Math.max(0.6, s.size * press * this.u * s.scale);
   }
 
   /** The loudness of a sound whose shape is known (the app's own notes): plucked ones die away, held ones stay. */
@@ -572,7 +618,7 @@ export class LayerHand {
         s.y += s.vy * h;
       }
       // the sound swelled well past where it was: the brush is dipped again
-      if (!s.over && amp > s.amp + 0.18 && s.cue.len === undefined) s.load = Math.max(s.load, 0.7 + 0.3 * s.rand());
+      if (amp > s.amp + 0.18 && s.cue.len === undefined) s.load = Math.max(s.load, 0.7 + 0.3 * s.rand());
       s.scale = p.scale;
       const want = this.radius(s, amp);
       s.r += (want - s.r) * clamp(dt / 0.03);
@@ -581,8 +627,11 @@ export class LayerHand {
       else this.pull(s, p);
       s.t = at;
     }
-    if (!s.over && (this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals"))
-      this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short: false, k: s.k, rgb: s.rgb, hz: s.hz };
+    if (this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals") this.line = this.memory(s, false);
+  }
+
+  private memory(s: Stroke, short: boolean): Lifted {
+    return { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short, k: s.k, rgb: s.rgb, hz: s.hz, strands: s.strands };
   }
 
   /** Leave marks along the way from where the last one was left to where the tip is now. */
@@ -641,7 +690,8 @@ export class LayerHand {
     const vx = s.vx - this.flow.x;
     const vy = s.vy - this.flow.y;
     const speed = Math.hypot(vx, vy);
-    const ang = speed > 1 ? Math.atan2(vy, vx) : Math.atan2(p.dy, p.dx);
+    // (the bass's slabs lie along the band whichever way its brush moves: a slide does not stand them on end)
+    const ang = speed > 1 && this.layer !== "bass" ? Math.atan2(vy, vx) : Math.atan2(p.dy, p.dx);
     const size = radius * (0.87 + 0.26 * r());
     const side = gauss(r) * radius * 0.07 * (0.5 + m.loose);
     const nx = -Math.sin(ang);
@@ -670,10 +720,6 @@ export class LayerHand {
       hard = 0.05;
       load = 1;
     }
-    if (s.over) {
-      share *= 0.6;
-      load *= 0.7;
-    }
     this.emit({
       x: x + nx * side,
       y: y + ny * side,
@@ -701,12 +747,16 @@ export class LayerHand {
   private release(s: Stroke) {
     const short = s.cue.len !== undefined ? s.cue.len < SHORT : s.t - s.cue.t < SHORT;
     const lineLayer = this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals";
-    if (lineLayer && !s.over) this.line = { x: s.x, y: s.y, vx: s.vx, vy: s.vy, t: s.t, seg: s.seg, load: s.load, short, k: s.k, rgb: s.rgb, hz: s.hz };
+    if (lineLayer) this.line = this.memory(s, short);
+    if (s.cue.len === undefined) {
+      while (this.lifted.length && this.lifted[0].t < s.t - 0.1) this.lifted.shift();
+      this.lifted.push(this.memory(s, short));
+    }
     if (this.layer === "chords") {
       if (short) this.block(s);
       return;
     }
-    if (s.over || s.r < 0.9 * this.u || this.layer === "vocals" || this.layer === "other") return;
+    if (s.r < 0.9 * this.u || this.layer === "vocals" || this.layer === "other") return;
     // a line that goes straight on into its next note has no tail
     if (lineLayer && !short) return;
     const r = s.rand;
@@ -784,7 +834,7 @@ export class LayerHand {
 
   /** The notes of the chord that are sounding now. */
   private sounding(): Stroke[] {
-    return [...this.strokes.values()].filter((s) => !s.over);
+    return [...this.strokes.values()];
   }
   /** How rough the chord sounding now is: pairs of notes a semitone or a tone apart beat against each other. */
   private tension(): number {
@@ -901,7 +951,9 @@ export class LayerHand {
   /** Fog drifts in where the other sounds (pads, ambience) are: wide, edge-less, very thin. */
   private haze(t: number) {
     if (this.layer !== "other") return;
-    const lv = this.texture.level;
+    // (only sound that goes on makes fog, and only as much of it as is noise: a drum's ring that leaks into the stem
+    // comes and goes, and clean tones are the chords' and the melody's)
+    const lv = Math.min(this.texture.level, this.texture.floor * 1.3) * (this.texture.air ?? 1);
     if (lv < 0.08) return;
     const every = 0.18 / (0.4 + lv);
     if (t - this.fogT < every) return;
@@ -919,7 +971,9 @@ export class LayerHand {
   private scrub(f: Frame) {
     const r = rng(this.seedOf({ id: 0, t: f.t, hz: 1, amp: 0, attack: 0, bright: 0, rough: 0 }, 13));
     const dt = 0.01;
-    for (let b = 0; b < NOISE_BANDS; b++) {
+    // (a hiss up among the cymbals is the drums': in any other layer it has leaked in from them)
+    const bands = this.layer === "drums" ? NOISE_BANDS : NOISE_BANDS - HIGH_BANDS;
+    for (let b = 0; b < bands; b++) {
       const n = f.noise[b];
       if (n < 0.25) continue;
       if (r() > (n - 0.2) * 18 * dt * this.touch.density) continue;
@@ -996,14 +1050,17 @@ export class LayerHand {
   /** A hit: what it is decides what is thrown. */
   private thrown(c: Cue) {
     const r = rng(this.seedOf(c, 5));
-    const up = clamp(upOfHz(c.hz));
+    // a hit heard by an ear (no drum named) that reaches right down and is not noisy is a kick: an ear hears its weight
+    // a little higher than its thump, because of its click, so it is laid where its thump is
+    const thump = this.layer === "drums" && c.drum === undefined && c.lo !== undefined && c.lo < 120 && c.rough < 0.45;
+    const up = clamp(upOfHz(thump ? Math.max(45, Math.min(c.hz, c.lo! * 1.6)) : c.hz));
     const p = this.where(c.t, up);
     if (!p) return;
     const u = this.u * p.scale;
     const m = this.manner;
     const s = clamp(c.amp);
     const col = this.col;
-    const drum = c.drum ?? (c.rough < 0.45 && up < 0.3 ? "kick" : up > 0.68 ? (c.ring !== undefined && c.ring > 0.6 ? "crash" : "hat") : c.rough > 0.4 ? "snare" : "tom");
+    const drum = c.drum ?? (thump || (c.rough < 0.45 && up < 0.3) ? "kick" : up > 0.68 ? (c.ring !== undefined && c.ring > 0.6 ? "crash" : "hat") : c.rough > 0.4 ? "snare" : "tom");
     const kind = /kick|808/.test(drum) ? "kick" : /hat|open|shaker|ride|crash|cymbal|tamb|bell/.test(drum) ? (/open|crash|ride|cymbal/.test(drum) ? "cymbal" : "hat") : /snare|clap|rim|snap/.test(drum) ? "snare" : "tom";
     if (this.layer !== "drums") {
       // the hit of a struck note in another layer: a few drops off its attack, nothing more
