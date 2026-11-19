@@ -75,6 +75,10 @@ export class FileLayers {
   get stemsSpan() {
     return this.store.betterSpan;
   }
+  /** How far into the song the model's stems have been heard (seconds): whoever reads them reads only a little beyond. */
+  stemsHeard() {
+    return this.store.betterSpan?.to ?? 0;
+  }
 
   /**
    * A trained model's stems take over from `from` seconds of the song (0: all of it): `names` are
@@ -96,9 +100,22 @@ export class FileLayers {
     for (const ch of Object.values(stretch)) for (const c of ch ?? []) if (!transfer.includes(c.buffer)) transfer.push(c.buffer);
     this.post({ type: "stem-data", id: this.id, at, stretch }, transfer);
   }
+  /**
+   * `pushStems` for stems as the engine wrote them (each stem's channels interleaved, 32-bit
+   * floats): they are handed to the worker as they are and taken apart there, so the page does
+   * no work on them. (The buffers are handed over: not usable here afterwards.)
+   */
+  pushRaw(at: number, raw: Partial<Record<StemName, ArrayBuffer>>, channels = 2) {
+    const transfer = [...new Set(Object.values(raw).filter((b): b is ArrayBuffer => !!b))];
+    this.post({ type: "stem-raw", id: this.id, at, raw, channels }, transfer);
+  }
   /** Every stem of the model has been handed over. */
   endStems() {
     this.post({ type: "stems-end", id: this.id });
+  }
+  /** The model's stems stop where they got to (the split was stopped or failed): the quick split paints the rest. */
+  stopStems() {
+    this.post({ type: "stems-stop", id: this.id });
   }
 
   /** Is everything up to `t` seconds heard? */

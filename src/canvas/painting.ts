@@ -122,6 +122,8 @@ export class Artist {
   private turnover = 0;
   /** layers not painted */
   hidden = new Set<LayerKind>();
+  /** sources of their own not painted (a model's guitar or piano stem, whichever layers its hands paint in) */
+  hiddenSources = new Set<string>();
   style: PaintStyle = "auto";
   drips = false;
   /** the run: Clear starts a new one, with new detail on the same structure */
@@ -159,7 +161,9 @@ export class Artist {
     }
     if (!h) {
       h = new LayerHand(layer);
-      h.put = (s) => this.lay(s, layer);
+      // (a hand of a source of its own, a model's guitar or piano stem, is keyed "guitar:chords" and the like)
+      const source = key.includes(":") ? key.slice(0, key.indexOf(":")) : null;
+      h.put = (s) => this.lay(s, layer, source);
       h.size(this.w, this.h);
       if (this.colours) h.colours(this.colours.c, this.colours.palette, this.colours.map);
       h.run = this.run;
@@ -180,6 +184,12 @@ export class Artist {
   /** The moment the music was last painted up to (seconds, on its own clock). */
   get time() {
     return this.now;
+  }
+  /** How loud a source of its own (a model's guitar or piano stem) is now: its loudest hand with a brush down, 0 when none is. */
+  sourceLevel(source: string): number {
+    let lv = 0;
+    for (const [key, h] of this.hands) if (key.startsWith(`${source}:`) && h.down > 0) lv = Math.max(lv, h.texture.level);
+    return lv;
   }
   /** Every hand of one layer. */
   handsOf(layer: LayerKind): LayerHand[] {
@@ -260,8 +270,8 @@ export class Artist {
   }
 
   /** Lay a mark of a layer, as far as the budget lets it. */
-  private lay(s: Stamp, layer: LayerKind) {
-    if (this.hidden.has(layer)) return;
+  private lay(s: Stamp, layer: LayerKind, source: string | null = null) {
+    if (this.hidden.has(layer) || (source !== null && this.hiddenSources.has(source))) return;
     const allow = this.budget.admit(s, layer);
     if (allow < 0.04) return;
     if (allow < 1) {

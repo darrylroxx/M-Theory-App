@@ -64,6 +64,21 @@ describe("layouts: where each moment of each layer goes", () => {
     for (let t = 0; t < 30; t += 0.25) expect(Math.abs(r.place(when(t), 0.5, "melody")!.y - yOfUp(0.5, H))).toBeLessThan(H * 0.04);
   });
 
+  it("the river and the lanes paint the whole width: the newest paint lands at the right-hand margin, and a pass later it has drifted to the left one", () => {
+    for (const make of [() => new River(), () => new Lanes()]) {
+      const r = at(make(), 40);
+      const head = r.place(when(40), 0.5, "melody")!.x;
+      expect(head).toBeCloseTo(W * (1 - MARGIN), 6);
+      // nothing to the right of the margin stays bare: the newest paint is within a brush of it
+      expect(W - head).toBeLessThanOrEqual(W * MARGIN + 1e-6);
+      // the music of one pass ago is at the left-hand margin: one pass fills the canvas from margin to margin
+      expect(r.place(when(40 - PASS), 0.5, "melody")!.x).toBeCloseTo(W * MARGIN, 0);
+      // and every stretch of the width between holds some moment of the last pass
+      const xs = Array.from({ length: PASS * 10 + 1 }, (_, k) => r.place(when(40 - k / 10), 0.5, "melody")!.x);
+      for (let f = MARGIN; f < 1 - MARGIN; f += 0.05) expect(xs.some((x) => Math.abs(x - f * W) < W * 0.01)).toBe(true);
+    }
+  });
+
   it("rings: time goes round, frequency goes out from the middle, and a phrase comes round to the same spoke", () => {
     const g = at(new Rings(), 0);
     const centre = { x: W / 2, y: H / 2 };

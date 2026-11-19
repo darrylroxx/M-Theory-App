@@ -7,6 +7,7 @@
  * the paint is exactly in time with what is heard.
  */
 import { master } from "../audio/mix";
+import { heardTime } from "../canvas/clock";
 import { Ear, type Frame } from "./ear";
 
 export interface Song {
@@ -132,7 +133,8 @@ export class Player {
   /** Where the song is, in seconds, as it is heard (null = not playing). */
   position(): number | null {
     if (!this.node) return null;
-    const heard = this.c.currentTime - (this.c.outputLatency || 0);
+    // (the same clock the app's own song is painted by: what is leaving the speakers, not what is being scheduled)
+    const heard = heardTime(this.c);
     return Math.max(this.offset, this.offset + heard - this.startedAt);
   }
 }

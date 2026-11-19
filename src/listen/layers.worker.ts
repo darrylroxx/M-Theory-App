@@ -12,6 +12,7 @@
 import { LayerAnalysis } from "./layers";
 import { PushedStems, type StemStretch } from "./pushed";
 import { SignalStems, type StemName } from "./split";
+import { deinterleave } from "./neuralstems";
 
 export type ToWorker =
   | { type: "open"; id: number; sr: number; left: Float32Array; right: Float32Array; ref: number }
@@ -20,7 +21,11 @@ export type ToWorker =
   | { type: "stems"; id: number; pass: number; names: StemName[]; rate: number; from: number }
   /** the model's stems from frame `at` (at their own rate) on */
   | { type: "stem-data"; id: number; at: number; stretch: StemStretch }
-  | { type: "stems-end"; id: number };
+  /** the same, each stem as the engine wrote it (its channels interleaved): taken apart here, not on the page */
+  | { type: "stem-raw"; id: number; at: number; raw: Partial<Record<StemName, ArrayBuffer>>; channels: number }
+  | { type: "stems-end"; id: number }
+  /** the model's stems stop where they are (the split was stopped or failed): what was heard of them stays, the rest is the quick split's */
+  | { type: "stems-stop"; id: number };
 export type FromWorker =
   | { type: "ready"; id: number }
   | { type: "heard"; id: number; to: number; mix: import("./ear").Frame[]; layers: import("./layers").LayerFrames[] }
@@ -58,8 +63,22 @@ self.onmessage = (e) => {
     model = { stems: new PushedStems(m.names, m.rate), pass: m.pass };
     void better(song, model, m.from);
   } else if (m.type === "stem-data") model?.stems.push(m.at, m.stretch);
+  else if (m.type === "stem-raw") model?.stems.push(m.at, apart(m.raw, m.channels));
   else if (m.type === "stems-end") model?.stems.end();
+  else if (m.type === "stems-stop") {
+    // (the second pass is let go of: it hears no further, and a stretch never coming is not waited for)
+    const was = model;
+    model = null;
+    was?.stems.end();
+  }
 };
+
+/** Interleaved stems as one array per channel. */
+function apart(raw: Partial<Record<StemName, ArrayBuffer>>, channels: number): StemStretch {
+  const out: StemStretch = {};
+  for (const [name, buf] of Object.entries(raw) as [StemName, ArrayBuffer][]) out[name] = deinterleave(buf, channels);
+  return out;
+}
 
 async function run(m: Extract<ToWorker, { type: "open" }>) {
   const id = (current = m.id);

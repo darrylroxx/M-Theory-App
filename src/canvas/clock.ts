@@ -7,6 +7,37 @@ import type { Spot } from "./layout";
 import { pageOf } from "./layout";
 import type { When } from "./place";
 
+/** What `heardTime` needs of an audio context (a real one, or a stand-in in a test). */
+export interface HeardClock {
+  readonly currentTime: number;
+  readonly baseLatency?: number;
+  readonly outputLatency?: number;
+  getOutputTimestamp?(): { contextTime?: number; performanceTime?: number };
+}
+
+/**
+ * The moment of the music being heard now, on the audio clock. The clock the app schedules its
+ * sounds by runs ahead of the speakers: by the time a sample leaves them, the context has already
+ * moved on by its own buffering (`baseLatency`) and the system's (`outputLatency`). The browser's
+ * own word on it (`getOutputTimestamp`: which context time was leaving the speakers, and when) is
+ * best; without it both delays are taken off. The app's song and a song from a file both go by
+ * this, so their marks land with the sound alike.
+ */
+export function heardTime(c: HeardClock, perfNow: number = typeof performance !== "undefined" ? performance.now() : 0): number {
+  const now = c.currentTime;
+  try {
+    const ts = c.getOutputTimestamp?.();
+    if (ts && ts.contextTime !== undefined && ts.performanceTime) {
+      const t = ts.contextTime + Math.max(0, (perfNow - ts.performanceTime) / 1000);
+      // (some browsers answer with a stamp that is stale or not yet started: only a sensible one is believed)
+      if (t <= now + 0.01 && t > now - 0.5) return Math.min(now, t);
+    }
+  } catch {
+    // not given: estimated below
+  }
+  return now - (c.outputLatency || 0) - (c.baseLatency || 0);
+}
+
 /**
  * The app's own song. `spot` is where the music is at audio time `at`; `start` is the audio time
  * the music started (so that seconds since then run on without a break); `jump` counts the times
