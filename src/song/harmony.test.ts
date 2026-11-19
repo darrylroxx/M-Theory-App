@@ -8,7 +8,7 @@ import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { addTrack, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
-import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonizeFrom, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
+import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonizeFrom, harmonyMenu, liveSource, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { reviveIdea, sameMusic } from "./library";
 import { copySection, pasteSection, reviveClips, undoFits } from "./clip";
 import { keysVoicings, reviveTones } from "../audio/tone";
@@ -559,5 +559,24 @@ describe("the Harmonize button on a page", () => {
   it("a page whose track has gone falls back to the first of its kind", () => {
     const p = { ...song(), focus: { melody: "gone" } };
     expect(harmonizeFrom(p, "melody")).toBe("melody");
+  });
+});
+
+describe("the track a sheet writes from, while the song changes under it", () => {
+  it("keeps the chosen track while it is there", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "pad" }, "k").p;
+    expect(liveSource(p, "k", "chords")).toBe("k");
+    expect(liveSource(p, "melody", "k")).toBe("melody");
+  });
+  it("a removed track gives way to the page's own track, or to none", () => {
+    let p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "pad" }, "k").p;
+    p = focusTrack(p, "chords", "k");
+    p = removeTrack(p, "k");
+    // the Chords page is back on its first track: the sheet follows it
+    expect(harmonizeFrom(p, "chords")).toBe("chords");
+    expect(liveSource(p, "k", harmonizeFrom(p, "chords"))).toBe("chords");
+    // asked from a track's + (no track on the page to fall back on): nothing chosen
+    expect(liveSource(p, "k")).toBeNull();
+    expect(liveSource(p, null, "gone")).toBeNull();
   });
 });

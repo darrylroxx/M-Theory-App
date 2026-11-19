@@ -14,7 +14,7 @@
  * written over after a yes.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { addHarmony, harmonyMenu, harmonySources, harmonyState, isHarmony, optionOf, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
+import { addHarmony, harmonyMenu, harmonySources, harmonyState, isHarmony, liveSource, optionOf, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
 import type { Track } from "../../song/tracks";
 import { newId, useApp, type AppState } from "../state";
@@ -58,9 +58,29 @@ export function HarmonyPicker({ kind: kind0, track, source, anchor, onEmpty, onC
   const p = state.progression;
   const [id] = useState(() => track?.id ?? newId());
   const [kind, setKind] = useState(kind0);
-  const [from, setFrom] = useState<string | null>(track?.harmony?.from ?? source ?? null);
+  const [picked, setFrom] = useState<string | null>(track?.harmony?.from ?? source ?? null);
   const [option, setOption] = useState<string | null>(track?.harmony?.option ?? null);
   const sources = useMemo(() => harmonySources(p), [p]);
+  // a track removed while the sheet is open is not written from: the page's own track (if any) takes its place
+  const from = useMemo(() => (track ? picked : liveSource(p, picked, source)), [track, picked, p, source]);
+  const lost = picked !== from;
+  useEffect(() => {
+    if (!lost) return;
+    setFrom(from);
+    setOption(null);
+    hear(null);
+  }, [lost]); // eslint-disable-line react-hooks/exhaustive-deps
+  // the page brought another track forward (or lost its own): the sheet now harmonizes that one
+  const pageSource = useRef(source);
+  useEffect(() => {
+    if (source === pageSource.current) return;
+    pageSource.current = source;
+    if (source && source !== picked) {
+      setFrom(source);
+      setOption(null);
+      hear(null);
+    }
+  }, [source]); // eslint-disable-line react-hooks/exhaustive-deps
   const menu = useMemo(() => (from ? harmonyMenu(p, state.key, kind, from, id) : []), [p, state.key, kind, from, id]);
   const status = useMemo(() => (track ? harmonyState(p, state.key, track.id) : null), [track, p, state.key]);
   const hearing = !!preview && preview.id === id;

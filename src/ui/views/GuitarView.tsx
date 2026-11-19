@@ -412,11 +412,17 @@ export function GuitarView() {
   const progRef = useRef(prog);
   progRef.current = prog;
   /** Harmonize on the Chords or Melody page: the sheet, set to the track on the page (a second tap closes it). */
-  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null) => setHz((h) => {
-    if (h?.source) return null;
-    const source = harmonizeFrom(progRef.current, page);
-    return source ? { kind: page, source, anchor } : null;
-  }), []);
+  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null) => {
+    // the shape finder would sit under the sheet: it gives way
+    openSheet(null);
+    setHz((h) => (h?.page || !harmonizeFrom(progRef.current, page) ? null : { kind: page, page, anchor }));
+  }, [openSheet]);
+  // the shape finder opened over the sheet: the sheet gives way
+  useEffect(() => {
+    if (sheet) setHz(null);
+  }, [sheet]);
+  // what Harmonize writes from follows the page: another track brought forward (or this one removed) and the sheet goes with it
+  const hzSource = hz?.page ? harmonizeFrom(prog, hz.page) ?? undefined : undefined;
   const harmonizeChords = useCallback((el: HTMLElement | null) => harmonize("chords", el), [harmonize]);
   const harmonizeTune = useCallback((el: HTMLElement | null) => harmonize("melody", el), [harmonize]);
   // bars on screen and Follow, the same on every editing page
@@ -771,7 +777,7 @@ export function GuitarView() {
           <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
             {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
             <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
-            <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} harmonizing={!!hz?.source} />
+            <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} harmonizing={!!hz?.page} />
           </div>
           <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={links.style} soundLink={links.sound} inst={chordInst} />
         </div>
@@ -779,7 +785,7 @@ export function GuitarView() {
           <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} onSheet={setHz} />
           {/* undo belongs to one melody track: switching track (or writing a harmony track again) starts it afresh, so one track's past can never be written over another */}
           <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
-            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} harmonizing={!!hz?.source} />
+            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} harmonizing={!!hz?.page} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
@@ -793,7 +799,7 @@ export function GuitarView() {
         </div>
       </div>
       {hz && (pane === "rhythm" || pane === "melody") && (
-        <HarmonyPicker key={hz.track?.id ?? `${hz.source ?? "new"}:${hz.kind}`} kind={hz.kind} track={hz.track} source={hz.source} anchor={hz.anchor} onEmpty={hz.onEmpty} onClose={closeHz} />
+        <HarmonyPicker key={hz.track?.id ?? (hz.page ? `page:${hz.page}` : `new:${hz.kind}`)} kind={hz.kind} track={hz.track} source={hzSource} anchor={hz.anchor} onEmpty={hz.onEmpty} onClose={closeHz} />
       )}
       {pane === "rhythm" && away && !sheet && (
         <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
@@ -1119,7 +1125,14 @@ function pasteOf(kind: ClipKind, p: Progression, clips: Clips, key: Key): Progre
 }
 
 /** The harmony sheet as a page opens it: a new track (from a source already chosen, or asking first), or a harmony track written again. */
-type HzOpen = { kind: "chords" | "melody"; track?: Track; source?: string; anchor?: HTMLElement | null; onEmpty?: () => void };
+type HzOpen = {
+  kind: "chords" | "melody";
+  track?: Track;
+  /** opened by the page's Harmonize button: it writes from the track this page is editing */
+  page?: "chords" | "melody";
+  anchor?: HTMLElement | null;
+  onEmpty?: () => void;
+};
 
 /**
  * Copy and Paste for one page. Copy takes everything on this page of the section on screen; Paste
