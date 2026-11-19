@@ -88,6 +88,15 @@ describe("a section's drum sound booked for later", () => {
   });
 });
 
+describe("a new desk", () => {
+  it("starts on its drums' settings, so the first hit of a render does not glide in from the defaults", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => syncDrums({ ...kit("909"), noise: "vinyl", noiseAmt: 0.6 }, 100, "drums"));
+    const gliding = booked(c).filter((x) => Math.abs(x.p.at(0) - x.p.at(5)) > 1e-6);
+    expect(gliding).toEqual([]);
+  });
+});
+
 describe("every drums track has a noise bed of its own", () => {
   it("one track's bed stops when its drums stop, and the other's runs on", () => {
     const c = new FakeAudio();

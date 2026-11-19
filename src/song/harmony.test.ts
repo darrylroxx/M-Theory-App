@@ -396,6 +396,13 @@ describe("a harmony as the song around it grows", () => {
     // a note changed by hand after that is still caught
     const s = focusTrack(q, "melody", "h");
     expect(harmonyState({ ...s, melody: { ...s.melody!, notes: [...s.melody!.notes, { at: 0, midi: 50 }] } }, D, "h").edited).toEqual(["A"]);
+    // and a later change to what it was written from leaves it out of date, not changed by hand
+    const m = focusTrack(q, "melody", "melody");
+    const tuned = { ...m, melody: { ...m.melody!, notes: m.melody!.notes.map((x, i) => (i === 1 ? { ...x, midi: x.midi + 2 } : x)) } };
+    expect(harmonyState(tuned, D, "h")).toEqual({ edited: [], stale: true, source: true });
+    const c = focusTrack(q, "chords", "chords");
+    const chorded = { ...c, chords: c.chords.map((x, i) => (i === 0 ? { ...x, ref: transposeRef(x.ref, 5, D) } : x)) };
+    expect(harmonyState(chorded, D, "pad")).toEqual({ edited: [], stale: true, source: true });
   });
 
   it("written again with another option, a track whose instrument was never chosen moves to the one that suits it; a chosen one stays", () => {
@@ -510,6 +517,17 @@ describe("a re-harmonisation pasted into another idea", () => {
     expect(into.mix?.chords?.mute).toBe(true);
     // and taking it away lets the chords be heard again
     expect(removeTrack(into, t.id).mix?.chords?.mute).toBe(false);
+  });
+  it("copied from an idea with no sections yet, keeps its record of what was written, so it is not taken for changed by hand", () => {
+    for (const option of ["relative", "colour"]) {
+      const page: Progression = { chords: [ch("C", 4), ch("G", 4), ch("A", 4, "min"), ch("F", 4)], melody: tune([64, 65, 67, 67, 67, 69, 67, 64, 65, 64, 62, 60, 65, 69, 72, 69]), bpm: 90, pattern: "ring", loop: true, bars: 4, meter: { num: 4, den: 4 } };
+      const p = addHarmony(page, C, { kind: "chords", from: "chords", option }, "hx").p;
+      const clip = copySection(p, "", C, "idea-1")!;
+      const other = loadCurrent({ chords: [ch("C", 4)], bpm: 90, pattern: "ring", loop: true, bars: 1, meter: { num: 4, den: 4 }, song: { parts: [{ id: "X", chords: [ch("C", 4)], bars: 1 }], blocks: [{ id: "x", partId: "X" }], current: "x" } });
+      const into = pasteSection(other, "x", clip, C, id);
+      const t = into.tracks!.find((x) => x.harmony?.option === option)!;
+      expect(harmonyState(into, C, t.id).edited, option).toEqual([]);
+    }
   });
   it("into one section of several, leaves the chords playing in the others (the pasted track plays only there)", () => {
     const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "borrowed" }, "bw").p;

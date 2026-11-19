@@ -200,6 +200,26 @@ describe("a section's own sound", () => {
     p.stop();
     expect(v.sound).toEqual(chorus);
   });
+  it("an added track's first chord is on the track's own sound from its start, in a render and on every ▶", async () => {
+    const log = notes();
+    const quiet: HarpSound = { ...SOUND_DEFAULT, level: 0.3, drive: 0.5 };
+    const target = 0.3 * 0.3 * 1.25;
+    // (the rack's level comes straight after its pump)
+    const level = (v: TrackVoice) => ((v.rack.duck as unknown as FakeAny).outputs[0] as FakeAny).gain;
+    const extra: ExtraPlay = { chords: [{ track: "c9", at: 0, beats: 4, midi: CHORD, style: "ring", sound: quiet }], tunes: [], drums: [] };
+    const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, extra }];
+    await S.renderSong(items, { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    const r = log.find((n) => n.track === "c9")!;
+    expect(level(r.v).at(r.when + 0.005)).toBeCloseTo(target, 3);
+    const p = new S.ProgressionPlayer();
+    for (let pass = 0; pass < 2; pass++) {
+      log.length = 0;
+      p.start(items, 120, "ring", false);
+      const n = log.find((x) => x.track === "c9")!;
+      expect(level(n.v).at(n.when + 0.005)).toBeCloseTo(target, 3);
+      p.stop();
+    }
+  });
 });
 
 describe("the drum desks", () => {
@@ -325,6 +345,17 @@ describe("the drum desks", () => {
     playStep(pump, "kick", 3, 0.3, "d2");
     expect(pumped).toEqual([0.3]);
     onKickHit(null);
+  });
+});
+
+describe("a note played to be heard", () => {
+  it("goes to the track being edited, so an instrument that finishes loading after another track was picked is not heard on that one", () => {
+    expect(S.heardTrack("chord")).toBe("chords");
+    S.hearOn("chord", { id: "c2", sound: SOUND_DEFAULT });
+    expect(S.heardTrack("chord")).toBe("c2");
+    expect(S.heardTrack("melody")).toBe("melody");
+    S.hearOn("chord", null);
+    expect(S.heardTrack("chord")).toBe("chords");
   });
 });
 

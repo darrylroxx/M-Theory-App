@@ -278,7 +278,8 @@ function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, ma
   const from = fresh ? here(t.harmony.from) : t.harmony.from;
   if (!from || (!isFirst(from) && !tracks.some((x) => x.id === from))) return forget(t, tracks);
   const same = !!ct.harmony && ct.harmony.option === t.harmony.option && here(ct.harmony.from) === from;
-  const mark = same && c.part ? ct.harmony?.marks?.[c.part] : undefined;
+  // (a copy of a page with no sections yet: its record is the page's)
+  const mark = same ? ct.harmony?.marks?.[c.part ?? ""] : undefined;
   const { [part]: _, ...others } = fresh ? {} : t.harmony.marks ?? {};
   const marks = mark ? { ...others, [part]: mark } : others;
   return { ...t, harmony: { from, option: t.harmony.option, ...(Object.keys(marks).length ? { marks } : {}) } };

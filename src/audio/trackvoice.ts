@@ -160,18 +160,22 @@ export class TrackVoice {
     readonly kind: VoiceKind,
     /** an added track's id (the first tracks are reported by kind) */
     readonly track?: string,
+    /** the sound it starts on: a song's track starts on its own, so its first note has nothing to glide from */
+    start: HarpSound = SOUND_DEFAULT,
+    bpm = 90,
   ) {
     this.offline = "startRendering" in c;
     this.out = c.createGain();
     this.out.connect(dest);
     this.rack = createRack(c, this.out);
-    this.rack.set(this.sound, 90);
+    this.rack.set(start, bpm);
     this.harpIn = c.createGain();
     this.harpIn.connect(this.rack.input);
     this.harp = new Harp(c, { input: this.harpIn, halo: this.rack.halo });
     // (an offline render's notes are on another clock and are not heard live: the canvas is not told of them)
     this.harp.tag = this.offline ? undefined : kind;
     this.harp.track = track;
+    this.setSound(start, bpm);
   }
 
   /** The instrument playing now (none: the strings). */

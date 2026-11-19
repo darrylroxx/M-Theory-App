@@ -3,7 +3,7 @@ import { DEFAULT_BEAT, applyPattern, grooveOf, kitOfBeat, type Beat, type BeatPa
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, keepTracks, letGoOfKeys, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepTracks, letGoOfKeys, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
 import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
@@ -374,7 +374,8 @@ export function GuitarView() {
         () => {
           if (!mine()) return;
           setLoading((x) => (x === id ? null : x));
-          hearIt();
+          // (only while the track is still the one being edited: otherwise the strum would sound on the track shown now)
+          if (heardTrack(kind === "chords" ? "chord" : "melody") === id) hearIt();
         },
         () => mine() && setLoading((x) => (x === id ? null : x)),
       );
@@ -444,7 +445,11 @@ export function GuitarView() {
     // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
     const keys = Object.entries(heard.tones ?? {})
       .filter(([, t]) => onKeys(t))
-      .map(([id]) => ({ id, kind: (id === "melody" || heard.tracks?.some((t) => t.id === id && t.kind === "melody") ? "melody" : "chord") as "melody" | "chord" }));
+      .map(([id]) => {
+        const t = heard.tracks?.find((x) => x.id === id);
+        // (an added track's voice is made on its own sound, so its first chord does not glide in from another)
+        return { id, kind: (id === "melody" || t?.kind === "melody" ? "melody" : "chord") as "melody" | "chord", sound: t ? reviveSound(t.sound) : undefined };
+      });
     waiting.current = true;
     const mine = starts.begin();
     void readyTracks(keys).then(() => {

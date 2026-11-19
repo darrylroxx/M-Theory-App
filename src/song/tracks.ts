@@ -153,8 +153,9 @@ export function normalize(p: Progression): Progression {
 
 /** An added drums track's own kit, from a section that has a beat on it (none yet: undefined). */
 function ownBeat(p: Progression, id: string): Beat | undefined {
-  for (const part of p.song?.parts ?? []) if (part.layers?.[id]?.beat) return part.layers[id].beat;
-  return p.layers?.[id]?.beat;
+  const all = [...(p.song?.parts ?? []).map((x) => x.layers?.[id]?.beat), p.layers?.[id]?.beat].filter((b): b is Beat => !!b);
+  // a section where the track was only looked at holds an empty beat on whatever kit was showing: one that plays comes first
+  return all.find((b) => b.on) ?? all[0];
 }
 
 /**

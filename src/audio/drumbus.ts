@@ -293,7 +293,9 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   const desk = deskOf(track);
   const was = desk.applied;
   // (a section's sound booked for later that never came, because playing stopped or jumped, is let go)
-  const to = (param: AudioParam, value: number, tc = 0.03) => param.cancelScheduledValues(t).setTargetAtTime(value, t, tc);
+  // A new desk (a render makes its own) starts on these settings: its first hit must not glide in from the defaults
+  const fresh = was.bpm === undefined;
+  const to = (param: AudioParam, value: number, tc = 0.03) => (fresh ? (param.value = value) : param.cancelScheduledValues(t).setTargetAtTime(value, t, tc));
   if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
   if (fx.size !== was.size || fx.verb !== was.verb) {
     // building a room takes a moment: wait until the knob stops moving (a section's own room: until its moment)
@@ -352,12 +354,14 @@ export function syncDrums(beat: Beat, bpm: number, track = FIRST_DRUMS, at?: num
     const p = soundOf(beat, id);
     const key = `${p.level}|${p.pan}|${p.space}|${p.echo}`;
     if (mixed.get(id) === key) continue;
+    // (a new desk's drums start where they are set, as its effects do)
+    const to = mixed.has(id) ? (param: AudioParam, v: number) => param.cancelScheduledValues(t).setTargetAtTime(v, t, 0.015) : (param: AudioParam, v: number) => (param.value = v);
     mixed.set(id, key);
     const ch = b.channels[id];
-    ch.input.gain.cancelScheduledValues(t).setTargetAtTime(p.level / 0.8, t, 0.015);
-    ch.pan.pan.cancelScheduledValues(t).setTargetAtTime(p.pan, t, 0.015);
-    ch.space.gain.cancelScheduledValues(t).setTargetAtTime(p.space, t, 0.015);
-    ch.echo.gain.cancelScheduledValues(t).setTargetAtTime(p.echo, t, 0.015);
+    to(ch.input.gain, p.level / 0.8);
+    to(ch.pan.pan, p.pan);
+    to(ch.space.gain, p.space);
+    to(ch.echo.gain, p.echo);
   }
 }
 

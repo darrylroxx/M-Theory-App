@@ -35,17 +35,16 @@ let pumping = false;
 
 const kindOf = (id: string, kind?: VoiceKind): VoiceKind => kind ?? (id === "melody" ? "melody" : "chord");
 
-/** A track's voice on the live context (made the first time it is needed). */
-function voiceOf(id: string, kind?: VoiceKind): TrackVoice {
+/** A track's voice on the live context (made the first time it is needed, on the page's sound for it, else on `sound`: the track's own). */
+function voiceOf(id: string, kind?: VoiceKind, sound?: HarpSound): TrackVoice {
   const ctx = audioContext();
   let v = voices.get(id);
   if (!v || v.c !== ctx) {
     const f = fader(id, ctx);
     const first = id === "chords" || id === "melody";
-    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id);
+    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id, liveSound.get(id) ?? sound ?? SOUND_DEFAULT, tempo);
     // every track goes out through a tap, so the canvas's guide hears each kind of part apart
     tapStem(v.kind === "melody" ? "melody" : "chords", f, id);
-    v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     v.setTone(liveTones[id] ?? GUITAR);
     voices.set(id, v);
     if (!pumping) {
@@ -105,8 +104,8 @@ export function warmTrack(id: string, kind: "chords" | "melody", tone: Tone): Pr
  * the synth its processor) before the music starts, so the first chord is heard. Resolves when
  * they all can, or after `ms` whatever happens (the rest then joins in as it arrives).
  */
-export function readyTracks(tracks: { id: string; kind: VoiceKind }[], ms = 4000): Promise<void> {
-  const loading = tracks.map((t) => voiceOf(t.id, t.kind)).filter((v) => !v.ready());
+export function readyTracks(tracks: { id: string; kind: VoiceKind; sound?: HarpSound }[], ms = 4000): Promise<void> {
+  const loading = tracks.map((t) => voiceOf(t.id, t.kind, t.sound)).filter((v) => !v.ready());
   if (!loading.length) return Promise.resolve();
   const all = Promise.all(loading.map((v) => v.load().catch(() => {}))).then(() => {});
   return Promise.race([all, new Promise<void>((r) => setTimeout(r, ms))]);
@@ -158,6 +157,8 @@ export function hearOn(kind: "chord" | "melody", track: { id: string; sound: Har
     voices.get(track.id)?.setSound(track.sound, tempo);
   }
 }
+/** The track a note played to be heard goes to now (the first tracks: "chords" and "melody"). */
+export const heardTrack = (kind: "chord" | "melody") => heardOn[kind]?.id ?? (kind === "chord" ? "chords" : "melody");
 const chordVoice = () => (heardOn.chord ? voiceOf(heardOn.chord.id, "chord") : voiceOf("chords"));
 const tuneVoice = () => (heardOn.melody ? voiceOf(heardOn.melody.id, "melody") : voiceOf("melody"));
 
@@ -496,7 +497,7 @@ export class ProgressionPlayer {
         const run = clipChords(ex.chords, s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0), s0 + (this.secs.rest[i] ?? item.beats));
         for (const ch of run)
           if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-            playChord(voiceOf(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
+            playChord(voiceOf(ch.track, "chord", ch.sound), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
               key: `${ch.track}@${t0.toFixed(4)}`,
               t0,
               chords: run.filter((x) => x.track === ch.track),
@@ -559,7 +560,7 @@ export class ProgressionPlayer {
       const tunes: { id: string; t: PlayTune }[] = [...(t ? [{ id: "melody", t }] : []), ...(this.items[cur.index]?.extra?.tunes ?? []).map((x) => ({ id: x.track, t: x.tune }))];
       for (const { id, t: tune } of tunes) {
         if (tune.m.on === false || !tune.m.notes.length) continue;
-        const v = voiceOf(id, "melody");
+        const v = voiceOf(id, "melody", tune.sound);
         if (tune.tone) v.setTone(tune.tone);
         if (synthWay(v)) {
           // a synth with a way of its own plays the whole section its way: this twelfth of a beat plays what starts in it
@@ -690,7 +691,8 @@ export class ProgressionPlayer {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
       // the sections' own sounds were played on each track's voice: it goes back to the one its page is set to
-      v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
+      // (an added track sounds the same in every section: one the page is not editing keeps its own, so the next ▶ starts on it)
+      if (!v.track || liveSound.has(id)) v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     }
     stopAll();
     stopDrums();
@@ -718,12 +720,12 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
   const off = new OfflineAudioContext(2, length + tail, o.rate);
   const made = new Map<string, TrackVoice>();
   withContext(off, () => {
-    const voice = (id: string, kind: VoiceKind) => {
+    const voice = (id: string, kind: VoiceKind, sound?: HarpSound) => {
       let v = made.get(id);
       if (!v) {
-        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id);
-        // each track starts as the page has it; a section with a sound of its own changes it where it starts
-        v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, o.bpm, 0);
+        // each track starts on the sound it first plays with (none given: as the page has it), so its first note
+        // does not glide in from another; a later section with a sound of its own changes it where it starts
+        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm);
         v.setTone(liveTones[id] ?? GUITAR);
         made.set(id, v);
       }
@@ -751,7 +753,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       let first = i;
       while (first > 0 && Math.abs(secs.origin[first - 1] - origin) < 1e-6) first--;
       const runStart = s0 - items.slice(first, i).reduce((n, it) => n + it.beats, 0);
-      playChord(voice("chords", "chord"), item, t, spb, o.pattern, s0, o.beat, cache, () => {
+      playChord(voice("chords", "chord", item.sound), item, t, spb, o.pattern, s0, o.beat, cache, () => {
         const chords: SecChord[] = [];
         let a = i;
         while (a > 0 && Math.abs(secs.origin[a - 1] - origin) < 1e-6) a--;
@@ -765,7 +767,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       const tunes: { id: string; tune: PlayTune | null }[] = [{ id: "melody", tune: item.tune ?? null }, ...(item.extra?.tunes ?? []).map((x) => ({ id: x.track, tune: x.tune }))];
       for (const { id, tune } of tunes) {
         if (!tune || tune.m.on === false) continue;
-        const v = voice(id, "melody");
+        const v = voice(id, "melody", tune.sound);
         if (tune.tone) v.setTone(tune.tone);
         if (tune.sound) v.setSound(tune.sound, o.bpm, t);
         v.repedal(t);
@@ -788,7 +790,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       const run = clipChords(ex?.chords ?? [], runStart, s0 + secs.rest[i]);
       for (const ch of run)
         if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-          playChord(voice(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
+          playChord(voice(ch.track, "chord", ch.sound), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
             key: `${ch.track}@${t0.toFixed(4)}`,
             t0,
             chords: run.filter((x) => x.track === ch.track),

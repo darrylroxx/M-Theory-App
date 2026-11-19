@@ -169,6 +169,18 @@ describe("tracks", () => {
     expect(focusTrack(p, "drums", "drums").beat?.kit).toBe("909");
   });
 
+  it("a new section takes the kit of a section where the added drums play, not of one where they were only looked at", () => {
+    let p: Progression = { ...base(["G"]), beat: { ...DEFAULT_BEAT, on: true, kit: "909" } };
+    // Drums 2 is added in A and left empty there; in B it is given a kit and a beat
+    p = addTrack(p, "drums", "d2").p;
+    p = addNewSection(p, id);
+    p = { ...p, beat: { ...p.beat!, kit: "mod", on: true } };
+    p = addNewSection(p, id); // C
+    expect(p.focus?.drums).toBe("d2");
+    expect(p.beat?.kit).toBe("mod");
+    expect(p.beat?.on).toBe(false);
+  });
+
   it("a track removed takes its instrument with it", () => {
     let p = addTrack(base(["G"]), "chords", "c2").p;
     p = { ...p, tones: { chords: { inst: "piano" }, c2: { inst: "synth" } } };

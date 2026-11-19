@@ -25,6 +25,12 @@ const panText = (v: number) => (Math.abs(v) < 0.025 ? "C" : `${v < 0 ? "L" : "R"
 const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low" : "High"} ${Math.round(Math.abs(v) * 100)}`);
 /** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
 const HOLD_MS = 1500;
+/**
+ * Whether the page's drums go onto the track's desk at once: not while another section plays (its
+ * own kit stays on until the music stops; this section's is heard when it comes round), as the harp does.
+ * `pos`: how far into the page's section the music is (null: stopped, or another section sounding).
+ */
+export const deskFollowsPage = (playing: boolean, pos: number | null) => !playing || pos !== null;
 
 /**
  * The drum machine, always on the page under the chords.
@@ -202,13 +208,16 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     return () => setDrumSolo(null, track);
   }, [solo, track]);
 
+  const sync = (b: Beat) => {
+    if (deskFollowsPage(playing, getPos())) syncDrums(b, bpm, track);
+  };
   const hit = (id: DrumId, b: Beat = beat, velocity = 0.8) => {
-    syncDrums(b, bpm, track);
+    sync(b);
     playDrum(b, id, undefined, velocity, 0, track);
   };
   /** Hear a drum while a knob is moving, without machine-gunning it. */
   const audition = (id: DrumId, b: Beat) => {
-    syncDrums(b, bpm, track);
+    sync(b);
     if (playing) return;
     const h = heard.current;
     window.clearTimeout(h.timer);
@@ -345,7 +354,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const pickKit = (k: (typeof kits)[number]) => {
     const next = k.preset ? applyUserKit(beat, k.preset) : applyKit(beat, k.id as KitId);
     setBeat((b) => (k.preset ? applyUserKit(b, k.preset) : applyKit(b, k.id as KitId)));
-    syncDrums(next, bpm, track);
+    sync(next);
     if (!playing) hit("kick", next);
   };
   const saveKit = () => {
@@ -367,7 +376,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
 
   // ── Sound and effects ──
   const setFx = (patch: Partial<BeatFx> & { swing?: number }) => {
-    syncDrums({ ...beat, ...patch }, bpm, track);
+    sync({ ...beat, ...patch });
     setBeat((b) => ({ ...b, ...patch }));
   };
   const p = soundOf(beat, sel);

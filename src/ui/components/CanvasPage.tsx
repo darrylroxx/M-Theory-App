@@ -92,6 +92,16 @@ function Better({ view, link }: { view: LinkView; link: { current: StemLink | nu
 }
 
 /**
+ * A song from a file starts on its own: the app's song stops first (the other way round, the app's
+ * ▶ stops the file). Both at once would be heard over each other, and the app's notes, not painted
+ * while the file is, would pile up and all land at once when the file stops.
+ */
+export function playAlone(appPlaying: boolean, stopApp: () => void, play: () => void) {
+  if (appPlaying) stopApp();
+  play();
+}
+
+/**
  * The canvas: while music plays, it paints itself.
  *
  * It hears the music layer by layer (the app's own song track by track, with every note it
@@ -547,15 +557,16 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     setSongOn(false);
     painter.current?.lift();
   }, []);
-  const playSong = (s: Song) => {
-    const c = audioContext();
-    const fp = (filePlayer.current ??= new Player(c));
-    fp.onEnd = () => setSongOn(false);
-    reader.current = new Reader(s, 0);
-    painter.current?.lift();
-    fp.play(s, 0);
-    setSongOn(true);
-  };
+  const playSong = (s: Song) =>
+    playAlone(live.current.playing, onPlay, () => {
+      const c = audioContext();
+      const fp = (filePlayer.current ??= new Player(c));
+      fp.onEnd = () => setSongOn(false);
+      reader.current = new Reader(s, 0);
+      painter.current?.lift();
+      fp.play(s, 0);
+      setSongOn(true);
+    });
   const open = async (file: File | undefined | null) => {
     if (!file) return;
     stopSong();
@@ -565,6 +576,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     try {
       const s = await openSong(file, audioContext());
       if (!mine()) return;
+      // the song open before may have been started while this one was being read: it stops, not plays on under this one's name
+      stopSong();
       painter.current?.fresh();
       fileLayers.current?.close();
       // heard layer by layer, ahead, from the moment it is opened

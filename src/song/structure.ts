@@ -576,6 +576,28 @@ export function letters(p: Progression): { partId: string; letter: string; label
   return out;
 }
 
+/**
+ * A harmony track changed along with the whole song (moved to another key with it) is still what
+ * was written: its record of each section follows (unless changed by hand before), so a later
+ * change to its source is not taken for a change by hand.
+ */
+function followMarks(p: Progression, q: Progression): Progression {
+  const spots: [string, Layers | undefined, Layers | undefined][] = p.song && q.song ? p.song.parts.map((x, i) => [x.id, x.layers, q.song!.parts[i]?.layers]) : [["", p.layers, q.layers]];
+  const tracks = q.tracks?.map((t) => {
+    const marks = t.harmony?.marks;
+    if (!marks) return t;
+    let next = marks;
+    for (const [id, was, now] of spots) {
+      const k = marks[id] ? id : spots.length === 1 && marks[""] ? "" : null;
+      const m = k === null ? undefined : marks[k];
+      if (!m || m.out !== outPrint(was?.[t.id])) continue;
+      next = { ...next, [k!]: { ...m, out: outPrint(now?.[t.id]) } };
+    }
+    return next === marks ? t : { ...t, harmony: { ...t.harmony!, marks: next } };
+  });
+  return tracks ? { ...q, tracks } : q;
+}
+
 /** Apply a change to every chord in the song (transpose, change bar length), not just the ones in the tray. */
 function mapAllChordsN(p0: Progression, fn: (c: ProgChord) => ProgChord): Progression {
   const p = commit(p0);
@@ -583,9 +605,9 @@ function mapAllChordsN(p0: Progression, fn: (c: ProgChord) => ProgChord): Progre
   // the extra chords tracks change with the first one
   const mapLayers = (l: Layers | undefined): Layers | undefined => (l ? Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v.chords ? { ...v, chords: v.chords.map(fn) } : v])) : l);
   const layers = mapLayers(p.layers);
-  if (!p.song) return { ...p, chords, layers };
+  if (!p.song) return followMarks(p, { ...p, chords, layers });
   const cur = partOf(p.song, p.song.current);
-  return { ...p, chords, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, chords, layers } : { ...x, chords: x.chords.map(fn), layers: mapLayers(x.layers) })) } };
+  return followMarks(p, { ...p, chords, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, chords, layers } : { ...x, chords: x.chords.map(fn), layers: mapLayers(x.layers) })) } });
 }
 
 /** Change every melody in the song (each section's, and the added melody tracks'). */
@@ -595,9 +617,9 @@ function mapAllMelodiesN(p0: Progression, fn: (m: Melody) => Melody): Progressio
   const mapLayers = (l: Layers | undefined): Layers | undefined => (l ? Object.fromEntries(Object.entries(l).map(([k, v]) => [k, v.melody ? { ...v, melody: fn(v.melody) } : v])) : l);
   const melody = one(p.melody);
   const layers = mapLayers(p.layers);
-  if (!p.song) return { ...p, melody, layers };
+  if (!p.song) return followMarks(p, { ...p, melody, layers });
   const cur = partOf(p.song, p.song.current);
-  return { ...p, melody, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, melody, layers } : { ...x, melody: one(x.melody), layers: mapLayers(x.layers) })) } };
+  return followMarks(p, { ...p, melody, layers, song: { ...p.song, parts: p.song.parts.map((x) => (x.id === cur?.id ? { ...x, melody, layers } : { ...x, melody: one(x.melody), layers: mapLayers(x.layers) })) } });
 }
 
 /**
