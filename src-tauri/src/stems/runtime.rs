@@ -77,6 +77,101 @@ impl ThreadManager for LowThreads {
 static ENV: OnceLock<Result<Environment, String>> = OnceLock::new();
 static LOADING: Mutex<()> = Mutex::new(());
 
+/// ONNX Runtime for Windows is built against Microsoft's Visual C++ runtime, which is not part of
+/// Windows (the app itself does not need it). Its library would not load without it, and with an
+/// older one than it was built for (before 14.40, from 2024) it would crash the whole app, the
+/// sound with it, the first time it locked a mutex. So the copy Windows would hand it is looked
+/// at first: if it is missing or too old, the runtime is not touched, and the reason is shown.
+/// (Nothing is loaded by the look, so once the user has installed the current one, the next try
+/// works without a restart.)
+#[cfg_attr(not(windows), allow(dead_code))]
+const CRT_NEEDED: (u16, u16) = (14, 40);
+
+/// What is wrong with the Visual C++ runtime, if anything (`version`: that of msvcp140.dll, None
+/// if there is none).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn crt_verdict(version: Option<(u16, u16, u16)>) -> Option<String> {
+    let fix = "Install the latest Microsoft Visual C++ Redistributable (x64), then try again.";
+    match version {
+        None => Some(format!("ONNX Runtime needs Microsoft's Visual C++ Redistributable (x64), which this computer does not have. {fix}")),
+        Some((a, b, c)) if (a, b) < CRT_NEEDED => Some(format!("ONNX Runtime needs a newer Microsoft Visual C++ Redistributable (x64): {}.{} or later; this computer has {a}.{b}.{c}. {fix}", CRT_NEEDED.0, CRT_NEEDED.1)),
+        Some(_) => None,
+    }
+}
+
+/// `crt_verdict` for this computer (on Windows; elsewhere nothing is needed).
+pub fn crt_problem() -> Option<String> {
+    #[cfg(windows)]
+    {
+        // the copy the runtime would get: one already loaded into the app (an audio driver can
+        // bring its own), else where Windows looks, beside the app first, then its system folder
+        let file = loaded_module("msvcp140.dll").or_else(|| {
+            let beside = std::env::current_exe().ok().and_then(|e| e.parent().map(Path::to_path_buf));
+            let system = std::env::var_os("SystemRoot").map(|r| PathBuf::from(r).join("System32"));
+            let dir = [beside, system].into_iter().flatten().find(|d| d.join("msvcp140.dll").exists())?;
+            // the rest of the same redistributable, beside it
+            ["vcruntime140.dll", "vcruntime140_1.dll", "msvcp140_1.dll"].iter().all(|f| dir.join(f).exists()).then(|| dir.join("msvcp140.dll"))
+        });
+        crt_verdict(file.and_then(|f| file_version(&f)))
+    }
+    #[cfg(not(windows))]
+    {
+        None
+    }
+}
+
+/// Where the module `name` this process has already loaded comes from, if it has.
+#[cfg(windows)]
+fn loaded_module(name: &str) -> Option<PathBuf> {
+    use std::os::windows::ffi::{OsStrExt, OsStringExt};
+    use windows_sys::Win32::System::LibraryLoader::{GetModuleFileNameW, GetModuleHandleW};
+    let wide: Vec<u16> = std::ffi::OsStr::new(name).encode_wide().chain(Some(0)).collect();
+    let mut buf = vec![0u16; 32_768];
+    // SAFETY: the name is NUL-terminated; the handle is only looked up, never freed (no reference
+    // is taken); the path is written into a buffer of the length given
+    unsafe {
+        let module = GetModuleHandleW(wide.as_ptr());
+        if module.is_null() {
+            return None;
+        }
+        let n = GetModuleFileNameW(module, buf.as_mut_ptr(), buf.len() as u32) as usize;
+        (n > 0 && n < buf.len()).then(|| PathBuf::from(std::ffi::OsString::from_wide(&buf[..n])))
+    }
+}
+
+/// A file's version (major, minor, build), from its version resource.
+#[cfg(windows)]
+fn file_version(path: &Path) -> Option<(u16, u16, u16)> {
+    use std::os::windows::ffi::OsStrExt;
+    use windows_sys::Win32::Storage::FileSystem::{GetFileVersionInfoSizeW, GetFileVersionInfoW, VerQueryValueW, VS_FIXEDFILEINFO};
+    let name: Vec<u16> = path.as_os_str().encode_wide().chain(Some(0)).collect();
+    let root: [u16; 2] = [b'\\' as u16, 0];
+    // SAFETY: the name and the sub-block are NUL-terminated; the buffer is as large as the size
+    // asked for, and the pointer handed back points into it, checked for null and length
+    unsafe {
+        let size = GetFileVersionInfoSizeW(name.as_ptr(), std::ptr::null_mut());
+        if size == 0 {
+            return None;
+        }
+        let mut buf = vec![0u8; size as usize];
+        if GetFileVersionInfoW(name.as_ptr(), 0, size, buf.as_mut_ptr().cast()) == 0 {
+            return None;
+        }
+        let mut info: *mut core::ffi::c_void = std::ptr::null_mut();
+        let mut len = 0u32;
+        if VerQueryValueW(buf.as_ptr().cast(), root.as_ptr(), &mut info, &mut len) == 0 || info.is_null() || (len as usize) < std::mem::size_of::<VS_FIXEDFILEINFO>() {
+            return None;
+        }
+        let f = std::ptr::read_unaligned(info as *const VS_FIXEDFILEINFO);
+        Some(((f.dwFileVersionMS >> 16) as u16, (f.dwFileVersionMS & 0xffff) as u16, (f.dwFileVersionLS >> 16) as u16))
+    }
+}
+
+/// Why the runtime would not load in this run of the app, if it would not.
+pub fn load_failure() -> Option<String> {
+    ENV.get().and_then(|r| r.as_ref().err().cloned())
+}
+
 /// Open the runtime from `dir` (where it was downloaded). The answer is kept: the library stays
 /// loaded for the life of the app. A failure is kept too, so a broken copy is not tried over and
 /// over; the user can download again and restart the app.
@@ -90,19 +185,21 @@ pub fn environment(dir: &Path, library: &str, preload: &[&str]) -> Result<Enviro
         // not downloaded yet: nothing is remembered, so it can be loaded once it is
         return Err("ONNX Runtime has not been downloaded".into());
     }
+    if let Some(why) = crt_problem() {
+        // not remembered either: nothing has been loaded, so it can be once that is put right
+        return Err(why);
+    }
     let r = (|| {
         for p in preload {
-            // its helpers first, from the same folder (Windows then uses this copy, not an older one)
-            ort::util::preload_dylib(dir.join(p)).map_err(|e| format!("{p} could not be loaded ({e})"))?;
-        }
-        let b = ort::init_from(&lib).map_err(|e| {
-            if cfg!(windows) {
-                format!("ONNX Runtime could not be loaded ({e}). It needs the Microsoft Visual C++ Redistributable (x64), which most computers already have.")
-            } else {
-                format!("ONNX Runtime could not be loaded ({e})")
+            // its helpers first, from the same folder (Windows then uses this copy, not the older
+            // one it may keep in its system folder). Only the graphics card needs them: if one
+            // will not load, the processor still can do the work, so it is noted, not fatal.
+            if let Err(e) = ort::util::preload_dylib(dir.join(p)) {
+                block_gpu(format!("{p} could not be loaded ({e}); splitting uses the processor"));
             }
-        })?;
-        b.with_name("m-theory-stems").with_telemetry(false).build().map_err(|e| format!("ONNX Runtime would not start ({e})"))
+        }
+        let b = ort::init_from(&lib).map_err(|e| format!("ONNX Runtime could not be loaded ({e}); restart the app to try again."))?;
+        b.with_name("m-theory-stems").with_telemetry(false).build().map_err(|e| format!("ONNX Runtime would not start ({e}); restart the app to try again."))
     })();
     let _ = ENV.set(r.clone());
     r
@@ -158,14 +255,23 @@ fn gpu_builder(_b: SessionBuilder) -> Result<SessionBuilder, String> {
 
 /// The graphics card's state, as found the last time it was tried (None: not tried yet).
 static GPU: Mutex<Option<Result<(), String>>> = Mutex::new(None);
+/// Why the graphics card must not be tried at all in this run of the app (its helper library
+/// would not load: the runtime would then reach for whatever older copy Windows keeps).
+static GPU_BLOCKED: OnceLock<String> = OnceLock::new();
 
 pub fn gpu_state() -> Option<Result<(), String>> {
+    if let Some(why) = GPU_BLOCKED.get() {
+        return Some(Err(why.clone()));
+    }
     GPU.lock().ok().and_then(|g| g.clone())
 }
 fn set_gpu(r: Result<(), String>) {
     if let Ok(mut g) = GPU.lock() {
         *g = Some(r);
     }
+}
+fn block_gpu(why: String) {
+    let _ = GPU_BLOCKED.set(why);
 }
 
 /// Try the graphics card with a tiny network, once the runtime is here. Cheap (well under a
@@ -174,6 +280,9 @@ fn set_gpu(r: Result<(), String>) {
 pub fn probe_gpu(env: &Environment) -> Option<Result<(), String>> {
     if !cfg!(windows) {
         return None;
+    }
+    if let Some(why) = GPU_BLOCKED.get() {
+        return Some(Err(why.clone()));
     }
     let bytes = onnx::scaled_copies(&[1.0], Some(64));
     let r = (|| -> Result<(), String> {
@@ -467,6 +576,20 @@ mod tests {
         assert!((1..=8).contains(&t));
         assert!(t <= (n / 2).max(1));
         assert!(n <= 2 || t <= n - 2);
+    }
+
+    #[test]
+    fn the_visual_cpp_runtime_must_be_there_and_new_enough() {
+        assert!(crt_verdict(None).unwrap().contains("does not have"));
+        // the one from before 2024's change to how a mutex starts: the runtime would crash on it
+        let old = crt_verdict(Some((14, 38, 33135))).unwrap();
+        assert!(old.contains("14.40 or later") && old.contains("14.38.33135"), "{old}");
+        assert!(crt_verdict(Some((14, 40, 33810))).is_none());
+        assert!(crt_verdict(Some((14, 44, 35211))).is_none());
+        assert!(crt_verdict(Some((15, 0, 0))).is_none());
+        if !cfg!(windows) {
+            assert!(crt_problem().is_none(), "only Windows needs it");
+        }
     }
 
     #[test]

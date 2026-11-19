@@ -88,6 +88,46 @@ fn model_present(data: &Path, m: &ModelDef) -> Option<Provenance> {
     (fs::metadata(&p).ok()?.len() == prov.bytes).then_some(prov)
 }
 
+/// Clear away what older versions of the app left in the data folder: a runtime of another
+/// version (and its package), a model no longer offered, a half-downloaded file under an old
+/// name. Only names this app made are looked at, and never the runtime or models in use.
+fn tidy(data: &Path) {
+    let gone = |p: &Path| {
+        let _ = if p.is_dir() { fs::remove_dir_all(p) } else { fs::remove_file(p) };
+    };
+    if let (Some(rt), Ok(rd)) = (RUNTIME.as_ref(), fs::read_dir(data.join("runtime"))) {
+        let package = format!("onnxruntime-{}.whl", rt.version);
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            let ours = name.starts_with("onnxruntime-") || name.chars().next().is_some_and(|c| c.is_ascii_digit());
+            if ours && name != rt.version && !name.starts_with(&package) {
+                gone(&e.path());
+            }
+        }
+        // a file half-unpacked when the app was closed (see `fetch::unzip`)
+        for e in fs::read_dir(data.join("runtime").join(rt.version)).into_iter().flatten().flatten() {
+            if e.file_name().to_string_lossy().ends_with(".tmp") {
+                gone(&e.path());
+            }
+        }
+    }
+    if let Ok(rd) = fs::read_dir(data.join("models")) {
+        for e in rd.flatten() {
+            let name = e.file_name().to_string_lossy().to_string();
+            match fetch::model(&name) {
+                None => gone(&e.path()),
+                Some(m) => {
+                    for f in fs::read_dir(e.path()).into_iter().flatten().flatten() {
+                        if !f.file_name().to_string_lossy().starts_with(m.file) {
+                            gone(&f.path());
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 // ── what is going on ──
 
 struct Jobs {
@@ -153,6 +193,24 @@ pub struct ModelStatus {
     pub sha256: Option<String>,
     pub checked_against: Option<String>,
     pub revision: Option<String>,
+    /// why the model would not open when a split last tried, in this run of the app (None: it
+    /// opened, or has not been tried). Downloading it again (`stems_prepare`) replaces it.
+    pub error: Option<String>,
+}
+
+/// The models that would not open (by id, with why), in this run of the app.
+static MODEL_ERRORS: Mutex<Vec<(&'static str, String)>> = Mutex::new(Vec::new());
+
+fn model_error(id: &str) -> Option<String> {
+    MODEL_ERRORS.lock().ok()?.iter().find(|(k, _)| *k == id).map(|(_, e)| e.clone())
+}
+fn set_model_error(id: &'static str, e: Option<String>) {
+    if let Ok(mut g) = MODEL_ERRORS.lock() {
+        g.retain(|(k, _)| *k != id);
+        if let Some(e) = e {
+            g.push((id, e));
+        }
+    }
 }
 
 #[derive(Serialize, Clone)]
@@ -210,14 +268,21 @@ fn status(app: &tauri::AppHandle) -> Result<Status, String> {
                 sha256: prov.as_ref().map(|p| p.sha256.clone()).or(m.sha256.map(str::to_string)),
                 checked_against: prov.as_ref().map(|p| p.checked_against.clone()),
                 revision: prov.and_then(|p| p.revision),
+                error: model_error(m.id),
             }
         })
         .collect();
     let rt = RUNTIME.as_ref();
-    let load_error = match runtime::loaded() {
-        true => None,
-        false => LOAD_ERROR.lock().ok().and_then(|e| e.clone()),
+    // why splitting cannot run in this run of the app: the runtime would not load (kept until a
+    // restart), or Windows lacks what it needs (looked at afresh each time, so installing it is
+    // seen at once, and before anything is downloaded)
+    let load_error = match (runtime::loaded(), rt) {
+        (true, _) | (_, None) => None,
+        (false, Some(_)) => runtime::load_failure().or_else(runtime::crt_problem),
     };
+    // walked before the job list is looked at: a big cache takes a moment, and `stems_cancel`
+    // must never wait for it
+    let cache_bytes = fetch::dir_size(&cache);
     let gpu = match rt.and_then(|r| r.gpu) {
         Some(name) => {
             let state = runtime::gpu_state();
@@ -227,8 +292,10 @@ fn status(app: &tauri::AppHandle) -> Result<Status, String> {
     };
     let j = jobs();
     Ok(Status {
-        available: rt.is_some(),
-        reason: rt.is_none().then(|| "Neural stems need the Windows app on a 64-bit PC".to_string()),
+        // a runtime that would not load stays that way until the app is restarted (a library
+        // cannot be loaded twice), so until then the quick splits are what there is
+        available: rt.is_some() && load_error.is_none(),
+        reason: if rt.is_none() { Some("Neural stems need the Windows app on a 64-bit PC".to_string()) } else { load_error.clone() },
         models,
         runtime: RuntimeStatus {
             present: runtime_present(&data),
@@ -242,25 +309,17 @@ fn status(app: &tauri::AppHandle) -> Result<Status, String> {
         gpu,
         preparing: j.preparing.is_some(),
         splitting: j.running.iter().map(|(k, _)| k).filter(|k| j.preparing.as_deref() != Some(k.as_str())).cloned().collect(),
-        cache_bytes: fetch::dir_size(&cache),
+        cache_bytes,
         cache_dir: cache.to_string_lossy().into(),
         threads: runtime::threads(),
     })
 }
 
-static LOAD_ERROR: Mutex<Option<String>> = Mutex::new(None);
-
-/// Open the runtime (once), remembering why if it will not.
+/// Open the runtime (once; `runtime::environment` keeps why, if it will not load).
 fn environment(data: &Path) -> Result<ort::environment::Environment, String> {
     let rt = RUNTIME.as_ref().ok_or("Neural stems need the Windows app on a 64-bit PC")?;
     let dir = runtime_dir(data).ok_or("No runtime for this computer")?;
-    let r = runtime::environment(&dir, rt.library, rt.preload);
-    if let Err(e) = &r {
-        if let Ok(mut g) = LOAD_ERROR.lock() {
-            *g = Some(e.clone());
-        }
-    }
-    r
+    runtime::environment(&dir, rt.library, rt.preload)
 }
 
 /// Whether the model and its runtime are here, their sizes and where they came from, whether
@@ -289,6 +348,10 @@ pub struct PrepareEvent {
 pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<String>, progress: Channel<PrepareEvent>) -> Result<Status, String> {
     let rt = RUNTIME.as_ref().ok_or("Neural stems need the Windows app on a 64-bit PC")?;
     let m = fetch::model(model.as_deref().unwrap_or(MODELS[0].id)).ok_or("No such model")?;
+    // nothing is downloaded that could not be used on this computer
+    if let Some(why) = tauri::async_runtime::spawn_blocking(runtime::crt_problem).await.map_err(|e| e.to_string())? {
+        return Err(why);
+    }
     let (reg, cancel) = register(&id)?;
     {
         let mut j = jobs();
@@ -299,7 +362,13 @@ pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<Stri
     }
     let data = data_dir(&app)?;
     fs::create_dir_all(&data).map_err(|e| e.to_string())?;
-    let need = (if runtime_present(&data) { 0 } else { rt.bytes * 3 }) + if model_present(&data, m).is_some() { 0 } else { m.approx_bytes + m.approx_bytes / 5 };
+    let d = data.clone();
+    tauri::async_runtime::spawn_blocking(move || tidy(&d)).await.map_err(|e| e.to_string())?;
+    // a runtime already open in this run is in use, whatever happened to its files since
+    let runtime_needed = !runtime_present(&data) && !runtime::loaded();
+    // a model that would not open is fetched again (a copy damaged on the disk is replaced)
+    let model_needed = model_present(&data, m).is_none() || model_error(m.id).is_some();
+    let need = (if runtime_needed { rt.bytes * 3 } else { 0 }) + if model_needed { m.approx_bytes + m.approx_bytes / 5 } else { 0 };
     if let Some(free) = crate::recfile::free_space(&data) {
         if free < need {
             return Err(format!("Not enough room on the disk: {} MB are needed, {} MB are free", need >> 20, free >> 20));
@@ -312,10 +381,10 @@ pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<Stri
     let step = |g: fetch::Got| if g.total == Some(g.done) { "check" } else { "download" };
     let client = fetch::client()?;
 
-    if !runtime_present(&data) {
+    if runtime_needed {
         let dir = runtime_dir(&data).ok_or("No runtime for this computer")?;
         let wheel = data.join("runtime").join(format!("onnxruntime-{}.whl", rt.version));
-        fetch::download(&client, rt.url, &wheel, Some(rt.sha256), Some(rt.bytes), &cancel, |g| send("runtime", step(g), g.done, g.total)).await?;
+        fetch::download(&client, &fetch::PUBLIC, rt.url, &wheel, Some(rt.sha256), Some(rt.bytes), &cancel, |g| send("runtime", step(g), g.done, g.total)).await?;
         send("runtime", "unpack", 0, None);
         let (w, d) = (wheel.clone(), dir.clone());
         tauri::async_runtime::spawn_blocking(move || fetch::unzip(&w, rt.files, &d)).await.map_err(|e| e.to_string())??;
@@ -324,12 +393,13 @@ pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<Stri
         send("runtime", "done", rt.bytes, Some(rt.bytes));
     }
 
-    if model_present(&data, m).is_none() {
+    if model_needed {
         let dest = model_path(&data, m);
+        let _ = fs::remove_file(provenance_path(&dest));
         let mut last = String::new();
         let mut got = None;
         for url in m.urls {
-            match fetch::download(&client, url, &dest, m.sha256, Some(m.approx_bytes), &cancel, |g| send("model", step(g), g.done, g.total)).await {
+            match fetch::download(&client, &fetch::PUBLIC, url, &dest, m.sha256, Some(m.approx_bytes), &cancel, |g| send("model", step(g), g.done, g.total)).await {
                 Ok(f) => {
                     got = Some((url, f));
                     break;
@@ -340,6 +410,7 @@ pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<Stri
         }
         let (url, f) = got.ok_or(last)?;
         Provenance { url: url.to_string(), sha256: f.sha256, bytes: f.bytes, checked_against: f.checked_against.into(), revision: f.revision, fetched: fetch::now() }.write(&provenance_path(&dest))?;
+        set_model_error(m.id, None);
         send("model", "done", f.bytes, Some(f.bytes));
     }
 
@@ -354,9 +425,14 @@ pub async fn stems_prepare(app: tauri::AppHandle, id: String, model: Option<Stri
 }
 
 /// Stop a split or a download (by the id the page gave it). False if there is no such job.
+/// (Async, like every command here, so it never runs on the window's own thread.)
 #[tauri::command]
-pub fn stems_cancel(id: String) -> bool {
-    match jobs().running.iter().find(|(k, _)| *k == id) {
+pub async fn stems_cancel(id: String) -> bool {
+    cancel_job(&id)
+}
+
+fn cancel_job(id: &str) -> bool {
+    match jobs().running.iter().find(|(k, _)| k == id) {
         Some((_, flag)) => {
             flag.store(true, Ordering::Relaxed);
             true
@@ -413,6 +489,9 @@ pub struct Separated {
 struct Made {
     pipeline: u32,
     model: String,
+    /// the SHA-256 of the model file that made them: a model downloaded again in another version
+    /// makes them again
+    model_sha256: String,
     stems: Vec<StemFile>,
     rate: u32,
     frames: u64,
@@ -426,9 +505,12 @@ fn cache_key(file_sha: &str, model: &str) -> String {
     format!("{}-{model}", &file_sha[..32.min(file_sha.len())])
 }
 
-fn finished(dir: &Path) -> Option<Made> {
+/// The stems kept in `dir`, if they were all made, by this version of the pipeline and (when the
+/// model is here to compare with) by the model file there is now.
+fn finished(dir: &Path, model_sha256: Option<&str>) -> Option<Made> {
     let made: Made = serde_json::from_slice(&fs::read(dir.join("done.json")).ok()?).ok()?;
-    (made.pipeline == PIPELINE && made.stems.iter().all(|s| Path::new(&s.path).exists())).then_some(made)
+    let same_model = model_sha256.is_none_or(|m| m.eq_ignore_ascii_case(&made.model_sha256));
+    (made.pipeline == PIPELINE && same_model && made.stems.iter().all(|s| Path::new(&s.path).exists())).then_some(made)
 }
 
 /// Make room for a new song's stems: the oldest finished songs go first (never one in use, nor
@@ -462,7 +544,7 @@ fn evict(cache: &Path, need: u64, in_use: &[String]) {
             total = total.saturating_sub(size);
         }
     }
-    // songs handed over by the page are kept a week after they were last split
+    // songs handed over by the page are kept a week after they were last handed over
     if let Ok(rd) = fs::read_dir(cache.join("uploads")) {
         for e in rd.flatten() {
             let old = e.metadata().and_then(|m| m.modified()).map(|t| t.elapsed().map(|d| d > Duration::from_secs(7 * 86_400)).unwrap_or(false)).unwrap_or(false);
@@ -496,6 +578,9 @@ pub async fn stems_upload(app: tauri::AppHandle, request: Request<'_>) -> Result
             let tmp = p.with_extension("tmp");
             fs::write(&tmp, &bytes).map_err(|e| format!("The song could not be kept ({e})"))?;
             fs::rename(&tmp, &p).map_err(|e| e.to_string())?;
+        } else if let Ok(f) = fs::File::options().append(true).open(&p) {
+            // handed over again: kept another week from now (see `evict`)
+            let _ = f.set_modified(std::time::SystemTime::now());
         }
         Ok(p.to_string_lossy().into())
     })
@@ -527,9 +612,27 @@ pub async fn stems_split(app: tauri::AppHandle, id: String, path: String, model:
     tauri::async_runtime::spawn_blocking(move || thread.join().unwrap_or_else(|_| Err("The split stopped unexpectedly".into()))).await.map_err(|e| e.to_string())?
 }
 
+/// Wait while the engine records a take: nothing heavy starts then, not even reading a whole
+/// song through to know it, or opening the model (a few seconds of hard work).
+fn wait_for_take(busy: fn() -> bool, cancel: &AtomicBool, send: &mut dyn FnMut(SplitEvent)) -> Result<(), String> {
+    if !busy() {
+        return Ok(());
+    }
+    send(SplitEvent::Paused { reason: "recording".into() });
+    while busy() {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("cancelled".into());
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    }
+    send(SplitEvent::Resumed);
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &Path, cancel: &Arc<AtomicBool>, reg: &mut Registered, send: &mut dyn FnMut(SplitEvent)) -> Result<Separated, String> {
-    let sha = fetch::sha256_file(song).map_err(|e| format!("The song could not be read ({e})"))?;
+    wait_for_take(crate::engine::recording, cancel, send)?;
+    let sha = fetch::sha256_file_or_stop(song, cancel).map_err(|e| if e == "cancelled" { e } else { format!("The song could not be read ({e})") })?;
     let key = cache_key(&sha, m.id);
     let dir = cache.join(&key);
     {
@@ -540,7 +643,8 @@ fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &P
         j.keys.push(key.clone());
         reg.key = Some(key.clone());
     }
-    if let Some(made) = finished(&dir) {
+    let model = model_present(data, m);
+    if let Some(made) = finished(&dir, model.as_ref().map(|p| p.sha256.as_str())) {
         // touched, so it counts as used just now and is kept longest
         let _ = fs::write(dir.join("done.json"), serde_json::to_vec(&made).unwrap_or_default());
         let seconds = made.frames as f64 / made.rate.max(1) as f64;
@@ -548,18 +652,22 @@ fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &P
         send(SplitEvent::Progress { done: 1, total: 1, ready_frames: made.frames, ready: seconds, speed: 0.0, eta: Some(0.0) });
         return Ok(Separated { id: id.into(), key, model: made.model, stems: made.stems, rate: made.rate, frames: made.frames, seconds, provider: made.provider, cached: true, took: 0.0 });
     }
-    if model_present(data, m).is_none() {
+    let Some(model) = model else {
         return Err("The stem model has not been downloaded".into());
-    }
+    };
     let env = environment(data)?;
 
     // one song at a time
+    let mut queued = false;
     let _worker = loop {
         match WORKER.try_lock() {
             Ok(g) => break g,
             Err(std::sync::TryLockError::Poisoned(p)) => break p.into_inner(),
             Err(std::sync::TryLockError::WouldBlock) => {
-                send(SplitEvent::Queued);
+                if !queued {
+                    queued = true;
+                    send(SplitEvent::Queued);
+                }
                 if cancel.load(Ordering::Relaxed) {
                     return Err("cancelled".into());
                 }
@@ -567,6 +675,8 @@ fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &P
             }
         }
     };
+    // a take may have begun while this song waited its turn
+    wait_for_take(crate::engine::recording, cancel, send)?;
     let started = Instant::now();
     let r = (|| -> Result<Separated, Stop> {
         let mut src = pipeline::Source::open(song)?;
@@ -581,10 +691,16 @@ fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &P
             }
         }
         send(SplitEvent::Loading);
-        let mut sep = runtime::OrtSeparator::open(&env, &model_path(data, m), m.stems.len(), m.segment, true)?;
-        if sep.stems() != m.stems.len() {
-            return Err(Stop::Failed(format!("The model makes {} stems, not {}", sep.stems(), m.stems.len())));
-        }
+        // a model that will not open, or is not the network it should be, is reported with the
+        // model's status (see `ModelStatus::error`), so the page can offer to fetch it again
+        let opened = runtime::OrtSeparator::open(&env, &model_path(data, m), m.stems.len(), m.segment, true).and_then(|sep| match sep.stems() {
+            n if n == m.stems.len() => Ok(sep),
+            n => Err(format!("The model makes {n} stems, not {}", m.stems.len())),
+        });
+        // (running out of memory says nothing about the file, so that is not held against it)
+        let blame = opened.as_ref().err().filter(|e| !e.to_ascii_lowercase().contains("alloc") && !e.to_ascii_lowercase().contains("memory"));
+        set_model_error(m.id, blame.cloned());
+        let mut sep = opened?;
         let stems: Vec<StemFile> = m.stems.iter().map(|s| StemFile { name: s.to_string(), path: dir.join(format!("{s}.wav")).to_string_lossy().into() }).collect();
         let outputs: Vec<PathBuf> = stems.iter().map(|s| PathBuf::from(&s.path)).collect();
         let rate = src.rate;
@@ -605,7 +721,7 @@ fn split_job(id: &str, song: &Path, m: &'static ModelDef, data: &Path, cache: &P
             Event::Resumed => send(SplitEvent::Resumed),
         })?;
         let provider = sep.provider().to_string();
-        let made = Made { pipeline: PIPELINE, model: m.id.into(), stems: stems.clone(), rate: done.rate, frames: done.frames, provider: provider.clone(), made: fetch::now() };
+        let made = Made { pipeline: PIPELINE, model: m.id.into(), model_sha256: model.sha256.clone(), stems: stems.clone(), rate: done.rate, frames: done.frames, provider: provider.clone(), made: fetch::now() };
         fs::write(dir.join("done.json"), serde_json::to_vec_pretty(&made).map_err(|e| e.to_string())?).map_err(|e| e.to_string())?;
         Ok(Separated { id: id.into(), key: key.clone(), model: m.id.into(), stems, rate: done.rate, frames: done.frames, seconds: done.frames as f64 / done.rate as f64, provider, cached: false, took: started.elapsed().as_secs_f64() })
     })();
@@ -788,15 +904,102 @@ mod tests {
         fs::create_dir_all(&dir).unwrap();
         let stem = StemFile { name: "vocals".into(), path: dir.join("vocals.wav").to_string_lossy().into() };
         fs::write(&stem.path, b"x").unwrap();
-        assert!(finished(&dir).is_none());
-        let made = Made { pipeline: PIPELINE, model: "htdemucs".into(), stems: vec![stem.clone()], rate: 48_000, frames: 10, provider: "CPU".into(), made: 0 };
+        let sha = "ab".repeat(32);
+        assert!(finished(&dir, Some(&sha)).is_none());
+        let made = Made { pipeline: PIPELINE, model: "htdemucs".into(), model_sha256: sha.clone(), stems: vec![stem.clone()], rate: 48_000, frames: 10, provider: "CPU".into(), made: 0 };
         fs::write(dir.join("done.json"), serde_json::to_vec(&made).unwrap()).unwrap();
-        assert_eq!(finished(&dir).unwrap().stems, vec![stem.clone()]);
-        // made by an older version: made again
-        let old = Made { pipeline: PIPELINE + 1, ..made };
+        assert_eq!(finished(&dir, Some(&sha)).unwrap().stems, vec![stem.clone()]);
+        // the model is not here to compare with (deleted): the stems are still good to use
+        assert!(finished(&dir, None).is_some());
+        // made by another version of the model file: made again
+        assert!(finished(&dir, Some(&"cd".repeat(32))).is_none());
+        // made by an older version of the pipeline: made again
+        let old = Made { pipeline: PIPELINE + 1, ..made.clone() };
         fs::write(dir.join("done.json"), serde_json::to_vec(&old).unwrap()).unwrap();
-        assert!(finished(&dir).is_none());
+        assert!(finished(&dir, Some(&sha)).is_none());
+        // a stem file gone missing: made again
+        fs::write(dir.join("done.json"), serde_json::to_vec(&made).unwrap()).unwrap();
+        fs::remove_file(&stem.path).unwrap();
+        assert!(finished(&dir, Some(&sha)).is_none());
         let _ = fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn what_older_versions_left_behind_is_cleared_and_nothing_else() {
+        let data = crate::recfile::scratch("stems-tidy").with_file_name("tidy-data");
+        let _ = fs::remove_dir_all(&data);
+        let mk = |rel: &str| {
+            let p = data.join(rel);
+            fs::create_dir_all(p.parent().unwrap()).unwrap();
+            fs::write(&p, b"x").unwrap();
+        };
+        let m = &MODELS[0];
+        let keep_model = [format!("models/{}/{}", m.id, m.file), format!("models/{}/{}.json", m.id, m.file), format!("models/{}/{}.part", m.id, m.file)];
+        for k in &keep_model {
+            mk(k);
+        }
+        mk(&format!("models/{}/an-older-export.onnx.part", m.id));
+        mk("models/a-model-no-longer-offered/x.onnx");
+        mk("runtime/1.0.0/onnxruntime.dll");
+        mk("runtime/onnxruntime-1.0.0.whl.part");
+        mk("runtime/notes-the-user-left.txt");
+        if let Some(rt) = RUNTIME.as_ref() {
+            mk(&format!("runtime/{}/{}", rt.version, rt.library));
+            mk(&format!("runtime/{}/{}.tmp", rt.version, rt.library));
+            mk(&format!("runtime/onnxruntime-{}.whl.part", rt.version));
+        }
+        tidy(&data);
+        for k in &keep_model {
+            assert!(data.join(k).exists(), "{k}");
+        }
+        assert!(!data.join(format!("models/{}/an-older-export.onnx.part", m.id)).exists());
+        assert!(!data.join("models/a-model-no-longer-offered").exists());
+        assert!(data.join("runtime/notes-the-user-left.txt").exists(), "not a name the app made");
+        if let Some(rt) = RUNTIME.as_ref() {
+            assert!(!data.join("runtime/1.0.0").exists() && !data.join("runtime/onnxruntime-1.0.0.whl.part").exists());
+            assert!(data.join(format!("runtime/{}/{}", rt.version, rt.library)).exists());
+            assert!(!data.join(format!("runtime/{}/{}.tmp", rt.version, rt.library)).exists(), "half-unpacked");
+            assert!(data.join(format!("runtime/onnxruntime-{}.whl.part", rt.version)).exists(), "a download to carry on with");
+        }
+        let _ = fs::remove_dir_all(&data);
+    }
+
+    #[test]
+    fn nothing_starts_while_a_take_is_recorded() {
+        use std::sync::atomic::AtomicUsize;
+        static LOOKS: AtomicUsize = AtomicUsize::new(0);
+        // recording for the first three looks, then not
+        fn busy() -> bool {
+            LOOKS.fetch_add(1, Ordering::Relaxed) < 3
+        }
+        let mut seen = vec![];
+        wait_for_take(busy, &AtomicBool::new(false), &mut |e| seen.push(serde_json::to_value(e).unwrap()["kind"].as_str().unwrap().to_string())).unwrap();
+        assert_eq!(seen, vec!["paused", "resumed"]);
+        assert!(LOOKS.load(Ordering::Relaxed) >= 4);
+        // not recording: straight on, with nothing said
+        fn idle() -> bool {
+            false
+        }
+        let mut seen = 0;
+        wait_for_take(idle, &AtomicBool::new(false), &mut |_| seen += 1).unwrap();
+        assert_eq!(seen, 0);
+        // cancelled while waiting
+        fn always() -> bool {
+            true
+        }
+        assert_eq!(wait_for_take(always, &AtomicBool::new(true), &mut |_| {}).unwrap_err(), "cancelled");
+    }
+
+    #[test]
+    fn a_job_is_cancelled_by_its_id_and_its_place_is_freed_when_it_ends() {
+        let (reg, flag) = register("cancel-me").unwrap();
+        assert!(register("cancel-me").is_err(), "one job per id");
+        assert!(!cancel_job("someone-else"));
+        assert!(cancel_job("cancel-me"));
+        assert!(flag.load(Ordering::Relaxed));
+        drop(reg);
+        assert!(!cancel_job("cancel-me"), "gone once it ended");
+        assert!(register("cancel-me").is_ok());
     }
 
     /// The whole path with the real ONNX Runtime: fetched through this app's own list (pinned
@@ -823,7 +1026,7 @@ mod tests {
             }
             Err(_) => {
                 let cancel = AtomicBool::new(false);
-                let got = tauri::async_runtime::block_on(fetch::download(&fetch::client().unwrap(), rt.url, &wheel, Some(rt.sha256), Some(rt.bytes), &cancel, |_| {})).unwrap();
+                let got = tauri::async_runtime::block_on(fetch::download(&fetch::client().unwrap(), &fetch::PUBLIC, rt.url, &wheel, Some(rt.sha256), Some(rt.bytes), &cancel, |_| {})).unwrap();
                 assert_eq!(got.bytes, rt.bytes);
             }
         }
@@ -904,6 +1107,21 @@ mod tests {
         drop(reg);
         assert_eq!(r.unwrap_err(), "cancelled");
         assert!(!cache.join(&out.key).exists());
+
+        // a model file that will not open: the split fails plainly, and the model's status says
+        // why (so the page can offer to fetch it again); nothing half-made is left
+        let m6 = fetch::model("htdemucs_6s").unwrap();
+        let bad = model_path(&data, m6);
+        fs::create_dir_all(bad.parent().unwrap()).unwrap();
+        fs::write(&bad, b"not a network at all").unwrap();
+        Provenance { url: "stand-in".into(), sha256: fetch::hex(&Sha256::digest(b"not a network at all")), bytes: 20, checked_against: "pinned".into(), revision: None, fetched: 0 }.write(&provenance_path(&bad)).unwrap();
+        let (mut reg, flag) = register("e2e-4").unwrap();
+        let e = split_job("e2e-4", &song, m6, &data, &cache, &flag, &mut reg, &mut |_| {}).unwrap_err();
+        drop(reg);
+        assert!(e.contains("could not be opened"), "{e}");
+        assert!(model_error("htdemucs_6s").is_some());
+        assert!(!cache.join(cache_key(&fetch::sha256_file(&song).unwrap(), "htdemucs_6s")).exists());
+        set_model_error("htdemucs_6s", None);
 
         // a stretch under way is abandoned at once when told to stop (as when a take begins)
         let mut sep = runtime::OrtSeparator::open(&environment(&data).unwrap(), &mp, 4, 4_410, false).unwrap();

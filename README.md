@@ -176,19 +176,26 @@ instead of from the whole mix.
 - **Downloaded once, when you ask.** The model is not in the installer. The first time, the app
   fetches ONNX Runtime (about 25 MB, from Microsoft's own package) and the model (about 166 MB for
   four stems, 136 MB for six; builds of the same network range from about 80 to 320 MB), checks each
-  against its fingerprint (SHA-256) and keeps them. A download that is interrupted carries on where
-  it stopped. If it fails, or you never ask, nothing else changes.
+  against its fingerprint (SHA-256) and keeps them. It only ever downloads from its publishers'
+  own addresses, written into the app, over secure connections. A download that is interrupted
+  carries on where it stopped. If it fails, or you never ask, nothing else changes.
+- **One thing Windows may need.** ONNX Runtime needs Microsoft's *Visual C++ Redistributable*
+  (x64), from 2024 or later. Most PCs have it; if yours does not, the app says so before it
+  downloads anything. Install the latest one from Microsoft and try again.
 - **How long it takes.** On an ordinary 4-core laptop processor, roughly as long as the song itself
   (somewhere between half and the whole of its length); with a graphics card Windows can use for it
   (DirectML, which most recent PCs have), several times faster. The song is worked through from the
   start, 7.8 seconds at a time, and every stem can be used up to where the work has got, so the
   painting can start long before the whole song is done.
 - **It keeps out of the music's way.** It uses at most half of the processor, at low priority, and
-  stops completely while you record a take, carrying on when the take is over.
+  stops completely while you record a take (it does not even start until the take is over). If
+  the graphics card will not do it, or gives back nonsense, the processor takes over; if neither
+  can, the app tells you why and the Canvas carries on with its quick splits.
 - **Kept for next time.** Stems are kept in the app's cache folder (32-bit WAV, about 90 MB per stem
   for a four-minute song), so the same song is ready at once the next time, whatever its file is
   called. When they take more than about 4 GB, the songs split longest ago make room.
-- **Files it reads:** WAV, MP3, FLAC, OGG (Vorbis) and M4A (AAC or Apple Lossless). Not Opus.
+- **Files it reads:** WAV, MP3, FLAC, OGG (Vorbis) and M4A (AAC or Apple Lossless), up to about
+  three hours long at 48 kHz. Not Opus.
 - **Only in the desktop app.** The web version and the phone app cannot run it; there (and until
   the model is downloaded) the Canvas uses its quick splits, approximate layers worked out from the
   sound as it plays.

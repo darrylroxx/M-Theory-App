@@ -30,6 +30,8 @@ export interface NeuralModel {
   sha256: string | null;
   checked_against: string | null;
   revision: string | null;
+  /** why it would not open when a split last tried (downloading it again replaces it) */
+  error: string | null;
 }
 
 export interface NeuralStatus {
@@ -110,16 +112,16 @@ export function offStatus(reason: string): NeuralStatus {
   };
 }
 
-/** Is everything needed to split with `model` downloaded? */
+/** Is everything needed to split with `model` downloaded, and did nothing fail to open? */
 export function readyToSplit(status: NeuralStatus, model?: string): boolean {
   const m = model ? status.models.find((x) => x.id === model) : status.models[0];
-  return status.available && status.runtime.present && !!m?.present;
+  return status.available && status.runtime.present && !!m?.present && !m.error;
 }
 
 /** How much `prepareNeural` would still download, in bytes (about, for the model). */
 export function toDownload(status: NeuralStatus, model?: string): number {
   const m = model ? status.models.find((x) => x.id === model) : status.models[0];
-  return (status.runtime.present ? 0 : status.runtime.bytes) + (m && !m.present ? m.bytes : 0);
+  return (status.runtime.present ? 0 : status.runtime.bytes) + (m && (!m.present || m.error) ? m.bytes : 0);
 }
 
 /** "166 MB", "25 MB", "4.0 GB" */
@@ -134,10 +136,15 @@ async function core() {
 
 // ── status and downloading ──
 
+/** Never fails: whatever goes wrong, the answer is a status saying why the quick splits are used. */
 export async function neuralStatus(): Promise<NeuralStatus> {
   const why = neuralUnavailable(isDesktop());
   if (why) return offStatus(why);
-  return (await core()).invoke<NeuralStatus>("stems_status");
+  try {
+    return await (await core()).invoke<NeuralStatus>("stems_status");
+  } catch (e) {
+    return offStatus(failure(e).message);
+  }
 }
 
 let seq = 0;
@@ -188,6 +195,8 @@ export function prepareNeural(opts: { model?: string; onProgress?: (p: PreparePr
       throw failure(e);
     }
   })();
+  // a failure is for whoever awaits `done`; it must not also be reported as unhandled
+  done.catch(() => undefined);
   return { id, done, cancel: () => cancelJob(id) };
 }
 

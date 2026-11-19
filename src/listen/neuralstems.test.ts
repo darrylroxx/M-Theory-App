@@ -32,8 +32,8 @@ function status(over: Partial<import("./neuralstems").NeuralStatus> = {}): impor
     available: true,
     reason: null,
     models: [
-      { id: "htdemucs", name: "Demucs v4", stems: ["drums", "bass", "other", "vocals"], present: false, bytes: 166_000_000, source: "https://example/htdemucs.onnx", page: "", licence: "MIT", sha256: null, checked_against: null, revision: null },
-      { id: "htdemucs_6s", name: "Demucs v4, six", stems: ["drums", "bass", "other", "vocals", "guitar", "piano"], present: true, bytes: 136_000_000, source: "", page: "", licence: "MIT", sha256: "ab", checked_against: "host", revision: null },
+      { id: "htdemucs", name: "Demucs v4", stems: ["drums", "bass", "other", "vocals"], present: false, bytes: 166_000_000, source: "https://example/htdemucs.onnx", page: "", licence: "MIT", sha256: null, checked_against: null, revision: null, error: null },
+      { id: "htdemucs_6s", name: "Demucs v4, six", stems: ["drums", "bass", "other", "vocals", "guitar", "piano"], present: true, bytes: 136_000_000, source: "", page: "", licence: "MIT", sha256: "ab", checked_against: "host", revision: null, error: null },
     ],
     runtime: { present: false, loaded: false, version: "1.24.4", source: "https://files.pythonhosted.org/x.whl", bytes: 25_111_930, licence: "MIT", error: null },
     gpu: { provider: "DirectML", usable: null, note: null },
@@ -67,6 +67,21 @@ describe("where neural stems can run", () => {
     expect(calls).toHaveLength(0);
   });
 
+  it("a native side that cannot answer leaves the quick splits, with the reason", async () => {
+    answer = async () => {
+      throw "the app's data folder could not be found";
+    };
+    const s = await ns.neuralStatus();
+    expect(s.available).toBe(false);
+    expect(s.reason).toMatch(/data folder/);
+    expect(ns.readyToSplit(s)).toBe(false);
+    // a runtime that would not load (no Visual C++ runtime) is reported as unavailable
+    answer = async () => status({ available: false, reason: "ONNX Runtime could not be loaded (…); install it and restart the app.", runtime: { ...status().runtime, present: true, error: "ONNX Runtime could not be loaded" } });
+    const t = await ns.neuralStatus();
+    expect(ns.neuralUnavailable(true, t)).toMatch(/restart the app/);
+    expect(ns.readyToSplit(t, "htdemucs_6s")).toBe(false);
+  });
+
   it("in the desktop app, the native side's answer counts", async () => {
     expect(ns.neuralUnavailable(true)).toBeNull();
     expect(ns.neuralUnavailable(true, { available: false, reason: "needs a 64-bit PC" })).toBe("needs a 64-bit PC");
@@ -79,6 +94,11 @@ describe("where neural stems can run", () => {
     // what is still to be fetched: the runtime and the model
     expect(ns.toDownload(s)).toBe(25_111_930 + 166_000_000);
     expect(ns.toDownload(s, "htdemucs_6s")).toBe(25_111_930);
+    // a model that would not open is not ready, and is fetched again
+    const broken = status({ runtime: { ...s.runtime, present: true } });
+    broken.models[1] = { ...broken.models[1], error: "The model could not be opened (protobuf parsing failed)" };
+    expect(ns.readyToSplit(broken, "htdemucs_6s")).toBe(false);
+    expect(ns.toDownload(broken, "htdemucs_6s")).toBe(136_000_000);
     expect(ns.sizeLabel(166_000_000)).toBe("166 MB");
     expect(ns.sizeLabel(4.2e9)).toBe("4.2 GB");
   });

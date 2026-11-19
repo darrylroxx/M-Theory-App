@@ -46,9 +46,13 @@ pub struct Resampler {
     /// cut-off (cycles per input sample) and the window's shape
     fc: f64,
     beta: f64,
-    /// one row of taps for each of the `l` positions an output sample can fall between two
-    /// input samples (when there are not too many of them; otherwise each is worked out)
-    table: Option<Vec<f32>>,
+    /// one row of taps for each of the `phases` positions an output sample can fall between two
+    /// input samples: every one of the `l` there are, or, for an odd pair of rates where there are
+    /// thousands, the nearest of 4096 evenly spaced ones (a timing error under 1/8192 of a sample,
+    /// more than 70 dB down even at 18 kHz) rather than working each one out, which would make
+    /// such a song dozens of times slower to split
+    table: Vec<f32>,
+    phases: u64,
     /// input not yet used up, per channel, and the number (in the whole stream) of its first sample
     buf: Vec<Vec<f32>>,
     base: u64,
@@ -64,6 +68,8 @@ pub struct Resampler {
 const ZEROS: f64 = 32.0;
 const ROLLOFF: f64 = 0.92;
 const KAISER_BETA: f64 = 8.6;
+/// The most rows of taps a resampler keeps (see `Resampler::table`).
+const MAX_PHASES: u64 = 4096;
 
 fn gcd(a: u64, b: u64) -> u64 {
     if b == 0 {
@@ -95,15 +101,16 @@ impl Resampler {
         // going down, the band must stop below the new, lower half rate
         let fc = 0.5 * ROLLOFF * (l as f64 / m as f64).min(1.0);
         let half = (ZEROS / (2.0 * fc)).ceil() as usize;
-        let mut r = Resampler { l, m, half, fc, beta: KAISER_BETA, table: None, buf: vec![Vec::new(); channels], base: 0, pushed: 0, next: 0 };
-        if l != m && l <= 4096 {
+        let phases = l.min(MAX_PHASES);
+        let mut r = Resampler { l, m, half, fc, beta: KAISER_BETA, table: Vec::new(), phases, buf: vec![Vec::new(); channels], base: 0, pushed: 0, next: 0 };
+        if l != m {
             let taps = 2 * half;
-            let mut t = vec![0.0f32; l as usize * taps];
-            for phase in 0..l {
-                let row = r.taps(phase);
-                t[phase as usize * taps..(phase as usize + 1) * taps].copy_from_slice(&row);
+            let mut t = vec![0.0f32; phases as usize * taps];
+            for p in 0..phases {
+                let row = r.taps(p as f64 / phases as f64);
+                t[p as usize * taps..(p as usize + 1) * taps].copy_from_slice(&row);
             }
-            r.table = Some(t);
+            r.table = t;
         }
         r
     }
@@ -112,11 +119,10 @@ impl Resampler {
         self.l == self.m
     }
 
-    /// The taps for an output sample that falls `phase / l` of the way from one input sample to
-    /// the next, scaled so they add up to exactly one (a steady level passes unchanged).
-    fn taps(&self, phase: u64) -> Vec<f32> {
+    /// The taps for an output sample that falls `frac` of the way from one input sample to the
+    /// next, scaled so they add up to exactly one (a steady level passes unchanged).
+    fn taps(&self, frac: f64) -> Vec<f32> {
         let taps = 2 * self.half;
-        let frac = phase as f64 / self.l as f64;
         let i0b = bessel_i0(self.beta);
         let mut row: Vec<f64> = (0..taps)
             .map(|j| {
@@ -174,22 +180,21 @@ impl Resampler {
                 break;
             }
             let pos = self.next * self.m;
-            let i0 = pos / self.l;
-            let phase = pos % self.l;
+            let mut i0 = pos / self.l;
+            // the nearest row of taps (exactly this output sample's place when there is a row
+            // for every place); rounding up to the next input sample's own place moves on to it
+            let mut row_at = ((pos % self.l) * self.phases * 2 + self.l) / (2 * self.l);
+            if row_at == self.phases {
+                row_at = 0;
+                i0 += 1;
+            }
             // the last input sample this output sample needs
             let last = i0 + self.half as u64;
             if !finished && last >= self.pushed {
                 break;
             }
             let first = i0 as i64 - self.half as i64 + 1;
-            let owned;
-            let row: &[f32] = match &self.table {
-                Some(t) => &t[phase as usize * taps..(phase as usize + 1) * taps],
-                None => {
-                    owned = self.taps(phase);
-                    &owned
-                }
-            };
+            let row: &[f32] = &self.table[row_at as usize * taps..(row_at as usize + 1) * taps];
             for (c, b) in self.buf.iter().enumerate() {
                 let mut acc = 0.0f64;
                 for (j, &h) in row.iter().enumerate() {
@@ -250,7 +255,13 @@ impl Source {
             .make(&track.codec_params, &DecoderOptions::default())
             .map_err(|e| format!("The sound in this file is in a form that cannot be split here ({e})"))?;
         let rate = track.codec_params.sample_rate.ok_or("The file does not say its sample rate")?;
+        if !(4_000..=768_000).contains(&rate) {
+            return Err(format!("The file says its sample rate is {rate} Hz, which cannot be split here"));
+        }
         let frames = track.codec_params.n_frames;
+        if frames.is_some_and(|f| f > max_frames()) {
+            return Err(too_long(rate));
+        }
         let id = track.id;
         Ok(Source { format, decoder, track: id, rate, frames, sb: None })
     }
@@ -280,6 +291,12 @@ impl Source {
             if frames == 0 {
                 continue;
             }
+            // a file whose sound decodes at another rate than it says (an AAC file with a part
+            // this decoder cannot read, the part that doubles its rate) would give stems that do
+            // not line up with the song as the page plays it: refused plainly instead
+            if spec.rate != self.rate {
+                return Err(format!("The sound in this file is in a form that cannot be split here (it says {} Hz but decodes at {} Hz)", self.rate, spec.rate));
+            }
             let need = decoded.capacity() as u64;
             if self.sb.as_ref().map(|s| s.capacity() < need as usize * spec.channels.count()).unwrap_or(true) {
                 self.sb = Some(SampleBuffer::new(need, spec));
@@ -296,6 +313,16 @@ impl Source {
             return Ok(true);
         }
     }
+}
+
+/// The longest song that can be split (frames): a stem is a WAV file, whose sizes are counted
+/// in 32 bits, so it holds at most 4 GB, about three hours of stereo 32-bit sound at 48 kHz.
+pub fn max_frames() -> u64 {
+    (u32::MAX as u64 - (1 << 16)) / 8
+}
+
+fn too_long(rate: u32) -> String {
+    format!("The song is too long to split: at most about {} minutes at its sample rate", max_frames() / rate.max(1) as u64 / 60)
 }
 
 // ── stretches and cross-fades ──
@@ -525,6 +552,9 @@ pub fn split_source(src: &mut Source, outputs: &[PathBuf], sep: &mut dyn Separat
                 finished = true;
             }
             src_frames += l.len() as u64;
+            if src_frames > max_frames() {
+                return Err(Stop::Failed(too_long(rate)));
+            }
             up.push(&[&l, &r]);
             conv[0].clear();
             conv[1].clear();
@@ -748,7 +778,8 @@ pub(crate) mod tests {
 
     #[test]
     fn the_rate_is_changed_cleanly_and_back_again() {
-        for (from, to) in [(48_000u32, 44_100u32), (44_100, 48_000), (22_050, 44_100), (96_000, 44_100), (44_100, 44_100)] {
+        // the last pairs are odd ones, with thousands of places an output sample can fall
+        for (from, to) in [(48_000u32, 44_100u32), (44_100, 48_000), (22_050, 44_100), (96_000, 44_100), (44_100, 44_100), (44_056, 44_100), (44_100, 44_056), (44_101, 44_100)] {
             let n = from as usize; // one second
             let f = 1000.0;
             let x: Vec<f32> = (0..n).map(|i| (2.0 * std::f64::consts::PI * f * i as f64 / from as f64).sin() as f32).collect();
@@ -783,6 +814,34 @@ pub(crate) mod tests {
             let err = back[0].iter().zip(&x).skip(200).take(n - 400).map(|(a, b)| (a - b).abs()).fold(0.0f32, f32::max);
             assert!(err < 2e-3, "{from}->{to}->{from}: {err}");
         }
+    }
+
+    #[test]
+    fn an_odd_pair_of_rates_keeps_a_small_table_and_stays_quick() {
+        let r = Resampler::new(44_056, 44_100, 2);
+        assert_eq!(r.l, 11_025);
+        assert_eq!(r.phases, MAX_PHASES);
+        assert_eq!(r.table.len(), MAX_PHASES as usize * 2 * r.half);
+        // ordinary pairs have a row for every place, so nothing is rounded
+        let r = Resampler::new(48_000, 44_100, 2);
+        assert_eq!((r.l, r.phases), (147, 147));
+        // ten seconds of stereo through an odd pair, as fast as through an ordinary one would be
+        let x: Vec<f32> = (0..441_000).map(|i| (i as f32 * 0.01).sin()).collect();
+        let t = std::time::Instant::now();
+        let mut a = Resampler::new(44_101, 44_100, 2);
+        let mut out = vec![Vec::new(), Vec::new()];
+        a.push(&[&x, &x]);
+        a.pull(&mut out, true);
+        assert_eq!(out[0].len() as u64, a.out_len(441_000));
+        assert!(t.elapsed() < Duration::from_secs(20), "{:?}", t.elapsed());
+    }
+
+    #[test]
+    fn a_stem_never_outgrows_what_a_wav_file_can_hold() {
+        // stereo 32-bit: 8 bytes a frame, plus the header, within the file's 32-bit sizes
+        assert!(max_frames() * 8 + 4096 < u32::MAX as u64);
+        assert!(max_frames() / 48_000 / 60 >= 180, "at least three hours at 48 kHz");
+        assert!(too_long(96_000).contains("93 minutes"), "{}", too_long(96_000));
     }
 
     #[test]
@@ -857,6 +916,40 @@ pub(crate) mod tests {
         assert!(sum_err < 3e-3, "the stems add up to the song: {sum_err}");
         for p in outs.iter().chain([&song]) {
             let _ = std::fs::remove_file(p);
+        }
+    }
+
+    #[test]
+    fn a_song_ending_anywhere_in_a_stretch_comes_back_whole_and_unchanged() {
+        // lengths around the stretches' edges (4000 long, starting every 3000), including songs
+        // whose end is only found after the stretch that covers it has run
+        let dir = crate::recfile::scratch("stems-edges");
+        for len in [1usize, 2, 2999, 3000, 3999, 4000, 4001, 6999, 7000, 7001, 9000, 10_001] {
+            let song = dir.with_file_name(format!("edges-{len}.wav"));
+            let x: Vec<[f32; 2]> = (0..len).map(|i| [((i * 7919) % 1000) as f32 / 1000.0 - 0.5, ((i * 104_729) % 997) as f32 / 997.0 - 0.5]).collect();
+            write_wav(&song, MODEL_RATE, 2, &x);
+            let out = [dir.with_file_name(format!("edges-{len}-stem.wav"))];
+            let mut sep = Shares { seg: 4_000, shares: vec![1.0], runs: 0, interrupt_on: None, cancel_on: None };
+            let cancel = AtomicBool::new(false);
+            let mut ready = vec![];
+            let done = split(&song, &out, &mut sep, &ctl(&cancel), &mut |e| {
+                if let Event::Progress { ready: r, .. } = e {
+                    ready.push(r)
+                }
+            })
+            .map_err(|e| format!("{e:?}"))
+            .unwrap();
+            assert_eq!(done.frames, len as u64);
+            assert_eq!(done.segments, Plan::quarter(4_000).count(len as u64), "{len}: every stretch run once");
+            assert!(ready.windows(2).all(|w| w[0] <= w[1]) && *ready.last().unwrap() == len as u64, "{len}: {ready:?}");
+            let (_, y) = read_wav(&out[0]);
+            assert_eq!(y.len(), len);
+            for (i, (a, b)) in y.iter().zip(&x).enumerate() {
+                assert!((a[0] - b[0]).abs() < 1e-6 && (a[1] - b[1]).abs() < 1e-6, "{len}, frame {i}: {a:?} vs {b:?}");
+            }
+            for p in out.iter().chain([&song]) {
+                let _ = std::fs::remove_file(p);
+            }
         }
     }
 

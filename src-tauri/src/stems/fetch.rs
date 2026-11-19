@@ -10,8 +10,12 @@
 //!
 //! Every download is checked against a SHA-256 before it is used. Where this file pins one, that
 //! is the one; where it does not yet (the model's could not be read from where this was written),
-//! the host must state the file's SHA-256 (Hugging Face sends it with every stored file) and the
-//! download must match it, and the checked value is kept with the file for anyone to see.
+//! the publisher itself must state the file's SHA-256 (Hugging Face sends it with every stored
+//! file, over its own secure connection) and the download must match it; the checked value is
+//! kept with the file for anyone to see. Only the publisher's word counts: a mirror, or any other
+//! server a download is sent on to, can never supply the value its own file is checked against,
+//! so a file from anywhere else is used only if this file pins it. Every step of a download is
+//! over HTTPS; a server that sends it to a plain address is not followed.
 //!
 //! A download that is stopped (cancelled, the connection dropped, the app closed) is kept as a
 //! part-file and continued from where it stopped next time, if the host still offers the very
@@ -157,10 +161,18 @@ impl Provenance {
 }
 
 pub fn sha256_file(path: &Path) -> Result<String, String> {
+    sha256_file_or_stop(path, &AtomicBool::new(false))
+}
+
+/// `sha256_file`, given up ("cancelled") as soon as `cancel` is set: a song can be a long file.
+pub fn sha256_file_or_stop(path: &Path, cancel: &AtomicBool) -> Result<String, String> {
     let mut f = File::open(path).map_err(|e| e.to_string())?;
     let mut h = Sha256::new();
     let mut buf = vec![0u8; 1 << 20];
     loop {
+        if cancel.load(Ordering::Relaxed) {
+            return Err("cancelled".into());
+        }
         let n = f.read(&mut buf).map_err(|e| e.to_string())?;
         if n == 0 {
             break;
@@ -179,9 +191,10 @@ fn is_sha256(s: &str) -> bool {
     s.len() == 64 && s.bytes().all(|b| b.is_ascii_hexdigit())
 }
 
-/// Which SHA-256 a download must have: the pinned one if there is one (a host stating another
-/// is refused), else the one the host stated. With neither, the file cannot be checked and is not
-/// used. Returns the expected value and where it came from.
+/// Which SHA-256 a download must have: the pinned one if there is one (the publisher stating
+/// another is refused at once), else the one the publisher stated. With neither, the file cannot
+/// be checked and is not used. `host` is only ever what a vouching host said (see `Trust`).
+/// Returns the expected value and where it came from.
 pub fn expected_sha(pinned: Option<&str>, host: Option<&str>) -> Result<(String, &'static str), String> {
     let host = host.map(|h| h.to_ascii_lowercase()).filter(|h| is_sha256(h));
     match (pinned, host) {
@@ -192,18 +205,36 @@ pub fn expected_sha(pinned: Option<&str>, host: Option<&str>) -> Result<(String,
     }
 }
 
-/// The SHA-256 a host states for a file. Hugging Face sends it as `X-Linked-Etag` on the way to
-/// the stored file (and as the plain ETag on some answers), in quotes.
-pub fn host_sha(headers: &reqwest::header::HeaderMap) -> Option<String> {
-    for name in ["x-linked-etag", "etag"] {
-        if let Some(v) = headers.get(name).and_then(|v| v.to_str().ok()) {
-            let v = v.trim().trim_start_matches("W/").trim_matches('"').to_ascii_lowercase();
-            if is_sha256(&v) {
-                return Some(v);
-            }
-        }
-    }
-    None
+/// Whose word on a download counts, and where a download may go.
+pub struct Trust {
+    /// may this host state the SHA-256 a file is checked against (when this app pins none)?
+    pub vouches: fn(&reqwest::Url) -> bool,
+    /// may a download be fetched from (or sent on to) this address at all?
+    pub allows: fn(&reqwest::Url) -> bool,
+}
+
+/// The rule for the app's downloads: HTTPS only, and only Hugging Face (the model's publisher,
+/// and the servers it hands its files out from) may vouch for a file. PyPI, where the runtime
+/// comes from, never needs to: that file is pinned here.
+pub const PUBLIC: Trust = Trust { vouches: hugging_face, allows: secure };
+
+/// Hugging Face's own hosts: huggingface.co and hf.co, and their sub-domains (its file servers).
+fn hugging_face(url: &reqwest::Url) -> bool {
+    let Some(host) = url.host_str().map(|h| h.to_ascii_lowercase()) else { return false };
+    secure(url) && ["huggingface.co", "hf.co"].iter().any(|d| host == *d || host.ends_with(&format!(".{d}")))
+}
+
+fn secure(url: &reqwest::Url) -> bool {
+    url.scheme() == "https" && url.host_str().is_some()
+}
+
+/// A SHA-256 a host states for a file in header `name`. Hugging Face sends it as `X-Linked-Etag`
+/// on the way to the stored file (and as the plain ETag on some answers), in quotes. Only read
+/// from a host that vouches (see `Trust`): any other server's ETag means whatever it likes.
+fn sha_header(headers: &reqwest::header::HeaderMap, name: &str) -> Option<String> {
+    let v = headers.get(name)?.to_str().ok()?;
+    let v = v.trim().trim_start_matches("W/").trim_matches('"').to_ascii_lowercase();
+    is_sha256(&v).then_some(v)
 }
 
 /// How far a download has got.
@@ -248,13 +279,27 @@ pub fn client() -> Result<reqwest::Client, String> {
 /// Download `url` to `dest`, checked: first into `dest.part` (continued if an earlier attempt
 /// left one for the same file), then checked, then moved into place. A file that does not check
 /// out is deleted. `cancel` stops it between blocks; what was fetched so far is kept for next time.
-pub async fn download(client: &reqwest::Client, url: &str, dest: &Path, pinned: Option<&str>, expected_bytes: Option<u64>, cancel: &AtomicBool, mut progress: impl FnMut(Got) + Send) -> Result<Fetched, String> {
-    match attempt(client, url, dest, pinned, expected_bytes, cancel, &mut progress).await {
+/// A pinned file already in place is not fetched again.
+#[allow(clippy::too_many_arguments)]
+pub async fn download(client: &reqwest::Client, trust: &Trust, url: &str, dest: &Path, pinned: Option<&str>, expected_bytes: Option<u64>, cancel: &AtomicBool, mut progress: impl FnMut(Got) + Send) -> Result<Fetched, String> {
+    if let Some(p) = pinned {
+        // left by an earlier try that stopped before it was used (the app closed): it is checked,
+        // not fetched again
+        let d = dest.to_path_buf();
+        if let Ok(Ok(got)) = tauri::async_runtime::spawn_blocking(move || sha256_file(&d)).await {
+            if got.eq_ignore_ascii_case(p) {
+                let bytes = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+                progress(Got { done: bytes, total: Some(bytes) });
+                return Ok(Fetched { sha256: got, bytes, checked_against: "pinned", revision: None });
+            }
+        }
+    }
+    match attempt(client, trust, url, dest, pinned, expected_bytes, cancel, &mut progress).await {
         // the server answered for a part that was not asked for: once more, from nothing
         Err(Attempt::Restart) => {
             let _ = fs::remove_file(with_suffix(dest, ".part"));
             let _ = fs::remove_file(with_suffix(dest, ".part.json"));
-            match attempt(client, url, dest, pinned, expected_bytes, cancel, &mut progress).await {
+            match attempt(client, trust, url, dest, pinned, expected_bytes, cancel, &mut progress).await {
                 Ok(f) => Ok(f),
                 Err(Attempt::Restart) => Err("The server would not send the file in one piece".into()),
                 Err(Attempt::Failed(e)) => Err(e),
@@ -281,7 +326,8 @@ impl From<&str> for Attempt {
     }
 }
 
-async fn attempt(client: &reqwest::Client, url: &str, dest: &Path, pinned: Option<&str>, expected_bytes: Option<u64>, cancel: &AtomicBool, progress: &mut (dyn FnMut(Got) + Send)) -> Result<Fetched, Attempt> {
+#[allow(clippy::too_many_arguments)]
+async fn attempt(client: &reqwest::Client, trust: &Trust, url: &str, dest: &Path, pinned: Option<&str>, expected_bytes: Option<u64>, cancel: &AtomicBool, progress: &mut (dyn FnMut(Got) + Send)) -> Result<Fetched, Attempt> {
     let part = with_suffix(dest, ".part");
     let info_path = with_suffix(dest, ".part.json");
     let mut have = fs::metadata(&part).map(|m| m.len()).unwrap_or(0);
@@ -290,28 +336,43 @@ async fn attempt(client: &reqwest::Client, url: &str, dest: &Path, pinned: Optio
         have = 0;
     }
 
-    // ask (for the rest, if some is here already), following redirects by hand
-    let mut at = url.to_string();
-    let mut stated: Option<String> = None;
+    // ask (for the rest, if some is here already), following redirects by hand: the headers on
+    // the way are where the publisher states the file's SHA-256, and every hop must stay secure
+    let mut at = reqwest::Url::parse(url).map_err(|e| e.to_string())?;
+    if !(trust.allows)(&at) {
+        return Err(format!("{url} is not a secure address; nothing was downloaded").into());
+    }
+    // `X-Linked-Etag` is the file's SHA-256 wherever it is sent; a plain ETag only counts if no
+    // step sent that (a file server's own ETag can be some other 64-digit hash of its own)
+    let mut linked: Option<String> = None;
+    let mut plain: Option<String> = None;
     let mut revision: Option<String> = None;
     let mut resp = None;
     for _ in 0..8 {
-        let mut req = client.get(&at);
+        let mut req = client.get(at.clone());
         if have > 0 {
             req = req.header(reqwest::header::RANGE, format!("bytes={have}-"));
         }
-        let r = req.send().await.map_err(|e| format!("Could not reach {} ({e})", host_of(&at)))?;
-        stated = stated.or_else(|| host_sha(r.headers()));
-        revision = revision.or_else(|| r.headers().get("x-repo-commit").and_then(|v| v.to_str().ok()).map(str::to_string));
+        let r = req.send().await.map_err(|e| format!("Could not reach {} ({e})", host_of(at.as_str())))?;
+        if (trust.vouches)(&at) {
+            linked = linked.or_else(|| sha_header(r.headers(), "x-linked-etag"));
+            plain = plain.or_else(|| sha_header(r.headers(), "etag"));
+            revision = revision.or_else(|| r.headers().get("x-repo-commit").and_then(|v| v.to_str().ok()).map(str::to_string));
+        }
         if r.status().is_redirection() {
             let loc = r.headers().get(reqwest::header::LOCATION).and_then(|v| v.to_str().ok()).ok_or("The server sent the download elsewhere without saying where")?;
-            at = reqwest::Url::parse(&at).and_then(|base| base.join(loc)).map_err(|e| e.to_string())?.to_string();
+            let next = at.join(loc).map_err(|e| e.to_string())?;
+            if !(trust.allows)(&next) {
+                return Err(format!("{} sent the download to an address that is not secure; it was not followed", host_of(at.as_str())).into());
+            }
+            at = next;
             continue;
         }
         resp = Some(r);
         break;
     }
     let mut resp = resp.ok_or("The download was sent round in circles")?;
+    let stated = linked.or(plain);
     let (want, against) = expected_sha(pinned, stated.as_deref())?;
 
     // a part-file of some other version of the file is no use
@@ -335,9 +396,9 @@ async fn attempt(client: &reqwest::Client, url: &str, dest: &Path, pinned: Optio
         false
     } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE && have > 0 {
         // the part-file may already be whole: check it as it is (a wrong one is deleted)
-        return Ok(finish(&part, &info_path, dest, &want, against, revision, have)?);
+        return Ok(finish(&part, &info_path, dest, &want, against, revision, have).await?);
     } else {
-        return Err(format!("{} answered {status}", host_of(&at)).into());
+        return Err(format!("{} answered {status}", host_of(at.as_str())).into());
     };
     if !resumed {
         have = 0;
@@ -379,12 +440,14 @@ async fn attempt(client: &reqwest::Client, url: &str, dest: &Path, pinned: Optio
             return Err(format!("The download was cut off at {done} of {t} bytes; it will go on from here next time").into());
         }
     }
-    Ok(finish(&part, &info_path, dest, &want, against, revision, done)?)
+    Ok(finish(&part, &info_path, dest, &want, against, revision, done).await?)
 }
 
 /// Check a finished part-file and move it into place, or delete it if it is not the right file.
-fn finish(part: &Path, info: &Path, dest: &Path, want: &str, against: &'static str, revision: Option<String>, bytes: u64) -> Result<Fetched, String> {
-    let got = sha256_file(part)?;
+/// The check reads the whole file (a model is 150 MB), so it is done off the async threads.
+async fn finish(part: &Path, info: &Path, dest: &Path, want: &str, against: &'static str, revision: Option<String>, bytes: u64) -> Result<Fetched, String> {
+    let p = part.to_path_buf();
+    let got = tauri::async_runtime::spawn_blocking(move || sha256_file(&p)).await.map_err(|e| e.to_string())??;
     if got != want {
         let _ = fs::remove_file(part);
         let _ = fs::remove_file(info);
@@ -460,8 +523,10 @@ mod tests {
     use std::sync::Arc;
 
     /// A tiny web server on this computer: `/file` is the file (in ranges, if asked, stating its
-    /// SHA-256 as Hugging Face does), `/moved` sends there, `/quiet` states nothing. It answers
-    /// `limit` requests, cutting the first answer off after `cut` bytes if asked.
+    /// SHA-256 as Hugging Face does), `/quiet` states nothing, `/moved` states it and sends on to
+    /// `/stored` (a file store whose ETag is a hash of its own, as Hugging Face's can be), and
+    /// `/away` sends on to a plain address elsewhere. It answers `limit` requests, cutting the
+    /// first answer off after `cut` bytes if asked.
     fn serve(body: Vec<u8>, sha: Option<String>, cut: Option<usize>, limit: usize) -> (String, std::thread::JoinHandle<Vec<String>>) {
         let l = TcpListener::bind("127.0.0.1:0").unwrap();
         let addr = format!("http://{}", l.local_addr().unwrap());
@@ -485,9 +550,23 @@ mod tests {
                 }
                 let path = first.split_whitespace().nth(1).unwrap_or("").to_string();
                 seen.push(format!("{path} {}", range.map(|r| r.to_string()).unwrap_or_default()));
+                if path == "/away" {
+                    write!(s, "HTTP/1.1 302 Found\r\nLocation: http://elsewhere.invalid/file\r\nContent-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    continue;
+                }
                 if path == "/moved" {
                     let tag = sha.as_ref().map(|h| format!("X-Linked-Etag: \"{h}\"\r\nX-Repo-Commit: abc123\r\n")).unwrap_or_default();
-                    write!(s, "HTTP/1.1 302 Found\r\nLocation: /file\r\n{tag}Content-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    write!(s, "HTTP/1.1 302 Found\r\nLocation: /stored\r\n{tag}Content-Length: 0\r\nConnection: close\r\n\r\n").unwrap();
+                    continue;
+                }
+                if path == "/stored" {
+                    // where the file is kept: its own ETag is some other 64-digit hash, as a
+                    // file store's can be
+                    let other = "e".repeat(64);
+                    write!(s, "HTTP/1.1 200 OK\r\nETag: \"{other}\"\r\nContent-Length: {}\r\nConnection: close\r\n\r\n", body.len()).unwrap();
+                    let _ = s.write_all(&body);
+                    let _ = s.flush();
+                    let _ = s.shutdown(std::net::Shutdown::Write);
                     continue;
                 }
                 let tag = if path == "/quiet" { String::new() } else { sha.as_ref().map(|h| format!("ETag: \"{h}\"\r\n")).unwrap_or_default() };
@@ -509,6 +588,17 @@ mod tests {
         });
         (addr, h)
     }
+
+    fn here(u: &reqwest::Url) -> bool {
+        u.host_str() == Some("127.0.0.1")
+    }
+    fn nobody(_: &reqwest::Url) -> bool {
+        false
+    }
+    /// The tests' own server, on this computer over plain HTTP, standing in for the publisher
+    const LOCAL: Trust = Trust { vouches: here, allows: here };
+    /// ... and for a mirror, whose word on its own file counts for nothing
+    const MIRROR: Trust = Trust { vouches: nobody, allows: here };
 
     fn local() -> reqwest::Client {
         if rustls::crypto::CryptoProvider::get_default().is_none() {
@@ -543,10 +633,10 @@ mod tests {
         assert!(expected_sha(None, Some("not-a-hash")).is_err());
         let mut h = reqwest::header::HeaderMap::new();
         h.insert("x-linked-etag", format!("\"{b}\"").parse().unwrap());
-        assert_eq!(host_sha(&h), Some(b.clone()));
+        assert_eq!(sha_header(&h, "x-linked-etag"), Some(b.clone()));
         let mut h = reqwest::header::HeaderMap::new();
         h.insert("etag", "W/\"1a2b-3c\"".parse().unwrap());
-        assert_eq!(host_sha(&h), None, "an ordinary ETag is not a checksum");
+        assert_eq!(sha_header(&h, "etag"), None, "an ordinary ETag is not a checksum");
     }
 
     #[test]
@@ -556,14 +646,15 @@ mod tests {
         let dest = fresh("fetch-moved.bin");
         let cancel = AtomicBool::new(false);
         let mut seen = vec![];
-        let got = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/moved"), &dest, None, None, &cancel, |g| seen.push(g.done))).unwrap();
+        let got = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/moved"), &dest, None, None, &cancel, |g| seen.push(g.done))).unwrap();
         assert_eq!(got.sha256, h);
         assert_eq!(got.checked_against, "host");
         assert_eq!(got.revision.as_deref(), Some("abc123"));
         assert_eq!(fs::read(&dest).unwrap(), b);
         assert_eq!(*seen.last().unwrap(), b.len() as u64);
         assert!(!with_suffix(&dest, ".part").exists() && !with_suffix(&dest, ".part.json").exists());
-        assert_eq!(server.join().unwrap(), vec!["/moved ".to_string(), "/file ".to_string()]);
+        // the SHA-256 stated on the way counts, not the file store's own ETag
+        assert_eq!(server.join().unwrap(), vec!["/moved ".to_string(), "/stored ".to_string()]);
         let _ = fs::remove_file(dest);
     }
 
@@ -576,20 +667,20 @@ mod tests {
         let (addr, server) = serve(b.clone(), None, None, 1);
         let dest = fresh("fetch-wrong.bin");
         let cancel = AtomicBool::new(false);
-        let r = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/quiet"), &dest, Some(&wrong), None, &cancel, |_| {}));
+        let r = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/quiet"), &dest, Some(&wrong), None, &cancel, |_| {}));
         assert!(r.unwrap_err().contains("SHA-256"));
         assert!(!dest.exists() && !with_suffix(&dest, ".part").exists());
         server.join().unwrap();
         // no pin and no stated checksum: refused before anything is written
         let (addr, server) = serve(b, None, None, 1);
-        let r = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/quiet"), &dest, None, None, &cancel, |_| {}));
+        let r = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/quiet"), &dest, None, None, &cancel, |_| {}));
         assert!(r.unwrap_err().contains("could not be checked"));
         assert!(!dest.exists());
         server.join().unwrap();
         // pinned to the right one, with a host that says nothing: fine
         let (b, h) = body();
         let (addr, server) = serve(b.clone(), None, None, 1);
-        let got = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/quiet"), &dest, Some(&h), Some(b.len() as u64), &cancel, |_| {})).unwrap();
+        let got = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/quiet"), &dest, Some(&h), Some(b.len() as u64), &cancel, |_| {})).unwrap();
         assert_eq!(got.checked_against, "pinned");
         server.join().unwrap();
         let _ = fs::remove_file(dest);
@@ -602,12 +693,12 @@ mod tests {
         let dest = fresh("fetch-resume.bin");
         let cancel = AtomicBool::new(false);
         let url = format!("{addr}/file");
-        let first = tauri::async_runtime::block_on(download(&local(), &url, &dest, None, None, &cancel, |_| {}));
+        let first = tauri::async_runtime::block_on(download(&local(), &LOCAL, &url, &dest, None, None, &cancel, |_| {}));
         assert!(first.is_err(), "the first try is cut off");
         let part = with_suffix(&dest, ".part");
         let kept = fs::metadata(&part).unwrap().len();
         assert!(kept > 0 && kept <= 100_000, "{kept}");
-        let got = tauri::async_runtime::block_on(download(&local(), &url, &dest, None, None, &cancel, |_| {})).unwrap();
+        let got = tauri::async_runtime::block_on(download(&local(), &LOCAL, &url, &dest, None, None, &cancel, |_| {})).unwrap();
         assert_eq!(got.sha256, h);
         assert_eq!(fs::read(&dest).unwrap(), b);
         // the second request asked only for the rest
@@ -624,7 +715,7 @@ mod tests {
         fs::write(with_suffix(&dest, ".part.json"), serde_json::to_vec(&PartInfo { url: "elsewhere".into(), host_sha: None }).unwrap()).unwrap();
         let (addr, server) = serve(b.clone(), Some(h.clone()), None, 1);
         let cancel = AtomicBool::new(false);
-        let got = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/file"), &dest, None, None, &cancel, |_| {})).unwrap();
+        let got = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/file"), &dest, None, None, &cancel, |_| {})).unwrap();
         assert_eq!(got.sha256, h);
         assert_eq!(server.join().unwrap(), vec!["/file ".to_string()], "no range was asked for");
         assert_eq!(tail(&dest, 0), b);
@@ -639,13 +730,96 @@ mod tests {
         let cancel = Arc::new(AtomicBool::new(false));
         let c2 = cancel.clone();
         // cancelled as soon as the download has begun
-        let r = tauri::async_runtime::block_on(download(&local(), &format!("{addr}/file"), &dest, None, None, &cancel, move |_| c2.store(true, Ordering::Relaxed)));
+        let r = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/file"), &dest, None, None, &cancel, move |_| c2.store(true, Ordering::Relaxed)));
         assert_eq!(r.unwrap_err(), "cancelled");
         assert!(!dest.exists());
         assert!(with_suffix(&dest, ".part.json").exists());
         server.join().unwrap();
         let _ = fs::remove_file(with_suffix(&dest, ".part"));
         let _ = fs::remove_file(with_suffix(&dest, ".part.json"));
+    }
+
+    #[test]
+    fn only_the_publisher_vouches_for_a_file_and_every_step_is_secure() {
+        let u = |s: &str| reqwest::Url::parse(s).unwrap();
+        let hf = (PUBLIC.vouches)(&u("https://huggingface.co/StemSplitio/htdemucs-onnx/resolve/main/x.onnx"));
+        assert!(hf);
+        // the servers Hugging Face hands its files out from
+        assert!((PUBLIC.vouches)(&u("https://cas-bridge.xethub.hf.co/xet-bridge-us/abc")));
+        assert!((PUBLIC.vouches)(&u("https://cdn-lfs.huggingface.co/repos/ab/cd")));
+        // a look-alike, a mirror, a plain address, the runtime's host: none may vouch
+        for bad in ["https://huggingface.co.example.com/x", "https://nothuggingface.co/x", "https://mirror.example.org/x.onnx", "http://huggingface.co/x", "https://files.pythonhosted.org/packages/x.whl", "https://github.com/x/releases/download/v1/x.onnx"] {
+            assert!(!(PUBLIC.vouches)(&u(bad)), "{bad}");
+        }
+        assert!((PUBLIC.allows)(&u("https://files.pythonhosted.org/x.whl")));
+        assert!(!(PUBLIC.allows)(&u("http://files.pythonhosted.org/x.whl")), "never over a plain connection");
+        assert!(!(PUBLIC.allows)(&u("file:///C:/Windows/x.dll")));
+        // every address the app downloads from is secure, and the model's are the publisher's
+        for m in MODELS {
+            assert!(m.urls.iter().all(|x| (PUBLIC.allows)(&u(x))));
+            assert!(m.sha256.is_some() || m.urls.iter().all(|x| (PUBLIC.vouches)(&u(x))), "{}: a mirror needs a pinned SHA-256", m.id);
+        }
+        if let Some(rt) = RUNTIME.as_ref() {
+            assert!((PUBLIC.allows)(&u(rt.url)) && is_sha256(rt.sha256));
+        }
+    }
+
+    #[test]
+    fn a_mirror_cannot_vouch_for_its_own_file() {
+        let (b, h) = body();
+        // the mirror states the SHA-256 of what it sends (as a hostile one would): not enough
+        let (addr, server) = serve(b.clone(), Some(h.clone()), None, 2);
+        let dest = fresh("fetch-mirror.bin");
+        let cancel = AtomicBool::new(false);
+        let r = tauri::async_runtime::block_on(download(&local(), &MIRROR, &format!("{addr}/moved"), &dest, None, None, &cancel, |_| {}));
+        assert!(r.unwrap_err().contains("could not be checked"));
+        assert!(!dest.exists() && !with_suffix(&dest, ".part").exists());
+        assert_eq!(server.join().unwrap().len(), 2, "sent on, and still not vouched for");
+        // the same file from the same mirror, pinned by the app: fine
+        let (addr, server) = serve(b.clone(), Some(h.clone()), None, 1);
+        let got = tauri::async_runtime::block_on(download(&local(), &MIRROR, &format!("{addr}/file"), &dest, Some(&h), None, &cancel, |_| {})).unwrap();
+        assert_eq!((got.checked_against, got.revision), ("pinned", None));
+        server.join().unwrap();
+        let _ = fs::remove_file(dest);
+    }
+
+    #[test]
+    fn a_download_sent_on_to_an_address_that_is_not_allowed_is_not_followed() {
+        let (b, h) = body();
+        let (addr, server) = serve(b, Some(h), None, 1);
+        let dest = fresh("fetch-away.bin");
+        let cancel = AtomicBool::new(false);
+        let r = tauri::async_runtime::block_on(download(&local(), &LOCAL, &format!("{addr}/away"), &dest, None, None, &cancel, |_| {}));
+        assert!(r.unwrap_err().contains("not followed"));
+        assert!(!dest.exists());
+        assert_eq!(server.join().unwrap(), vec!["/away ".to_string()]);
+        // and an address that is not allowed is never asked at all
+        let r = tauri::async_runtime::block_on(download(&local(), &PUBLIC, "http://127.0.0.1:9/x", &dest, None, None, &cancel, |_| {}));
+        assert!(r.unwrap_err().contains("not a secure address"));
+    }
+
+    #[test]
+    fn a_pinned_file_already_in_place_is_not_fetched_again() {
+        let (b, h) = body();
+        let dest = fresh("fetch-here.bin");
+        fs::write(&dest, &b).unwrap();
+        let cancel = AtomicBool::new(false);
+        // nothing listens there: had it been asked, this would fail
+        let got = tauri::async_runtime::block_on(download(&local(), &LOCAL, "http://127.0.0.1:9/file", &dest, Some(&h), None, &cancel, |_| {})).unwrap();
+        assert_eq!((got.bytes, got.checked_against), (b.len() as u64, "pinned"));
+        // a file in place that is not the pinned one is fetched (and here, fails to be)
+        fs::write(&dest, b"something else").unwrap();
+        assert!(tauri::async_runtime::block_on(download(&local(), &LOCAL, "http://127.0.0.1:9/file", &dest, Some(&h), None, &cancel, |_| {})).is_err());
+        let _ = fs::remove_file(dest);
+    }
+
+    #[test]
+    fn hashing_a_long_file_stops_when_cancelled() {
+        let p = fresh("fetch-hash.bin");
+        fs::write(&p, vec![1u8; 3 << 20]).unwrap();
+        assert_eq!(sha256_file_or_stop(&p, &AtomicBool::new(true)).unwrap_err(), "cancelled");
+        assert_eq!(sha256_file_or_stop(&p, &AtomicBool::new(false)).unwrap(), hex(&Sha256::digest(vec![1u8; 3 << 20])));
+        let _ = fs::remove_file(p);
     }
 
     #[test]
