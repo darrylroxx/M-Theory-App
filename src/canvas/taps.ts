@@ -8,18 +8,22 @@
  * texture (how loud, how bright, how noisy), which costs half as much. Vocal takes are only
  * heard.
  *
- * All the drum tracks play through one drum bus today, so they are heard there, together. A
- * tap is just an audio node, so when an added drum track has an output of its own it can be
- * listened to on its own by naming its node here.
+ * Every drums track has a desk of its own that goes out through its own fader, so each is heard
+ * on its own, like any other track, and painted by a hand of its own in the drums layer.
  *
- * Ears cost time on the audio thread, so there are never more than six: beyond that, tracks
- * painted in the same layer share an ear (and a hand).
+ * A track that is not heard (muted, or another track is soloed) gets no ear: nothing of it is
+ * painted, and the ears go to the tracks that are heard. Ears cost time on the audio thread, so
+ * there are never more than six: beyond that, tracks painted in the same layer share an ear (and
+ * a hand).
  */
 import { allTracks, type Track } from "../song/tracks";
 import type { Progression } from "../ui/state";
+import { audible } from "../audio/mix";
 import { layerOfTrack, type LayerKind } from "./layers";
 
 export const MAX_TAPS = 6;
+/** Which layers' tracks share an ear first, when there are too many. */
+const SHARE_FIRST: LayerKind[] = ["drums", "other", "chords", "vocals", "bass", "harmony", "melody"];
 
 export interface TapPlan {
   /** the ear's and the hand's name */
@@ -34,23 +38,20 @@ export interface TapPlan {
 }
 
 /** The ears for a song's tracks. */
-export function planTaps(p: Pick<Progression, "tracks">): TapPlan[] {
+export function planTaps(p: Pick<Progression, "tracks" | "mix">): TapPlan[] {
   const plans: TapPlan[] = [];
-  let drums: TapPlan | null = null;
   for (const t of allTracks(p)) {
-    if (t.kind === "drums") {
-      // every drum track sounds through the one drum bus, after the first drum track's fader
-      if (!drums) plans.push((drums = { key: "drums", layer: "drums", faders: ["drums"], members: [], light: true }));
-      drums.members.push(t.id);
-      continue;
-    }
+    if (!audible(p.mix, t.id)) continue;
     plans.push({ key: t.id, layer: layerOfTrack(t as Track), faders: [t.id], members: [t.id], light: t.kind !== "vocals" });
   }
-  // too many ears: tracks of one layer share one, the layer with the most first
+  // too many ears: tracks of one layer share one. Drums first (two kits' hits on one hand are still hits), then washes
+  // and fog, then the voices; two melodies sharing a hand would be one line jumping between them, so they share last.
+  // Within that, the layer with the most tracks first.
+  const rank = (l: LayerKind) => SHARE_FIRST.indexOf(l);
   while (plans.length > MAX_TAPS) {
     const count = new Map<LayerKind, TapPlan[]>();
     for (const pl of plans) count.set(pl.layer, [...(count.get(pl.layer) ?? []), pl]);
-    const [, same] = [...count.entries()].filter(([, v]) => v.length > 1).sort((a, b) => b[1].length - a[1].length)[0] ?? [];
+    const [, same] = [...count.entries()].filter(([, v]) => v.length > 1).sort((a, b) => rank(a[0]) - rank(b[0]) || b[1].length - a[1].length)[0] ?? [];
     if (!same) break;
     const [a, b] = same.slice(-2);
     a.faders.push(...b.faders);

@@ -471,6 +471,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
             out[l] = on ? Math.round(Math.min(1, act.loud) * 10) / 10 : 0;
           }
           setLayerLv((old) => (LAYER_ORDER.every((l) => old[l] === out[l]) ? old : out));
+          // each hand on the stage, as data (never shown): its layer, how loud its track is heard and how many marks it has laid
+          if (stage.current) stage.current.dataset.hands = [...a.hands].map(([k, h]) => `${k}=${h.layer}:${h.texture.level.toFixed(2)}:${h.made}`).join(" ");
           const src: Record<string, number> = {};
           for (const k of SOURCES) src[k] = moving ? Math.round(Math.min(1, a.sourceLevel(k)) * 10) / 10 : 0;
           setSrcLv((old) => (SOURCES.every((k) => old[k] === src[k]) ? old : src));
