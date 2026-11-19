@@ -127,7 +127,8 @@ export async function engineBacking(left: Float32Array, right: Float32Array): Pr
   }
   return (await core()).invoke<number>("engine_backing", new Uint8Array(inter.buffer));
 }
-export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; record: boolean; name: string }): Promise<string | null> {
+/** Start the count-in and the loop. `bars`: the beats in each bar of the loop, so the click accents every bar in its own meter. */
+export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; bars?: number[]; record: boolean; name: string }): Promise<string | null> {
   const { invoke } = await core();
   return inTurn(() => invoke<string | null>("engine_start", o));
 }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, shownTakes, soundTag, takeBars, toggled, type Recorded, type Take } from "./takes";
+import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, shownTakes, soundTag, takeBars, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -151,5 +151,39 @@ describe("a flow session: pass after pass until stopped", () => {
     const t = { frames: 192000, rate: 48000 } as Take;
     expect(takeBars(t, 120, 4)).toBe(2); // 4 s at 120 bpm: 8 beats
     expect(takeBars(t, 90, 3)).toBe(2); // 6 beats of 3
+  });
+});
+
+describe("the click under a recording", () => {
+  it("counts in with the loop's first bar and clicks every bar in its own meter", () => {
+    const bars = [{ beats: 4 }, { beats: 4 }, { beats: 3 }, { beats: 3 }];
+    expect(clickPlan(bars, 4, 1)).toEqual({ beatsPerBar: 4, countInBeats: 4, bars: [4, 4, 3, 3] });
+    // a loop that starts in the 3/4 section counts in three
+    expect(clickPlan(bars.slice(2), 4, 2)).toEqual({ beatsPerBar: 3, countInBeats: 6, bars: [3, 3] });
+  });
+  it("falls back to the bar it was given, and never asks for less than a beat", () => {
+    expect(clickPlan(undefined, 3, 1)).toEqual({ beatsPerBar: 3, countInBeats: 3, bars: [] });
+    expect(clickPlan([{ beats: 0 }, { beats: Number.NaN }, { beats: 2.0000001 }], 4, 0)).toEqual({ beatsPerBar: 1, countInBeats: 0, bars: [1, 1, 2] });
+  });
+});
+
+describe("the Vocals lane across meters", () => {
+  // two bars of 4/4, then two of 3/4: 14 beats, drawn as four bars of the same width
+  const bars = [{ beats: 4 }, { beats: 4 }, { beats: 3 }, { beats: 3 }];
+  it("puts a moment of the loop in the bar that is playing", () => {
+    expect(barsInto(bars, 0)).toBe(0);
+    expect(barsInto(bars, 4)).toBe(1);
+    expect(barsInto(bars, 8)).toBe(2); // the first 3/4 bar starts 8 beats in (57% of the time, half-way along the lane)
+    expect(barsInto(bars, 9.5)).toBeCloseTo(2.5);
+    expect(barsInto(bars, 14)).toBe(4);
+    expect(barsInto(bars, 99)).toBe(4);
+    expect(barsInto(bars, Number.NaN)).toBe(0);
+  });
+  it("draws a take to where it ends, from the bar it starts on", () => {
+    // 7 beats from bar 2: a 4/4 bar and a 3/4 one, two whole bars (not 1¾)
+    expect(barsInto(bars, 7, 1)).toBe(2);
+    expect(barsInto(bars, 4.5, 1)).toBeCloseTo(1 + 0.5 / 3);
+    expect(barsInto(bars, 50, 2)).toBe(2);
+    expect(barsInto([{ beats: 0 }], 0.5)).toBe(0.5);
   });
 });

@@ -1168,3 +1168,20 @@ span.cv-better { cursor: default; }
 .cv.full .cv-line { bottom: env(safe-area-inset-bottom, 0px); }
 /* the song's row stops short of the tools on the right, however long the song's name (on a phone, 60% would reach under them) */
 .cv-song { max-width: min(60%, calc(100% - 148px)); }
+
+/* ── Vocals lane: bars on screen (TakeLane.tsx) ──
+   The lane shows as many bars as Bars on screen says, across its width; the rest scroll
+   sideways inside it (never the page), with ‹ › beside it to turn a page. */
+.tl-wrap { display: flex; align-items: stretch; gap: 6px; min-width: 0; max-width: 100%; }
+.tl-wrap .take-lane { flex: 1 1 auto; min-width: 0; }
+.tl-wrap .dm-page { align-self: center; }
+.tl-scroll { position: absolute; inset: 0; overflow-x: auto; overflow-y: hidden; overscroll-behavior-x: contain; scrollbar-width: none; }
+.tl-scroll::-webkit-scrollbar { display: none; }
+.tl-inner { position: relative; height: 100%; min-width: 100%; }
+.tl-wrap .tl-more { z-index: 1; padding-left: 4px; background: var(--card-2); }
+@media (max-width: 640px) {
+  .tl-wrap { gap: 4px; }
+  .tl-wrap .dm-page { min-width: 26px; padding-inline: 4px; }
+}
+/* the pass's progress line stays across the lane as it stands, over the bars that scroll beneath it */
+.tl-wrap .tl-fill { z-index: 1; pointer-events: none; }
