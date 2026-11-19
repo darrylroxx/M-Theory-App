@@ -345,7 +345,9 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   const after = insteadOf(p, kind, next, h.from, srcKind);
   const others = (p.tracks ?? []).filter((x) => x.id !== id);
   const freed = before && !after && !others.some((x) => insteadTarget(x, p.tracks ?? []) === before);
-  const mix = after ? muteFor(p, after, true) : freed ? muteFor(p, before, false) : p.mix;
+  // (chords this track already played instead of, unmuted by hand since, stay heard: that is the songwriter's choice)
+  const theirs = after === before && p.mix?.[after ?? ""]?.mute === false;
+  const mix = after && !theirs ? muteFor(p, after, true) : freed ? muteFor(p, before, false) : p.mix;
   const q: Progression = { ...put(p, id, w.layers), tracks, ...(tones ? { tones } : {}), ...(mix ? { mix } : {}) };
   return refocus(q, p0.focus);
 }

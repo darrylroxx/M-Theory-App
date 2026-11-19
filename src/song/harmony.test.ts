@@ -10,7 +10,7 @@ import { addTrack, focusTrack, normalize, removeTrack, reviveTracks } from "./tr
 import { setSig } from "./unity";
 import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { reviveIdea, sameMusic } from "./library";
-import { copySection, pasteSection, reviveClips } from "./clip";
+import { copySection, pasteSection, reviveClips, undoFits } from "./clip";
 import { keysVoicings, reviveTones } from "../audio/tone";
 
 const C: Key = { tonic: "C", scaleId: "ionian" };
@@ -426,6 +426,14 @@ describe("a harmony track through a change of time signature", () => {
       expect(harmonyState(q, C, "h1").edited).toEqual([]);
     });
   }
+  for (const option of ["third-above", "counter"]) {
+    it(`${option}, in an idea with no sections yet: nothing looks changed by hand that was not`, () => {
+      const page: Progression = { chords: [ch("C", 4), ch("G", 4), ch("A", 4, "min"), ch("F", 4)], melody: tune([64, 65, 67, 67, 67, 69, 67, 64, 65, 64, 62, 60, 65, 69, 72, 69]), bpm: 90, pattern: "ring", loop: true, bars: 4, meter: { num: 4, den: 4 } };
+      const p = addHarmony(page, C, { kind: "melody", from: "melody", option }, "h1").p;
+      expect(harmonyState(p, C, "h1").edited).toEqual([]);
+      for (const sig of [{ num: 3, den: 4 as const }, { num: 6, den: 8 as const }]) expect(harmonyState(setSig(p, sig), C, "h1").edited).toEqual([]);
+    });
+  }
   it("a section changed by hand before still shows", () => {
     const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
     const m = p.melody!;
@@ -444,10 +452,29 @@ describe("a harmony track as the pages see it", () => {
     expect(writtenAs(rewriteHarmony(tapped, C, "h1", "sixth-below"), "h1")).not.toBe(was);
     expect(writtenAs(p, "melody")).toBe("");
   });
+  it("a paste into it can no longer be taken back once it is written again", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "colour" }, "h1").p;
+    const u = { block: "a", track: "h1", before: { chords: p.chords }, written: writtenAs(p, "h1") };
+    expect(undoFits(u, "a", "h1", writtenAs(p, "h1"))).toBe(true);
+    const q = rewriteHarmony(p, C, "h1", "sus");
+    expect(undoFits(u, "a", "h1", writtenAs(q, "h1"))).toBe(false);
+  });
   it("one removed is no longer there to write again", () => {
     const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "counter" }, "h1").p;
     expect(isHarmony(p, "h1")).toBe(true);
     expect(isHarmony(removeTrack(p, "h1"), "h1")).toBe(false);
+  });
+});
+
+describe("a re-harmonisation written again", () => {
+  it("leaves the chords it plays instead of heard when the songwriter unmuted them", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "tritone" }, "tt").p;
+    expect(p.mix?.chords).toEqual({ mute: true, instead: true });
+    // unmuted by hand on the Track page: the mute is theirs now
+    const heard = { ...p, mix: { ...p.mix, chords: { mute: false } } };
+    for (const option of ["tritone", "borrowed"]) expect(rewriteHarmony(heard, C, "tt", option).mix?.chords?.mute).toBe(false);
+    // never muted (pasted into a song whose other sections play those chords): writing it across the song mutes them
+    expect(rewriteHarmony({ ...p, mix: undefined }, C, "tt").mix?.chords).toEqual({ mute: true, instead: true });
   });
 });
 
@@ -465,5 +492,16 @@ describe("a re-harmonisation pasted into another idea", () => {
     expect(into.mix?.chords?.mute).toBe(true);
     // and taking it away lets the chords be heard again
     expect(removeTrack(into, t.id).mix?.chords?.mute).toBe(false);
+  });
+  it("into one section of several, leaves the chords playing in the others (the pasted track plays only there)", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "borrowed" }, "bw").p;
+    const clip = copySection(p, "a", C, "idea-1")!;
+    const other = loadCurrent({
+      chords: [ch("C", 4)], bpm: 90, pattern: "ring", loop: true, bars: 1, meter: { num: 4, den: 4 },
+      song: { parts: [{ id: "X", chords: [ch("C", 4)], bars: 1 }, { id: "Y", chords: [ch("E", 2), ch("A", 2)], bars: 1 }, { id: "Z", chords: [ch("F", 2), ch("G", 2)], bars: 1 }], blocks: [{ id: "x", partId: "X" }, { id: "y", partId: "Y" }, { id: "z", partId: "Z" }], current: "x" },
+    });
+    const into = pasteSection(other, "x", clip, C, id);
+    expect(into.tracks!.some((x) => x.name === "Borrowed")).toBe(true);
+    expect(into.mix?.chords?.mute).toBeFalsy();
   });
 });

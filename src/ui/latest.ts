@@ -16,3 +16,15 @@ export function lastOnly(): { begin: () => () => boolean; cancel: () => void } {
     cancel: () => void n++,
   };
 }
+
+/** The same, for each of several things on its own (each track's change of instrument): one key's last start does not call off another's. */
+export function lastOnlyEach(): { begin: (key: string) => () => boolean } {
+  const each = new Map<string, ReturnType<typeof lastOnly>>();
+  return {
+    begin: (key) => {
+      let l = each.get(key);
+      if (!l) each.set(key, (l = lastOnly()));
+      return l.begin();
+    },
+  };
+}

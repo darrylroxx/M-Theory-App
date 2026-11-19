@@ -136,14 +136,29 @@ export function tuneSection(m: Melody, bar: number, swing: number, len: number):
 /** The melody's velocity: as the notes it plays one by one. */
 const TUNE_VELOCITY = 0.9;
 
+/** Where each section's melody on the synth has been played up to, so the next stretch starts exactly there (by section, for each cache). */
+const playedTo = new WeakMap<SynthCache, Map<string, number>>();
+
 /**
  * A melody on a synth with a way of its own, for the stretch [from, to) of a section that started
  * at `t0` and is `len` beats long: the whole section is worked out once (so a lead glides from
  * note to note, an arp runs through each note, a drone holds under the tune) and the notes that
- * start in this stretch are played.
+ * start in this stretch are played. `start`: the beat of the section where the playing started
+ * (a loop's start): the tune is worked out from there, as a synth's chords are, so a drone or a
+ * note held from before it sounds from there.
  */
-export function playTuneSpan(v: TrackVoice, cache: SynthCache, key: string, tune: { m: Melody; bar: number; swing: number }, t0: number, spb: number, len: number, from: number, to: number) {
-  playSpan(v, synthSection(cache, key, v, t0, spb, () => tuneSection(tune.m, tune.bar, tune.swing, len), TUNE_VELOCITY), from - EARLY, to - EARLY);
+export function playTuneSpan(v: TrackVoice, cache: SynthCache, key: string, tune: { m: Melody; bar: number; swing: number }, t0: number, spb: number, len: number, from: number, to: number, start = 0) {
+  const notes = synthSection(cache, key, v, t0, spb, () => clipChords(tuneSection(tune.m, tune.bar, tune.swing, len), start, len), TUNE_VELOCITY);
+  let done = playedTo.get(cache);
+  if (!done) playedTo.set(cache, (done = new Map()));
+  // each stretch starts where the last one of this section ended (a note on the edge between two is played once,
+  // whatever the rounding), and the last one takes everything up to the section's end, so its last step is not lost
+  const a = done.get(key) ?? from - EARLY;
+  const b = to >= t0 + len * spb - 1e-4 ? Infinity : to - EARLY;
+  if (b <= a) return;
+  done.set(key, b);
+  if (done.size > 64) done.delete(done.keys().next().value!);
+  playSpan(v, notes, a, b);
 }
 
 /** One melody note: on the strings it rings until the next; on the keys and the synth it is held until the next note, and never past the section's end. */

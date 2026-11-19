@@ -201,6 +201,53 @@ describe("a melody on the synth, played its way", () => {
   });
 });
 
+describe("a melody on the synth, played its way, at any tempo and in any loop", () => {
+  const lead = presetById("pwm-lead")!.params;
+  const way = (play: Partial<typeof lead.play>): Tone => ({ inst: "synth", synth: { ...lead, play: { ...lead.play, humanise: 0, ...play } } });
+  // a two-bar section: a note on every beat, then the last held for two beats
+  const tune = { m: { div: 1 as const, bars: 2, notes: [60, 62, 64, 65, 67, 69].map((midi, i) => ({ at: i * 12, midi })) }, bar: 4, swing: 0 };
+  /**
+   * The section played as the live player plays it: a twelfth of a beat at a time from beat
+   * `from` (a loop's start), each stretch's start and end worked out on their own. What was
+   * played, and what the section holds from there on.
+   */
+  const live = (bpm: number, t: number, tone: Tone, from = 0, m = tune) => {
+    const spb = 60 / bpm;
+    const c = new FakeAudio();
+    const { v } = voice(c, "melody");
+    v.setTone(tone);
+    const cache: SynthCache = new Map();
+    const t0 = t - from * spb;
+    for (let k = from * 12; k < 8 * 12; k++) {
+      const base = t + (k / 12 - from) * spb;
+      playTuneSpan(v, cache, "m", m, t0, spb, 8, base, base + spb / 12, from);
+    }
+    const got = ons(v).map((n) => `${n.midi}@${(n.t - t0).toFixed(4)}`);
+    const all = [...cache.values()].flat().map((n) => `${n.midi}@${(Math.max(n.start, 0) - t0).toFixed(4)}`);
+    return { got, all };
+  };
+  const ways: [string, Tone][] = [["Arp 1/16", way({ mode: "arp", rate: "1/16", octaves: 1, pattern: "up" })], ["Arp 1/32", way({ mode: "arp", rate: "1/32", octaves: 1, pattern: "up" })], ["Pulse", way({ mode: "pulse", rate: "1/8" })], ["Glide", way({ mode: "glide" })], ["Drone", way({ mode: "drone" })]];
+  for (const [name, tone] of ways)
+    it(`${name}: every note of the section is played once, wherever the clock is (100, 160 and 200 bpm)`, () => {
+      for (const bpm of [100, 160, 200])
+        for (const t of [0.08, 1.2345, 7.77, 13.0123]) {
+          const { got, all } = live(bpm, t, tone);
+          expect(got.length).toBeGreaterThan(0);
+          expect([...got].sort()).toEqual([...all].sort());
+        }
+    });
+  it("Drone, in a loop of its second bar: what is held under the section sounds from the loop's start", () => {
+    // C on beat 1, E from beat 4 into the second bar, G on its third beat
+    const held = { ...tune, m: { ...tune.m, notes: [{ at: 0, midi: 60 }, { at: 36, midi: 64 }, { at: 72, midi: 67 }] } };
+    const { got } = live(120, 3.1, way({ mode: "drone" }), 4, held);
+    // the drone and the note still sounding where the loop starts begin there, every time round
+    const atStart = got.filter((x) => x.endsWith(`@${(4 * 0.5).toFixed(4)}`)).map((x) => Number(x.split("@")[0]));
+    // (nothing starts there in the tune itself: the E began a beat before)
+    expect(atStart.length).toBeGreaterThanOrEqual(3);
+    expect(atStart.some((m) => m % 12 === 4)).toBe(true);
+  });
+});
+
 describe("MIDI files", () => {
   const items: PlayItem[] = [{ midi: C, beats: 4 }];
   const programs = (b: Uint8Array) => [...b].flatMap((x, i) => ((x & 0xf0) === 0xc0 && b[i - 1] === 0 ? [b[i + 1]] : []));

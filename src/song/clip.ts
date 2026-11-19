@@ -247,13 +247,17 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   // a track the paste made plays the instrument it played there, and one that played instead of chords there does here too (they are muted)
   let tones = q.tones;
   let mix = q.mix;
+  // (a mute is for the whole song, and the pasted track plays only in this section: where those chords
+  // are heard in another section they are left playing, and writing the harmony again mutes them)
+  const others = commit(normalize(q)).song?.parts.filter((x) => x.id !== part) ?? [];
+  const elsewhere = (tid: string) => others.some((x) => (tid === "chords" ? x.chords : x.layers?.[tid]?.chords)?.some((ch) => !ch.rest && ch.beats > 0));
   for (const [from, nid] of to) {
     if (!made.has(nid)) continue;
     const tone = c.tones?.[from];
     if (tone) tones = { ...tones, [nid]: clone(tone) };
     const t = harmonies.find((x) => x.id === nid);
     const replaced = t && insteadTarget(t, harmonies);
-    if (replaced) mix = muteInstead(mix, replaced);
+    if (replaced && !elsewhere(replaced)) mix = muteInstead(mix, replaced);
   }
   return { ...q, tracks: harmonies.length ? harmonies : undefined, ...(tones ? { tones } : {}), ...(mix ? { mix } : {}) };
 }
@@ -286,14 +290,17 @@ export interface PasteUndo {
   block: string;
   track: string;
   before: Partial<Progression>;
+  /** how that track was last written, when it is a harmony track (see `writtenAs`) */
+  written?: string;
 }
 /**
  * Can a paste be taken back here? Only in the section and on the track it was pasted into: the
  * page's fields hold whichever track is brought forward, so taken back on another track it would
- * write the old music over that track's.
+ * write the old music over that track's. Nor once a harmony track was written again since
+ * (`written`, as `writtenAs` has it now): the old music would go back over the new in this section only.
  */
-export function undoFits(u: PasteUndo | null, block: string, track: string): u is PasteUndo {
-  return !!u && u.block === block && u.track === track;
+export function undoFits(u: PasteUndo | null, block: string, track: string, written = ""): u is PasteUndo {
+  return !!u && u.block === block && u.track === track && (u.written ?? "") === written;
 }
 
 /** Is there anything on this page of the section on screen? (Pasting over it can be undone.) */

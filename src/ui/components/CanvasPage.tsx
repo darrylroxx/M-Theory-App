@@ -32,6 +32,8 @@ import { getScale, scalePcs } from "../../theory/scales";
 import { useApp } from "../state";
 import { OpenIcon } from "../icons";
 import { Seg } from "./common";
+import { TrackKeys } from "./SynthKeys";
+import type { Tone } from "../../audio/tone";
 
 /** No more real pixels than this, however sharp the screen: paint has to keep up with the music. */
 const MAX_PIXELS = 1_500_000;
@@ -99,7 +101,7 @@ function Better({ view, link }: { view: LinkView; link: { current: StemLink | nu
  * neighbours, mixes as pigment does and dries. No two paintings come out the same, and music
  * of one kind paints pictures of one kind.
  */
-export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay }: {
+export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay, hand }: {
   /** the page is on screen */
   active: boolean;
   playing: boolean;
@@ -111,6 +113,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   keyOf: Key;
   onPlay: () => void;
   canPlay: boolean;
+  /** the instruments of the chords and melody tracks the pages edit: one on keys can be played here, and is painted */
+  hand?: { chords: Tone; melody: Tone };
 }) {
   const { state, set, toast } = useApp();
   const prefs = state.canvas ?? { palette: DEFAULT_PALETTE };
@@ -598,12 +602,18 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     const file = songFile.current;
     const layers = fileLayers.current;
     if (!active || !song || !file || !layers) return;
-    const link = new StemLink(file, layers, { onChange: (v) => setBetter(v) });
+    // (one that has handed over every stem of this song is kept while the page is away: there is nothing left for it to do)
+    const kept = stems.current?.keeps(file, layers) ? stems.current : null;
+    if (!kept) stems.current?.stop();
+    const link = kept ?? new StemLink(file, layers, { onChange: (v) => setBetter(v) });
     stems.current = link;
-    void link.start();
+    if (kept) setBetter(kept.view);
+    else void link.start();
     return () => {
-      link.stop();
-      if (stems.current === link) stems.current = null;
+      if (!link.keeps(file, layers)) {
+        link.stop();
+        if (stems.current === link) stems.current = null;
+      }
       setBetter(null);
     };
   }, [active, song]);
@@ -695,6 +705,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
         </div>
       </div>
       <div className="cv-bar">
+        {hand && !song && <TrackKeys chords={hand.chords} melody={hand.melody} />}
         <div className="cv-layers" role="group" aria-label="Layers">
           {LAYER_ORDER.map((l) => {
             const off = hidden.has(l);

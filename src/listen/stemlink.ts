@@ -411,6 +411,15 @@ export class StemLink {
   get isStopped() {
     return this.stopped;
   }
+
+  /**
+   * Is this the link of this song, into this hearing, with every stem already handed over? Then
+   * there is nothing left to do: the page left and shown again keeps it (a new one would hand the
+   * whole song over again and start the hearing of the stems from nothing).
+   */
+  keeps(file: SongFile, sink: StemSink): boolean {
+    return !this.stopped && this.view.phase === "done" && this.file === file && this.sink === sink;
+  }
 }
 
 function message(e: unknown): string {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lastOnly } from "./latest";
+import { lastOnly, lastOnlyEach } from "./latest";
 
 describe("only the last of what was started goes on", () => {
   it("a slow file read finishing after a later, quicker one is dropped", async () => {
@@ -23,5 +23,17 @@ describe("only the last of what was started goes on", () => {
     starts.cancel();
     await ready;
     expect(played).toBe(false);
+  });
+});
+
+describe("only the last of what was started goes on, for each thing on its own", () => {
+  it("a track's slow piano finishing after it was changed again is dropped; another track's is not", () => {
+    const loads = lastOnlyEach();
+    const piano = loads.begin("chords");
+    const other = loads.begin("pad1");
+    const guitar = loads.begin("chords");
+    expect(piano()).toBe(false);
+    expect(guitar()).toBe(true);
+    expect(other()).toBe(true);
   });
 });

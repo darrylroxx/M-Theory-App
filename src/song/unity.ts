@@ -11,6 +11,7 @@ import type { Progression } from "../ui/state";
 import { DEFAULT_SIG, fitRhythm, isCompound, mapLayers, mapList, refit, sameSig, sigBeats, sigFor, type Maps, type TimeSig } from "./meter";
 import { retime, sections, type SongPart } from "./structure";
 import { normalize } from "./tracks";
+import { outPrint } from "./prints";
 
 /** Which things a change is for: what is on the page, the song's own settings, or one section. */
 type Scope = "live" | "shared" | SongPart;
@@ -108,7 +109,17 @@ export function setSig(p0: Progression, sig: TimeSig): Progression {
   if (sameSig(p.meter, sig)) return p;
   if (!p.song) {
     const f = refit(p.meter!, sig);
-    return mapSong({ ...p, meter: sig }, (scope) => (scope === "live" ? f : null));
+    const q = mapSong({ ...p, meter: sig }, (scope) => (scope === "live" ? f : null));
+    // a harmony track fitted to the new bars is still what was written, only fitted: its record of the
+    // page follows (unless changed by hand before), as it does for a song's sections, so it does not look changed by hand
+    const was = normalize(p).layers;
+    const now = normalize(q).layers;
+    const tracks = q.tracks?.map((t) => {
+      const m = t.harmony?.marks?.[""];
+      if (!m || m.out !== outPrint(was?.[t.id])) return t;
+      return { ...t, harmony: { ...t.harmony!, marks: { ...t.harmony!.marks, "": { ...m, out: outPrint(now?.[t.id]) } } } };
+    });
+    return tracks ? { ...q, tracks } : q;
   }
   return retime(p, sig);
 }

@@ -4,8 +4,7 @@ import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
 import { ProgressionPlayer, getAudio, hearOn, keepTracks, letGoOfKeys, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
-import { VOICINGS, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
-import { pianoVoicing } from "../../keys/voicing";
+import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
 import { setHome } from "../../audio/trackplay";
@@ -42,7 +41,7 @@ import { activeTake, groupsOf, type Take } from "../../song/takes";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
-import { lastOnly } from "../latest";
+import { lastOnly, lastOnlyEach } from "../latest";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
 import { conform, sectionSig, setSig, sigOf } from "../../song/unity";
 import { sameMusic } from "../../song/library";
@@ -358,6 +357,8 @@ export function GuitarView() {
   useEffect(() => keepTracks(trackIds ? trackIds.split("|") : []), [trackIds]);
   /** the track whose piano or synth is loading after it was chosen */
   const [loading, setLoading] = useState<string | null>(null);
+  /** each track's last change of instrument: a slower load that ends after a later change is not heard, nor clears its mark */
+  const toneLoads = useRef(lastOnlyEach());
   /** Change a track's instrument: the song keeps it, and the track's voice takes it at once (loading starts now), then it is heard. */
   const toneSetter = useCallback((id: string, kind: "chords" | "melody", tone: Tone, hearIt: () => void) => (patch: Partial<Tone>) => {
     const next: Tone = { ...tone, ...patch };
@@ -366,22 +367,25 @@ export function GuitarView() {
     set((s) => ({ ...s, progression: withTone(s.progression, id, next) }));
     if (patch.inst !== undefined || patch.keys !== undefined) {
       setLoading(id);
+      const mine = toneLoads.current.begin(id);
       void warmTrack(id, kind, next).then(
         () => {
+          if (!mine()) return;
           setLoading((x) => (x === id ? null : x));
           hearIt();
         },
-        () => setLoading((x) => (x === id ? null : x)),
+        () => mine() && setLoading((x) => (x === id ? null : x)),
       );
     } else void warmTrack(id, kind, next);
   }, [set]);
   const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, toneSetter, hearSoon]);
+  const hand = useMemo(() => ({ chords: chordTone, melody: tuneTone }), [chordTone, tuneTone]);
   const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, toneSetter, hearTune]);
   /** the keys a chord in the sheet plays: the tray's own, or a fresh voicing for a chord not in the tray */
   const sheetKeys = useCallback((ref: ChordRef, slotId?: string) => {
     const i = slotId ? prog.chords.findIndex((c) => c.id === slotId) : -1;
-    return i >= 0 && keyVs ? keyVs[i] : pianoVoicing(ref, { style: keyStyle });
-  }, [prog.chords, keyVs, keyStyle]);
+    return i >= 0 && keyVs ? keyVs[i] : keysVoicing(ref, chordTone);
+  }, [prog.chords, keyVs, chordTone]);
 
   // what the section on screen has of its own, and which section the rest follows
   const linked = useMemo(() => linkState(prog), [prog]);
@@ -759,7 +763,7 @@ export function GuitarView() {
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
-          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
+          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} hand={hand} />
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <ClipBar kind="drums" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
@@ -895,10 +899,11 @@ function CapoPick() {
 }
 
 /** The chords track on the page plays the keys: how its chords are voiced (null: it plays Guitar). */
-function useKeys(): NonNullable<Tone["voicing"]> | null {
+/** The chords track the page edits, when it plays on the keys (its voicing and register). */
+function useKeys(): Tone | null {
   const { state } = useApp();
   const t = toneOf(state.progression, state.progression.focus?.chords ?? "chords");
-  return onKeys(t) ? voicingOf(t) : null;
+  return onKeys(t) ? t : null;
 }
 
 const ChordBoard = memo(function ChordBoard() {
@@ -995,7 +1000,7 @@ function ChordCard({ c, on, onPick }: { c: KeyChord; on: boolean; onPick: () => 
         {c.signature && <span className="kc-star">★</span>}
       </span>
       <span className="kc-name">{name}</span>
-      {keys ? <KeyboardDiagram notes={pianoVoicing(c.ref, { style: keys })} chord={c.ref} keyOf={state.key} labels={labels === "fingers" ? "intervals" : labels} width={120} compact />
+      {keys ? <KeyboardDiagram notes={keysVoicing(c.ref, keys)} chord={c.ref} keyOf={state.key} labels={labels === "fingers" ? "intervals" : labels} width={120} compact />
         : v && <ChordDiagram voicing={v} root={c.ref.root} labels={labels} width={120} leftHanded={leftHanded} capo={capo} />}
       <div className="kc-actions" data-nodrag>
         {!keys && <button className="shapes-btn" aria-label={`Other ways to play ${name}`} title="Other ways to play it" aria-haspopup="dialog" onClick={(e) => { e.stopPropagation(); openSheet({ ref: c.ref }); }}><ShapesIcon />Shapes</button>}
@@ -1121,14 +1126,14 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
     const before = state.progression;
     const next = pasteOf(kind, before, state.clip ?? {}, state.key);
     set((s) => ({ ...s, progression: { ...s.progression, ...pageOf(pasteOf(kind, s.progression, s.clip ?? {}, s.key), kind) } }));
-    setUndo({ block, track: on, before: pageOf(before, kind) });
+    setUndo({ block, track: on, before: pageOf(before, kind), written: writtenAs(before, on) });
     onPasted();
     const moved = kind !== "drums" && keyShift(clip.key, state.key) !== 0;
     const lost = pastFrame(next, kind, frame);
     toast(`${clip.from}'s ${what} pasted into ${label}${moved ? `, moved to ${displayNote(state.key.tonic)}` : ""}${lost ? `. Some is past the end of ${label}` : ""}`);
   };
   const takeBack = () => {
-    if (!undoFits(undo, block, on)) return;
+    if (!undoFits(undo, block, on, writtenAs(state.progression, on))) return;
     set((s) => ({ ...s, progression: { ...s.progression, ...undo.before } }));
     setUndo(null);
     onPasted();
@@ -1165,7 +1170,7 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
       <span className="spacer" />
       <BarsControl />
       <button className="icon-btn" title="Copy" aria-label={`Copy the ${what} of ${label}`} onClick={copy}><CopyIcon /></button>
-      {undoFits(undo, block, on) ? (
+      {undoFits(undo, block, on, writtenAs(state.progression, on)) ? (
         <button className="icon-btn" aria-label="Undo the paste" title="Undo" onClick={takeBack}>↶</button>
       ) : (
         <button className="icon-btn clip-paste" disabled={!clip} aria-label={clip ? `Paste the ${what} of ${clip.from} into ${label}` : `Paste: copy a ${what} first`} title={clip ? `Paste ${clip.from}` : "Paste"} onClick={paste}>

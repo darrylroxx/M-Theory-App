@@ -24,8 +24,7 @@ import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
-import { onKeys, reviveTones, toneOf, voicingOf, type Tones } from "../audio/tone";
-import { pianoVoicing } from "../keys/voicing";
+import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
 
@@ -412,7 +411,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.progression]);
   const audition = useCallback(
     (ref: ChordRef) => {
-      if (keysTone) return strum(pianoVoicing(ref, { style: voicingOf(keysTone) }));
+      if (keysTone) return strum(keysVoicing(ref, keysTone));
       const v = shapeOf(ref);
       if (v) strum(v.midi);
     },

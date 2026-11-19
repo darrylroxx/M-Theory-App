@@ -282,6 +282,8 @@ interface Anchor {
   origin: number;
   /** when the run of items this one belongs to ends (its section, or the loop's end) */
   end: number;
+  /** where that run starts, in beats into its section (a loop's start) */
+  run: number;
 }
 
 /** A drums track on its own grid: the first one ("drums") and each one added on the Track page. */
@@ -402,7 +404,8 @@ export class ProgressionPlayer {
     this.passBeat = list.slice(0, fromIndex).reduce((a, x) => a + x.beats, 0);
     this.origin = 0;
     this.endAt = null;
-    setBedPlaying(true, beat, FIRST_DRUMS);
+    // the first track's noise bed: as the section that plays first has it (each next one's, as it comes)
+    setBedPlaying(true, list[fromIndex]?.drums ?? beat, FIRST_DRUMS);
     if (beat) {
       syncDrums(beat, bpm);
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
@@ -432,7 +435,9 @@ export class ProgressionPlayer {
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
-    setBedPlaying(this.playing, beat, FIRST_DRUMS);
+    // the first track's noise bed follows the section that is playing, not the one on the page
+    const lane = this.lanes.get(FIRST_DRUMS);
+    setBedPlaying(this.playing, lane?.cur ? this.beatOf(FIRST_DRUMS, lane.cur) : beat, FIRST_DRUMS, lane?.cur?.time);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
@@ -458,10 +463,6 @@ export class ProgressionPlayer {
       const t = this.nextTime;
       this.origin = sectionStart(item, i, this.passBeat, this.origin);
       this.marks.push({ time: t, index: i });
-      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: i, origin: this.origin, end: t + (this.secs.rest[i] ?? item.beats) * spb };
-      this.tAnchors.push(anchor);
-      this.spans.push(anchor);
-      if (this.spans.length > 24) this.spans.shift();
       const s0 = this.passBeat - this.origin;
       // where this item's section started, on the clock: the synth plays a whole section its way
       const t0 = t - s0 * spb;
@@ -470,6 +471,11 @@ export class ProgressionPlayer {
         while (a > 0 && Math.abs(this.secs.origin[a - 1] - this.secs.origin[from]) < 1e-6) a--;
         return a;
       };
+      const run = s0 - this.items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0);
+      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: i, origin: this.origin, end: t + (this.secs.rest[i] ?? item.beats) * spb, run };
+      this.tAnchors.push(anchor);
+      this.spans.push(anchor);
+      if (this.spans.length > 24) this.spans.shift();
       const items = this.items;
       const origins = this.secs.origin;
       playChord(voiceOf("chords"), item, t, spb, this.pattern, s0, this.beat, this.synthNotes, () => {
@@ -557,7 +563,7 @@ export class ProgressionPlayer {
           // a synth with a way of its own plays the whole section its way: this twelfth of a beat plays what starts in it
           const t0 = at(0);
           if (tune.sound) v.setSound(tune.sound, this.bpm, Math.max(base, t0));
-          playTuneSpan(v, this.synthNotes, `${id}~${t0.toFixed(4)}`, tune, t0, cur.spb, (cur.end - t0) / cur.spb, base, base + cur.spb / 12);
+          playTuneSpan(v, this.synthNotes, `${id}~${t0.toFixed(4)}`, tune, t0, cur.spb, (cur.end - t0) / cur.spb, base, base + cur.spb / 12, cur.run);
           continue;
         }
         const hits = tuneBetween(tune.m, tune.bar, this.tTick / 12, (this.tTick + 1) / 12, tune.swing);
@@ -635,8 +641,8 @@ export class ProgressionPlayer {
     if (b === lane.synced) return;
     lane.synced = b;
     if (b) syncDrums(b, this.bpm, track, a.time);
-    // an added track's noise bed runs only while its drums play (the first track's follows the page's beat)
-    if (track !== FIRST_DRUMS) setBedPlaying(!!b, b, track);
+    // a track's noise bed runs only while its drums play, from where the section starts (as a render has it)
+    setBedPlaying(!!b, b, track, a.time);
   }
 
   private tick() {
@@ -663,7 +669,8 @@ export class ProgressionPlayer {
     this.tCur = null;
     this.spans = [];
     this.lanes.clear();
-    this.synthNotes.clear();
+    // (a fresh cache: what each section's melody was played up to goes with it)
+    this.synthNotes = new Map();
     this.fresh = true;
     for (const src of this.sources) {
       try {
@@ -738,6 +745,10 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       const s1 = s0 + item.beats;
       const t0 = t - s0 * spb;
       const end = t + secs.rest[i] * spb;
+      // where the run of items this one is in starts, in beats into its section (a loop's start)
+      let first = i;
+      while (first > 0 && Math.abs(secs.origin[first - 1] - origin) < 1e-6) first--;
+      const runStart = s0 - items.slice(first, i).reduce((n, it) => n + it.beats, 0);
       playChord(voice("chords", "chord"), item, t, spb, o.pattern, s0, o.beat, cache, () => {
         const chords: SecChord[] = [];
         let a = i;
@@ -757,21 +768,22 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
         if (tune.sound) v.setSound(tune.sound, o.bpm, t);
         v.repedal(t);
         if (synthWay(v)) {
-          playTuneSpan(v, cache, `${id}~${t0.toFixed(4)}`, tune, t0, spb, s0 + secs.rest[i], t, t + item.beats * spb);
+          playTuneSpan(v, cache, `${id}~${t0.toFixed(4)}`, tune, t0, spb, s0 + secs.rest[i], t, t + item.beats * spb, runStart);
           continue;
         }
         const hits = tuneBetween(tune.m, tune.bar, s0, s1, tune.swing);
         hits.forEach((h, k) => {
           const after = hits.slice(k + 1).find((x) => x.beat > h.beat + 1e-6);
           const gap = (after ? after.beat - h.beat : nextNote(tune.m, tune.bar, h.beat)) * spb;
-          playTuneNote(v, h.midi, t + (h.beat - s0) * spb, gap, end, 0, tune.sound);
+          // notes struck together each get a string of their own, as live (where a twelfth of a beat's notes are counted off)
+          const tick = (b: number) => Math.floor(b * 12 + 1e-6);
+          const lane = hits.slice(0, k).filter((x) => tick(x.beat) === tick(h.beat)).length;
+          playTuneNote(v, h.midi, t + (h.beat - s0) * spb, gap, end, Math.min(lane, 3), tune.sound);
         });
       }
       const ex = item.extra;
       // (cut to the run of items it is in, as the live player does: a loop's edges)
-      let first = i;
-      while (first > 0 && Math.abs(secs.origin[first - 1] - origin) < 1e-6) first--;
-      const run = clipChords(ex?.chords ?? [], s0 - items.slice(first, i).reduce((n, it) => n + it.beats, 0), s0 + secs.rest[i]);
+      const run = clipChords(ex?.chords ?? [], runStart, s0 + secs.rest[i]);
       for (const ch of run)
         if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
           playChord(voice(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({

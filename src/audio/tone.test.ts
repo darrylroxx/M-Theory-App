@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { GUITAR, keysVoicings, midiProgram, reviveTone, reviveTones, synthOf, toneOf, voicingOf, withTone } from "./tone";
+import { GUITAR, keysVoicing, keysVoicings, midiProgram, reviveTone, reviveTones, synthOf, toneOf, voicingOf, withTone } from "./tone";
 import { fingerprint, reviveIdea, snapshot } from "../song/library";
 import { addTrack, focusTrack, removeTrack } from "../song/tracks";
 import { presetById } from "../synth/presets";
@@ -75,6 +75,14 @@ describe("chords on the keys", () => {
   it("a rest has no keys", () => {
     const vs = keysVoicings([chord("C"), { ...chord("D"), rest: true }, chord("G")], { inst: "piano" });
     expect(vs[1]).toEqual([]);
+  });
+  it("a chord on its own (tapped, on its card, in the sheet) sits where the tray plays it, in the track's register", () => {
+    const am = { ref: { root: "A", typeId: "min" } };
+    for (const t of [{ inst: "piano" as const, register: "high" as const }, { inst: "piano" as const, voicing: "close" as const, register: "high" as const }, { inst: "synth" as const }]) {
+      expect(keysVoicing(am.ref, t)).toEqual(keysVoicings([am], t)[0]);
+    }
+    const mean = (v: number[]) => v.reduce((a, b) => a + b, 0) / v.length;
+    expect(mean(keysVoicing(am.ref, { inst: "piano", register: "high" }))).toBeGreaterThan(mean(keysVoicing(am.ref, { inst: "piano" })) + 6);
   });
 });
 

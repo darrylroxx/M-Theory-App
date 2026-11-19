@@ -202,7 +202,9 @@ describe("the Canvas's link to the neural split", () => {
     const n = native();
     const s = sink();
     const views: string[] = [];
-    const link = new StemLink(song(), s, { onChange: (v) => views.push(v.phase) });
+    const file = song();
+    const link = new StemLink(file, s, { onChange: (v) => views.push(v.phase) });
+    expect(link.keeps(file, s)).toBe(false);
     await link.start();
     await settle();
     expect(calls.map((c) => c.cmd)).toEqual(["stems_status", "stems_upload", "stems_split"]);
@@ -229,6 +231,10 @@ describe("the Canvas's link to the neural split", () => {
     expect(link.view.phase).toBe("done");
     expect(views).toContain("checking");
     expect(views.at(-1)).toBe("done");
+    // it is kept for this song and this hearing (the page left and shown again), never for another
+    expect(link.keeps(file, s)).toBe(true);
+    expect(link.keeps(song(), s)).toBe(false);
+    expect(link.keeps(file, sink())).toBe(false);
     // stopping a link that is done cancels nothing and stops nothing
     calls.length = 0;
     link.stop();

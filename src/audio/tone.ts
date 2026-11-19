@@ -8,7 +8,7 @@
  * `Progression.tones`, by track id; a track with nothing there plays Guitar, which is how every
  * song made before this sounds.
  */
-import { KEY_STYLES, REGISTERS, arrangeKeys, type KeyStyle, type Register } from "../keys/voicing";
+import { KEY_STYLES, REGISTERS, arrangeKeys, pianoVoicing, type KeyStyle, type Register } from "../keys/voicing";
 import type { ChordRef } from "../theory/chords";
 import { reviveSynth, type SynthParams } from "../synth/params";
 import { presetById, type PresetCategory } from "../synth/presets";
@@ -114,6 +114,15 @@ export function withoutTone<P extends { tones?: Tones }>(p: P, id: string): P {
 export function keysVoicings(chords: { ref: ChordRef; rest?: boolean }[], t: Tone): number[][] {
   const band = t.register ? REGISTERS[t.register] : null;
   return arrangeKeys(chords.map((c) => (c.rest ? null : c.ref)), { style: voicingOf(t), ...(band ? { low: band.low, high: band.high } : {}) });
+}
+
+/**
+ * One chord on a track's keys on its own (tapped to be heard, drawn on its card, or in the sheet
+ * before it is in the tray): in the track's voicing and its register, where its tray plays it.
+ */
+export function keysVoicing(ref: ChordRef, t: Tone): number[] {
+  const band = t.register ? REGISTERS[t.register] : null;
+  return pianoVoicing(ref, { style: voicingOf(t), ...(band ? { low: band.low, high: band.high } : {}) });
 }
 
 /** Which instrument a key of the instrument switch is: one name for each sound, so a change of model is a change of instrument. */

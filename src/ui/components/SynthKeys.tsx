@@ -10,6 +10,8 @@
 import { type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKeys, type LiveOut } from "../../synth/live";
 import { DEFAULT_PLAY, type PlaySettings } from "../../synth/params";
+import { liveKeys } from "../../audio/synth";
+import { onKeys, synthOf, type Tone } from "../../audio/tone";
 
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const BLACK = new Set([1, 3, 6, 8, 10]);
@@ -159,4 +161,17 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
       <button className="icon-btn" aria-label="Octave up" disabled={top >= HIGH} onClick={() => shift(1)}>›</button>
     </div>
   );
+}
+
+/**
+ * The keys of the track the pages edit, on a page with no instrument of its own (the Canvas, which
+ * paints the notes as they sound): the chords track's when it is on the piano or the synth, else
+ * the melody's. None when both are on the strings, which have no keys.
+ */
+export function TrackKeys({ chords, melody }: { chords: Tone; melody: Tone }) {
+  const kind = onKeys(chords) ? "chord" : onKeys(melody) ? "melody" : null;
+  const out = useMemo(() => (kind ? liveKeys(kind) : null), [kind]);
+  if (!kind || !out) return null;
+  const tone = kind === "chord" ? chords : melody;
+  return tone.inst === "synth" ? <SynthKeys out={out} play={synthOf(tone, kind === "chord" ? "chords" : "melody").play} /> : <SynthKeys out={out} className="piano" />;
 }
