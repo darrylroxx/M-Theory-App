@@ -31,6 +31,8 @@ import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
+import { AuditionCtx, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
+import { previewHarmony } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
@@ -106,7 +108,7 @@ export function GuitarView() {
   const chordKeys = onKeys(chordTone);
   const keyStyle = voicingOf(chordTone);
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const keyVs = useMemo(() => (chordKeys ? keysVoicings(prog.chords, chordTone) : null), [chordsKey, chordKeys, keyStyle]);
+  const keyVs = useMemo(() => (chordKeys ? keysVoicings(prog.chords, chordTone) : null), [chordsKey, chordKeys, keyStyle, chordTone.register]);
   /** what each chord in the tray plays: its keys, or its guitar shape */
   const trayMidi = useCallback((i: number): (number | null)[] => (keyVs ? keyVs[i] ?? [] : voicings[i]?.midi ?? []), [keyVs, voicings]);
 
@@ -171,6 +173,10 @@ export function GuitarView() {
   }, [playedKey]); // eslint-disable-line react-hooks/exhaustive-deps
   // The whole song, section after section. A section with no chords is one bar of the beat on its own.
   const secs = useMemo(() => sections(prog), [prog]);
+  // A harmony being auditioned (see HarmonyPicker): the song plays as if it were added, the page stays as it is.
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const heard = useMemo(() => (preview ? previewHarmony(prog, state.key, preview.plan, preview.id) : prog), [prog, preview, state.key]);
+  const playSecs = useMemo(() => (heard === prog ? secs : sections(heard)), [heard, prog, secs]);
   // Each section plays with its own settings where it has them, and the song's (the first section's) everywhere else.
   const plan = useMemo(() => {
     const list: PlayItem[] = [];
@@ -182,10 +188,10 @@ export function GuitarView() {
     /** is there anything in the song to hear? */
     let any = false;
     // with no song yet, what is on the page is section A (every track in its place: a page may be editing an added track)
-    const np = normalize(prog);
+    const np = normalize(heard);
     const nBeat = np.beat ?? DEFAULT_BEAT;
-    const row: Section[] = secs.length ? secs : [soloSection(np)];
-    const editingOther = np !== prog && !!prog.focus?.chords;
+    const row: Section[] = playSecs.length ? playSecs : [soloSection(np)];
+    const editingOther = normalize(prog) !== prog && !!prog.focus?.chords;
     // what plays each track: the item carries it, so the player, the WAV and the backing all play the same instrument
     const firstTone = toneOf(np, "chords");
     const tuneTone = toneOf(np, "melody");
@@ -255,7 +261,7 @@ export function GuitarView() {
       if (sec.chords.some((c) => !c.rest) || drums.on || secTune || extra) any = true;
     }
     return { items: list, map, parts: secs.length ? parts : [], lengths, any, per };
-  }, [secs, voicings, voicingsOf, beat, songSig.num, songSig.den, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound, prog.tracks, prog.tones, takesReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [secs, playSecs, heard, voicings, voicingsOf, beat, songSig.num, songSig.den, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound, prog.tracks, prog.tones, takesReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── looping: nothing loops until some bars are chosen; then those bars go round and round ──
   const [span, setSpan] = useState<LoopSpan | null>(null);
@@ -341,9 +347,10 @@ export function GuitarView() {
   // ── what plays each track (Guitar, Piano or Synth) ──
   const tuneId = editTune ?? "melody";
   const tuneTone = toneOf(prog, tuneId);
-  useEffect(() => setTones(prog.tones), [prog.tones]);
+  // (a harmony being auditioned has its instrument too, and is kept while it is heard)
+  useEffect(() => setTones(heard.tones), [heard.tones]);
   // a track that is removed lets go of its instrument and its drum desk (they fade out)
-  const trackIds = (prog.tracks ?? []).map((t) => t.id).join("|");
+  const trackIds = (heard.tracks ?? []).map((t) => t.id).join("|");
   useEffect(() => keepTracks(trackIds ? trackIds.split("|") : []), [trackIds]);
   /** the track whose piano or synth is loading after it was chosen */
   const [loading, setLoading] = useState<string | null>(null);
@@ -418,9 +425,9 @@ export function GuitarView() {
     if (!planRef.current.any || !listRef.current.items.length) return toast("Add chords, a melody or drums first");
     getAudio();
     // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
-    const keys = Object.entries(prog.tones ?? {})
+    const keys = Object.entries(heard.tones ?? {})
       .filter(([, t]) => onKeys(t))
-      .map(([id]) => ({ id, kind: (id === "melody" || prog.tracks?.some((t) => t.id === id && t.kind === "melody") ? "melody" : "chord") as "melody" | "chord" }));
+      .map(([id]) => ({ id, kind: (id === "melody" || heard.tracks?.some((t) => t.id === id && t.kind === "melody") ? "melody" : "chord") as "melody" | "chord" }));
     waiting.current = true;
     void readyTracks(keys).then(() => {
       waiting.current = false;
@@ -466,6 +473,42 @@ export function GuitarView() {
   const onLoopBar = (bar: BarRef) => !recording && setSpan((sp) => tapLoop(layout, sp, bar));
   /** ↻: loop the section on screen, or let the loop go. */
   const toggleLoop = () => !recording && setSpan(loop ? null : loopSection(curBlock, nBars));
+
+  // ── auditioning a harmony track before it is added (HarmonyPicker) ──
+  // The section on screen goes round with the candidate in it; switching options swaps it while
+  // it plays. When the audition ends the loop is put back, and the music stops if it was started for it.
+  const auditRef = useRef<{ span: LoopSpan | null; started: boolean } | null>(null);
+  const spanRef = useRef(span);
+  spanRef.current = span;
+  const nBarsRef = useRef(nBars);
+  nBarsRef.current = nBars;
+  const recordingRef = useRef(recording);
+  recordingRef.current = recording;
+  const stopRef = useRef(stopPlay);
+  stopRef.current = stopPlay;
+  const audit = useCallback((pv: Preview | null) => {
+    if (!pv) {
+      const was = auditRef.current;
+      auditRef.current = null;
+      setPreview(null);
+      if (was) {
+        if (was.started) stopRef.current();
+        setSpan(was.span);
+      }
+      return;
+    }
+    if (recordingRef.current) return;
+    auditRef.current ??= { span: spanRef.current, started: !playingRef.current };
+    setPreview(pv);
+    setSpan(loopSection(curRef.current, nBarsRef.current));
+    if (!playingRef.current) setAudition((n) => n + 1);
+  }, []);
+  // a candidate on a piano or the synth starts loading as soon as it is chosen
+  const previewTone = preview ? heard.tones?.[preview.id] : undefined;
+  useEffect(() => {
+    if (preview && previewTone && onKeys(previewTone)) void warmTrack(preview.id, preview.plan.kind, previewTone);
+  }, [preview?.id, previewTone]); // eslint-disable-line react-hooks/exhaustive-deps
+  const auditionCtx = useMemo<Audition>(() => ({ preview, hear: audit, playing }), [preview, audit, playing]);
   /** What a recording goes round: the loop if there is one, else the section on screen. */
   const recordPlan = useCallback(() => {
     const span = loop ?? fitLoop(layout, loopSection(curBlock, nBars));
@@ -557,7 +600,8 @@ export function GuitarView() {
     });
   }, [secs, plan.per, prog, firstBeat, bar]);
   // the mixer: every track's volume, mute and solo, for the whole song
-  useEffect(() => setMix(prog.mix), [prog.mix]);
+  // (an audition of a swap mutes its source while it is heard)
+  useEffect(() => setMix(heard.mix), [heard.mix]);
   const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
   const drop = useCallback((p: Payload, index: number | null) => {
     if (index === null) return;
@@ -669,6 +713,7 @@ export function GuitarView() {
   }, [drop]);
 
   return (
+    <AuditionCtx.Provider value={auditionCtx}>
     <DragCtx.Provider value={api}>
       <div className={`page write${drag ? " dragging" : ""}`}>
         <Transport locked={recording} per={plan.per} current={curBlock} loop={loop} layout={layout} onBar={onLoopBar} onLoop={toggleLoop} getBar={getBar} playing={playing} onPlay={togglePlay} canPlay={plan.any} />
@@ -713,6 +758,7 @@ export function GuitarView() {
       )}
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
     </DragCtx.Provider>
+    </AuditionCtx.Provider>
   );
 }
 
@@ -1080,21 +1126,27 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
     const id = newId();
     set((s) => ({ ...s, progression: addTrack(s.progression, ek, id).p }));
   };
+  // a new chords or melody track can be written to go with another track (the drums: just a new track)
+  const [sheet, setSheet] = useState<{ track?: Track } | null>(null);
+  // it belongs to this page and this idea
+  useEffect(() => setSheet(null), [state.ideaId, pane]);
   const drop = (t: Track) => {
     if (!window.confirm(`Remove ${t.name} from every section?`)) return;
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };
   return (
+    <>
     <div className={`clip-bar${list.length > 1 ? " many" : ""}`} role="group" aria-label={`The ${what} tracks, copy and paste`}>
       <span className={`clip-of ${letterClass(color)}`}><b title={label}>{label}</b></span>
       <span className="seg clip-tracks" role="radiogroup" aria-label={`Which ${what} track`}>
         {list.map((t) => (
           <button key={t.id} role="radio" aria-checked={on === t.id} className={on === t.id ? "on" : ""} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, ek, t.id) }))}>
             {t.name}
+            {on === t.id && t.harmony && ek !== "drums" && <HarmonyAgain track={t} className="clip-hz" onOpen={() => setSheet({ track: t })} />}
             {on === t.id && !isFirst(t.id) && <i className="clip-x" role="button" aria-label={`Remove ${t.name}`} title="Remove" onClick={(e) => { e.stopPropagation(); drop(t); }}>✕</i>}
           </button>
         ))}
-        <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={add}>+</button>
+        <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={() => (ek === "drums" ? add() : setSheet({}))}>+</button>
       </span>
       <span className="spacer" />
       <BarsControl />
@@ -1107,6 +1159,8 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
         </button>
       )}
     </div>
+    {sheet && ek !== "drums" && <HarmonyPicker key={sheet.track?.id ?? "new"} kind={ek} track={sheet.track} onEmpty={add} onClose={() => setSheet(null)} />}
+    </>
   );
 }
 

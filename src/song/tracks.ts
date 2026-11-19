@@ -23,6 +23,7 @@ import type { ProgChord, Progression } from "../ui/state";
 import { reviveFx, type VocalFx } from "../audio/vocalfx";
 import { reviveTakes, type Take } from "./takes";
 import { withoutTone } from "../audio/tone";
+import { HARMONY_OPTIONS } from "../theory/harmonize";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
 /** The kinds a page edits by bringing a track forward. */
@@ -47,6 +48,24 @@ export interface Track {
   active?: Record<string, string>;
   /** a chords or melody track written to go with another: the canvas paints it as a harmony line */
   role?: "harmony";
+  /** a harmony track: what it was written from and how (see song/harmony), so it can be written again */
+  harmony?: HarmonyOf;
+}
+
+/**
+ * Where a harmony track came from: the track it was written from, the option it was written
+ * with, and for each section (by part id) a fingerprint of the source as it was then and of what
+ * was written. A section whose notes no longer match was changed by hand since; one whose source
+ * no longer matches has a source that changed since.
+ */
+export interface HarmonyOf {
+  from: string;
+  option: string;
+  marks?: Record<string, HarmonyMark>;
+}
+export interface HarmonyMark {
+  src: string;
+  out: string;
 }
 
 /** What one track holds in one section (and, for the first track kept aside, its settings too). */
@@ -191,9 +210,50 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const p = normalize(p0);
   const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, layers: without(x.layers, id) })) } : p.song;
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
-  const tracks = (p.tracks ?? []).filter((t) => t.id !== id);
+  // tracks written from it keep their notes, but can no longer be written again from it
+  const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t) : t));
+  // a re-harmonisation that went: the chords it played instead of are heard again (unless another still replaces them)
+  const gone = p.tracks?.find((t) => t.id === id);
+  const target = gone && insteadTarget(gone, p.tracks ?? []);
+  if (mix && target && mix[target]?.mute && !tracks.some((t) => insteadTarget(t, tracks) === target)) mix[target] = { ...mix[target], mute: false };
   // its instrument goes with it
   return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: mix && Object.keys(mix).length ? mix : undefined }, id), focus);
+}
+
+/**
+ * The chords track a harmony track plays instead of: a re-harmonisation (an Instead option)
+ * replaces the chords it was written from (from a melody: the song's chords, which it re-voices),
+ * and Best fit chooses chords of its own for the tune, so it replaces the song's chords too.
+ * Undefined for a track that plays with its source.
+ */
+export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
+  const h = t.harmony;
+  if (t.kind !== "chords" || !h) return undefined;
+  const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === h.option);
+  if (!opt || !(opt.instead || opt.id === "fit")) return undefined;
+  return h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords";
+}
+
+/**
+ * Harmony tracks' record of what they wrote in one section, given to another section that now
+ * holds the same music: the page that became section A, or a section given a copy of its own.
+ * Without it those notes would look changed by hand and out of date, though nobody touched them.
+ */
+export function carryMarks(tracks: Track[] | undefined, from: string, to: string): Track[] | undefined {
+  if (!tracks?.some((t) => t.harmony?.marks?.[from] && !t.harmony.marks[to])) return tracks;
+  return tracks.map((t) => {
+    const m = t.harmony?.marks?.[from];
+    if (!t.harmony || !m || t.harmony.marks?.[to]) return t;
+    // the page's record moves (it has no page of its own any more); a section's is shared with its copy
+    const { [from]: _, ...rest } = t.harmony.marks ?? {};
+    return { ...t, harmony: { ...t.harmony, marks: { ...(from === "" ? rest : t.harmony.marks), [to]: m } } };
+  });
+}
+
+/** A harmony track without its source (it stays a harmony line; it just can no longer be written again). */
+function forget(t: Track): Track {
+  const { harmony: _, ...rest } = t;
+  return rest;
 }
 
 /** Rename a track (the first three keep their names). */
@@ -218,9 +278,24 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
       ...(r.kind === "vocals" && reviveTakes(r.takes) ? { takes: reviveTakes(r.takes) } : {}),
       ...(r.kind === "vocals" && r.active && typeof r.active === "object" ? { active: Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) } : {}),
       ...((r.kind === "melody" || r.kind === "chords") && r.role === "harmony" ? { role: "harmony" as const } : {}),
+      ...(r.kind === "melody" || r.kind === "chords" ? reviveHarmony(r.harmony, r.kind) : {}),
     });
   }
-  return out.length ? out : undefined;
+  // a harmony's source must still be a chords or melody track of the song (and not itself)
+  const ok = (h: HarmonyOf, self: string) => h.from !== self && (h.from === "chords" || h.from === "melody" || out.some((t) => t.id === h.from && (t.kind === "chords" || t.kind === "melody")));
+  const fixed = out.map((t) => (t.harmony && !ok(t.harmony, t.id) ? forget(t) : t));
+  return fixed.length ? fixed : undefined;
+}
+
+/** Where a harmony track came from, loaded from storage: dropped when it makes no sense. */
+function reviveHarmony(raw: unknown, kind: "chords" | "melody"): { harmony?: HarmonyOf } {
+  const h = raw as Partial<HarmonyOf> | null | undefined;
+  if (!h || typeof h !== "object" || typeof h.from !== "string" || !h.from || typeof h.option !== "string") return {};
+  if (!HARMONY_OPTIONS.some((o) => o.id === h.option && o.kind === kind)) return {};
+  const marks: Record<string, HarmonyMark> = {};
+  if (h.marks && typeof h.marks === "object")
+    for (const [k, m] of Object.entries(h.marks)) if (m && typeof m.src === "string" && typeof m.out === "string") marks[k] = { src: m.src, out: m.out };
+  return { harmony: { from: h.from, option: h.option, ...(Object.keys(marks).length ? { marks } : {}) } };
 }
 
 /** Layers loaded from storage, made safe; only tracks that exist are kept. */

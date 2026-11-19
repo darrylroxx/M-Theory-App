@@ -188,6 +188,8 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   // the copy's tracks, here
   const tracks = [...(p.tracks ?? [])];
   const to = new Map<string, string>();
+  /** the tracks the paste made */
+  const made = new Set<string>();
   for (const t of c.tracks) {
     const free = (x: Track) => x.kind === t.kind && ![...to.values()].includes(x.id);
     const same = tracks.find((x) => x.id === t.id && free(x)) ?? tracks.find((x) => x.name === t.name && free(x));
@@ -198,6 +200,7 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
     const nid = isFirst(t.id) || tracks.some((x) => x.id === t.id) ? id() : t.id;
     const { takes: _t, active: _a, ...rest } = t;
     tracks.push({ ...clone(rest), id: nid });
+    made.add(nid);
     to.set(t.id, nid);
   }
 
@@ -235,7 +238,34 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
     }
     return tidy({ ...t, takes: takes.length ? takes : undefined, active: Object.keys(active).length ? active : undefined });
   });
-  return { ...q, tracks: vocals.length ? vocals : undefined };
+  const part = q.song?.blocks.find((b) => b.id === target)?.partId;
+  const harmonies = part ? vocals.map((t) => harmonyAfterPaste(t, c, to, made, part, vocals)) : vocals;
+  return { ...q, tracks: harmonies.length ? harmonies : undefined };
+}
+
+/**
+ * A harmony track after a section was pasted: one made by the paste is written from the same
+ * track here as it was there (or from nothing, when that track did not come along). What the
+ * section now holds is what the copied one held, so it takes that section's fingerprint: then
+ * writing the harmony again later knows whether those notes were changed by hand. Where the
+ * copy's harmony was written another way, the section counts as changed by hand (it is asked about).
+ */
+function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, made: Set<string>, part: string, tracks: Track[]): Track {
+  const ct = c.tracks.find((x) => to.get(x.id) === t.id);
+  if (!t.harmony || !ct) return t;
+  /** the copy's source, as it is called here */
+  const here = (id: string | undefined) => (id === undefined ? undefined : isFirst(id) ? id : to.get(id) ?? (tracks.some((x) => x.id === id) ? id : undefined));
+  const fresh = made.has(t.id);
+  const from = fresh ? here(t.harmony.from) : t.harmony.from;
+  if (!from || (!isFirst(from) && !tracks.some((x) => x.id === from))) {
+    const { harmony: _, ...rest } = t;
+    return rest;
+  }
+  const same = !!ct.harmony && ct.harmony.option === t.harmony.option && here(ct.harmony.from) === from;
+  const mark = same && c.part ? ct.harmony?.marks?.[c.part] : undefined;
+  const { [part]: _, ...others } = fresh ? {} : t.harmony.marks ?? {};
+  const marks = mark ? { ...others, [part]: mark } : others;
+  return { ...t, harmony: { from, option: t.harmony.option, ...(Object.keys(marks).length ? { marks } : {}) } };
 }
 export const pasteSection = settled(pasteSectionN);
 
