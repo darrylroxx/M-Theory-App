@@ -101,19 +101,6 @@ export function toggled(marks: ReadonlySet<number>, n: number): Set<number> {
 }
 
 /**
- * The takes of one recording to list. A long session can leave hundreds, so only these show:
- * the keepers (★), the one that plays, and the newest few; the rest wait behind "+N". Short
- * last passes are left out unless asked for (or marked, or playing).
- */
-export function shownTakes(takes: Take[], group: string, o: { active?: string; newest?: number; shorts?: boolean; all?: boolean } = {}): { shown: Take[]; more: number } {
-  const mine = takes.filter((t) => t.group === group && (o.shorts || !t.short || t.keep || t.id === o.active));
-  if (o.all) return { shown: mine, more: 0 };
-  const newest = o.newest ?? 8;
-  const shown = mine.filter((t, i) => t.keep || t.id === o.active || i >= mine.length - newest);
-  return { shown, more: mine.length - shown.length };
-}
-
-/**
  * The click under a recording: how many beats each bar of the loop has (whole beats, at least
  * one, as the time signatures give them), and a count-in of `countIn` bars in the meter of the
  * loop's first bar, the one that comes straight after it. A loop that crosses from a 4/4

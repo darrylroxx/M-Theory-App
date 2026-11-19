@@ -3,11 +3,12 @@ import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
 import { renderSong } from "../../audio/synth";
-import { hearAlone, stopAlone } from "../../audio/takeplay";
+import { hearAlone, onAlone as onAloneChange, stopAlone } from "../../audio/takeplay";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
-import { TakeLane, type LaneBar } from "./TakeLane";
+import { barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
+import { addRecording, chooseTake, clipsOf, sameSpot, compClip, deleteClip, deleteTake, inUse, moveClip, placedClips, removeRecording, splitClip, trimClip, type Clip } from "../../song/clips";
+import { TakeLane, type LaneBar, type LaneRow } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
@@ -157,8 +158,6 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const fxRef = useRef<VocalFx>(fx);
   fxRef.current = fx;
   phaseRef.current = phase;
-  /** recordings whose takes are all listed ("+N" was opened) */
-  const [open, setOpen] = useState<Set<string>>(() => new Set());
 
   const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
@@ -337,7 +336,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     // the tempo, key and time signature it was sung in
     const takes = cutTakes(r, { group, at: c.plan.at, nudge, id: newId, kept: c.kept }).map((x) => ({ ...x, sound, bpm: c.plan.bpm, key: c.key, sig: c.sig }));
     if (!takes.length) return toast("Stopped before the first take");
-    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === c.track.id ? { ...x, takes: [...(x.takes ?? []), ...takes] } : x)) } }));
+    // the take that plays (the last ★, else the last full pass) is laid whole where it was sung
+    // (sung again over the same bars, it plays there instead of what played: the earlier takes are a Use away)
+    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === c.track.id ? { ...x, ...addRecording(x, takes, newId) } : x)) } }));
     const full = takes.filter((x) => !x.short).length || takes.length;
     const stars = takes.filter((x) => x.keep).length;
     const filled = (r.padded ?? 0) / r.rate;
@@ -426,28 +427,105 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     if (el && atEnd.current) el.scrollLeft = el.scrollWidth;
   }, [pass]);
 
-  // ── takes ──
+  // ── takes and clips ──
   const groups = groupsOf(track?.takes).reverse();
-  const choose = (g: string, id: string) => setTrack((t) => ({ ...t, active: { ...t.active, [g]: id } }));
+  /** what an edit changes on a track (and an undo puts back) */
+  type Snap = Pick<Track, "takes" | "clips" | "active">;
+  const snapOf = (t: Track): Snap => ({ takes: t.takes, clips: t.clips, active: t.active });
+  const isAt = (t: Track | undefined, x: Snap) => !!t && t.takes === x.takes && t.clips === x.clips && t.active === x.active;
+  /** the edits made on this page, newest last: Ctrl+Z (or ↶) takes the last one back */
+  const undoRef = useRef<{ track: string; before: Snap; after: Snap }[]>([]);
+  const [undoN, setUndoN] = useState(0);
+  const trackIn = (s: { progression: { tracks?: Track[] } }, id: string) => (s.progression.tracks ?? []).find((t) => t.id === id);
+  const putSnap = (id: string, x: Snap) => set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === id ? { ...t, ...x } : t)) } }));
+  /** Change the takes or clips of the track shown; `undo`: a message offering ↶ */
+  const edit = (fn: (t: Track) => Partial<Snap>, undo?: string) => {
+    if (!track) return;
+    const before = snapOf(track);
+    const after = { ...before, ...fn(track) };
+    if (isAt({ ...track, ...after }, before)) return;
+    undoRef.current = [...undoRef.current.slice(-49), { track: track.id, before, after }];
+    setUndoN(undoRef.current.length);
+    putSnap(track.id, after);
+    const id = track.id;
+    if (undo) toast(undo, { label: "↶", aria: "Undo", when: (s) => isAt(trackIn(s, id), after), run: () => undoKey.current() });
+  };
+  const takeBack = () => {
+    const last = undoRef.current.pop();
+    setUndoN(undoRef.current.length);
+    if (!last) return;
+    // only onto what it left: if something else changed it since (a new recording, say), nothing is undone over that
+    if (!isAt(trackIn(state, last.track), last.after)) {
+      undoRef.current = [];
+      setUndoN(0);
+      return toast("Nothing to undo");
+    }
+    putSnap(last.track, last.before);
+  };
+  // Ctrl+Z on this page (not while recording, nor in a box being typed in)
+  const undoKey = useRef(takeBack);
+  undoKey.current = takeBack;
+  useEffect(() => {
+    if (!active || phase !== "idle") return;
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || isTyping(e.target) || !undoRef.current.length) return;
+      e.preventDefault();
+      undoKey.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [active, phase]);
+
+  /** Use a take: it plays wherever its recording does (in every clip of it) */
+  const choose = (id: string) => edit((t) => chooseTake(t, id, newId()));
   /** ★ a take afterwards (or take the ★ off) */
-  const setKeep = (id: string, keep: boolean) => setTrack((t) => ({ ...t, takes: (t.takes ?? []).map((x) => (x.id !== id ? x : keep ? { ...x, keep: true } : (({ keep: _, ...rest }) => rest)(x))) }));
+  const setKeep = (id: string, keep: boolean) => edit((t) => ({ takes: (t.takes ?? []).map((x) => (x.id !== id ? x : keep ? { ...x, keep: true } : (({ keep: _, ...rest }) => rest)(x))) }));
   const removeGroup = (g: string) => {
     if (!window.confirm("Remove this recording and all its takes? (The files stay in Music › M-Theory › Recordings.)")) return;
-    setTrack((t) => ({ ...t, takes: (t.takes ?? []).filter((x) => x.group !== g), active: Object.fromEntries(Object.entries(t.active ?? {}).filter(([k]) => k !== g)) }));
+    edit((t) => removeRecording(t, g), "Recording removed");
   };
-  /** Hear a take alone: the song stops, and so does any take heard alone before (only one is ever heard). */
-  const preview = async (tk: Take) => {
+  /** Delete a take from the song (its file stays on disk); whatever played it plays the next best take */
+  const dropTake = (tk: Take) => {
+    if (selTake === tk.id) {
+      // the selection moves on to the next take in the list
+      const list = browseList();
+      const i = list.findIndex((x) => x.id === tk.id);
+      setSelTake((list[i + 1] ?? list[i - 1])?.id ?? null);
+    }
+    edit((t) => deleteTake(t, tk.id), `Take ${tk.n} deleted`);
+  };
+  // ── the clip editor ──
+  const [selClip, setSelClip] = useState<string | null>(null);
+  const [selTake, setSelTake] = useState<string | null>(null);
+  const [cut, setCut] = useState(false);
+  const [snap, setSnap] = useState(true);
+  const setClips = (fn: (cs: Clip[], t: Track) => Clip[], undo?: string) => edit((t) => ({ clips: fn(clipsOf(t), t) }), undo);
+  const placed = track ? placedClips(track) : [];
+  const selPlaced = placed.find((x) => x.clip.id === selClip) ?? null;
+  // ── hearing takes alone ──
+  /** the take being heard alone */
+  const [alone, setAlone] = useState<string | null>(null);
+  useEffect(() => onAloneChange((on) => !on && setAlone(null)), []);
+  /** Hear a take alone (or a clip's stretch of it): the song stops, and so does any take heard alone before (only one is ever heard). */
+  const preview = async (tk: Take, part?: { from: number; to: number }) => {
     // (not over a song the interface is playing)
     if (phaseRef.current !== "idle") return;
     onAlone();
     // just this take is read from the recording, so it plays from its own start
-    if ((await hearAlone(tk, track?.id ?? "vocals")) === false) toast("Could not read the recording");
+    const ok = await hearAlone(tk, track?.id ?? "vocals", part);
+    if (ok) setAlone(tk.id);
+    else if (ok === false) toast("Could not read the recording");
   };
+  const playStop = (tk: Take) => (alone === tk.id ? stopAlone() : void preview(tk));
   // a take heard alone stops when the page is left (or goes away)
   useEffect(() => {
     if (!active) stopAlone();
   }, [active]);
   useEffect(() => () => stopAlone(), []);
+  // ── sifting through the takes ──
+  const [starOnly, setStarOnly] = useState(false);
+  /** the takes listed, in order: newest recording first, its passes as they were sung */
+  const browseList = () => groups.flatMap((g) => (track?.takes ?? []).filter((t) => t.group === g && (!starOnly || t.keep) && (shorts || !t.short || t.keep || (track && inUse(track, t.id)))));
   const stale = (track?.takes ?? []).some((t) => !sameSound(t, fx));
   const applySound = async () => {
     if (!track?.takes?.length) return;
@@ -501,9 +579,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   laneRef.current = laneBars;
   const playingRef = useRef(playing);
   playingRef.current = playing;
-  const laneTakes = groups.map((g, gi) => ({ g, gi, tk: activeTake(track?.takes ?? [], g, track?.active?.[g]) }))
-    .filter((x): x is { g: string; gi: number; tk: Take } => !!x.tk)
-    .map(({ gi, tk }) => ({ take: tk, label: `● ${groups.length - gi} · ${tk.keep ? "★" : ""}${tk.n}` }));
+  /** "● 2 · ": which recording a take is from (in the take picker, when it offers takes of more than one) */
+  const recNo = (g: string, other: boolean) => (other && groups.length > 1 ? `● ${groups.length - groups.indexOf(g)} · ` : "");
+  // each recording a row of its clips, newest first
+  const laneRows: LaneRow[] = groups.map((g, gi) => ({ group: g, label: `● ${groups.length - gi}`, clips: placed.filter((x) => x.take.group === g) }));
   /** How far across the lane the music is: from the engine while singing over the loop, from the app's player while the song plays. */
   const where = useCallback((): number | null => {
     const s = status.current;
@@ -529,14 +608,63 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     return i < 0 ? null : (i + (w.beat / per - k)) / bars.length;
   }, [getWhere]);
 
+  /** the take a clip plays, from a track's own takes */
+  const takeIn = (cs: Clip[], t: Track, id: string) => {
+    const c = cs.find((x) => x.id === id);
+    return c ? (t.takes ?? []).find((k) => k.id === c.take) : undefined;
+  };
+  const laneEdit = track && !running ? {
+    selected: selClip,
+    onSelect: (x: { clip: Clip; take: Take } | null) => {
+      setSelClip(x?.clip.id ?? null);
+      if (x) setSelTake(x.take.id);
+    },
+    cut, snap,
+    onTrim: (id: string, edge: "from" | "to", frame: number) => setClips((cs, t) => { const tk = takeIn(cs, t, id); return tk ? trimClip(cs, id, edge, frame, tk) : cs; }),
+    onMove: (id: string, m: number) => setClips((cs) => moveClip(cs, id, m)),
+    onSplit: (id: string, frame: number) => {
+      const nid = newId();
+      setClips((cs, t) => { const tk = takeIn(cs, t, id); return tk ? splitClip(cs, id, frame, tk, nid) : cs; });
+      // ✂ cuts once: the next tap picks a piece
+      setCut(false);
+    },
+    onDelete: (id: string) => {
+      setClips((cs) => deleteClip(cs, id), "Clip deleted");
+      setSelClip(null);
+    },
+    onHear: desktop ? (x: { clip: Clip; take: Take }) => void preview(x.take, x.clip) : undefined,
+    keys: active,
+  } : undefined;
   const lane = laneBars.length > 0 ? (
-    <TakeLane bars={laneBars} takes={laneTakes} bpm={bpm} where={where} shown={shown} follow={follow}
-      live={active && (playing || phase === "recording" || phase === "rehearsing")} onPick={desktop ? (t) => void preview(t) : undefined} />
+    <TakeLane bars={laneBars} rows={laneRows} bpm={bpm} where={where} shown={shown} follow={follow}
+      live={active && (playing || phase === "recording" || phase === "rehearsing")} edit={laneEdit} />
+  ) : null;
+  /** the takes the selected clip can play instead (of its recording, or another sung from the same bar) */
+  const swaps = selPlaced ? (track?.takes ?? []).filter((t) => sameSpot(t, selPlaced.take)) : [];
+  const manyRecs = new Set(swaps.map((t) => t.group)).size > 1;
+  // the editor's tools: ✂, Snap, and for the clip selected, which take it plays, hear it, delete it
+  const tools = laneBars.length > 0 && placed.length > 0 && !running && track ? (
+    <div className="tl-tools" role="toolbar" aria-label="Edit clips">
+      <button className={`icon-btn${cut ? " on" : ""}`} aria-pressed={cut} aria-label="Cut: tap a clip to split it (S)" title="Cut: tap a clip to split it (S)" onClick={() => setCut(!cut)}>✂</button>
+      <button className={`btn sm${snap ? " on" : ""}`} aria-pressed={snap} title="Moves keep to 1/16 notes (hold Alt or Shift to move freely)" onClick={() => setSnap(!snap)}>Snap</button>
+      {selPlaced && (
+        <span className="tl-sel">
+          <select aria-label="Take in this clip" value={selPlaced.take.id} onChange={(e) => { const to = e.target.value; setClips((_, t) => compClip(t, selPlaced.clip.id, to)); setSelTake(to); }}>
+            {swaps.map((t) => <option key={t.id} value={t.id}>{recNo(t.group, manyRecs)}Take {t.keep ? "★" : ""}{t.n}{t.short ? " ·" : ""}</option>)}
+          </select>
+          {desktop && <button className="icon-btn" aria-label="Hear this clip alone" title="Hear this clip alone" onClick={() => void preview(selPlaced.take, selPlaced.clip)}>▶</button>}
+          <button className="icon-btn" aria-label="Delete this clip" title="Delete this clip (Delete)" onClick={() => laneEdit?.onDelete(selPlaced.clip.id)}>✕</button>
+        </span>
+      )}
+      <span className="spacer" />
+      <button className="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!undoN} onClick={takeBack}>↶</button>
+    </div>
   ) : null;
 
+  const list = browseList();
   const takesBox = track && groups.length > 0 ? (
-    <TakeList track={track} groups={groups} running={running} stale={stale} busy={busy} shorts={shorts} setShorts={setShorts} open={open} setOpen={setOpen}
-      applySound={() => void applySound()} choose={choose} setKeep={setKeep} preview={(t) => void preview(t)} removeGroup={removeGroup} />
+    <TakeBrowser track={track} groups={groups} list={list} sel={selTake} setSel={setSelTake} alone={alone} canHear={desktop} playStop={playStop} starOnly={starOnly} setStarOnly={setStarOnly}
+      running={running} stale={stale} busy={busy} shorts={shorts} setShorts={setShorts} applySound={() => void applySound()} choose={choose} setKeep={setKeep} drop={dropTake} removeGroup={removeGroup} />
   ) : null;
 
   return (
@@ -552,6 +680,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
 
       {!desktop && <p className="small vc-note">Recording: in the Windows app.</p>}
       {/* in the browser too: the takes already made, and the line while the song plays */}
+      {!desktop && tools}
       {!desktop && lane}
 
       {desktop && (
@@ -575,6 +704,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
             <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click</label>
           </div>
 
+          {tools}
           {lane}
           {phase === "recording" && (
             // every pass sung so far, and the one being sung: tap to keep ★. One row that scrolls, never grows.
@@ -668,52 +798,127 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   );
 }
 
-/** The recordings on a track and their takes (one per pass), each recording on a line. */
-function TakeList({ track, groups, running, stale, busy, shorts, setShorts, open, setOpen, applySound, choose, setKeep, preview, removeGroup }: {
+/** How long a take is, as m:ss. */
+const lengthOf = (t: Take) => {
+  const sec = Math.round(t.frames / t.rate);
+  return `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, "0")}`;
+};
+
+/**
+ * Every take of every recording on a track, newest recording first, its passes as they were
+ * sung, to sift through: hear each alone, ★ the keepers, use one, delete the rest. One is
+ * selected: ‹ › or the arrow keys step through them (hearing each in turn while one is being
+ * heard), Space hears it or stops, Enter uses it, K ★s it, Delete deletes it.
+ */
+function TakeBrowser({ track, groups, list, sel, setSel, alone, canHear, playStop, starOnly, setStarOnly, running, stale, busy, shorts, setShorts, applySound, choose, setKeep, drop, removeGroup }: {
   track: Track;
   groups: string[];
+  /** the takes listed, in order */
+  list: Take[];
+  sel: string | null;
+  setSel: (id: string | null) => void;
+  /** the take being heard alone */
+  alone: string | null;
+  canHear: boolean;
+  playStop: (t: Take) => void;
+  starOnly: boolean;
+  setStarOnly: (on: boolean) => void;
   running: boolean;
   stale: boolean;
   busy: string | null;
   shorts: boolean;
   setShorts: (on: boolean) => void;
-  open: Set<string>;
-  setOpen: (fn: (o: Set<string>) => Set<string>) => void;
   applySound: () => void;
-  choose: (g: string, id: string) => void;
+  choose: (id: string) => void;
   setKeep: (id: string, keep: boolean) => void;
-  preview: (t: Take) => void;
+  drop: (t: Take) => void;
   removeGroup: (g: string) => void;
 }) {
+  const listRef = useRef<HTMLDivElement>(null);
+  const at = list.findIndex((t) => t.id === sel);
+  const cur = at >= 0 ? list[at] : undefined;
+  const step = (d: 1 | -1) => {
+    const next = list[at < 0 ? (d > 0 ? 0 : list.length - 1) : Math.max(0, Math.min(list.length - 1, at + d))];
+    if (!next) return;
+    setSel(next.id);
+    // stepping while one is heard hears the next
+    if (alone && alone !== next.id && canHear) playStop(next);
+  };
+  // the selected take stays in view
+  useEffect(() => {
+    if (!sel) return;
+    const el = listRef.current?.querySelector<HTMLElement>(`[data-take="${CSS.escape(sel)}"]`);
+    const box = listRef.current;
+    if (!el || !box) return;
+    // scrolled within the list only (never the page)
+    if (el.offsetTop < box.scrollTop) box.scrollTop = el.offsetTop;
+    else if (el.offsetTop + el.offsetHeight > box.scrollTop + box.clientHeight) box.scrollTop = el.offsetTop + el.offsetHeight - box.clientHeight;
+  }, [sel]);
+  const onKey = (e: React.KeyboardEvent) => {
+    if (e.ctrlKey || e.metaKey || e.altKey || isTyping(e.target) || (e.target as HTMLElement).tagName === "SELECT") return;
+    const k = e.key;
+    let done = true;
+    if (k === "ArrowDown" || k === "ArrowRight") step(1);
+    else if (k === "ArrowUp" || k === "ArrowLeft") step(-1);
+    else if (k === " " && cur && canHear) playStop(cur);
+    else if (k === "Enter" && cur && (e.target as HTMLElement) === listRef.current) choose(cur.id);
+    else if ((k === "k" || k === "K") && cur) setKeep(cur.id, !cur.keep);
+    else if ((k === "Delete" || k === "Backspace") && cur && !running) drop(cur);
+    else done = false;
+    if (done) {
+      e.preventDefault();
+      e.stopPropagation();
+    }
+  };
+  const count = (g: string) => (track.takes ?? []).filter((t) => t.group === g).length;
+  /** after a button in the list, the keys go to the list again (Space plays, not presses the button again) */
+  const focus = () => listRef.current?.focus({ preventScroll: true });
   return (
     <div className="vc-takes">
-      <div className="row">
+      <div className="row tb-head">
         <b className="vc-title">Takes</b>
+        <span className="seg" role="radiogroup" aria-label="Which takes">
+          <button role="radio" aria-checked={!starOnly} className={!starOnly ? "on" : ""} onClick={() => setStarOnly(false)}>All</button>
+          <button role="radio" aria-checked={starOnly} className={starOnly ? "on" : ""} onClick={() => setStarOnly(true)} aria-label="Kept only">★</button>
+        </span>
+        <span className="tb-step">
+          <button className="btn sm" aria-label="Previous take" title="Previous take (←)" disabled={!list.length} onClick={() => step(-1)}>‹</button>
+          <button className="btn sm" aria-label="Next take" title="Next take (→)" disabled={!list.length} onClick={() => step(1)}>›</button>
+        </span>
         <span className="spacer" />
         {stale && <button className="btn sm" disabled={!!busy || running} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound above on them">{busy ? "…" : "↻ Apply sound"}</button>}
         {(track.takes ?? []).some((t) => t.short) && <label className="toggle vc-mini"><input type="checkbox" checked={shorts} onChange={(e) => setShorts(e.target.checked)} /> Short takes</label>}
       </div>
-      {groups.map((g, gi) => {
-        const on = activeTake(track.takes ?? [], g, track.active?.[g]);
-        // a long session leaves many passes: the keepers, the one playing and the newest show; "+N" for the rest
-        const all = open.has(g);
-        const { shown, more } = shownTakes(track.takes ?? [], g, { active: on?.id, shorts, all });
-        return (
-          <div key={g} className="vc-group">
-            <span className="small"><b>● {groups.length - gi}</b></span>
-            <span className="seg vc-takelist" role="radiogroup" aria-label="Which take plays">
-              {shown.map((t) => <button key={t.id} role="radio" aria-checked={on?.id === t.id} aria-label={`Take ${t.n}${t.keep ? ", kept" : ""}${t.short ? ", short" : ""}`} className={`${on?.id === t.id ? "on" : ""}${t.keep ? " keep" : ""}`} title="Play this take with the song; double-click to hear it alone" onClick={() => choose(g, t.id)} onDoubleClick={() => preview(t)}>{t.keep ? "★" : ""}{t.n}{t.short ? "·" : ""}</button>)}
-              {(more > 0 || all) && <button className="vc-more" aria-label={all ? "Show fewer takes" : `Show ${more} more takes`} onClick={() => setOpen((o) => { const n = new Set(o); if (all) n.delete(g); else n.add(g); return n; })}>{all ? "−" : `+${more}`}</button>}
-            </span>
-            {/* kept together, so on a phone they never break apart onto lines of their own */}
-            <span className="vc-group-acts">
-              <button className={`icon-btn vc-keep${on?.keep ? " on" : ""}`} aria-pressed={!!on?.keep} aria-label="Keep the chosen take ★" title="Keep ★" disabled={!on} onClick={() => on && setKeep(on.id, !on.keep)}>★</button>
-              <button className="icon-btn" aria-label="Hear the chosen take alone" title="Hear the chosen take alone" onClick={() => on && preview(on)}>▶</button>
-              <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
-            </span>
-          </div>
-        );
-      })}
+      <div className="tb-list" ref={listRef} role="listbox" aria-label="Takes" tabIndex={0} onKeyDown={onKey}>
+        {groups.map((g, gi) => {
+          const mine = list.filter((t) => t.group === g);
+          return (
+            <div key={g} className="tb-group" role="group" aria-label={`Recording ${groups.length - gi}`}>
+              <div className="tb-rec">
+                <b>● {groups.length - gi}</b>
+                <span className="tiny muted">{count(g)} take{count(g) === 1 ? "" : "s"}</span>
+                <span className="spacer" />
+                <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
+              </div>
+              {mine.map((t) => {
+                const used = inUse(track, t.id);
+                return (
+                  <div key={t.id} data-take={t.id} role="option" aria-selected={t.id === sel} className={`tb-take${t.id === sel ? " sel" : ""}${used ? " used" : ""}${alone === t.id ? " heard" : ""}`}
+                    onClick={() => { setSel(t.id); focus(); }}>
+                    {canHear && <button className="icon-btn tb-play" aria-label={alone === t.id ? "Stop" : `Hear take ${t.n} alone`} title={alone === t.id ? "Stop (Space)" : "Hear it alone (Space)"} onClick={(e) => { e.stopPropagation(); setSel(t.id); playStop(t); focus(); }}>{alone === t.id ? "■" : "▶"}</button>}
+                    <span className="tb-n">Take {t.n}{t.short ? " ·" : ""}</span>
+                    <span className="tb-len tiny muted mono">{lengthOf(t)}</span>
+                    <button className={`icon-btn vc-keep${t.keep ? " on" : ""}`} aria-pressed={!!t.keep} aria-label={`Keep take ${t.n} ★`} title="Keep ★ (K)" onClick={(e) => { e.stopPropagation(); setSel(t.id); setKeep(t.id, !t.keep); focus(); }}>★</button>
+                    <button className={`btn sm tb-use${used ? " on" : ""}`} aria-pressed={used} aria-label={`Use take ${t.n}`} title="This take plays here (Enter)" onClick={(e) => { e.stopPropagation(); setSel(t.id); choose(t.id); focus(); }}>Use</button>
+                    <button className="icon-btn" aria-label={`Delete take ${t.n}`} title="Delete this take (the file stays)" disabled={running} onClick={(e) => { e.stopPropagation(); drop(t); focus(); }}>✕</button>
+                  </div>
+                );
+              })}
+              {!mine.length && <div className="tiny muted tb-none">{starOnly ? "No ★ takes" : "—"}</div>}
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 }

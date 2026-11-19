@@ -22,6 +22,7 @@ import { reviveMelody, type Melody } from "./melody";
 import type { ProgChord, Progression } from "../ui/state";
 import { reviveFx, type VocalFx } from "../audio/vocalfx";
 import { reviveTakes, type Take } from "./takes";
+import { migrateClips, reviveClips, type Clip } from "./clips";
 import { withoutTone } from "../audio/tone";
 import type { Mix } from "../audio/mix";
 import { HARMONY_OPTIONS } from "../theory/harmonize";
@@ -47,6 +48,8 @@ export interface Track {
   fx?: VocalFx;
   takes?: Take[];
   active?: Record<string, string>;
+  /** a vocal track: what it plays of its takes, as edited (see song/clips; a track saved before has one whole take from each recording) */
+  clips?: Clip[];
   /** a chords or melody track written to go with another: the canvas paints it as a harmony line */
   role?: "harmony";
   /** a harmony track: what it was written from and how (see song/harmony), so it can be written again */
@@ -291,6 +294,14 @@ export function renameTrack(p: Progression, id: string, name: string): Progressi
   return { ...p, tracks: (p.tracks ?? []).map((t) => (t.id === id ? { ...t, name: n } : t)) };
 }
 
+/** A vocal track's takes, the take chosen from each recording, and its clips (a track saved before clips gets one whole take from each recording, as it played). */
+function reviveVocal(r: Partial<Track>): Pick<Track, "takes" | "active" | "clips"> {
+  const takes = reviveTakes(r.takes);
+  const active = r.active && typeof r.active === "object" ? (Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) as Record<string, string>) : undefined;
+  const clips = reviveClips(r.clips, takes) ?? (takes ? migrateClips(takes, active) : undefined);
+  return { ...(takes ? { takes } : {}), ...(active ? { active } : {}), ...(clips && takes ? { clips } : {}) };
+}
+
 /** Tracks loaded from storage, made safe. */
 export function reviveTracks(raw: unknown): Track[] | undefined {
   if (!Array.isArray(raw)) return undefined;
@@ -303,8 +314,7 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
       ...(hasStyle(r.style) ? { style: r.style } : {}), ...(r.feel ? { feel: reviveFeel(r.feel) } : {}), ...(r.sound ? { sound: reviveSound(r.sound) } : {}),
       ...(r.kind === "vocals" ? { input: r.input === 2 ? 2 : 1 } : {}),
       ...(r.kind === "vocals" && reviveFx(r.fx) ? { fx: reviveFx(r.fx) } : {}),
-      ...(r.kind === "vocals" && reviveTakes(r.takes) ? { takes: reviveTakes(r.takes) } : {}),
-      ...(r.kind === "vocals" && r.active && typeof r.active === "object" ? { active: Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) } : {}),
+      ...(r.kind === "vocals" ? reviveVocal(r) : {}),
       ...((r.kind === "melody" || r.kind === "chords") && r.role === "harmony" ? { role: "harmony" as const } : {}),
       ...(r.kind === "melody" || r.kind === "chords" ? reviveHarmony(r.harmony, r.kind) : {}),
       ...(r.kind === "chords" && typeof r.replaces === "string" && r.replaces ? { replaces: r.replaces } : {}),

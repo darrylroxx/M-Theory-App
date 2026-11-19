@@ -30,9 +30,17 @@ export interface PlayTake {
 /** a little later than now, so a take started late is not cut short at its head by the time it reaches the audio thread */
 const LATE = 0.02;
 
+/** the fade at each edge of a take or clip as it plays, so a cut never clicks (seconds) */
+export const EDGE_FADE = 0.005;
+
 interface Run {
   src: AudioBufferSourceNode;
+  /** its fades */
+  gain: GainNode;
   buffer: AudioBuffer;
+  /** which part of the buffer, as listed (a clip trimmed or split while it plays is started again) */
+  offset: number;
+  dur: number;
   /** where in time the take's own start lies (it may be before it was started: part-way in) */
   t0: number;
   /** when it stops, as it was started */
@@ -64,8 +72,8 @@ export class TakeRuns {
       const t0 = t + (tk.at - s0) * spb;
       const run = this.runs.get(key);
       // already sounding from exactly here: it carries on
-      if (run && run.buffer === tk.buffer && Math.abs(run.t0 - t0) < 1e-4 && run.until > t + 1e-4) continue;
-      if (run) this.end(run, Math.max(t, now));
+      if (run && run.buffer === tk.buffer && Math.abs(run.t0 - t0) < 1e-4 && run.offset === tk.offset && run.dur === tk.dur && run.until > t + 1e-4) continue;
+      if (run) this.end(run, Math.max(t, now), now);
       const when = Math.max(t0, t, now > t ? now + LATE : t);
       const into = when - t0;
       const dur = Math.min(tk.dur - into, until - when);
@@ -75,23 +83,35 @@ export class TakeRuns {
       }
       const src = c.createBufferSource();
       src.buffer = tk.buffer;
-      src.connect(fader(tk.track, c));
+      // a short fade in and out at its edges (where it was cut, where the loop cuts it, or part-way in)
+      const gain = c.createGain();
+      fadeEdges(gain.gain, when, dur);
+      src.connect(gain);
+      gain.connect(fader(tk.track, c));
       src.start(when, tk.offset + into, dur);
       this.live.add(src);
-      src.onended = () => this.live.delete(src);
-      this.runs.set(key, { src, buffer: tk.buffer, t0, until: when + dur });
+      src.onended = () => {
+        this.live.delete(src);
+        gain.disconnect();
+      };
+      this.runs.set(key, { src, gain, buffer: tk.buffer, offset: tk.offset, dur: tk.dur, t0, until: when + dur });
     }
     // a take sounding that this stretch does not have: the music has left it
     for (const [key, run] of this.runs) {
       if (here.has(key)) continue;
-      if (run.until > t + 1e-4) this.end(run, Math.max(t, now));
+      if (run.until > t + 1e-4) this.end(run, Math.max(t, now), now);
       this.runs.delete(key);
     }
   }
 
-  private end(run: Run, at: number) {
+  /** Stop a take early at `at` (the music left it), fading out just before. */
+  private end(run: Run, at: number, now: number) {
     if (run.until <= at) return;
     run.until = at;
+    const g = run.gain.gain;
+    const from = Math.max(now, at - EDGE_FADE);
+    g.cancelScheduledValues(from);
+    g.setTargetAtTime(0, from, EDGE_FADE / 4);
     try {
       run.src.stop(at);
     } catch {
@@ -118,6 +138,15 @@ export class TakeRuns {
   }
 }
 
+/** A gain that fades in over the first EDGE_FADE of `dur` from `when`, and out over the last (half each at most, for a very short piece). */
+export function fadeEdges(g: AudioParam, when: number, dur: number): void {
+  const f = Math.min(EDGE_FADE, dur / 2);
+  g.setValueAtTime(0, when);
+  g.linearRampToValueAtTime(1, when + f);
+  g.setValueAtTime(1, when + dur - f);
+  g.linearRampToValueAtTime(0, when + dur);
+}
+
 // ── one take alone ──
 let alone: AudioBufferSourceNode | null = null;
 /** counts every ask: a take still loading when another is asked for (or when it is stopped) is never heard */
@@ -141,11 +170,11 @@ export function stopAlone(): void {
 }
 
 /**
- * Hear one take alone, from its start, through its track's fader: whatever was heard alone
+ * Hear one take alone (or a clip's stretch of it, `part`, in frames of the take), through its track's fader: whatever was heard alone
  * before stops first. Resolves false if it could not be read, or if something else was asked
  * for (or it was stopped) while it was loading.
  */
-export async function hearAlone(t: TakeRef & { rate: number }, track: string): Promise<boolean | null> {
+export async function hearAlone(t: TakeRef & { rate: number }, track: string, part?: { from: number; to: number }): Promise<boolean | null> {
   stopAlone();
   const mine = asks;
   const buf = await loadTake(t);
@@ -154,8 +183,16 @@ export async function hearAlone(t: TakeRef & { rate: number }, track: string): P
   const c = audioContext();
   const src = c.createBufferSource();
   src.buffer = buf;
-  src.connect(fader(track, c));
-  src.start(c.currentTime + 0.02, 0, t.frames / t.rate);
+  // just a clip's stretch of it (faded at its edges, as it plays in the song), or the whole take
+  const from = part ? Math.max(0, part.from) / t.rate : 0;
+  const dur = (part ? Math.min(t.frames, part.to) : t.frames) / t.rate - from;
+  if (!(dur > 0)) return false;
+  const when = c.currentTime + 0.02;
+  const gain = c.createGain();
+  fadeEdges(gain.gain, when, dur);
+  src.connect(gain);
+  gain.connect(fader(track, c));
+  src.start(when, from, dur);
   src.onended = () => {
     if (alone !== src) return;
     alone = null;

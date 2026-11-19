@@ -3,7 +3,7 @@
  * books (starts, stops, gain automation) and can say what a gain will be at any time.
  */
 
-type Ev = { kind: "set"; t: number; v: number } | { kind: "target"; t: number; v: number; tau: number };
+type Ev = { kind: "set"; t: number; v: number } | { kind: "target"; t: number; v: number; tau: number } | { kind: "ramp"; t: number; v: number };
 
 export class FakeParam {
   events: Ev[] = [];
@@ -14,6 +14,10 @@ export class FakeParam {
   }
   setTargetAtTime(v: number, t: number, tau: number) {
     this.add({ kind: "target", t, v, tau });
+    return this;
+  }
+  linearRampToValueAtTime(v: number, t: number) {
+    this.add({ kind: "ramp", t, v });
     return this;
   }
   cancelScheduledValues(t: number) {
@@ -28,10 +32,13 @@ export class FakeParam {
   /** The value at time t, following the Web Audio rules for these two kinds of event. */
   at(t: number): number {
     let v = this.value;
+    let vt = 0;
     for (let i = 0; i < this.events.length; i++) {
       const e = this.events[i];
-      if (e.t > t) break;
-      if (e.kind === "set") v = e.v;
+      // a ramp under way: a straight line from the value before it
+      if (e.t > t) return e.kind === "ramp" && e.t > vt ? v + ((e.v - v) * (t - vt)) / (e.t - vt) : v;
+      vt = e.t;
+      if (e.kind === "set" || e.kind === "ramp") v = e.v;
       else {
         const next = this.events[i + 1];
         const until = next && next.t <= t ? next.t : t;

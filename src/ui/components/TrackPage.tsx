@@ -7,7 +7,7 @@ import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame } from "../../song/frame";
 import { loopKeys, type LoopBars } from "../../song/loops";
 import { selectBlock } from "../../song/structure";
-import { activeTake, groupsOf } from "../../song/takes";
+import { placedClips } from "../../song/clips";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
@@ -359,16 +359,19 @@ function DrumBlock({ s, bw }: { s: TrackSection; bw: number }) {
 }
 
 
-/** A vocal track's takes in a section: the take chosen from each recording, where it starts and how long it lasts. */
+/** A vocal track's clips in a section (sung there): each where it plays and as long as it lasts, as edited on the Vocals lane. */
 function TakeBlock({ t, s, bw, bpm }: { t: Track; s: TrackSection; bw: number; bpm: number }) {
-  const spans = groupsOf(t.takes)
-    .map((g) => activeTake(t.takes ?? [], g, t.active?.[g]))
-    .filter((tk): tk is NonNullable<typeof tk> => !!tk && tk.at.block === s.block)
-    .map((tk) => ({ id: tk.id, n: tk.n, x: tk.at.bar * bw, w: Math.max(6, (tk.frames / tk.rate / (60 / bpm) / s.bar) * bw) }));
+  const bar = (sec: number) => (sec / (60 / bpm) / s.bar) * bw;
+  const spans = placedClips(t)
+    .filter(({ take }) => take.at.block === s.block)
+    .map(({ clip, take }) => {
+      const m = clip.move ?? 0;
+      return { id: clip.id, n: take.n, x: take.at.bar * bw + bar((clip.from + m) / take.rate), w: Math.max(4, bar((clip.to - clip.from) / take.rate)) };
+    });
   if (!spans.length) return <span className="tv-empty">{t.takes?.length ? "" : "No takes yet"}</span>;
   return (
     <span className="tv-takes">
-      {spans.map((x) => <span key={x.id} className="tv-take" style={{ left: x.x, width: x.w }}>Take {x.n}</span>)}
+      {spans.map((x) => <span key={x.id} className="tv-take" style={{ left: x.x, width: x.w }} title={`Take ${x.n}`}>{x.w > 44 ? `Take ${x.n}` : x.n}</span>)}
     </span>
   );
 }
