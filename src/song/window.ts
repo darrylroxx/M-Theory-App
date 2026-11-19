@@ -102,3 +102,17 @@ export function scrolledWindow(left: number, width: number, count: number, total
   const bw = width / n;
   return { start: bw > 0 && Number.isFinite(left) ? clampStart(Math.round(left / bw), n, all) : 0, count: n };
 }
+
+/**
+ * Where the Track page's lanes go so a section is in view: `left` is the bar at the left edge (it
+ * may be part of a bar), `count` how many bars fit on screen, the section starts at bar `at` and
+ * lasts `len` bars. Unchanged while the section is in view (all of it, or its start when it is
+ * longer than the screen); else its first bar goes to the left edge.
+ */
+export function showSection(left: number, count: number, at: number, len: number): number {
+  const eps = 1e-3;
+  const right = left + count;
+  const startSeen = at >= left - eps && at < right - eps;
+  const fits = len <= count + eps;
+  return startSeen && (!fits || at + len <= right + eps) ? left : at;
+}

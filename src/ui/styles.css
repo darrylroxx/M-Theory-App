@@ -883,6 +883,11 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-lanes { position: relative; }
 .tv-row { display: flex; height: 52px; border-bottom: 1px solid var(--border); }
 .tv-row.quiet .tv-block { opacity: 0.35; }
+/* a track just added on another page: lit for a moment when the Track page opens */
+.tv-head.fresh { animation: tv-fresh 1.6s ease-out; }
+.tv-row.fresh { animation: tv-fresh-row 1.6s ease-out; }
+@keyframes tv-fresh { 0%, 35% { background-color: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background-color: transparent; } }
+@keyframes tv-fresh-row { 0%, 35% { outline: 2px solid var(--accent); outline-offset: -2px; } 100% { outline: 2px solid transparent; outline-offset: -2px; } }
 .tv-ruler { height: 34px; }
 .tv-sec { flex: none; position: relative; border-right: 2px solid var(--border-2); background: color-mix(in srgb, var(--kc) 22%, var(--card)); }
 .tv-sec.on { background: color-mix(in srgb, var(--kc) 45%, var(--card)); }
