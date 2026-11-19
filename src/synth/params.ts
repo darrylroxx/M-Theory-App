@@ -59,7 +59,7 @@ export interface PlaySettings {
   swing: number;
   /**
    * arp: a rhythm of steps, one character each: "x" plays, "X" plays harder, "." rests. It
-   * starts again at every bar of the song. "" plays every step (as before rhythms existed).
+   * starts again on the first bar line after it has played through. "" plays every step (as before rhythms existed).
    */
   rhythm: string;
   /** arp: how many times each step is struck, 1..4 (quick repeats inside the step) */

@@ -298,9 +298,9 @@ const DIR_LABELS: { value: StrumDir; label: string }[] = [
 /** A step is a note value and how it is felt: straight, dotted or triplet. */
 const NOTE_VALUES = ["1/4", "1/8", "1/16", "1/32"] as const;
 const FEELS: { value: "" | "D" | "T"; label: ReactNode }[] = [
-  { value: "", label: <span title="Straight">–</span> },
-  { value: "D", label: <span title="Dotted: half as long again">•</span> },
-  { value: "T", label: <span title="Triplet: three in the time of two">3</span> },
+  { value: "", label: <span title="Straight" aria-label="Straight">–</span> },
+  { value: "D", label: <span title="Dotted: half as long again" aria-label="Dotted: half as long again">•</span> },
+  { value: "T", label: <span title="Triplet: three in the time of two" aria-label="Triplet: three in the time of two">3</span> },
 ];
 const splitRate = (r: Rate): { value: (typeof NOTE_VALUES)[number]; feel: "" | "D" | "T" } => {
   const m = /^(1\/\d+)([DT]?)$/.exec(r);
@@ -381,7 +381,7 @@ const NEXT_STEP: Record<string, string> = { x: "X", X: ".", ".": "x" };
 
 /**
  * The arp's rhythm: a ready one to pick, and its steps to tap (each tap: plays → accented →
- * rest). 8 or 16 steps, played from the start of every bar.
+ * rest). 8 or 16 steps, starting again on the first bar line after they have all played.
  */
 function RhythmSteps({ rhythm, onChange }: { rhythm: string; onChange: (r: string) => void }) {
   const steps = rhythm || "x".repeat(8);

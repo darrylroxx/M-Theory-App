@@ -60,7 +60,7 @@ export function synthSection(cache: SynthCache, section: string, v: TrackVoice, 
   if (!notes) {
     const written: PlayNote[] = [];
     for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity });
-    // (`bar`: an arp's rhythm of steps starts again at each bar of the section)
+    // (`bar`: an arp's rhythm of steps starts again on a bar line of the section, its swing on every one)
     notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home, bar });
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);

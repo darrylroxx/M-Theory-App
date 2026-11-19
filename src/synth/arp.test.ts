@@ -249,25 +249,30 @@ describe("the arpeggiator's timing", () => {
       expect(n, r.name).toBe(hits * 2);
     }
   });
-  it("the rhythm starts again at every bar, whatever the time signature", () => {
+  it("the rhythm starts again on the first bar line after it has played through, whatever the time signature", () => {
     const rhythm = "X..x..x.x..x..x."; // sixteen steps: more than a bar of 3/4 holds
-    const onsets = (bar: number, rate: PlaySettings["rate"], bpm = 120) => {
+    const onsets = (bar: number, rate: PlaySettings["rate"], bars: number, r = rhythm, bpm = 120) => {
       const spb = 60 / bpm;
-      const out = arp(chord([60, 64, 67], 0.2, 2 * bar * spb), { ...DEFAULT_PLAY, rate, rhythm }, { bpm, origin: 0.2, bar });
+      const out = arp(chord([60, 64, 67], 0.2, bars * bar * spb), { ...DEFAULT_PLAY, rate, rhythm: r }, { bpm, origin: 0.2, bar });
       return out.map((n) => Math.round(((n.start - 0.2) / spb / rateBeats(rate)) * 1000) / 1000);
     };
-    // 3/4: twelve sixteenths to a bar; the second bar plays the first twelve steps again
-    const three = onsets(3, "1/16");
-    const first = [...rhythm.slice(0, 12)].flatMap((c, i) => (c === "." ? [] : [i]));
-    expect(three).toEqual([...first, ...first.map((i) => i + 12)]);
-    // 6/8: two dotted-quarter beats, six eighths (a third of a beat each) to a bar
-    const six = onsets(2, "1/8T", 90);
-    const firstSix = [...rhythm.slice(0, 6)].flatMap((c, i) => (c === "." ? [] : [i]));
-    expect(six).toEqual([...firstSix, ...firstSix.map((i) => i + 6)]);
-    // 7/4 at a fast tempo: 28 sixteenths, the rhythm twice and then from its start again for the bar's last steps
-    const seven = onsets(7, "1/16", 168);
-    const firstSeven = [...(rhythm + rhythm).slice(0, 28)].flatMap((c, i) => (c === "." ? [] : [i]));
-    expect(seven).toEqual([...firstSeven, ...firstSeven.map((i) => i + 28)]);
+    /** the steps that play, `per` steps to the rhythm's run of whole bars */
+    const want = (r: string, per: number, steps: number) => Array.from({ length: steps }, (_, i) => i).filter((i) => r[(i % per) % r.length] !== ".");
+    // 3/4: twelve sixteenths to a bar, so the sixteen steps take two bars (all of them heard), then the rest of the second bar goes round again
+    expect(onsets(3, "1/16", 4)).toEqual(want(rhythm, 24, 48));
+    // a rhythm shorter than a bar still starts again at every bar: eight sixteenths in 3/4, then four of them, then the next bar
+    expect(onsets(3, "1/16", 2, "X.xxx..x")).toEqual(want("X.xxx..x", 12, 24));
+    // 4/4: sixteen eighths are two bars, every step heard (not just the first eight)
+    expect(onsets(4, "1/8", 4)).toEqual(want(rhythm, 16, 32));
+    // 6/8: two dotted-quarter beats, six eighths (a third of a beat each) to a bar: sixteen take three bars
+    expect(onsets(2, "1/8T", 6, rhythm, 90)).toEqual(want(rhythm, 18, 36));
+    // 7/4 at a fast tempo: 28 sixteenths, the rhythm once and then from its start again for the bar's last steps
+    expect(onsets(7, "1/16", 2, rhythm, 168)).toEqual(want(rhythm, 28, 56));
+  });
+  it("the swing still counts the steps of each bar when the rhythm runs over several", () => {
+    // 3/4 in quarters, three to a bar, a rhythm of eight playing every step (three bars long): each bar's first step falls on the beat
+    const out = arp(chord([60, 64, 67], 0, 4.5), { ...DEFAULT_PLAY, rate: "1/4", rhythm: "xxxxxxxX", swing: 0.375 }, { bpm: 120, origin: 0, bar: 3 });
+    expect(out.map((n) => Math.round((n.start / 0.5) * 1000) / 1000)).toEqual([0, 1.25, 2, 3, 4.25, 5, 6, 7.25, 8]);
   });
   it("a ratchet strikes each step two to four times inside it", () => {
     for (const reps of [2, 3, 4] as const) {

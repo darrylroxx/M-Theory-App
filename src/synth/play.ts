@@ -39,7 +39,7 @@ export interface PlayContext {
   seed?: number;
   /** the key's home note as a pitch class (0 = C) for the drone; default: the first chord's root */
   tonic?: number;
-  /** beats in a bar, counted from `origin`: an arp's rhythm of steps and its swing start again at each one (0 or missing: they run on) */
+  /** beats in a bar, counted from `origin`: an arp's swing starts again at each one, its rhythm of steps at the first one after it has played through (0 or missing: they run on) */
   bar?: number;
 }
 
@@ -214,20 +214,21 @@ export const ACCENT = 1.25;
 export const UNACCENTED = 0.8;
 
 /**
- * One step of the arp's clock, `index` steps into the bar (or into the run of keys): how late it
- * falls for the swing, how long it lasts (a swung pair still adds up to two steps), and whether it
- * plays: 0 rests, 1 plays, 2 plays accented.
+ * One step of the arp's clock, `index` steps into the rhythm (or into the run of keys): how late
+ * it falls for the swing, how long it lasts (a swung pair still adds up to two steps), and whether
+ * it plays: 0 rests, 1 plays, 2 plays accented. `inBar`: how many steps into its bar it is, which
+ * is what the swing counts (the rhythm may run over more than one bar); the same as `index` if left out.
  */
-export function arpStep(index: number, step: number, o: { swing?: number; rhythm?: string }): { shift: number; dur: number; hit: 0 | 1 | 2 } {
+export function arpStep(index: number, step: number, o: { swing?: number; rhythm?: string }, inBar = index): { shift: number; dur: number; hit: 0 | 1 | 2 } {
   // the whole knob is three quarters: half way (0.375) pushes the second step a quarter of a step, to the triplet lilt
   const sh = (Math.max(0, Math.min(SWING_MAX, o.swing ?? 0)) * 2 * step) / 3;
-  const odd = index % 2 === 1;
+  const odd = inBar % 2 === 1;
   const r = o.rhythm ?? "";
   const c = r ? r[index % r.length] : "x";
   return { shift: odd ? sh : 0, dur: odd ? step - sh : step + sh, hit: c === "X" ? 2 : c === "x" ? 1 : 0 };
 }
 
-/** How far into its bar (in steps, counting from 0) a moment falls: the arp's rhythm and swing start again at each bar. */
+/** How far (in steps, counting from 0) a moment falls into a stretch of `bar` beats that starts again and again from `origin`. */
 function stepIndex(t: number, origin: number, spb: number, step: number, bar: number): number {
   let beats = (t - origin) / spb;
   if (bar > 0) beats -= Math.floor(beats / bar + 1e-6) * bar;
@@ -252,6 +253,11 @@ export function arp(notes: PlayNote[], o: ArpSettings, ctx: PlayContext): SynthN
   const rand = rng((ctx.seed ?? 1) ^ 0xa5a5);
   const origin = ctx.origin ?? 0;
   const octs = octaveOrder(move === "span" ? "up" : move, octaves);
+  // the rhythm starts again on the first bar line after it has played through, so it keeps in step
+  // with the bars and every step of it is heard, even one longer than a bar (16 eighths in 4/4: two bars)
+  const bar = ctx.bar ?? 0;
+  const rlen = (o.rhythm ?? "").length;
+  const phrase = bar > 0 && rlen ? Math.max(1, Math.ceil((rlen * rateBeats(o.rate)) / bar - 1e-6)) * bar : bar;
   // the order the notes were written in, for the "played" pattern
   const written = new Map(notes.map((n, i) => [n, i]));
   const out: SynthNote[] = [];
@@ -266,7 +272,7 @@ export function arp(notes: PlayNote[], o: ArpSettings, ctx: PlayContext): SynthN
     for (let k = 0; ; k++) {
       const t = start + k * step;
       if (t >= end - 1e-6) break;
-      const s = arpStep(stepIndex(t, origin, spb, step, ctx.bar ?? 0), step, o);
+      const s = arpStep(stepIndex(t, origin, spb, step, phrase), step, o, stepIndex(t, origin, spb, step, bar));
       if (s.hit === 0) continue;
       const at = t + s.shift;
       if (at >= end - 1e-6) continue;
