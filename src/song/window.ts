@@ -24,6 +24,14 @@ export const isShown = (v: unknown): v is BarsShown => BARS_SHOWN.includes(v as 
 /** Until someone picks: four bars on a wide screen, two on a tablet, one on a phone. */
 export const defaultShown = (width: number): BarsShown => (width >= 1000 ? 4 : width >= 640 ? 2 : 1);
 
+/** The pages laid over bars: each shows a section's bars side by side (the Track page, the whole song). */
+const BAR_PAGES = ["rhythm", "melody", "drums", "vocals"];
+/**
+ * Whether a page gets the whole width of the screen: one that shows more than one bar at a time.
+ * A section of one bar is one bar whatever is chosen; the Track page always has the whole song.
+ */
+export const widePage = (page: string, shown: BarsShown, sectionBars: number): boolean => shown !== 1 && (page === "track" || (BAR_PAGES.includes(page) && sectionBars > 1));
+
 /** The setting loaded from storage, made safe. Follow is off unless it was switched on. */
 export function reviveView(raw: unknown): ViewPrefs | undefined {
   const v = raw as Partial<ViewPrefs> | null | undefined;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BARS_SHOWN, barAtBeat, barAtFrac, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, scrolledWindow, shownCount, turnPage } from "./window";
+import { BARS_SHOWN, barAtBeat, barAtFrac, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, scrolledWindow, shownCount, turnPage, widePage } from "./window";
 
 describe("bars on screen", () => {
   it("offers 1, 2, 4, 8 bars or the whole section", () => {
@@ -127,5 +127,22 @@ describe("the Vocals lane's window", () => {
     expect(reveal(w, 4, 12)).toBe(4);
     // a loop of 6 bars, 4 on screen: the last page is kept full (bars 3 to 6)
     expect(reveal(scrolledWindow(0, 800, 4, 6), 5, 6)).toBe(2);
+  });
+});
+
+describe("the whole width of the screen", () => {
+  it("goes to every page laid over bars when it shows more than one", () => {
+    for (const page of ["rhythm", "melody", "drums", "vocals"]) {
+      expect(widePage(page, 4, 4)).toBe(true);
+      expect(widePage(page, 0, 4)).toBe(true);
+      expect(widePage(page, 1, 4)).toBe(false);
+      expect(widePage(page, 4, 1)).toBe(false);
+    }
+  });
+  it("always to the Track page (the whole song), never to the Frame or the Canvas", () => {
+    expect(widePage("track", 4, 1)).toBe(true);
+    expect(widePage("track", 1, 4)).toBe(false);
+    expect(widePage("frame", 8, 4)).toBe(false);
+    expect(widePage("canvas", 8, 4)).toBe(false);
   });
 });

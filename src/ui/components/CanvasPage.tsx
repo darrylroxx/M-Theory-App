@@ -723,20 +723,29 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           </div>
         </div>
         <div className="cv-opts">
-          <span className="kb-label">Layout</span>
-          <Seg value={layoutPref} options={[{ value: "auto" as LayoutId | "auto", label: "Auto" }, ...LAYOUTS.map((x) => ({ value: x.id as LayoutId | "auto", label: <span title={x.label} aria-label={x.label}>{x.symbol}</span> }))]} onChange={(v) => setPrefs({ layout: v === "auto" ? undefined : v })} label="How the music is laid out" />
-          <span className="kb-label">Surface</span>
-          <Seg value={surface} options={SURFACES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ surface: v })} label="What the paint is on" />
-          <span className="kb-label">Paint</span>
-          <Seg value={style} options={STYLES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ style: v })} label="How the paint behaves" />
-          <button className={`btn sm${drips ? " on" : ""}`} aria-pressed={drips} title="Wet paint runs down the canvas" onClick={() => setPrefs({ drips: !drips })}>Drips</button>
-          <span className="kb-label" title="How long old paint stays as the music goes on">Old paint</span>
-          <Seg value={fade} options={FADES.map((f) => ({ value: f.id, label: f.label }))} onChange={(v) => setPrefs({ fade: v })} label="How long old paint stays" />
+          {/* each label stays with its control when the row wraps (on a phone) */}
+          <span className="cv-opt">
+            <span className="kb-label">Layout</span>
+            <Seg value={layoutPref} options={[{ value: "auto" as LayoutId | "auto", label: "Auto" }, ...LAYOUTS.map((x) => ({ value: x.id as LayoutId | "auto", label: <span title={x.label} aria-label={x.label}>{x.symbol}</span> }))]} onChange={(v) => setPrefs({ layout: v === "auto" ? undefined : v })} label="How the music is laid out" />
+          </span>
+          <span className="cv-opt">
+            <span className="kb-label">Surface</span>
+            <Seg value={surface} options={SURFACES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ surface: v })} label="What the paint is on" />
+          </span>
+          <span className="cv-opt">
+            <span className="kb-label">Paint</span>
+            <Seg value={style} options={STYLES.map((x) => ({ value: x.id, label: x.label }))} onChange={(v) => setPrefs({ style: v })} label="How the paint behaves" />
+            <button className={`btn sm${drips ? " on" : ""}`} aria-pressed={drips} title="Wet paint runs down the canvas" onClick={() => setPrefs({ drips: !drips })}>Drips</button>
+          </span>
+          <span className="cv-opt">
+            <span className="kb-label" title="How long old paint stays as the music goes on">Old paint</span>
+            <Seg value={fade} options={FADES.map((f) => ({ value: f.id, label: f.label }))} onChange={(v) => setPrefs({ fade: v })} label="How long old paint stays" />
+          </span>
           {song && (layoutNow === "sweep" || layoutNow === "river" || layoutNow === "lanes") && (
-            <>
+            <span className="cv-opt">
               <span className="kb-label" title="How much of the song one pass across the canvas holds">Across</span>
               <Seg value={pass} options={PASSES} onChange={(v) => setPrefs({ pass: v })} label="How much of the song one pass across the canvas holds" />
-            </>
+            </span>
           )}
           <span className="spacer" />
           <button className="btn sm" disabled={!painted} onClick={clear}>Clear</button>
