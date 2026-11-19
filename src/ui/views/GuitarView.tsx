@@ -38,7 +38,7 @@ import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
-import { layClips, placedClips, playedTakes as takesPlayed } from "../../song/clips";
+import { layClips, placedClips, playedTakes as takesPlayed, sixteenths } from "../../song/clips";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { stopAlone } from "../../audio/takeplay";
@@ -228,9 +228,9 @@ export function GuitarView() {
         else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
       }
       // the clips that lie under this section (the buffer holds just the take: a clip plays its stretch of it)
-      for (const { clip, take: tk, at, offset, dur } of laid[sec.blockId] ?? []) {
+      for (const { clip, take: tk, at, offset, dur, joined } of laid[sec.blockId] ?? []) {
         const buffer = takeBuffer(tk);
-        if (buffer) (ex.takes ??= []).push({ track: tk.track, buffer, at, offset, dur, id: clip.id });
+        if (buffer) (ex.takes ??= []).push({ track: tk.track, buffer, at, offset, dur, id: clip.id, ...(joined ? { joined } : {}) });
       }
       return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
     };
@@ -626,7 +626,7 @@ export function GuitarView() {
     const b = plan.per.findIndex((x) => x.block === span.to.block);
     for (let k = Math.max(0, a); k <= b; k++) {
       const x = plan.per[k];
-      for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar });
+      for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar, sub: sixteenths(!!x.items[0]?.meter?.triplet) });
     }
     return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : all.length > 1 ? `to ${plan.per.find((x) => x.block === span.to.block)?.label ?? ""} (all between)` : "and on"}`, bars };
   }, [runs, layout, curBlock, sliceLoop, plan.per, bar, prog.bpm, prog.pattern, firstBeat]);

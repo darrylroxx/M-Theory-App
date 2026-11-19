@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, soundTag, takeBars, toggled, type Recorded, type Take } from "./takes";
+import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, soundTag, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -127,12 +127,6 @@ describe("a flow session: pass after pass until stopped", () => {
     expect(sameSound({ sound: JSON.stringify(fx) } as Take, fx)).toBe(true);
     // a take made with no vocal sound (it plays dry) never matches
     expect(sameSound({ sound: "" } as Take, fx)).toBe(false);
-  });
-
-  it("a take is as many bars long as its sound at the tempo", () => {
-    const t = { frames: 192000, rate: 48000 } as Take;
-    expect(takeBars(t, 120, 4)).toBe(2); // 4 s at 120 bpm: 8 beats
-    expect(takeBars(t, 90, 3)).toBe(2); // 6 beats of 3
   });
 });
 

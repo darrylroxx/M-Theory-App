@@ -130,41 +130,6 @@ export function barsInto(bars: readonly { beats: number }[], beats: number, from
 }
 
 /**
- * Where takes lie in the song: for every section (in the song's order, each with the beats in a
- * bar and the beats it lasts), the takes that sound in it, each with where it starts counted
- * from the section's start, in beats. A take starts on the bar it was sung from, and one longer
- * than its section (a loop sung across several sections) is listed in each section after it
- * that it reaches too, at a place before that section's start: wherever the music is, the
- * player then knows which part of which take lies under it. A take whose section is gone is
- * left out.
- */
-export function layTakes<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], takes: readonly T[], bpm: number): Record<string, { take: T; at: number }[]> {
-  const start: Record<string, { at: number; bar: number }> = {};
-  let pos = 0;
-  for (const s of secs) {
-    start[s.block] = { at: pos, bar: s.bar };
-    pos += s.beats;
-  }
-  const out: Record<string, { take: T; at: number }[]> = {};
-  for (const s of secs) out[s.block] = [];
-  const spb = 60 / Math.max(1, bpm);
-  for (const take of takes) {
-    const from = start[take.at.block];
-    if (!from || !(take.frames > 0) || !(take.rate > 0)) continue;
-    const begin = from.at + take.at.bar * from.bar;
-    const len = take.frames / take.rate / spb;
-    for (const s of secs) {
-      const at = begin - start[s.block].at;
-      if (at < s.beats - 1e-6 && at + len > 1e-6) out[s.block].push({ take, at });
-    }
-  }
-  return out;
-}
-
-/** How many bars a take lasts at a tempo (the Track page and the Vocals lane draw it this long). */
-export const takeBars = (t: Take, bpm: number, beatsPerBar: number): number => t.frames / t.rate / (60 / bpm) / Math.max(1, beatsPerBar);
-
-/**
  * A short name for a vocal sound, kept on each take to tell whether its file was made with the
  * sound now set. A long session leaves hundreds of takes and the song is saved whole on every
  * change, so not the whole sound on each. (Takes saved before held the whole sound; `sameSound`

@@ -10,7 +10,8 @@ import { FakeAudio } from "./fakectx";
 import { Harp } from "./plucked";
 import { setMix } from "./mix";
 import type { ExtraPlay, PlayItem } from "./patterns";
-import { cutTakes, layTakes, type Recorded, type Take } from "../song/takes";
+import { cutTakes, type Recorded, type Take } from "../song/takes";
+import { layClips, wholeClip } from "../song/clips";
 
 let live: FakeAudio;
 class LiveCtx extends FakeAudio {
@@ -99,7 +100,7 @@ const newId = () => `t${++ids}`;
 
 /** The play list of some bars of the song (one item a bar, as the page makes it), with the takes laid in each section. */
 function listOf(song: Sec[], runs: { from: Bar; to: Bar }[], takes: Take[], bpm: number) {
-  const laid = layTakes(song.map((s) => ({ block: s.block, bar: s.bar, beats: s.bars * s.bar })), takes, bpm);
+  const laid = layClips(song.map((s) => ({ block: s.block, bar: s.bar, beats: s.bars * s.bar })), takes.map((take) => ({ clip: wholeClip(take, take.id), take })), bpm);
   const extras: Record<string, ExtraPlay> = {};
   for (const s of song) {
     const list = laid[s.block];
@@ -304,9 +305,55 @@ describe("a take is heard on the beat it was sung on", () => {
     p.stop();
     const a = srcs.find((s) => s.take === one)!;
     const b = srcs.find((s) => s.take === two)!;
-    // the first stops where the next bar starts (2.08 s: items are scheduled a little ahead), the second starts there, 2 s in
+    // the first stops a moment after the choice (not only at the next bar), the second starts there, in its place
     expect(Math.min(...a.stops.filter((w) => w > 0))).toBeCloseTo(b.when, 6);
+    expect(b.when).toBeCloseTo(1.32, 6);
     expect(b.offset).toBeCloseTo(b.when - 0.08, 6);
     void clicks;
+  });
+
+  it("an edit while the song plays is heard at once, even in a section with no chords (one item a whole pass)", () => {
+    const from = { block: "a", bar: 0 };
+    const { r } = session({ song: SONG, from, to: { block: "a", bar: 1 }, bpm: 120, rate: 48000, rt: 5, countIn: 1, passes: 2 });
+    const [one, two] = cutTakes(r, { group: "g", at: from, id: newId });
+    // A with only a beat in it: the whole pass (8 beats, 4 s) is one item
+    // (each take read once: the same buffer every time, as the page has it)
+    const bufs = new Map<Take, AudioBuffer>();
+    const buf = (t: Take) => bufs.get(t) ?? bufs.set(t, { duration: t.frames / t.rate, take: t } as unknown as AudioBuffer).get(t)!;
+    const item = (takes: Take[], at = 0): PlayItem[] => [{ midi: [], beats: 8, section: true, meter: { bar: 4 }, extra: { chords: [], tunes: [], drums: [], takes: takes.map((t) => ({ track: "v1", buffer: buf(t), at, offset: 0, dur: t.frames / t.rate, id: "clip" })) } }];
+    S.getAudio();
+    live.currentTime = 0;
+    const srcs = capture();
+    const p = new S.ProgressionPlayer();
+    p.start(item([one]), 120, "ring", true);
+    runTo(1);
+    // the clip deleted 0.92 s into the pass: it stops 20 ms later, not 3 s later where the pass ends
+    p.update(item([]), 120, "ring", true);
+    const a = srcs.find((s) => s.take === one)!;
+    expect(Math.min(...a.stops)).toBeCloseTo(1.02, 6);
+    runTo(1.5);
+    // undone: back at once, from where the music is
+    p.update(item([one]), 120, "ring", true);
+    const back = srcs.filter((s) => s.take === one);
+    expect(back).toHaveLength(2);
+    expect(back[1].when).toBeCloseTo(1.52, 6);
+    expect(back[1].offset).toBeCloseTo(1.52 - 0.08, 6);
+    // another take used for it: that one takes over there and then
+    runTo(2);
+    p.update(item([two]), 120, "ring", true);
+    const b = srcs.find((s) => s.take === two)!;
+    expect(b.when).toBeCloseTo(2.02, 6);
+    expect(b.offset).toBeCloseTo(2.02 - 0.08, 6);
+    expect(Math.min(...back[1].stops)).toBeCloseTo(2.02, 6);
+    // nothing changed: nothing started again
+    p.update(item([two]), 120, "ring", true);
+    runTo(3);
+    p.update(item([two]), 120, "ring", true);
+    expect(srcs.filter((s) => s.take === two)).toHaveLength(1);
+    // a new tempo (a moved clip's place in beats moves with it): what is booked at the old tempo is left as it is, the new one is heard from the next item
+    const n = srcs.length;
+    p.update(item([two], 0.25), 130, "ring", true);
+    expect(srcs.length).toBe(n);
+    p.stop();
   });
 });

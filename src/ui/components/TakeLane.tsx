@@ -11,6 +11,8 @@ export interface LaneBar {
   bar: number;
   letter: string;
   beats: number;
+  /** 1/16 notes in one of its beats (6 in x/8, where a beat is a dotted quarter; else 4) */
+  sub?: number;
 }
 
 /** At most this many recordings are drawn one above another; the rest are counted. */
@@ -51,7 +53,8 @@ export interface LaneEdit {
   keys: boolean;
 }
 
-type Drag = { x: Placed; kind: "from" | "to" | "move"; x0: number; pos0: number; pointer: number; moved: boolean; value: number };
+/** `still`: a finger on a clip not selected: a tap selects it, a swipe scrolls the lane (it never moves the clip) */
+type Drag = { x: Placed; kind: "from" | "to" | "move"; x0: number; pos0: number; pointer: number; moved: boolean; value: number; still?: boolean };
 
 const TEXT_INPUTS = new Set(["text", "number", "search", "email", "url", "password", "tel"]);
 const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el instanceof HTMLInputElement && TEXT_INPUTS.has(el.type)) || el.tagName === "TEXTAREA" || el.tagName === "SELECT" || el.isContentEditable);
@@ -226,6 +229,12 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
     hold();
     const edge = (e.target as HTMLElement).dataset?.edge;
     const kind = edge === "from" || edge === "to" ? edge : "move";
+    // a finger on the body of a clip not selected yet: the lane scrolls with it, and a tap selects
+    // it (a clip filling the lane would otherwise move with every swipe meant to scroll it)
+    if (kind === "move" && e.pointerType === "touch" && edit.selected !== x.clip.id) {
+      dragRef.current = { x, kind, x0: e.clientX, pos0: posAt(e.clientX), pointer: e.pointerId, moved: false, value: x.clip.move ?? 0, still: true };
+      return;
+    }
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -241,10 +250,16 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
     }
     if (!d.moved && Math.abs(e.clientX - d.x0) < TAP_PX) return;
     d.moved = true;
+    if (d.still) return;
     const pos = posAt(e.clientX);
     const { clip: c, take: t } = d.x;
-    if (d.kind === "move") d.value = snapMove((c.move ?? 0) + (laneBeats(bars, pos) - laneBeats(bars, d.pos0)) * spb * t.rate, t.rate, bpm, !edit?.snap || e.altKey || e.shiftKey);
-    else d.value = trimClip([c], c.id, d.kind, frameAt(t, c.move ?? 0, pos), t)[0][d.kind];
+    if (d.kind === "move") {
+      const raw = (c.move ?? 0) + (laneBeats(bars, pos) - laneBeats(bars, d.pos0)) * spb * t.rate;
+      // to the 1/16 notes of the bar its start lands in (in 6/8 an eighth is a third of a beat)
+      const k = Math.max(0, Math.min(bars.length - 1, Math.floor(lanePos(bars, anchor(t) + (c.from + raw) / t.rate / spb))));
+      const origin = (laneBeats(bars, k) - anchor(t)) * spb * t.rate;
+      d.value = snapMove(raw, t.rate, bpm, !edit?.snap || e.altKey || e.shiftKey, bars[k]?.sub ?? 4, origin);
+    } else d.value = trimClip([c], c.id, d.kind, frameAt(t, c.move ?? 0, pos), t)[0][d.kind];
     setDrag({ ...d });
   };
   const up = (e: React.PointerEvent<HTMLElement>) => {
@@ -253,6 +268,8 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
     dragRef.current = null;
     setDrag(null);
     const { clip: c, take: t } = d.x;
+    // (a swipe that scrolled the lane)
+    if (d.still && d.moved) return;
     if (!d.moved) {
       // a tap: split (✂), hear it (a second tap), or select it
       if (edit.cut) return edit.onSplit(c.id, frameAt(t, c.move ?? 0, posAt(e.clientX)));
@@ -349,7 +366,8 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
                   const sel = edit?.selected === c.id;
                   const buf = takeBuffer(t);
                   const wave = buf ? wavePath(buf) : null;
-                  const label = `${row.label} · ${t.keep ? "★" : ""}${t.n}`;
+                  // (↔: moved from where it was sung)
+                  const label = `${row.label} · ${t.keep ? "★" : ""}${t.n}${c.move ? " ↔" : ""}`;
                   const style = { left: `${(l / n) * 100}%`, width: `${(Math.max(0.02, r - l) / n) * 100}%`, top: ri * ROW_H };
                   return (
                     <div key={c.id} className={`tl-take${t.keep ? " keep" : ""}${sel ? " sel" : ""}${drag?.x.clip.id === c.id && drag.moved ? " drag" : ""}`} style={style} title={label}

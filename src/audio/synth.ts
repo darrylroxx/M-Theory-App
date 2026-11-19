@@ -13,7 +13,7 @@ import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune }
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
 import { fader } from "./mix";
-import { TakeRuns } from "./takeplay";
+import { TakeRuns, type PlayTake, type TakeSpan } from "./takeplay";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import type { HarpString } from "./harp";
@@ -290,6 +290,8 @@ interface Anchor {
   run: number;
   /** which list the index is in (see ProgressionPlayer.gen) */
   gen: number;
+  /** the stretch the recorded takes were laid under (see TakeRuns.item), to look at again when they are edited */
+  tk?: { s0: number; s1: number; until: number };
 }
 
 /** Where a list waiting to take over goes on (see ProgressionPlayer.queue). */
@@ -478,6 +480,30 @@ export class ProgressionPlayer {
     setBedPlaying(this.playing, lane?.cur ? this.beatOf(FIRST_DRUMS, lane.cur) : beat, FIRST_DRUMS, lane?.cur?.time);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
+    // a clip edited (deleted, trimmed, moved, another take used, an edit undone) or a take just read from disk: heard at once
+    this.retake();
+  }
+
+  /**
+   * The recorded takes under what is sounding and what is already booked, looked at again with
+   * the items as they are now: whatever changed is heard a moment from now, not only from the
+   * next item (which, in a section with no chords, is the whole section away).
+   */
+  private retake() {
+    if (!this.playing) return;
+    const c = getAudio();
+    const now = c.currentTime;
+    const spans: { takes: PlayTake[] | undefined; o: TakeSpan }[] = [];
+    for (const a of this.spans) {
+      const item = this.itemOf(a);
+      // (an item that is over, or one whose list changed shape since: left as it was)
+      if (!a.tk || !item || a.time + (a.tk.s1 - a.tk.s0) * a.spb <= now || Math.abs(item.beats - (a.tk.s1 - a.tk.s0)) > 1e-6) continue;
+      // booked at another tempo: the items now place the clips for the new one (a clip's place in beats moves with the tempo),
+      // so nothing is looked at again; the new tempo is heard from the next item, as everything else is
+      if (Math.abs(a.spb - 60 / this.bpm) > 1e-9) return;
+      spans.push({ takes: item.extra?.takes, o: { t: a.time, ...a.tk, spb: a.spb, now } });
+    }
+    this.takes.again(c, spans);
   }
 
   /**
@@ -580,7 +606,8 @@ export class ProgressionPlayer {
       // where the loop ends (the next time round starts it again), nor past where the music jumps
       let ahead = 0;
       for (let j = i; j < items.length && (j === i || !items[j].jump); j++) ahead += items[j].beats;
-      this.takes.item(c, ex?.takes, { t, s0, s1: s0 + item.beats, spb, now: c.currentTime, until: this.loop ? t + ahead * spb : Infinity });
+      anchor.tk = { s0, s1: s0 + item.beats, until: this.loop ? t + ahead * spb : Infinity };
+      this.takes.item(c, ex?.takes, { t, ...anchor.tk, spb, now: c.currentTime });
       // every drums track's grid re-locks to each chord; an added one joins when it first has a beat
       if (!this.lanes.has(FIRST_DRUMS)) this.lanes.set(FIRST_DRUMS, { anchors: [], cur: null, step: 0, div: this.beat?.div ?? 4, synced: this.beat });
       for (const d of ex?.drums ?? []) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div, synced: null });

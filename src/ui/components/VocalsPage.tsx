@@ -7,7 +7,7 @@ import { hearAlone, onAlone as onAloneChange, stopAlone } from "../../audio/take
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
 import { barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
-import { addRecording, chooseTake, clipsOf, sameSpot, compClip, deleteClip, deleteTake, inUse, moveClip, placedClips, removeRecording, splitClip, trimClip, type Clip } from "../../song/clips";
+import { addRecording, chooseTake, clipsOf, sameSpot, compClip, deleteClip, deleteTake, inUse, moveClip, placedClips, popUndo, removeRecording, splitClip, trimClip, type Clip, type UndoStep } from "../../song/clips";
 import { TakeLane, type LaneBar, type LaneRow } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
@@ -433,9 +433,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   type Snap = Pick<Track, "takes" | "clips" | "active">;
   const snapOf = (t: Track): Snap => ({ takes: t.takes, clips: t.clips, active: t.active });
   const isAt = (t: Track | undefined, x: Snap) => !!t && t.takes === x.takes && t.clips === x.clips && t.active === x.active;
-  /** the edits made on this page, newest last: Ctrl+Z (or ↶) takes the last one back */
-  const undoRef = useRef<{ track: string; before: Snap; after: Snap }[]>([]);
-  const [undoN, setUndoN] = useState(0);
+  /** the edits made on this page, newest last: Ctrl+Z (or ↶) takes back the last one made on the track shown */
+  const undoRef = useRef<UndoStep<Snap>[]>([]);
+  const [, setUndoN] = useState(0);
+  /** can the track shown have an edit taken back? */
+  const undoN = track ? undoRef.current.filter((x) => x.track === track.id).length : 0;
   const trackIn = (s: { progression: { tracks?: Track[] } }, id: string) => (s.progression.tracks ?? []).find((t) => t.id === id);
   const putSnap = (id: string, x: Snap) => set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === id ? { ...t, ...x } : t)) } }));
   /** Change the takes or clips of the track shown; `undo`: a message offering ↶ */
@@ -444,20 +446,22 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const before = snapOf(track);
     const after = { ...before, ...fn(track) };
     if (isAt({ ...track, ...after }, before)) return;
-    undoRef.current = [...undoRef.current.slice(-49), { track: track.id, before, after }];
-    setUndoN(undoRef.current.length);
+    undoRef.current = [...undoRef.current.slice(-99), { track: track.id, before, after }];
+    setUndoN((n) => n + 1);
     putSnap(track.id, after);
     const id = track.id;
-    if (undo) toast(undo, { label: "↶", aria: "Undo", when: (s) => isAt(trackIn(s, id), after), run: () => undoKey.current() });
+    if (undo) toast(undo, { label: "↶", aria: "Undo", when: (s) => isAt(trackIn(s, id), after), run: () => undoKey.current(id) });
   };
-  const takeBack = () => {
-    const last = undoRef.current.pop();
-    setUndoN(undoRef.current.length);
+  /** Take back the last edit made on a track (the one shown, unless said) */
+  const takeBack = (id = track?.id) => {
+    if (!id) return;
+    const { step: last, rest } = popUndo(undoRef.current, id);
+    undoRef.current = rest;
+    setUndoN((n) => n + 1);
     if (!last) return;
     // only onto what it left: if something else changed it since (a new recording, say), nothing is undone over that
     if (!isAt(trackIn(state, last.track), last.after)) {
-      undoRef.current = [];
-      setUndoN(0);
+      undoRef.current = rest.filter((x) => x.track !== id);
       return toast("Nothing to undo");
     }
     putSnap(last.track, last.before);
@@ -465,10 +469,12 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   // Ctrl+Z on this page (not while recording, nor in a box being typed in)
   const undoKey = useRef(takeBack);
   undoKey.current = takeBack;
+  const shownRef = useRef(track?.id);
+  shownRef.current = track?.id;
   useEffect(() => {
     if (!active || phase !== "idle") return;
     const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || isTyping(e.target) || !undoRef.current.length) return;
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || isTyping(e.target) || !undoRef.current.some((x) => x.track === shownRef.current)) return;
       e.preventDefault();
       undoKey.current();
     };
@@ -643,10 +649,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const swaps = selPlaced ? (track?.takes ?? []).filter((t) => sameSpot(t, selPlaced.take)) : [];
   const manyRecs = new Set(swaps.map((t) => t.group)).size > 1;
   // the editor's tools: ✂, Snap, and for the clip selected, which take it plays, hear it, delete it
-  const tools = laneBars.length > 0 && placed.length > 0 && !running && track ? (
+  const tools = laneBars.length > 0 && (placed.length > 0 || undoN > 0) && !running && track ? (
     <div className="tl-tools" role="toolbar" aria-label="Edit clips">
       <button className={`icon-btn${cut ? " on" : ""}`} aria-pressed={cut} aria-label="Cut: tap a clip to split it (S)" title="Cut: tap a clip to split it (S)" onClick={() => setCut(!cut)}>✂</button>
       <button className={`btn sm${snap ? " on" : ""}`} aria-pressed={snap} title="Moves keep to 1/16 notes (hold Alt or Shift to move freely)" onClick={() => setSnap(!snap)}>Snap</button>
+      <button className="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!undoN} onClick={() => takeBack()}>↶</button>
       {selPlaced && (
         <span className="tl-sel">
           <select aria-label="Take in this clip" value={selPlaced.take.id} onChange={(e) => { const to = e.target.value; setClips((_, t) => compClip(t, selPlaced.clip.id, to)); setSelTake(to); }}>
@@ -656,8 +663,6 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
           <button className="icon-btn" aria-label="Delete this clip" title="Delete this clip (Delete)" onClick={() => laneEdit?.onDelete(selPlaced.clip.id)}>✕</button>
         </span>
       )}
-      <span className="spacer" />
-      <button className="icon-btn" aria-label="Undo" title="Undo (Ctrl+Z)" disabled={!undoN} onClick={takeBack}>↶</button>
     </div>
   ) : null;
 
@@ -898,7 +903,7 @@ function TakeBrowser({ track, groups, list, sel, setSel, alone, canHear, playSto
                 <b>● {groups.length - gi}</b>
                 <span className="tiny muted">{count(g)} take{count(g) === 1 ? "" : "s"}</span>
                 <span className="spacer" />
-                <button className="icon-btn" aria-label="Remove this recording" title="Remove this recording" disabled={running} onClick={() => removeGroup(g)}>✕</button>
+                <button className="btn sm" aria-label="Remove this recording" title="Remove this recording and all its takes" disabled={running} onClick={() => removeGroup(g)}>Remove</button>
               </div>
               {mine.map((t) => {
                 const used = inUse(track, t.id);

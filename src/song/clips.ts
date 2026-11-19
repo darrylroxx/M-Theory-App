@@ -36,8 +36,6 @@ export interface ClipHolder {
 
 /** The shortest a clip can be trimmed or split to (seconds). */
 export const MIN_CLIP = 0.02;
-/** The fade at each edge of a clip, so a cut never clicks (seconds). */
-export const FADE = 0.005;
 
 /** Can one take stand in for another in a clip: of one recording, or of recordings sung from the same bar at the same rate (one timeline)? */
 export const sameSpot = (a: Take, b: Take): boolean => a.group === b.group || (a.at.block === b.at.block && a.at.bar === b.at.bar && a.rate === b.rate);
@@ -241,16 +239,41 @@ export function addRecording(h: ClipHolder, takes: Take[], id: () => string): Pi
   return { takes: all, clips: [...kept, wholeClip(t, id())] };
 }
 
+// ── undo ──
+
+/** An edit to one track's takes and clips: what it was before, and what it left. */
+export interface UndoStep<T> {
+  track: string;
+  before: T;
+  after: T;
+}
+
+/** The last edit made on `track` (each track's edits are taken back on their own), and the list without it. */
+export function popUndo<T>(steps: readonly UndoStep<T>[], track: string): { step?: UndoStep<T>; rest: UndoStep<T>[] } {
+  for (let i = steps.length - 1; i >= 0; i--) if (steps[i].track === track) return { step: steps[i], rest: [...steps.slice(0, i), ...steps.slice(i + 1)] };
+  return { rest: [...steps] };
+}
+
 // ── time ──
 
-/** How far a 1/16 note is, in frames of a take at `rate`, at `bpm` (a beat is a quarter note). */
-export const gridFrames = (rate: number, bpm: number): number => (rate * 60) / Math.max(1, bpm) / 4;
+/**
+ * How far a 1/16 note is, in frames of a take at `rate`, at `bpm`. `perBeat`: 1/16 notes in a
+ * beat: 4 where a beat is a quarter note, 6 in x/8, where a beat is a dotted quarter.
+ */
+export const gridFrames = (rate: number, bpm: number, perBeat = 4): number => (rate * 60) / Math.max(1, bpm) / Math.max(1, perBeat);
 
-/** A move kept to whole 1/16 notes (sung on the beat, it stays on a beat), unless `free`. */
-export function snapMove(move: number, rate: number, bpm: number, free = false): number {
+/** 1/16 notes in a beat of a bar of `beats` beats in x/8 (`compound`) or not. */
+export const sixteenths = (compound: boolean): number => (compound ? 6 : 4);
+
+/**
+ * A move kept to whole 1/16 notes (sung on the beat, it stays on a beat), unless `free`. `origin`:
+ * where (frames from where it was sung) the bar it lands in starts, so it keeps to that bar's
+ * grid even where the bars before it do not end on a whole 1/16 note of it.
+ */
+export function snapMove(move: number, rate: number, bpm: number, free = false, perBeat = 4, origin = 0): number {
   if (free) return Math.round(move);
-  const g = gridFrames(rate, bpm);
-  return Math.round(Math.round(move / g) * g);
+  const g = gridFrames(rate, bpm, perBeat);
+  return Math.round(origin + Math.round((move - origin) / g) * g);
 }
 
 /** Where a clip plays, from the bar its take was sung on: its start and its end (seconds). */
@@ -266,15 +289,17 @@ export function clipSpan(c: Clip, t: Pick<Take, "rate">): { start: number; end: 
  * long it plays (seconds). One that runs across several sections is listed in each it reaches
  * (at a place before the start of those after the first), so wherever the music is, the player
  * knows which part of which clip lies under it. A clip whose section is gone is left out.
+ * `joined`: it starts where another clip of the same take ends, in the same place (a split): the
+ * two are one sound.
  */
-export function layClips<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], clips: readonly { clip: Clip; take: T }[], bpm: number): Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number }[]> {
+export function layClips<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], clips: readonly { clip: Clip; take: T }[], bpm: number): Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number; joined: boolean }[]> {
   const start: Record<string, { at: number; bar: number }> = {};
   let pos = 0;
   for (const s of secs) {
     start[s.block] = { at: pos, bar: s.bar };
     pos += s.beats;
   }
-  const out: Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number }[]> = {};
+  const out: Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number; joined: boolean }[]> = {};
   for (const s of secs) out[s.block] = [];
   const spb = 60 / Math.max(1, bpm);
   for (const { clip, take } of clips) {
@@ -283,11 +308,26 @@ export function layClips<T extends Pick<Take, "at" | "frames" | "rate">>(secs: r
     const span = clipSpan(clip, take);
     const begin = from.at + take.at.bar * from.bar + span.start / spb;
     const len = (span.end - span.start) / spb;
+    const joined = clips.some((x) => x.clip !== clip && x.clip.take === clip.take && x.clip.to === clip.from && (x.clip.move ?? 0) === (clip.move ?? 0));
     for (const s of secs) {
       const at = begin - start[s.block].at;
-      if (at < s.beats - 1e-6 && at + len > 1e-6) out[s.block].push({ clip, take, at, offset: clip.from / take.rate, dur: (clip.to - clip.from) / take.rate });
+      if (at < s.beats - 1e-6 && at + len > 1e-6) out[s.block].push({ clip, take, at, offset: clip.from / take.rate, dur: (clip.to - clip.from) / take.rate, joined });
     }
   }
+  return out;
+}
+
+/**
+ * Where a track's clips are drawn in each section of a row of sections (each `bar` beats a bar,
+ * `beats` long): in bars from the section's start, and how many bars long (counted in that
+ * section's bars). One that runs across sections is in each it reaches, from before the start
+ * of those after the first, so each section shows its own part of it.
+ */
+export function clipBars<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], clips: readonly { clip: Clip; take: T }[], bpm: number): Record<string, { clip: Clip; take: T; x: number; w: number }[]> {
+  const laid = layClips(secs, clips, bpm);
+  const spb = 60 / Math.max(1, bpm);
+  const out: Record<string, { clip: Clip; take: T; x: number; w: number }[]> = {};
+  for (const s of secs) out[s.block] = (laid[s.block] ?? []).map(({ clip, take, at, dur }) => ({ clip, take, x: at / s.bar, w: dur / spb / s.bar }));
   return out;
 }
 

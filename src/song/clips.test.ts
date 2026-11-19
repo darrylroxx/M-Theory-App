@@ -1,8 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, layTakes, type Take } from "./takes";
+import { activeTake, type Take } from "./takes";
 import {
-  addRecording, chooseTake, clipSpan, clipsOf, compClip, deleteClip, deleteTake, gridFrames, inUse, laneBeats, lanePos, layClips, migrateClips, moveClip, placedClips,
-  playedTakes, removeRecording, reviveClips, sameSpot, snapMove, splitClip, trimClip, type Clip,
+  addRecording, chooseTake, clipBars, clipSpan, clipsOf, compClip, deleteClip, deleteTake, gridFrames, inUse, laneBeats, lanePos, layClips, migrateClips, moveClip, placedClips,
+  playedTakes, popUndo, removeRecording, reviveClips, sameSpot, snapMove, splitClip, trimClip, type Clip,
 } from "./clips";
 import { reviveTracks } from "./tracks";
 
@@ -29,7 +29,12 @@ describe("clips: what a vocal track plays of its takes", () => {
     expect(migrateClips(old, { g1: "t2" })).toEqual(clips);
     // laid in the song: exactly where, and as long as, the takes were
     const secs = [{ block: "a", bar: 4, beats: 8 }, { block: "b", bar: 3, beats: 9 }];
-    const before = layTakes(secs, [old[1], old[5]], 120);
+    // (as takes were laid before clips: from the bar each was sung on, in every section it reaches)
+    const before: Record<string, { take: Take; at: number }[]> = { a: [], b: [] };
+    for (const t of [old[1], old[5]]) {
+      const begin = (t.at.block === "a" ? 0 : 8) + t.at.bar * (t.at.block === "a" ? 4 : 3);
+      for (const [s, from, beats] of [["a", 0, 8], ["b", 8, 9]] as const) if (begin - from < beats && begin - from + t.frames / t.rate / 0.5 > 0) before[s].push({ take: t, at: begin - from });
+    }
     const after = layClips(secs, placedClips({ takes: old, active: { g1: "t2" } }), 120);
     for (const s of ["a", "b"]) {
       expect(after[s].map((x) => [x.take.id, x.at, x.offset, x.dur])).toEqual(before[s].map((x) => [x.take.id, x.at, 0, x.take.frames / x.take.rate]));
@@ -82,6 +87,34 @@ describe("clips: what a vocal track plays of its takes", () => {
     const [x] = layClips([{ block: "a", bar: 4, beats: 8 }], [{ clip: c, take: takes[0] }], 120).a;
     expect(x.at).toBeCloseTo(1 + 100 / 24000, 12);
     expect(x.offset).toBe(100 / R);
+  });
+
+  it("in 6/8 a 1/16 note is a sixth of a beat (a dotted quarter): moves of whole eighths stay on the grid", () => {
+    // 120 bpm in 6/8: a beat is 0.5 s, an eighth a sixth of a second (8000 frames), a 1/16 note 4000
+    expect(gridFrames(R, 120, 6)).toBe(4000);
+    for (const eighths of [1, 2, 4, -3]) expect(snapMove(eighths * 8000 + 1300, R, 120, false, 6)).toBe(eighths * 8000);
+    // the grid of the bar it lands in, counted from that bar's start (here 40000 frames from where it was sung, which is not on a 1/16 note of 6000)
+    expect(snapMove(41000, R, 120, false, 4, 40000)).toBe(40000);
+    expect(snapMove(46500, R, 120, false, 4, 40000)).toBe(46000);
+  });
+
+  it("where a split's second piece is the rest of the first, the two are one sound", () => {
+    const parts = splitClip([{ id: "c", take: "t1", from: 0, to: LOOP }], "c", 96000, takes[0], "d");
+    const lay = (cs: Clip[]) => layClips([{ block: "a", bar: 4, beats: 8 }], cs.map((clip) => ({ clip, take: takes[0] })), 120).a.map((x) => x.joined);
+    expect(lay(parts)).toEqual([false, true]);
+    // trimmed apart, or moved apart, or of another take: two sounds
+    expect(lay(trimClip(parts, "d", "from", 96001, takes[0]))).toEqual([false, false]);
+    expect(lay(moveClip(parts, "d", 6000))).toEqual([false, false]);
+    expect(layClips([{ block: "a", bar: 4, beats: 8 }], [{ clip: parts[0], take: takes[0] }, { clip: { ...parts[1], take: "t2" }, take: takes[1] }], 120).a.map((x) => x.joined)).toEqual([false, false]);
+  });
+
+  it("each track's edits are taken back on their own", () => {
+    const steps = [{ track: "v1", before: 1, after: 2 }, { track: "v2", before: 10, after: 20 }, { track: "v1", before: 2, after: 3 }, { track: "v2", before: 20, after: 30 }];
+    const a = popUndo(steps, "v1");
+    expect(a.step).toEqual({ track: "v1", before: 2, after: 3 });
+    expect(a.rest).toEqual([steps[0], steps[1], steps[3]]);
+    expect(popUndo(a.rest, "v1").step).toEqual(steps[0]);
+    expect(popUndo(steps, "v3")).toEqual({ rest: steps });
   });
 
   it("a split makes two pieces that play exactly what the one did", () => {
@@ -175,6 +208,21 @@ describe("clips: what a vocal track plays of its takes", () => {
     // listed in B too, from before B's start
     expect(laid.b[0].at).toBeCloseTo(4.75 - 8, 12);
     expect(laid.b[0].offset).toBe(laid.a[0].offset);
+  });
+
+  it("the Track page: a clip that runs on into the next section shows its part there, in that section's bars", () => {
+    // sung from A's first bar over A (2 bars of 4/4) and B (2 bars of 6/8, 2 beats a bar): 6 s at 120 is 12 beats
+    const t = take("t", 1, { frames: R * 6 });
+    const secs = [{ block: "a", bar: 4, beats: 8 }, { block: "b", bar: 2, beats: 4 }];
+    const whole = clipBars(secs, [{ clip: { id: "c", take: "t", from: 0, to: R * 6 }, take: t }], 120);
+    expect(whole.a.map((x) => [x.x, x.w])).toEqual([[0, 3]]);
+    // in B: from 2 bars of 4/4 before its start (4 of its bars), 6 of its bars long: its last 2 bars are B
+    expect(whole.b.map((x) => [x.x, x.w])).toEqual([[-4, 6]]);
+    // only the part over B left (split, the first piece deleted): drawn over B, and not over A at all
+    const late = clipBars(secs, [{ clip: { id: "c", take: "t", from: R * 4.8, to: R * 6 }, take: t }], 120);
+    expect(late.a).toEqual([]);
+    // 4.8 s in is beat 9.6, 1.6 beats (0.8 of a bar) into B; 1.2 s (2.4 beats) is 1.2 of its bars
+    expect(late.b.map((x) => [x.x, x.w])).toEqual([[expect.closeTo(0.8, 9), expect.closeTo(1.2, 9)]]);
   });
 
   it("the lane: every bar drawn the same width, whatever its beats", () => {

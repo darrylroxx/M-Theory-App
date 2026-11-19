@@ -7,7 +7,8 @@ import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame } from "../../song/frame";
 import { loopKeys, type LoopBars } from "../../song/loops";
 import { selectBlock } from "../../song/structure";
-import { placedClips } from "../../song/clips";
+import { clipBars, placedClips } from "../../song/clips";
+import type { Take } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
@@ -287,19 +288,23 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                 </div>
               ))}
             </div>
-            {tracks.map((t) => (
+            {tracks.map((t) => {
+              // where the vocal track's clips play, section by section
+              const laid = t.kind === "vocals" ? clipBars(sections.map((s) => ({ block: s.block, bar: s.bar, beats: s.bars * s.bar })), placedClips(t), state.progression.bpm) : {};
+              return (
               <div key={t.id} className={`tv-row k-${t.kind}${audible(mix, t.id) ? "" : " quiet"}${fresh.includes(t.id) ? " fresh" : ""}`}>
                 {sections.map((s0) => {
                   const s = content(t, s0);
                   return (
                     <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
                       aria-label={`${t.name} of section ${s.label}: open`} onClick={() => open(s.block, t)}>
-                      {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} bpm={state.progression.bpm} />}
+                      {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} laid={laid} />}
                     </button>
                   );
                 })}
               </div>
-            ))}
+              );
+            })}
             <div className="tv-row tv-row-add" />
             <div className="tv-line" ref={lineRef} />
           </div>
@@ -359,15 +364,9 @@ function DrumBlock({ s, bw }: { s: TrackSection; bw: number }) {
 }
 
 
-/** A vocal track's clips in a section (sung there): each where it plays and as long as it lasts, as edited on the Vocals lane. */
-function TakeBlock({ t, s, bw, bpm }: { t: Track; s: TrackSection; bw: number; bpm: number }) {
-  const bar = (sec: number) => (sec / (60 / bpm) / s.bar) * bw;
-  const spans = placedClips(t)
-    .filter(({ take }) => take.at.block === s.block)
-    .map(({ clip, take }) => {
-      const m = clip.move ?? 0;
-      return { id: clip.id, n: take.n, x: take.at.bar * bw + bar((clip.from + m) / take.rate), w: Math.max(4, bar((clip.to - clip.from) / take.rate)) };
-    });
+/** A vocal track's clips in a section: each part that plays there, where it plays and as long as it lasts, as edited on the Vocals lane (one running on from an earlier section shows its part here). */
+function TakeBlock({ t, s, bw, laid }: { t: Track; s: TrackSection; bw: number; laid: ReturnType<typeof clipBars<Take>> }) {
+  const spans = (laid[s.block] ?? []).map(({ clip, take, x, w }) => ({ id: clip.id, n: take.n, x: x * bw, w: Math.max(4, w * bw) }));
   if (!spans.length) return <span className="tv-empty">{t.takes?.length ? "" : "No takes yet"}</span>;
   return (
     <span className="tv-takes">
