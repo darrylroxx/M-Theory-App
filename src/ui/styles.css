@@ -772,6 +772,16 @@ button.dm-strip-name:hover { color: var(--accent); }
 /* the bar that is sounding: a line under it */
 .lb-bar.now::after { content: ""; position: absolute; left: 3px; right: 3px; bottom: 3px; height: 4px; border-radius: 2px; background: var(--text); }
 .lb-bar.in.now::after { background: var(--accent); }
+/* (not the width the shape finder's .now has on a phone: the bars must not jump as the music moves) */
+.lb-bar.now { width: auto; }
+/* while something loops, a section's name puts it in the loop or takes it out: a looped name is dark like its bars, any other has a + */
+.loop-all { flex: 0 0 auto; height: 32px; padding: 0 10px; border-radius: 16px; border: 1.5px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.78rem; font-weight: 800; }
+.loop-all:hover { border-color: var(--accent); color: var(--text); }
+.loop-all.on { background: var(--text); border-color: var(--text); color: var(--bg); }
+.transport.looping .lb-sec:not(.loops) .lb-letter::before { content: "+"; margin-right: 3px; font-weight: 800; opacity: 0.75; }
+.lb-sec.loops .lb-letter, .lb-sec.on.loops .lb-letter { background: var(--text) !important; color: var(--bg) !important; }
+.lb-sec.on.loops .lb-letter { box-shadow: inset 0 -4px 0 var(--kc); }
+.lb-sec.part .lb-letter { background: color-mix(in srgb, var(--text) 35%, var(--card-2)) !important; }
 @media (max-width: 620px) { .loop-btn { width: 36px; height: 36px; } .lb-bar { min-width: 30px; } }
 
 /* ── Canvas: the song paints itself ── */

@@ -4,7 +4,8 @@ import type { DrumId } from "../../audio/drums";
 import { MAX_DB, MIN_DB, audible, type Mix, type TrackId, type TrackMix } from "../../audio/mix";
 export type { TrackId };
 import { TICKS, hasTune, type Melody } from "../../song/melody";
-import { inFrame, inLoop, type LoopSpan } from "../../song/frame";
+import { inFrame } from "../../song/frame";
+import { loopKeys, type LoopBars } from "../../song/loops";
 import { selectBlock } from "../../song/structure";
 import { activeTake, groupsOf } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
@@ -65,7 +66,8 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   sections: TrackSection[];
   /** the section on screen */
   current: string;
-  loop: LoopSpan | null;
+  /** the bars that loop */
+  loop: LoopBars;
   layout: { block: string; bars: number }[];
   playing: boolean;
   /** which section is sounding and how many beats into it (null = stopped) */
@@ -78,6 +80,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   active: boolean;
 }) {
   const { state, set, toast } = useApp();
+  const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
   const [adding, setAdding] = useState(false);
@@ -279,7 +282,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                 <div key={s.block || "a"} className={`tv-sec ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}>
                   <button className="tv-letter" aria-pressed={s.block === current} aria-label={`Section ${s.label}`} title={s.label} style={{ maxWidth: s.bars * bw - 6 }} onClick={() => choose(s.block)}>{s.label}</button>
                   <span className={`tv-bars${bw < 40 ? " tight" : ""}`} aria-hidden="true">
-                    {Array.from({ length: s.bars }, (_, k) => <i key={k} className={inLoop(layout, loop, { block: s.block, bar: k }) ? "in" : ""} style={{ width: bw }}>{k % every === 0 && (k > 0 || bw >= 40) ? k + 1 : ""}</i>)}
+                    {Array.from({ length: s.bars }, (_, k) => <i key={k} className={looped.has(`${s.block}:${k}`) ? "in" : ""} style={{ width: bw }}>{k % every === 0 && (k > 0 || bw >= 40) ? k + 1 : ""}</i>)}
                   </span>
                 </div>
               ))}
