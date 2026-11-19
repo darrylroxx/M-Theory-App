@@ -247,6 +247,51 @@ authors:
 The stems are made from the user's own file, on the user's own computer, for the user's own
 study and painting. Rights in the original recording are not changed by splitting it.
 
+## Sources named in the documentation
+
+The README describes where the app's numbers, patterns and colours come from without naming
+products or publications; these are the sources it refers to.
+
+**The harp, the playing styles and the effects** (`src/audio/`). The numbers and patterns were collected from published acoustics research, teaching material and audio-engineering references. The session that gathered them could read search-result excerpts of these pages, not always the full text, so treat the list as where to look rather than as a guarantee that every figure was checked against the original.
+
+- Harp acoustics: Chadefaux, Le Carrou et al., *Experimentally based description of harp plucking* (JASA 2012); Le Carrou, Gautier et al. on the concert harp's soundboard and sound-hole modes and on sympathetic strings; Woodhouse, *Euphonics* (string damping, plucked-string synthesis); Waltham's harp chapters and ASA papers; UNSW Music Acoustics (harp); the Vienna Symphonic Library's harp notes; Sound On Sound, *Synthesizing plucked strings*.
+- Playing styles: Wikipedia (Strum, Carter Family picking, Tresillo, Clave, Ska stroke, Banjo roll); guitar lesson sites (rhythmguitar.org, justinguitar, andyguitar, Fender, MusicRadar, Guitar World, Premier Guitar, Classical Guitar Magazine, jazzguitar.be); the Giuliani right-hand studies; harp accompaniment guides (myharpsdelight.com, harpmastery, Harp Column).
+- Effects: J. O. Smith, *Physical Audio Signal Processing* (flanging and phasing); Valhalla DSP's notes on reverb types, shimmer and echo; Sound On Sound technique articles; the Web Audio API documentation (MDN); circuit analyses of classic overdrive, chorus and phaser pedals.
+
+**The drum sounds** (`src/audio/drums.ts`): circuit studies of the TR-808; the Mutable
+Instruments Plaits source (MIT); Perry Cook's PhISEM shaker models; Sound On Sound's "Synth
+Secrets" series.
+
+**The canvas's colour schemes** (`src/canvas/palettes.ts`). The *Screens* schemes are, in order,
+Solarized, Nord, Gruvbox, Dracula, Catppuccin, Rosé Pine, Tokyo Night and Kanagawa; *Highway* is
+the Outrun base16 scheme and *Synthwave* is SynthWave '84; *Stencil* is Risograph inks; the
+*Loved* palettes are from COLOURlovers; *Lily pond*, *Woodblock*, *Wave* and *Dusk* are from
+MetBrewer. Each keeps its project's values; the names in the app are this project's own.
+
+**Credits.** The *Loved* palettes were made by members of COLOURlovers and are credited here as that site asks: "Giant Goldfish" by manekineko, "(◕〝◕)" and "(◕ ” ◕)" by sugar!, "Thought Provoking" by Miss_Anthropy, "cheer up emo kid" by electrikmonk, "let them eat cake" by lunalein, "Terra?" by GlueStudio, "Ocean Five" by DESIGNJUNKEE. Some of those palettes are shared for non-commercial use only: fine for a personal app, worth a second look if the app is ever sold. Two top-ranked palettes whose maker asks to be contacted first were left out. *Lily pond*, *Woodblock*, *Wave* and *Dusk* are from the MetBrewer palettes; *Kasane* from the Nippon Colors list; *Riso* from the riso-colors list; the Screens and Glow schemes from their own projects.
+
+Hex values were read from each project's own files where the session could reach them (the first list), and from search-result excerpts of the pages otherwise (the second). Pigments have no single correct screen colour: the values used are the commonly published approximations.
+
+Read directly:
+
+- [nice-color-palettes](https://raw.githubusercontent.com/Jam3/nice-color-palettes/master/100.json): the top-loved COLOURlovers palettes
+- [MetBrewer](https://raw.githubusercontent.com/BlakeRMills/MetBrewer/main/R/PaletteCode.R): palettes sampled from works in a museum collection
+- [nippon-colors](https://registry.npmjs.org/nippon-colors/-/nippon-colors-1.0.0.tgz): 250 traditional Japanese colours
+- [riso-colors](https://raw.githubusercontent.com/mattdesl/riso-colors/master/riso-colors.json): Risograph inks
+- [color-names](https://raw.githubusercontent.com/codebrainz/color-names/master/output/colors.csv): the named colours (pigments, harvest gold, avocado …)
+- [chromotome](https://raw.githubusercontent.com/kgolid/chromotome/master/readme.md): how palettes for generative art are built
+- [Nord](https://raw.githubusercontent.com/nordtheme/nord/develop/src/nord.css), [Solarized](https://raw.githubusercontent.com/altercation/solarized/master/README.md), [Dracula](https://raw.githubusercontent.com/dracula/dracula-theme/master/README.md), [Gruvbox](https://raw.githubusercontent.com/morhetz/gruvbox/master/colors/gruvbox.vim), [Catppuccin](https://raw.githubusercontent.com/catppuccin/palette/main/palette.json), [Rosé Pine](https://raw.githubusercontent.com/rose-pine/palette/main/palette.json), [Tokyo Night](https://raw.githubusercontent.com/folke/tokyonight.nvim/main/lua/tokyonight/colors/storm.lua), [Kanagawa](https://raw.githubusercontent.com/rebelot/kanagawa.nvim/master/lua/kanagawa/colors.lua)
+- [SynthWave '84](https://raw.githubusercontent.com/robb0wen/synthwave-vscode/master/themes/synthwave-color-theme.json), [Outrun](https://raw.githubusercontent.com/tinted-theming/schemes/spec-0.11/base16/outrun-dark.yaml)
+
+Seen as search excerpts only:
+
+- [COLOURlovers, most loved of all time](https://www.colourlovers.com/palettes) and its palette pages (ranks, love counts, makers)
+- [Winsor & Newton oil colours as screen colours](https://color-term.com/winsornewton-colors) (a third party's conversion, not the maker's)
+- [The four-colour portrait palette](https://www.naturalpigments.com/zorn-palette.html)
+- [Vaporwave palette](https://www.color-hex.com/color-palette/10221)
+- [Bauhaus](https://digitalheroes.co.in/styles/bauhaus-revival/), [Art Deco](https://www.eggradients.com/palette/art-deco), [mid-century](https://madegooddesigns.com/retro-color-palettes/) and [Memphis](https://newretro.net/blogs/main/80s-color-palette-hex-codes) approximations
+- [Working with color in generative art](https://www.tylerxhobbs.com/words/working-with-color-in-generative-art)
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 

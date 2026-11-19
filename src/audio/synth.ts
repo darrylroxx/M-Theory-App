@@ -11,7 +11,7 @@ import { DRUM_IDS } from "./drums";
 import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
 import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 import { dropPulses } from "./pulse";
-import { tapStem } from "./stems";
+import { tapStem, untapStem } from "./stems";
 import { fader } from "./mix";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
@@ -19,6 +19,7 @@ import type { HarpString } from "./harp";
 import { TrackVoice, type VoiceKind } from "./trackvoice";
 import { GUITAR, type Tone, type Tones } from "./tone";
 import { playNotes, type PlayNote } from "../synth/play";
+import type { LiveOut } from "../synth/live";
 import { TUNE_LIFT, TUNE_SLOT, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
 
 
@@ -41,9 +42,9 @@ function voiceOf(id: string, kind?: VoiceKind): TrackVoice {
   if (!v || v.c !== ctx) {
     const f = fader(id, ctx);
     const first = id === "chords" || id === "melody";
-    // the first tracks go out through a tap of their own, so the canvas hears them apart
-    if (first) tapStem(id as "chords" | "melody", f);
     v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id);
+    // every track goes out through a tap, so the canvas's guide hears each kind of part apart
+    tapStem(v.kind === "melody" ? "melody" : "chords", f, id);
     v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     v.setTone(liveTones[id] ?? GUITAR);
     voices.set(id, v);
@@ -116,6 +117,7 @@ export function keepTracks(ids: string[]) {
     v.dispose();
     voices.delete(id);
     liveSound.delete(id);
+    untapStem(id);
   }
   keepDrums(ids);
 }
@@ -170,6 +172,25 @@ export function playNote(midi: number, when?: number, velocity = 0.8, slot?: num
     return;
   }
   v.note(midi, t0, velocity, len, { slot, lift: tune ? TUNE_LIFT : 1 });
+}
+
+/**
+ * The on-screen keys of a synth (see synth/live.ts): notes go to the track the page is editing,
+ * on its own synth. Its processor starts loading at the first touch.
+ */
+export function liveSynth(kind: "chord" | "melody"): LiveOut {
+  const v = () => {
+    const x = kind === "melody" ? tuneVoice() : chordVoice();
+    void x.load().catch(() => {});
+    return x;
+  };
+  return {
+    now: () => v().c.currentTime,
+    bpm: () => tempo,
+    on: (midi, when, velocity) => v().hold(midi, when, velocity),
+    off: (id, when) => v().letGo(id, when),
+    note: (midi, when, velocity, length) => v().note(midi, when, velocity, length),
+  };
 }
 
 /** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. On a synth, the synth's own way of playing. */

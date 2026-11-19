@@ -78,10 +78,21 @@ export class SynthInstrument implements Instrument {
   }
 
   play(midi: number, when: number, velocity: number, length: number, slot?: number) {
-    if (!Number.isFinite(midi) || !Number.isFinite(when)) return;
+    const id = this.hold(midi, when, velocity, slot);
+    if (id && Number.isFinite(length)) this.release(id, when + Math.max(0, length));
+  }
+
+  /** Start a note that sounds until `release` (a key held down on the screen). Returns its id (0: nothing was played). */
+  hold(midi: number, when: number, velocity: number, slot?: number): number {
+    if (!Number.isFinite(midi) || !Number.isFinite(when)) return 0;
     const id = this.nextId++;
     this.send({ type: "on", t: when, midi, vel: Math.max(0, Math.min(1, velocity)), id, slot: slot ?? -1 });
-    if (Number.isFinite(length)) this.send({ type: "off", t: when + Math.max(0, length), id });
+    return id;
+  }
+
+  /** Let a held note go at `when`. */
+  release(id: number, when: number) {
+    this.send({ type: "off", t: when, id });
   }
 
   /**

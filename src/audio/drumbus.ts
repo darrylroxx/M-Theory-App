@@ -21,7 +21,7 @@ import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type Beat
 import { atRenderTime, audioContext, audioIfStarted, isRendering } from "./context";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
-import { tapStem } from "./stems";
+import { tapStem, untapStem } from "./stems";
 import { fader } from "./mix";
 
 /** A drum sound, measured (once for each recording). */
@@ -229,8 +229,8 @@ function getBus(track = FIRST_DRUMS): Bus {
   const out = fader(track, c);
   const tail = c.createGain();
   mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(tail).connect(out);
-  // the canvas hears the first drums here, after everything that is done to them (the fader too)
-  if (track === FIRST_DRUMS) tapStem("drums", out);
+  // the canvas hears every drums track here, after everything that is done to it (the fader too)
+  tapStem("drums", out, track);
 
   const channels = {} as Record<DrumId, Channel>;
   for (const id of DRUM_IDS) {
@@ -261,6 +261,7 @@ export function keepDrums(tracks: string[]) {
     if (track === FIRST_DRUMS || tracks.includes(track)) continue;
     set.delete(track);
     solos.delete(track);
+    untapStem(track);
     stopBed(d);
     d.tail.gain.setTargetAtTime(0, c.currentTime, 0.015);
     window.setTimeout(() => {

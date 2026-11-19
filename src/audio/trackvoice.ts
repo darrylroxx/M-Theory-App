@@ -314,6 +314,20 @@ export class TrackVoice {
     inst.play(midi, when, velocity, len, o.slot);
   }
 
+  /**
+   * A key held down on the screen: the synth sounds until `letGo` (returns the note's id, 0 when
+   * this track is not on the synth). Played straight: the page works out arpeggios itself.
+   */
+  hold(midi: number, when: number, velocity: number): number {
+    const inst = this.inst;
+    if (this.gone || this.offline || !(inst instanceof SynthInstrument)) return 0;
+    return inst.hold(midi, when, velocity);
+  }
+  letGo(id: number, when: number) {
+    const inst = this.inst;
+    if (id && inst instanceof SynthInstrument) inst.release(id, when);
+  }
+
   /** The pianist's pedal change at a new chord: up for a moment, then down again (only when Pedal is on). */
   repedal(at: number) {
     const inst = this.inst;

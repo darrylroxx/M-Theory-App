@@ -21,9 +21,10 @@ export interface Palette {
 }
 
 /**
- * Where the colours come from (the full list of sources and credits is in the README):
+ * Where the colours come from (sources and credits are in NOTICE.md; the ids keep the names a
+ * saved canvas was made with):
  * - Paint: published approximations of real artists' pigments.
- * - Prints: palettes sampled from prints and paintings, traditional Japanese colours, Risograph
+ * - Prints: palettes sampled from prints and paintings, traditional Japanese colours, stencil-printing
  *   inks, and the named colours of a few design eras.
  * - Loved: the palettes people have loved most on the largest palette-sharing site, by its
  *   all-time ranking.
@@ -53,8 +54,8 @@ export const PALETTES: Palette[] = [
   { id: "dusk", name: "Dusk", group: "Prints", ground: "#fbf4e4", ink: "#1e466e", colors: ["#e76254", "#ef8a47", "#f7aa58", "#ffd06f", "#72bcd5", "#528fad", "#376795", "#1e466e"], surface: "paper" },
   // traditional Japanese colours: kurenai, yamabuki, moegi, asagi, ruri, ai, fuji, sakura; sumi for the line, on shironeri
   { id: "kasane", name: "Kasane", group: "Prints", ground: "#fcfaf2", ink: "#1c1c1c", colors: ["#cb1b45", "#ffb11b", "#7ba23f", "#33a6b8", "#005caf", "#0d5661", "#8b81c3", "#fedfe1"], surface: "paper" },
-  // Risograph inks on warm white paper: fluorescent pink, blue, yellow, bright red, teal, green, orange
-  { id: "riso", name: "Riso", group: "Prints", ground: "#f1e7e1", ink: "#000000", colors: ["#ff48b0", "#0078bf", "#ffe800", "#f15060", "#00838a", "#00a95c", "#ff6c2f"], surface: "paper" },
+  // Stencil-printing inks on warm white paper: fluorescent pink, blue, yellow, bright red, teal, green, orange
+  { id: "riso", name: "Stencil", group: "Prints", ground: "#f1e7e1", ink: "#000000", colors: ["#ff48b0", "#0078bf", "#ffe800", "#f15060", "#00838a", "#00a95c", "#ff6c2f"], surface: "paper" },
   // the design school's red, yellow and blue, with black
   { id: "blocks", name: "Blocks", group: "Prints", ground: "#f4f1ea", ink: "#141414", colors: ["#d62f25", "#f2c230", "#1f3a93", "#141414", "#4a71c0"], surface: "canvas" },
   // mustard, burnt orange, teal, olive, walnut
@@ -79,18 +80,18 @@ export const PALETTES: Palette[] = [
   { id: "shore", name: "Shore", group: "Loved", ground: "#fbf6ec", ink: "#1d3540", colors: ["#264653", "#2a9d8f", "#e9c46a", "#f4a261", "#e76f51"], surface: "canvas" },
 
   // ── Screens ──
-  { id: "solarized", name: "Solarized", group: "Screens", ground: "#fdf6e3", ink: "#073642", colors: ["#b58900", "#cb4b16", "#dc322f", "#d33682", "#6c71c4", "#268bd2", "#2aa198", "#859900"], surface: "paper" },
-  { id: "nord", name: "Nord", group: "Screens", ground: "#2e3440", ink: "#eceff4", colors: ["#88c0d0", "#81a1c1", "#5e81ac", "#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#b48ead"], surface: "linen" },
-  { id: "gruvbox", name: "Gruvbox", group: "Screens", ground: "#282828", ink: "#ebdbb2", colors: ["#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#fe8019"], surface: "linen" },
-  { id: "dracula", name: "Dracula", group: "Screens", ground: "#282a36", ink: "#f8f8f2", colors: ["#ff79c6", "#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#ff5555", "#f1fa8c"], surface: "canvas" },
-  { id: "catppuccin", name: "Catppuccin", group: "Screens", ground: "#1e1e2e", ink: "#cdd6f4", colors: ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5", "#89b4fa", "#cba6f7", "#f5c2e7"], surface: "canvas" },
-  { id: "rosepine", name: "Rosé Pine", group: "Screens", ground: "#191724", ink: "#e0def4", colors: ["#eb6f92", "#f6c177", "#ebbcba", "#31748f", "#9ccfd8", "#c4a7e7"], surface: "canvas" },
-  { id: "tokyo", name: "Tokyo Night", group: "Screens", ground: "#1a1b26", ink: "#c0caf5", colors: ["#f7768e", "#ff9e64", "#e0af68", "#9ece6a", "#73daca", "#7dcfff", "#7aa2f7", "#bb9af7"], surface: "canvas" },
-  { id: "kanagawa", name: "Kanagawa", group: "Screens", ground: "#1f1f28", ink: "#dcd7ba", colors: ["#7e9cd8", "#957fb8", "#98bb6c", "#e6c384", "#ffa066", "#d27e99", "#e46876", "#7aa89f"], surface: "canvas" },
+  { id: "solarized", name: "Sunlit", group: "Screens", ground: "#fdf6e3", ink: "#073642", colors: ["#b58900", "#cb4b16", "#dc322f", "#d33682", "#6c71c4", "#268bd2", "#2aa198", "#859900"], surface: "paper" },
+  { id: "nord", name: "Fjord", group: "Screens", ground: "#2e3440", ink: "#eceff4", colors: ["#88c0d0", "#81a1c1", "#5e81ac", "#bf616a", "#d08770", "#ebcb8b", "#a3be8c", "#b48ead"], surface: "linen" },
+  { id: "gruvbox", name: "Retro", group: "Screens", ground: "#282828", ink: "#ebdbb2", colors: ["#fb4934", "#b8bb26", "#fabd2f", "#83a598", "#d3869b", "#8ec07c", "#fe8019"], surface: "linen" },
+  { id: "dracula", name: "Midnight", group: "Screens", ground: "#282a36", ink: "#f8f8f2", colors: ["#ff79c6", "#bd93f9", "#8be9fd", "#50fa7b", "#ffb86c", "#ff5555", "#f1fa8c"], surface: "canvas" },
+  { id: "catppuccin", name: "Pastel", group: "Screens", ground: "#1e1e2e", ink: "#cdd6f4", colors: ["#f38ba8", "#fab387", "#f9e2af", "#a6e3a1", "#94e2d5", "#89b4fa", "#cba6f7", "#f5c2e7"], surface: "canvas" },
+  { id: "rosepine", name: "Rosewood", group: "Screens", ground: "#191724", ink: "#e0def4", colors: ["#eb6f92", "#f6c177", "#ebbcba", "#31748f", "#9ccfd8", "#c4a7e7"], surface: "canvas" },
+  { id: "tokyo", name: "Night city", group: "Screens", ground: "#1a1b26", ink: "#c0caf5", colors: ["#f7768e", "#ff9e64", "#e0af68", "#9ece6a", "#73daca", "#7dcfff", "#7aa2f7", "#bb9af7"], surface: "canvas" },
+  { id: "kanagawa", name: "Harbour", group: "Screens", ground: "#1f1f28", ink: "#dcd7ba", colors: ["#7e9cd8", "#957fb8", "#98bb6c", "#e6c384", "#ffa066", "#d27e99", "#e46876", "#7aa89f"], surface: "canvas" },
 
   // ── Glow ──
   { id: "synthwave", name: "Synthwave", group: "Glow", ground: "#262335", ink: "#ffffff", colors: ["#ff7edb", "#36f9f6", "#fede5d", "#f97e72", "#72f1b8", "#fe4450", "#03edf9", "#ff8b39"], surface: "canvas" },
-  { id: "outrun", name: "Outrun", group: "Glow", ground: "#00002a", ink: "#d0d0fa", colors: ["#ff4242", "#fc8d28", "#f3e877", "#59f176", "#0ef0f0", "#66b0ff", "#f10596", "#f003ef"], surface: "canvas" },
+  { id: "outrun", name: "Highway", group: "Glow", ground: "#00002a", ink: "#d0d0fa", colors: ["#ff4242", "#fc8d28", "#f3e877", "#59f176", "#0ef0f0", "#66b0ff", "#f10596", "#f003ef"], surface: "canvas" },
   { id: "vapor", name: "Vapor", group: "Glow", ground: "#241b2f", ink: "#fffb96", colors: ["#ff71ce", "#01cdfe", "#05ffa1", "#b967ff", "#fffb96"], surface: "canvas" },
 ];
 /** The families, in the order they are offered. */

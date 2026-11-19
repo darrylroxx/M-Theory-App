@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { ECHO_TIMES } from "../../audio/beats";
 import { HARP_VOICES, STRING_DEFAULT, VOICE_GROUPS } from "../../audio/harp";
 import { FEEL_DEFAULT, STYLES, STYLE_GROUPS, getStyle, type Feel, type PatternId, type StyleGroup } from "../../audio/patterns";
@@ -6,6 +6,7 @@ import { DRIVES, FX_DEFAULT, HARP_VERBS, TREM_SPEEDS, type HarpSound } from "../
 import { SOUNDS, sameSound, soundName, soundOfPreset } from "../../audio/sounds";
 import { INSTRUMENTS, KEYS_MODELS, synthOf, type InstId, type Tone } from "../../audio/tone";
 import type { SynthParams } from "../../synth/params";
+import { liveSynth } from "../../audio/synth";
 import { newId, useApp } from "../state";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
@@ -91,6 +92,9 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
   const tone = instProps?.tone;
   const strings = inst === "guitar";
   const toggle = (d: string) => setDrawer(drawer === d ? null : d);
+  // the synth's keys play this track (the page routes notes to the track it is editing)
+  const keyKind = instProps?.kind === "melody" ? "melody" : "chord";
+  const keys = useMemo(() => liveSynth(keyKind), [keyKind]);
   const extra = children?.(drawer, toggle);
 
   const voiceAt = HARP_VOICES.findIndex((v) => v.id === sound.voice);
@@ -137,7 +141,7 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
       </div>
       {extra?.drawers}
       {inst === "synth" && instProps && (
-        <SynthPanel compact params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} />
+        <SynthPanel compact params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} keys={keys} />
       )}
       {strings && drawer === "harp" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Instrument">

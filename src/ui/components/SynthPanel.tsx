@@ -1,6 +1,6 @@
 /**
  * The synth's panel. On top, ready-made sounds by kind (with ‹ › to step and a die for a surprise
- * in the same kind), six big macro knobs, and how the notes are played. Underneath, the whole
+ * in the same kind), six big macro knobs, how the notes are played, and keys to play it. Underneath, the whole
  * panel of the instrument it is modelled on, section by section (Osc, LFO, Filter, EG, Effect,
  * Voice), with sliders that move as the macros turn, so turning a macro shows what it does.
  *
@@ -32,6 +32,8 @@ import {
 } from "../../synth/params";
 import { CATEGORIES, type PresetCategory, type SynthPreset, presetById, presetsIn } from "../../synth/presets";
 import { Seg } from "./common";
+import type { LiveOut } from "../../synth/live";
+import { SynthKeys } from "./SynthKeys";
 
 export interface SynthPanelProps {
   params: SynthParams;
@@ -40,9 +42,11 @@ export interface SynthPanelProps {
   onAudition?: () => void;
   /** small: the presets, the macros and the way of playing; the panel opens on request */
   compact?: boolean;
+  /** where notes played on the on-screen keys go (no keys without it) */
+  keys?: LiveOut;
 }
 
-export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanelProps) {
+export function SynthPanel({ params, onChange, onAudition, compact, keys }: SynthPanelProps) {
   const preset = presetById(params.preset);
   const [cat, setCat] = useState<PresetCategory>(preset?.category ?? "pad");
   // a sound handed in from outside (another track's, say) brings its own kind with it, so ‹ › and
@@ -120,6 +124,8 @@ export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanel
       </div>
 
       <PlayPicker play={params.play} onChange={play} />
+
+      {keys && <SynthKeys out={keys} play={params.play} />}
 
       {compact && (
         <div className="dm-tabs">

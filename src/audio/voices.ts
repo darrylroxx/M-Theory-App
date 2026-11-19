@@ -1,11 +1,11 @@
 /**
  * The sound library: about a hundred drum sounds, each a short recipe for one general drum
  * synthesizer. The engine follows how the classic machines and the best drum synths build
- * their sounds (from circuit studies, the Mutable Instruments Plaits source, Perry Cook's
- * PhISEM shaker models and Sound On Sound's "Synth Secrets"):
+ * their sounds (from published circuit studies, open-source drum-synth code, physically
+ * informed shaker models and synthesis tutorials; credited in NOTICE.md):
  *
  *  tone      oscillators with a fast pitch drop, an optional slow sag, several membrane modes, FM
- *  ping      a pulse ringing a resonant filter: the TR-808's bridged-T way of making a drum
+ *  ping      a pulse ringing a resonant filter: the classic machines' bridged-T way of making a drum
  *  metal     a bank of square waves (or ring-modulated pairs) through band-pass filters: hats, bells
  *  noise     white, pink or clocked noise, filtered, with a hold, a gated tail or clap bursts
  *  click     a very short pulse: beater, stick, transient
@@ -614,7 +614,8 @@ export function renderRecipe(sr: number, R: Recipe, p: DrumParams, rand: () => n
 
 const SQ808 = [205.3, 304.4, 369.6, 522.7, 540, 800];
 const SQ606 = [245, 306, 365, 415, 437, 619];
-const PLAITS = [1, 1.304, 1.466, 1.787, 1.932, 2.536].map((x) => x * 828);
+/** the metal of an open-source drum synth's hats: six square waves at these ratios */
+const METAL_RATIOS = [1, 1.304, 1.466, 1.787, 1.932, 2.536].map((x) => x * 828);
 const MEMBRANE: [number, number, number][] = [[1, 0, 1], [1.593, -9, 0.3], [2.136, -14, 0.2], [2.296, -18, 0.15]];
 const WOOD: [number, number, number][] = [[1, 0, 1], [2.777, -6, 0.5], [7.378, -12, 0.25], [15.377, -20, 0.13]];
 
@@ -673,7 +674,7 @@ export const RECIPES: Record<DrumId, Recipe[]> = {
     R("hat.808", "808", [{ t: "metal", f: SQ808, bp: [[3440, 1.5], [7100, 1.5]], hp: 6500, D: 50 }]),
     R("hat.606", "606", [{ t: "metal", f: SQ606, bp: [[7500, 1]], hp: 6000, D: 40 }]),
     R("hat.909", "909", [{ t: "metal", f: SQ808.map((x) => x * 2), hp: 8000, D: 60 }, { t: "noise", hp: 8000, D: 50, level: -4 }], { rate: 32000, bits: 6, lp: 12000 }),
-    R("hat.metal", "Metal", [{ t: "metal", f: PLAITS, bp: [[6000, 4]], hp: 6000, D: 70, drop: [0.5, 8] }]),
+    R("hat.metal", "Metal", [{ t: "metal", f: METAL_RATIOS, bp: [[6000, 4]], hp: 6000, D: 70, drop: [0.5, 8] }]),
     R("hat.noise", "Noise", [{ t: "noise", hp: 7000, bp: [10000, 2], D: 30 }]),
     R("hat.fm", "FM", [{ t: "metal", f: [], fm: [2500, 1000, 3000], hp: 7000, D: 45 }]),
     R("hat.ring", "Ring", [{ t: "metal", f: [587, 845, 1351, 1793], ring: true, hp: 8000, D: 40 }]),
@@ -692,7 +693,7 @@ export const RECIPES: Record<DrumId, Recipe[]> = {
     R("open.disco", "Disco", [{ t: "metal", f: SQ808.map((x) => x * 2), hp: 8000, A: 3, D: 300, drop: [0.7, 150] }, { t: "noise", hp: 8000, A: 3, D: 280, level: -4 }]),
     R("open.trap", "Bright", [{ t: "noise", hp: 9000, D: 220 }, { t: "metal", f: SQ808, hp: 7000, D: 220, level: -8 }]),
     R("open.acoustic", "Acoustic", [{ t: "partials", n: 80, lo: 2000, hi: 16000, D: 850, swell: 30 }, { t: "noise", hp: 6000, D: 600, level: -12 }]),
-    R("open.sizzle", "Sizzle", [{ t: "noise", hp: 6000, D: 600, am: [20, 0.2] }, { t: "metal", f: PLAITS, hp: 6000, D: 500, level: -6 }]),
+    R("open.sizzle", "Sizzle", [{ t: "noise", hp: 6000, D: 600, am: [20, 0.2] }, { t: "metal", f: METAL_RATIOS, hp: 6000, D: 500, level: -6 }]),
     R("open.fm", "FM", [{ t: "metal", f: [], fm: [2500, 1000, 3000], hp: 7000, D: 400 }]),
     R("open.half", "Half", [{ t: "metal", f: SQ808, bp: [[3440, 1.5], [7100, 1.5]], hp: 6500, D: 150 }]),
     R("open.swell", "Swell", [{ t: "noise", hp: 7000, A: 120, D: 15 }]),
