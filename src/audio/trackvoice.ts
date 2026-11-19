@@ -23,6 +23,7 @@ import { createElectricPiano, createPiano } from "../keys/piano";
 import { Sampler } from "../keys/sampler";
 import type { EPiano } from "../keys/epiano";
 import { SynthInstrument } from "../synth/instrument";
+import { STOP_FADE } from "../synth/kernel";
 import { attackSec, cutoffHz, reviveSynth, timeSec, type SynthParams } from "../synth/params";
 import { soundFor } from "../synth/render";
 
@@ -153,6 +154,8 @@ export class TrackVoice {
   /** keys held down by hand: the instrument, its note (the synth's id, or the keyboard's lane) and its number for the canvas */
   private hands = new Map<number, { inst: Instrument; note: number; pulse: number }>();
   private handIds = 0;
+  /** ■ faded the track out (its room and echoes with it): the next note brings it back */
+  private hushed = false;
 
   constructor(
     readonly c: BaseAudioContext,
@@ -302,6 +305,7 @@ export class TrackVoice {
   /** Play one note. `length` in seconds (Infinity: the strings ring on; the keys and the synth are held until stopped). */
   note(midi: number, when: number, velocity: number, length: number, o: NoteOpts = {}) {
     if (this.gone) return;
+    this.wake(when);
     const inst = this.inst;
     if (!inst) {
       this.harp.play(midi, when, velocity, o.slot, length, !!o.cut, o.lift ?? 1, o.as, o.until);
@@ -340,6 +344,7 @@ export class TrackVoice {
   hold(midi: number, when: number, velocity: number): number {
     const inst = this.inst;
     if (this.gone || this.offline || !inst) return 0;
+    this.wake(when);
     let note = 0;
     if (inst instanceof SynthInstrument) note = inst.hold(midi, when, velocity);
     else if (isKeys(inst)) {
@@ -381,14 +386,35 @@ export class TrackVoice {
     if (this.inst instanceof SynthInstrument) this.inst.sync(when);
   }
 
-  /** Let every note go from `at`. */
+  /**
+   * Let every note go from `at` (■). Live, the track also fades out over the synth's stop fade,
+   * its room and echoes too, so nothing rings on for seconds after ■ (a hall's tail behind a
+   * drone otherwise lingers); the next note played on it brings it back.
+   */
   stopAll(at = this.c.currentTime) {
     clearTimeout(this.settle);
     this.harp.stopAll(at);
     const inst = this.inst;
-    if (!inst) return;
-    if (isKeys(inst)) inst.pedal(false, at);
-    inst.stopAll(at);
+    if (inst) {
+      if (isKeys(inst)) inst.pedal(false, at);
+      inst.stopAll(at);
+    }
+    if (this.offline || this.gone) return;
+    this.hushed = true;
+    const g = this.out.gain;
+    g.cancelScheduledValues(at);
+    // (to 1% in the fade's time: the room is 40 dB down by then, and silent soon after)
+    g.setTargetAtTime(0, at, STOP_FADE / 4.6);
+  }
+
+  /** A note is coming at `when` after ■ faded the track out: it comes back just before it (quickly, without a click). */
+  private wake(when: number) {
+    if (!this.hushed || this.offline) return;
+    this.hushed = false;
+    const t = Math.max(this.c.currentTime, when - 0.03);
+    const g = this.out.gain;
+    g.cancelScheduledValues(t);
+    g.setTargetAtTime(1, t, 0.006);
   }
 
   /** Offline, before the render: load what the notes need, then play what was written down. */

@@ -163,6 +163,12 @@ export class SynthInstrument implements Instrument {
     if (!isOffline(this.ctx)) {
       // live: a note that both started and ended while the processor was loading would only be a blip; leave it out
       const now = this.ctx.currentTime;
+      // ■ pressed while it was loading: what was sent before it was stopped before it could sound.
+      // Handed over as it is, every one of those notes would start at once (their time has passed)
+      // and ring out after the stop, a burst of the whole passage booked so far.
+      let stop = -1;
+      events.forEach((e, i) => e.type === "stop" && (stop = i));
+      if (stop >= 0) events = events.filter((e, i) => i > stop || (e.type !== "on" && e.type !== "off" && e.type !== "stop"));
       const gone = new Set<number>();
       for (const e of events) if (e.type === "off" && e.t < now) gone.add(e.id);
       if (gone.size) events = events.filter((e) => !((e.type === "on" || e.type === "off") && gone.has(e.id)));
