@@ -775,6 +775,8 @@ export class SynthKernel {
   private hushG = 1;
   private idle = false;
   private silent = 0;
+  /** the loudest sample of the stretch rendered last: was anything heard when a stop comes? */
+  private lastPeak = 0;
   private SM: number;
 
   // worked out once per control block and shared by every voice
@@ -1045,9 +1047,11 @@ export class SynthKernel {
     } else if (t === EV_OFF) this.off(this.evC[i]);
     else if (t === EV_ALL_OFF) this.releaseAll();
     else if (t === EV_STOP) {
+      // (▶ stops everything first: from silence there is nothing to fade, and a fade would soften the first note)
+      const heard = this.activeVoices() > 0 || this.lastPeak >= 1e-7;
       this.releaseAll();
       this.mono = null;
-      if (this.hushMode !== 1) {
+      if (heard && this.hushMode !== 1) {
         this.hushMode = 1;
         // (from wherever a fade back up had got to, so the level never jumps)
         this.hushX = 1 - Math.sqrt(this.hushG);
@@ -1332,6 +1336,7 @@ export class SynthKernel {
       } else {
         if (this.ctlPos === 0) this.controlTick();
         const peak = this.renderSpan(L, R, offset + i, len);
+        this.lastPeak = peak;
         // silent for half a second with no note sounding: rest
         if (peak < 1e-7 && this.activeVoices() === 0) {
           this.silent += len;

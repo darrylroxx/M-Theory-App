@@ -395,6 +395,21 @@ describe("■ (a stop)", () => {
     expect(level(3, 1)).toBeLessThan(1.3 * ref);
   });
 
+  it("▶ from silence (which stops first) does not soften the first note's attack", () => {
+    // a pluck's attack is all in its first few milliseconds
+    const first = (stop: boolean) => {
+      const k = new SynthKernel(SR, { seed: 3 });
+      k.setParams(soundFor(presetById("saw-pluck")!.params));
+      k.snapSmoothing();
+      if (stop) feed(k, { type: "stop", t: 1 });
+      feed(k, { type: "on", t: 1.08, midi: 60, vel: 0.8, id: 1 });
+      feed(k, { type: "off", t: 1.5, id: 1 });
+      const { L } = run(k, 1.2);
+      return rms(L, 1.08 * SR, 1.09 * SR);
+    };
+    expect(first(true)).toBeCloseTo(first(false), 6);
+  });
+
   it("a stop with nothing playing, or two in a row, does no harm", () => {
     const k = new SynthKernel(SR, { seed: 3 });
     k.setParams(droneSound());
