@@ -92,8 +92,8 @@ export const KITS: Kit[] = [
   { id: "808", name: "808", hint: "Analog classic: long boomy kick, snappy snare, metallic hats, cowbell.", names: { ...BASE_NAMES, shaker: "Maracas" } },
   { id: "909", name: "909", hint: "Harder analog: thumping kick, cracking snare, sizzling cymbals.", names: { ...BASE_NAMES, bell: "Ride" } },
   { id: "707", name: "707", hint: "80s digital: tight, clean and punchy. Post-punk and dark wave.", names: { ...BASE_NAMES, shaker: "Tambourine" } },
-  { id: "linn", name: "Linn", hint: "80s studio machine playing real drums: fat kick, big snare, hand claps.", names: { ...BASE_NAMES, rim: "Sidestick", shaker: "Tambourine" } },
-  { id: "volca", name: "Volca", hint: "Small analog box: clicky punchy kick, snappy snare, grainy hats.", names: { ...BASE_NAMES, rim: "Clave", bell: "Agogo" } },
+  { id: "linn", name: "Sampled", hint: "80s studio machine playing real drums: fat kick, big snare, hand claps.", names: { ...BASE_NAMES, rim: "Sidestick", shaker: "Tambourine" } },
+  { id: "volca", name: "Pocket", hint: "Small analog box: clicky punchy kick, snappy snare, grainy hats.", names: { ...BASE_NAMES, rim: "Clave", bell: "Agogo" } },
   { id: "lofi", name: "Lo-fi", hint: "80s 8-bit sample machine: punchy, gated and crunchy.", names: { ...BASE_NAMES, shaker: "Tambourine" } },
   { id: "mod", name: "Modular", hint: "Patched on a synth: thuds, noise bursts, ticks, zaps and bleeps.", names: { kick: "Thud", snare: "Burst", clap: "Static", hat: "Tick", open: "Sizzle", tom: "Zap", rim: "Click", shaker: "Hiss", bell: "Bleep" } },
 ];

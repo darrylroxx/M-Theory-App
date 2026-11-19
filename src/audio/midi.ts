@@ -1,7 +1,6 @@
 /**
- * Standard MIDI File export. Drag the .mid into any DAW (GarageBand, Logic,
- * Ableton, Reaper, FL…) and your progression shows up with the exact voicings
- * and rhythm you heard in the app.
+ * Standard MIDI File export. Drag the .mid into any recording app and your
+ * progression shows up with the exact voicings and rhythm you heard in the app.
  */
 import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import { hasTune, melodyBeats } from "../song/melody";

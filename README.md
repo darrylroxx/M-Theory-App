@@ -122,7 +122,7 @@ On the **Chords** page:
 9. **Drums** (the third part of a section). At first it shows only what you need: the kit, the rhythm and the grid.
    - **Kit ‹ ›**: the arrows flip through kits, the name opens the list.
      - 24 kits by sound and genre: Soft Box, Cassette, Dusty, Cold Wave, Dark Club, Neon, Arena, Studio, Brushes, Trap, Techno, Industrial, Glitch, Dub, Breaks, Analog, Mallets, Boom Bap, Garage, Funk, Disco, Jazz Club, Metal, Hand Drums. Each picks a sound for every drum, knob settings, effects and a colour of saturation.
-     - 8 machines, each built the way the real one makes sound: **Vintage** (70s organ rhythm box), **808**, **909**, **707**, **Linn**, **Volca**, **Lo-fi** (8-bit), **Modular**.
+     - 8 machines, each built the way the real one makes sound: **Vintage** (70s organ rhythm box), **808**, **909**, **707**, **Sampled** (80s machine playing real drums), **Pocket** (a small analog box), **Lo-fi** (8-bit), **Modular**.
      - **+ Save this kit** keeps your own setup for other songs.
    - Every section can have its own rhythm and its own kit, and the drums can be off in one section and on in the next.
    - **Every drums track is a kit of its own**: its own effects, noise bed, pump and fader, so Drums 2 can be drenched in reverb while Drums 1 stays dry, and soloing or muting one never touches the other. A new section starts an added drums track on its own kit. Switching drums track closes an edit in progress and lets go of a soloed drum.

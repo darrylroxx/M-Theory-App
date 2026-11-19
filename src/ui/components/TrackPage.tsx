@@ -209,7 +209,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                   <span className="tv-label">{t.name}</span>
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
-                {/* ⟳ beside the volume, so the name keeps the room (on a phone it ends the name's line) */}
+                {/* ⟳ beside the volume, so the name keeps the room */}
                 {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setSheet({ kind: t.kind as "chords" | "melody", track: t })} />}
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
