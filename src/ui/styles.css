@@ -1144,3 +1144,5 @@ main.wide .dm-panel, main.wide .dm-drawer { max-width: 1100px; }
   .tl-wrap { gap: 4px; }
   .tl-wrap .dm-page { min-width: 26px; padding-inline: 4px; }
 }
+/* the pass's progress line stays across the lane as it stands, over the bars that scroll beneath it */
+.tl-wrap .tl-fill { z-index: 1; pointer-events: none; }

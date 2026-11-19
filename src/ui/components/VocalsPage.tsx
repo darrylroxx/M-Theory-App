@@ -8,7 +8,7 @@ import { audioContext } from "../../audio/context";
 import { fader } from "../../audio/mix";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { activeTake, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
+import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
 import { TakeLane, type LaneBar } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
@@ -510,7 +510,13 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
       // between the engine's reports, the music has moved on at its rate
       const pos = s.pos + Math.min(0.1, (performance.now() - s.at) / 1000) * rate.current;
       const at = passAt(pos, s.count_in, s.length);
-      return at ? at.frac : null;
+      if (!at) return null;
+      // the lane draws every bar the same width: a loop from a 4/4 section into a 3/4 one is
+      // further on the lane than in time once it is in the shorter bars
+      const bars = laneRef.current;
+      let total = 0;
+      for (const b of bars) total += b.beats;
+      return total > 0 ? barsInto(bars, at.frac * total) / bars.length : at.frac;
     }
     if (!playingRef.current) return null;
     const w = getWhere();

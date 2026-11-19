@@ -126,6 +126,22 @@ export function clickPlan(bars: readonly { beats: number }[] | undefined, fallba
   return { beatsPerBar, countInBeats: Math.max(0, Math.round(countIn) || 0) * beatsPerBar, bars: list };
 }
 
+/**
+ * How many bars `beats` beats reach, counted from bar `from` of a run of bars that can differ in
+ * length: after a 4/4 bar and into a 3/4 one, 6 beats is 1⅔ bars, not 1½. The Vocals lane draws
+ * every bar the same width, so a moment of the loop, or a take's length, is turned into bars
+ * this way. Never past the last bar.
+ */
+export function barsInto(bars: readonly { beats: number }[], beats: number, from = 0): number {
+  let left = Number.isFinite(beats) ? Math.max(0, beats) : 0;
+  for (let k = Math.max(0, from); k < bars.length; k++) {
+    const len = bars[k].beats > 0 ? bars[k].beats : 1;
+    if (left < len) return k - from + left / len;
+    left -= len;
+  }
+  return Math.max(0, bars.length - from);
+}
+
 /** How many bars a take lasts at a tempo (the Track page and the Vocals lane draw it this long). */
 export const takeBars = (t: Take, bpm: number, beatsPerBar: number): number => t.frames / t.rate / (60 / bpm) / Math.max(1, beatsPerBar);
 
