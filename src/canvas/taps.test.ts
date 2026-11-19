@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Track } from "../song/tracks";
-import { MAX_TAPS, handOf, layerOf, planKey, planTaps } from "./taps";
+import { MAX_TAPS, handOf, heardIn, layerOf, planKey, planTaps } from "./taps";
 
 const t = (id: string, kind: Track["kind"], o: Partial<Track> = {}): Track => ({ id, kind, name: id, ...o });
 
@@ -42,6 +42,18 @@ describe("which parts of the app's own song the canvas listens to", () => {
     ]);
     // muting a track remakes the ears
     expect(planKey(muted)).not.toBe(planKey(planTaps({ tracks })));
+  });
+
+  it("a fader pulled all the way down is as silent as a mute: no ear, no hand, and the notes it was told of are not painted", () => {
+    const tracks = [t("d2", "drums"), t("h1", "melody", { role: "harmony" })];
+    const plans = planTaps({ tracks, mix: { h1: { db: -60 }, d2: { db: -12 } } });
+    expect(plans.map((p) => p.key)).toEqual(["chords", "melody", "drums", "d2"]);
+    const heard = heardIn(plans);
+    expect(["chords", "melody", "drums", "d2"].every(heard)).toBe(true);
+    expect(heard("h1")).toBe(false);
+    // muted, or left out by a solo
+    expect(heardIn(planTaps({ tracks, mix: { d2: { mute: true } } }))("d2")).toBe(false);
+    expect(heardIn(planTaps({ tracks, mix: { h1: { solo: true } } }))("drums")).toBe(false);
   });
 
   it("never more than six ears: past that, tracks of one layer share one", () => {

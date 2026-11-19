@@ -9,7 +9,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, asAudio } from "../audio/fakectx";
 import { TrackVoice, pianoShape, synthShape } from "../audio/trackvoice";
 import { playChord, playTuneNote, playTuneSpan, type SynthCache } from "../audio/trackplay";
-import { due, listen, type NotePulse, type Pulse } from "../audio/pulse";
+import { due, listen, pulse, type NotePulse, type Pulse } from "../audio/pulse";
 import { playStep } from "../audio/drumbus";
 import { DEFAULT_BEAT, type Beat } from "../audio/beats";
 import { setMix } from "../audio/mix";
@@ -18,8 +18,8 @@ import { presetById } from "../synth/presets";
 import type { PlaySettings } from "../synth/params";
 import type { SynthEvent } from "../synth/kernel";
 import type { Track } from "../song/tracks";
-import { cueOfPulse } from "./cues";
-import { handOf, layerOf, planTaps } from "./taps";
+import { cueOfPulse, trackOfPulse } from "./cues";
+import { handOf, heardIn, layerOf, planTaps } from "./taps";
 import { fileWhen } from "./clock";
 import { Artist, type LayerCue } from "./painting";
 import { getPalette } from "./palettes";
@@ -247,5 +247,40 @@ describe("each instrument is painted as what it is", () => {
       expect(x.covered).toBeLessThan(Math.max(1.3 * strings.covered, 1.2 * x.target));
       expect(x.covered).toBeGreaterThan(0.01);
     }
+  });
+
+  it("a track muted while it plays stops being painted at once, a held drone too, and notes it was told of before are dropped", () => {
+    const a = new Artist();
+    a.size(1000, 560);
+    a.setPalette(getPalette("woodblock"));
+    a.setKey(0, [0, 2, 4, 5, 7, 9, 11]);
+    const song: Track[] = [{ id: "c2", kind: "chords", name: "Chords 2" }];
+    // a drone on Chords 2 (held for the whole passage, its low notes on a bass hand of their own), and the guitar's chords
+    const drone = chordsOn(synth("saw-drone", { mode: "drone", humanise: 0 })).pulses;
+    const guitar = chordsOn(GUITAR, null).pulses;
+    // (and a note told of a moment before the mute, due after it)
+    pulse({ ...drone[0], time: 1.2 });
+    const late = due(Infinity);
+    const paint = (plans: ReturnType<typeof planTaps>, ps: Pulse[], from: number, to: number) => {
+      const heard = heardIn(plans);
+      const all = ps.filter((p) => heard(trackOfPulse(p))).map((p) => cueOfPulse(p, id++, layerOf(plans), () => 1, handOf(plans)));
+      for (let f = Math.round(from * 60); f <= to * 60; f++) {
+        const now = f / 60;
+        a.hear({ now, when: fileWhen(16, 2, 1), mix: [], cues: all.filter((c) => c.cue.t > now - 1 / 60 && c.cue.t <= now) });
+      }
+    };
+    const on = planTaps({ tracks: song });
+    a.keepHands(on.map((p) => p.key));
+    paint(on, [...drone, ...guitar], 0, 1.1);
+    expect([...a.hands.keys()]).toEqual(expect.arrayContaining(["c2", "c2:bass", "chords"]));
+    const made = a.hands.get("c2:bass")!.made;
+    expect(made).toBeGreaterThan(0);
+    // muted at 1.1 s: its hands go (the drone would otherwise be painted on for its whole length); the guitar goes on
+    const off = planTaps({ tracks: song, mix: { c2: { mute: true } } });
+    a.keepHands(off.map((p) => p.key));
+    expect([...a.hands.keys()].some((k) => k.startsWith("c2"))).toBe(false);
+    paint(off, late, 1.1, 4);
+    expect([...a.hands.keys()].some((k) => k.startsWith("c2"))).toBe(false);
+    expect(a.hands.has("chords")).toBe(true);
   });
 });

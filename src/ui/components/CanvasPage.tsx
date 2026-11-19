@@ -7,14 +7,14 @@ import { due, dropPulses, listen as listenPulses } from "../../audio/pulse";
 import { STEMS, readStem } from "../../audio/stems";
 import { songWhen, fileWhen, heardTime } from "../../canvas/clock";
 import { Cover, STEM_IDS, type StemId } from "../../canvas/cover";
-import { cueOfPulse } from "../../canvas/cues";
+import { cueOfPulse, trackOfPulse } from "../../canvas/cues";
 import { LAYER_INFO, LAYER_ORDER, type LayerKind } from "../../canvas/layers";
 import { MARGIN, REGIONS, RULER_HZ, hzLabel, pageOf, yOfHz, type Spot } from "../../canvas/layout";
 import { FADES, Painting, STYLES, type EarFrames, type LayerCue } from "../../canvas/painting";
 import { LAYOUTS, type LayoutId } from "../../canvas/place";
 import { Sim } from "../../canvas/sim";
 import { paintSwatches } from "../../canvas/swatch";
-import { handOf, layerOf, planKey, planTaps } from "../../canvas/taps";
+import { handOf, heardIn, layerOf, planKey, planTaps } from "../../canvas/taps";
 import type { Frame } from "../../listen/ear";
 import { FileLayers } from "../../listen/filelayers";
 import { listenLive, type Listening } from "../../listen/live";
@@ -351,6 +351,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     let gone = false;
     /** the ears on the app's own sound, and the plan they were made for */
     let asking = "";
+    /** the plan the hands were last kept to */
+    let handsFor = "";
     /** every note and hit the app plays, collected while the page is on screen */
     const stopPulses = listenPulses();
     let cueId = 1;
@@ -440,9 +442,18 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           passSeconds = pg.perPage * spot.bar * spot.spb;
           const nowHeard = heardTime(c) + LEAD;
           const plans = lv.plans;
+          // a track muted (or left out by a solo) stops being painted now, its held notes too
+          if (handsFor !== lv.plansId) {
+            handsFor = lv.plansId;
+            a.keepHands(plans.map((pl) => pl.key));
+          }
           const hand = handOf(plans);
           const layer = layerOf(plans);
-          const cues: LayerCue[] = due(nowHeard + 0.3).map((pl) => cueOfPulse(pl, cueId++, layer, levelOf, hand));
+          const heardNow = heardIn(plans);
+          // (notes told of before their track was muted are not painted either)
+          const cues: LayerCue[] = due(nowHeard + 0.3)
+            .filter((pl) => heardNow(trackOfPulse(pl)))
+            .map((pl) => cueOfPulse(pl, cueId++, layer, levelOf, hand));
           const ears: EarFrames[] = plans.map((pl) => ({ key: pl.key, layer: pl.layer, frames: heard.taps.get(pl.key) ?? none, exact: pl.light }));
           p.hear({ now: nowHeard, when: songWhen(spot, at, width, clock.start, clock.jump), mix: heard.mix, ears, cues });
           for (const s of STEMS) readStem(s, levels.current[s]);

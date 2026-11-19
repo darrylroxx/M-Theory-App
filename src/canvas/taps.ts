@@ -11,14 +11,14 @@
  * Every drums track has a desk of its own that goes out through its own fader, so each is heard
  * on its own, like any other track, and painted by a hand of its own in the drums layer.
  *
- * A track that is not heard (muted, or another track is soloed) gets no ear: nothing of it is
- * painted, and the ears go to the tracks that are heard. Ears cost time on the audio thread, so
+ * A track that is not heard (muted, another track soloed, or its fader all the way down) gets no
+ * ear and no hand: nothing of it is painted (not even notes it was told of just before), and the ears go to the tracks that are heard. Ears cost time on the audio thread, so
  * there are never more than six: beyond that, tracks painted in the same layer share an ear (and
  * a hand).
  */
 import { allTracks, type Track } from "../song/tracks";
 import type { Progression } from "../ui/state";
-import { audible } from "../audio/mix";
+import { gainOf } from "../audio/mix";
 import { layerOfTrack, type LayerKind } from "./layers";
 
 export const MAX_TAPS = 6;
@@ -41,7 +41,8 @@ export interface TapPlan {
 export function planTaps(p: Pick<Progression, "tracks" | "mix">): TapPlan[] {
   const plans: TapPlan[] = [];
   for (const t of allTracks(p)) {
-    if (!audible(p.mix, t.id)) continue;
+    // (a fader all the way down is as silent as a mute)
+    if (gainOf(p.mix, t.id) <= 0) continue;
     plans.push({ key: t.id, layer: layerOfTrack(t as Track), faders: [t.id], members: [t.id], light: t.kind !== "vocals" });
   }
   // too many ears: tracks of one layer share one. Drums first (two kits' hits on one hand are still hits), then washes
@@ -67,6 +68,12 @@ export function handOf(plans: TapPlan[]): (track: string) => string {
   const m = new Map<string, string>();
   for (const pl of plans) for (const id of pl.members) m.set(id, pl.key);
   return (track) => m.get(track) ?? track;
+}
+
+/** Is a track heard (and painted) at all? A note it was told of before it was muted is not painted. */
+export function heardIn(plans: TapPlan[]): (track: string) => boolean {
+  const m = new Set(plans.flatMap((pl) => pl.members));
+  return (track) => m.has(track);
 }
 
 /** The layer each track is painted in. */
