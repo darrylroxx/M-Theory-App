@@ -11,7 +11,7 @@
  * option, or the same one after its source changed. Sections changed by hand since are only
  * written over after a yes.
  */
-import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { addHarmony, harmonyMenu, harmonySources, harmonyState, optionOf, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
 import type { Track } from "../../song/tracks";
@@ -60,6 +60,19 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
 
   // the sheet goes: the audition stops and the loop is put back
   useEffect(() => () => hear(null), []); // eslint-disable-line react-hooks/exhaustive-deps
+  // how tall the sheet is, so an undo offered while it is open sits just above it (not over the page tabs)
+  const sheet = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const el = sheet.current;
+    if (!el) return;
+    const root = document.documentElement.style;
+    const ro = new ResizeObserver(() => root.setProperty("--hz-sheet-h", `${Math.ceil(el.getBoundingClientRect().height)}px`));
+    ro.observe(el);
+    return () => {
+      ro.disconnect();
+      root.removeProperty("--hz-sheet-h");
+    };
+  }, []);
   useEffect(() => {
     const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", esc);
@@ -108,7 +121,7 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
   );
   const srcName = (sid: string) => sources.find((t) => t.id === sid)?.name ?? "";
   return (
-    <div className="hz-sheet" role="dialog" aria-label={track ? `Write ${track.name} again` : `New ${KIND_WORD[kind]} track`}>
+    <div ref={sheet} className="hz-sheet" role="dialog" aria-label={track ? `Write ${track.name} again` : `New ${KIND_WORD[kind]} track`}>
       <div className="hz-row">
         {track ? (
           <span className="hz-src-now" title={`Written from ${srcName(track.harmony?.from ?? "")}`}>

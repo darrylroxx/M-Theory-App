@@ -632,7 +632,8 @@ button.dm-strip-name:hover { color: var(--accent); }
   .topbar-inner > * { margin-block: 5px; }
   .brand { margin-right: auto; height: 36px; }
   .tabs { order: 9; flex: 1 1 100%; margin: 0 0 5px; height: 39px; border-radius: 12px; padding: 3px; }
-  .tab { flex: 1 1 0; padding: 0; border-radius: 9px; font-size: 0.92rem; font-weight: 800; }
+  /* each tab as wide as its name plus an even share of the rest, so the gaps between names are even */
+  .tab { flex: 1 1 auto; padding: 0; border-radius: 9px; font-size: 0.92rem; font-weight: 800; }
   .song-frame.transport { padding: 6px 8px; margin-inline: -4px; }
   .sf-mode button { padding-inline: 8px; font-size: 0.8rem; }
   .sf-sum { display: none; }
@@ -1227,8 +1228,8 @@ span.cv-better { cursor: default; }
 }
 /* the option a harmony track was written with, while another is being tried */
 .hz-opts .chip.now:not(.on) { border-color: var(--accent); }
-/* an undo offered while the sheet is open goes to the top, clear of it */
-body:has(.hz-sheet) .toast.act { top: calc(64px + env(safe-area-inset-top, 0px)); bottom: auto; }
+/* an undo offered while the sheet is open sits just above it, clear of it and of the page tabs */
+body:has(.hz-sheet) .toast.act { bottom: calc(var(--hz-sheet-h, 0px) + 22px + env(safe-area-inset-bottom, 0px)); }
 /* ✕ keeps the top right corner however the chips wrap */
 .hz-sheet > .hz-row:first-child { padding-right: 38px; }
 .hz-sheet .hz-x { position: absolute; top: 10px; right: 10px; }
