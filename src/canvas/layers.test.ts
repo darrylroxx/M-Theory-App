@@ -208,7 +208,7 @@ describe("each layer paints in its own kind of paint", () => {
     }
     const line = (ms: Stamp[]) => ms.filter((m) => m.kind === 0 && m.stretch < 2);
     expect(mean(line(hm).map((m) => m.r))).toBeLessThan(0.8 * mean(line(mm).map((m) => m.r)));
-    const hatch = hm.filter((m) => m.stretch === 2.2 && m.hard === 0.7);
+    const hatch = hm.filter((m) => m.hard === 0.7 && m.load === 0.55);
     expect(hatch.length).toBeGreaterThan(5);
   });
 

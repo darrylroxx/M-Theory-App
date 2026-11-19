@@ -175,10 +175,10 @@ export function playNote(midi: number, when?: number, velocity = 0.8, slot?: num
 }
 
 /**
- * The on-screen keys of a synth (see synth/live.ts): notes go to the track the page is editing,
- * on its own synth. Its processor starts loading at the first touch.
+ * The on-screen keys of a piano or synth track (see synth/live.ts): notes go to the track the page
+ * is editing, on its own instrument. Its recordings or its processor start loading at the first touch.
  */
-export function liveSynth(kind: "chord" | "melody"): LiveOut {
+export function liveKeys(kind: "chord" | "melody"): LiveOut {
   const v = () => {
     const x = kind === "melody" ? tuneVoice() : chordVoice();
     void x.load().catch(() => {});

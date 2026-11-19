@@ -1,15 +1,15 @@
 /**
- * Keys to play the synth by hand: one to three octaves (as many as fit the width), ‹ › to move
- * up and down, and the computer keyboard while the keys have focus (A W S E D F T G Y H U J K,
- * Z and X for the octave). Press lower on a key to play it harder. Sliding a finger or the mouse
- * along the keys plays each one it crosses.
+ * Keys to play a piano or synth track by hand: one to three octaves (as many as fit the width),
+ * ‹ › to move up and down, and the computer keyboard while the keys have focus (A W S E D F T G Y
+ * H U J K, Z and X for the octave). Press lower on a key to play it harder. Sliding a finger or
+ * the mouse along the keys plays each one it crosses.
  *
- * The notes are played the synth's way (see synth/live.ts): held, latched for a drone, or
- * walked as an arpeggio.
+ * On the synth the notes are played its way (see synth/live.ts): held, latched for a drone, or
+ * walked as an arpeggio. A piano's are held while the key is down, as on a piano.
  */
 import { type KeyboardEvent, type PointerEvent, useEffect, useMemo, useRef, useState } from "react";
 import { LiveKeys, type LiveOut } from "../../synth/live";
-import type { PlaySettings } from "../../synth/params";
+import { DEFAULT_PLAY, type PlaySettings } from "../../synth/params";
 
 const NAMES = ["C", "C♯", "D", "D♯", "E", "F", "F♯", "G", "G♯", "A", "A♯", "B"];
 const BLACK = new Set([1, 3, 6, 8, 10]);
@@ -19,8 +19,10 @@ const COMPUTER = "awsedftgyhujkolp;";
 const MIN_WHITE = 30;
 const LOW = 24;
 const HIGH = 96;
+/** a piano's keys: each sounds while it is held */
+const HELD: PlaySettings = { ...DEFAULT_PLAY, mode: "sustain" };
 
-export function SynthKeys({ out, play }: { out: LiveOut; play: PlaySettings }) {
+export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?: PlaySettings; className?: string }) {
   const playRef = useRef(play);
   playRef.current = play;
   const live = useMemo(() => new LiveKeys(out, () => playRef.current), [out]);
@@ -131,7 +133,7 @@ export function SynthKeys({ out, play }: { out: LiveOut; play: PlaySettings }) {
   const on = new Set(lit);
 
   return (
-    <div className="syn-keys-row">
+    <div className={`syn-keys-row${className ? ` ${className}` : ""}`}>
       <button className="icon-btn" aria-label="Octave down" disabled={base <= LOW} onClick={() => shift(-1)}>‹</button>
       <div ref={box} className="syn-keys" role="group" aria-label="Keys" tabIndex={0}
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}

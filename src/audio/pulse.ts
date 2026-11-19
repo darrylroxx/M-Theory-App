@@ -32,6 +32,17 @@ export interface NotePulse {
   octave: number;
   /** the note itself, measured */
   sound: Sound;
+  /**
+   * A key held down by hand: how long it is let go is not known yet, so `length` is as long as it
+   * could sound, and `pulseRelease` tells when the key came up (by this number).
+   */
+  hold?: number;
+}
+/** A key held by hand came up. */
+export interface NoteRelease {
+  hold: number;
+  /** when it is heard to stop (audio clock, seconds) */
+  time: number;
 }
 /** A drum hit. */
 export interface DrumPulse {
@@ -49,6 +60,8 @@ export type Pulse = NotePulse | DrumPulse;
 
 let listeners = 0;
 let queue: Pulse[] = [];
+let ends: NoteRelease[] = [];
+let holds = 0;
 
 /** Start collecting. Call what it returns to stop. */
 export function listen(): () => void {
@@ -58,7 +71,10 @@ export function listen(): () => void {
     if (!on) return;
     on = false;
     listeners = Math.max(0, listeners - 1);
-    if (!listeners) queue = [];
+    if (!listeners) {
+      queue = [];
+      ends = [];
+    }
   };
 }
 
@@ -85,9 +101,34 @@ export function due(now: number): Pulse[] {
   return out.sort((a, b) => a.time - b.time);
 }
 
+/** A number for a key held down by hand, to tell its release by. */
+export const holdId = () => ++holds;
+
+/** A key held down by hand (`hold` on its note) comes up at `time`. */
+export function pulseRelease(hold: number, time: number) {
+  if (!listeners) return;
+  // its note not handed out yet: it is simply shorter
+  for (const p of queue)
+    if (p.kind !== "drum" && p.hold === hold) {
+      p.length = Math.max(0.01, Math.min(p.length, time - p.time));
+      return;
+    }
+  ends.push({ hold, time });
+  if (ends.length > 500) ends.splice(0, 250);
+}
+
+/** The keys held by hand that have come up by `now`, oldest first. Each is handed out once. */
+export function dueReleases(now: number): NoteRelease[] {
+  if (!ends.length) return [];
+  const out = ends.filter((e) => e.time <= now).sort((a, b) => a.time - b.time);
+  ends = ends.filter((e) => e.time > now);
+  return out;
+}
+
 /** Forget what has not sounded yet (playing was stopped). */
 export function dropPulses() {
   queue = [];
+  ends = [];
 }
 
 /** How many are waiting (for tests). */

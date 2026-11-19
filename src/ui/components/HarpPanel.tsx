@@ -6,11 +6,12 @@ import { DRIVES, FX_DEFAULT, HARP_VERBS, TREM_SPEEDS, type HarpSound } from "../
 import { SOUNDS, sameSound, soundName, soundOfPreset } from "../../audio/sounds";
 import { INSTRUMENTS, KEYS_MODELS, synthOf, type InstId, type Tone } from "../../audio/tone";
 import type { SynthParams } from "../../synth/params";
-import { liveSynth } from "../../audio/synth";
+import { liveKeys } from "../../audio/synth";
 import { newId, useApp } from "../state";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
 import { SynthPanel } from "./SynthPanel";
+import { SynthKeys } from "./SynthKeys";
 
 /** The instruments' small pictures, for the switch and the Track page. */
 export function InstIcon({ inst }: { inst: InstId }) {
@@ -92,9 +93,9 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
   const tone = instProps?.tone;
   const strings = inst === "guitar";
   const toggle = (d: string) => setDrawer(drawer === d ? null : d);
-  // the synth's keys play this track (the page routes notes to the track it is editing)
+  // the keys play this track on its piano or synth (the page routes notes to the track it is editing)
   const keyKind = instProps?.kind === "melody" ? "melody" : "chord";
-  const keys = useMemo(() => liveSynth(keyKind), [keyKind]);
+  const keys = useMemo(() => liveKeys(keyKind), [keyKind]);
   const extra = children?.(drawer, toggle);
 
   const voiceAt = HARP_VOICES.findIndex((v) => v.id === sound.voice);
@@ -140,6 +141,7 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
         {!strings && <LinkChip link={link} what="effects" />}
       </div>
       {extra?.drawers}
+      {inst === "piano" && <SynthKeys out={keys} className="piano" />}
       {inst === "synth" && instProps && (
         <SynthPanel compact params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} keys={keys} />
       )}

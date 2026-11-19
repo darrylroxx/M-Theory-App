@@ -151,8 +151,6 @@ interface Stroke {
   /** a wash already laid as far as this time, and where (the chords) */
   laid: number;
   laidAt: { x: number; y: number } | null;
-  /** for the harmony's hatching: where it has been */
-  marks: number;
   /** the pitch (semitones) the brush is making for, and the height on the frequency scale it was last at */
   aim: number;
   up: number;
@@ -188,6 +186,14 @@ const isLine = (l: LayerKind) => l === "melody" || l === "harmony" || l === "bas
 const HIGH_BANDS = Array.from({ length: NOISE_BANDS }, (_, b) => noiseHz(b)).filter((hz) => hz >= 5000).length;
 /** Shorter than this is a stab: a dab, a slab or a block. */
 const SHORT = 0.16;
+/**
+ * The harmony's hatching: a moment of it every so far along the line (design pixels; closer for a
+ * rougher harmony), a few links at that moment, each drawn as touches about this long. Tuned so a
+ * harmony that shadows its melody note for note lays fewer than twice the melody's marks a second.
+ */
+const HATCH_EVERY = 8;
+const HATCH_LINKS = 3;
+const HATCH_DASH = 6;
 /** How far up the scale a chord's wash may reach above its lowest note (about an octave and a half, where the notes live). */
 const CHORD_SPAN = 0.22;
 
@@ -231,6 +237,8 @@ export class LayerHand {
   private lifted: Lifted[] = [];
   /** recent points of the line, for hatching */
   readonly trail: { x: number; y: number; t: number }[] = [];
+  /** how far the harmony's line has gone since it was last hatched (real pixels) */
+  private hatchGap = 0;
   /** the colours */
   private col: LayerColours | null = null;
   private palette: RGB[] = [[60, 60, 60]];
@@ -295,6 +303,7 @@ export class LayerHand {
     this.line = null;
     this.lifted = [];
     this.trail.length = 0;
+    this.hatchGap = 0;
     this.now = -1;
     this.heardAt = -1;
     this.fogT = -1;
@@ -364,6 +373,19 @@ export class LayerHand {
       return;
     }
     s.until = Math.min(s.until, t);
+  }
+  /**
+   * A sound known in advance turned out shorter: it stops at `t` (a key held down by hand came
+   * up). One that has not begun yet keeps its start and is only made shorter.
+   */
+  end(id: number, t: number) {
+    const w = this.waiting.find((c) => c.id === id);
+    if (w) {
+      w.len = Math.max(0.01, Math.min(w.len ?? Infinity, t - w.t));
+      return;
+    }
+    const s = this.strokes.get(id);
+    if (s) s.until = Math.min(s.until, Math.max(s.cue.t + 0.01, t));
   }
   /** A hit (a drum, or the attack of something struck). */
   hit(c: Cue) {
@@ -534,7 +556,6 @@ export class LayerHand {
       seed: r() * 97,
       laid: c.t,
       laidAt: null,
-      marks: 0,
       aim: midiOfHz(c.hz),
       up: upOfHz(c.hz),
     };
@@ -722,41 +743,48 @@ export class LayerHand {
       const y = s.py + dy * f;
       this.mark(s, x, y, s.r, p, 1);
       s.load = Math.max(0, s.load - space / s.reach);
-      if (this.layer === "melody" || this.layer === "harmony") this.remember(x, y, s);
+      if (this.layer === "melody" || this.layer === "harmony") this.remember(x, y, s, space);
     }
     s.px += dx * ((n * space) / dist);
     s.py += dy * ((n * space) / dist);
   }
 
-  /** Where the line has been (for the harmony's hatching); and the hatching itself. */
-  private remember(x: number, y: number, s: Stroke) {
+  /** Where the line has been (for the harmony's hatching); and the hatching itself. `step`: how far the brush went since its last mark. */
+  private remember(x: number, y: number, s: Stroke, step: number) {
     this.trail.push({ x, y, t: s.t });
     if (this.trail.length > 90) this.trail.shift();
-    s.marks++;
-    if (this.layer !== "harmony" || !this.partner || s.marks % 2) return;
+    if (this.layer !== "harmony" || !this.partner) return;
     // Harmony's "sketchy" brush: link this point to points of the melody nearby, more surely the
-    // nearer they are, drawing only the middle of each link; rougher harmony, denser hatching
+    // nearer they are, drawing only the middle of each link; rougher harmony, denser hatching.
+    // The hatching goes by how far the line has gone, not by how many marks it has left: a harmony that follows its melody
+    // closely for a whole song would otherwise hatch at every touch of its brush, many times the marks of any other line
+    // (marks the budget only throws away, at the cost of the other layers' share).
+    const rough = clamp(0.3 + 0.9 * s.cue.rough + 0.4 * this.texture.rough);
+    this.hatchGap += step;
+    if (this.hatchGap < HATCH_EVERY * this.u * (1.5 - 0.7 * rough)) return;
+    this.hatchGap = 0;
     const lim = 64 * this.u;
     const r = s.rand;
-    const rough = clamp(0.3 + 0.9 * s.cue.rough + 0.4 * this.texture.rough);
-    // (a few links at a time: a harmony that follows its melody closely for a whole song would otherwise link every
-    // point to every point, tens of thousands of hairlines that the budget only throws away)
     let links = 0;
     const trail = this.partner.trail;
-    // (newest first: the hatching ties the harmony to where the melody is now)
-    for (let j = trail.length - 1; j >= 0 && links < 3; j--) {
-      const q = trail[j];
+    // (mostly to where the melody is now, sometimes to where it was a moment ago: the links lean different ways and cross)
+    for (let k = 0; k < 8 && links < HATCH_LINKS && trail.length; k++) {
+      const q = trail[trail.length - 1 - Math.floor(r() * r() * Math.min(trail.length, 60))];
       const dx = q.x - x;
       const dy = q.y - y;
       const d = dx * dx + dy * dy;
       if (d > lim * lim || d < 9 * this.u * this.u) continue;
-      if (r() > (1 - d / (lim * lim * 0.55)) * rough * 0.5) continue;
+      if (r() > (1 - d / (lim * lim * 0.55)) * (0.4 + 0.6 * rough)) continue;
       links++;
       const a = Math.atan2(dy, dx);
-      const steps = Math.max(2, Math.round(Math.sqrt(d) * 0.4 / (1.2 * this.u)));
-      for (let i = 0; i <= steps; i++) {
-        const f = 0.3 + (0.4 * i) / steps;
-        this.emit({ x: x + dx * f, y: y + dy * f, r: (0.55 + 0.35 * r()) * this.u, angle: a, stretch: 2.2, k: s.k, paint: 0.09 * this.manner.body, water: 0.02, vx: 0, vy: 0, load: 0.55, kind: 0, hard: 0.7, seed: r() * 97 });
+      // the middle of the link as a hairline of a few long touches, each running into the next
+      const len = Math.sqrt(d) * 0.4;
+      const steps = Math.max(1, Math.round(len / (HATCH_DASH * this.u)));
+      const rad = 0.7 * this.u;
+      const stretch = Math.max(2.2, (len / steps / (2 * rad)) * 1.2);
+      for (let i = 0; i < steps; i++) {
+        const f = 0.3 + (0.4 * (i + 0.5)) / steps;
+        this.emit({ x: x + dx * f, y: y + dy * f, r: rad * (0.85 + 0.3 * r()), angle: a, stretch, k: s.k, paint: 0.14 * this.manner.body, water: 0.02, vx: 0, vy: 0, load: 0.55, kind: 0, hard: 0.7, seed: r() * 97 });
       }
     }
   }

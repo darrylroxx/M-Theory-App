@@ -3,11 +3,11 @@ import { audioContext, audioIfStarted } from "../../audio/context";
 import { saveFile } from "../../audio/midi";
 import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
 import { fader, levelOf } from "../../audio/mix";
-import { due, dropPulses, listen as listenPulses } from "../../audio/pulse";
+import { due, dropPulses, dueReleases, listen as listenPulses } from "../../audio/pulse";
 import { STEMS, readStem } from "../../audio/stems";
 import { songWhen, fileWhen, heardTime } from "../../canvas/clock";
 import { Cover, STEM_IDS, type StemId } from "../../canvas/cover";
-import { cueOfPulse, trackOfPulse } from "../../canvas/cues";
+import { HeldCues, cueOfPulse, trackOfPulse } from "../../canvas/cues";
 import { LAYER_INFO, LAYER_ORDER, type LayerKind } from "../../canvas/layers";
 import { MARGIN, REGIONS, RULER_HZ, hzLabel, pageOf, yOfHz, type Spot } from "../../canvas/layout";
 import { FADES, Painting, STYLES, type EarFrames, type LayerCue } from "../../canvas/painting";
@@ -356,6 +356,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     /** every note and hit the app plays, collected while the page is on screen */
     const stopPulses = listenPulses();
     let cueId = 1;
+    /** notes of keys held down by hand, until they come up */
+    const held = new HeldCues();
     /** the app's own song: when it started (audio clock), how many times it has jumped, and where it was last */
     const clock = { start: 0, jump: 0, key: "", beat: -1, on: false };
     /** a song from a file: how far it has been painted, its jumps, and the vibe last handed on */
@@ -432,7 +434,12 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           const at = c.currentTime;
           if (!clock.on || (spot.key === clock.key && spot.beat < clock.beat - 0.05)) {
             // it started, or came round again
-            if (!clock.on) clock.start = at - spot.beat * spot.spb;
+            if (!clock.on) {
+              clock.start = at - spot.beat * spot.spb;
+              // notes played by hand before the song started (keys jammed while it was stopped) are not painted onto its start
+              due(clock.start - 0.1);
+              dueReleases(clock.start - 0.1);
+            }
             clock.jump++;
             clock.on = true;
           }
@@ -453,7 +460,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           // (notes told of before their track was muted are not painted either)
           const cues: LayerCue[] = due(nowHeard + 0.3)
             .filter((pl) => heardNow(trackOfPulse(pl)))
-            .map((pl) => cueOfPulse(pl, cueId++, layer, levelOf, hand));
+            .map((pl) => held.note(pl, cueOfPulse(pl, cueId++, layer, levelOf, hand)));
+          cues.push(...held.ends(dueReleases(nowHeard + 0.3)));
           const ears: EarFrames[] = plans.map((pl) => ({ key: pl.key, layer: pl.layer, frames: heard.taps.get(pl.key) ?? none, exact: pl.light }));
           p.hear({ now: nowHeard, when: songWhen(spot, at, width, clock.start, clock.jump), mix: heard.mix, ears, cues });
           for (const s of STEMS) readStem(s, levels.current[s]);

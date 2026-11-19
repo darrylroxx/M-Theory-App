@@ -17,7 +17,7 @@ import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 import { STRING_KEYS } from "./harp";
 import { Harp } from "./plucked";
 import { GUITAR, instKey, synthOf, type Tone } from "./tone";
-import { listening, pulse } from "./pulse";
+import { holdId, listening, pulse, pulseRelease } from "./pulse";
 import type { Sound } from "./describe";
 import { createElectricPiano, createPiano } from "../keys/piano";
 import { Sampler } from "../keys/sampler";
@@ -46,6 +46,8 @@ export const LEVEL_DB: Record<"grand" | "electric" | "synth", Record<VoiceKind, 
 const db = (v: number) => Math.pow(10, v / 20);
 
 export type VoiceKind = "chord" | "melody";
+/** The lanes of a keyboard's keys held down by hand (one a key), clear of the player's own. */
+export const HAND_LANE = 10_000;
 type Keys = Sampler | EPiano;
 
 /**
@@ -148,6 +150,9 @@ export class TrackVoice {
   private gone = false;
   /** the synth's sound as the canvas reads it (worked out again when the tone changes) */
   private shape: KeysShape | null = null;
+  /** keys held down by hand: the instrument, its note (the synth's id, or the keyboard's lane) and its number for the canvas */
+  private hands = new Map<number, { inst: Instrument; note: number; pulse: number }>();
+  private handIds = 0;
 
   constructor(
     readonly c: BaseAudioContext,
@@ -299,12 +304,7 @@ export class TrackVoice {
       return;
     }
     const len = o.cut ? Math.min(length, 0.12) : length;
-    if (this.harp.tag && listening()) {
-      const synth = this.tone.inst === "synth";
-      const k = synth ? (this.shape ??= synthShape(this.synth)) : pianoShape(this.tone.keys === "electric", midi);
-      // (a synth can hold a note for a whole section, a drone: it is painted for as long as it is held)
-      pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(synth ? 60 : 8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: k.cutoff, octave: 0, sound: keysSound(midi, k) });
-    }
+    this.tell(midi, when, velocity, len, o);
     // the synth takes its notes ahead of loading (they are handed to its processor when it is made); a keyboard needs its recordings first
     if (this.offline && isKeys(inst)) {
       this.wanted.push({ midi, velocity });
@@ -315,17 +315,49 @@ export class TrackVoice {
   }
 
   /**
-   * A key held down on the screen: the synth sounds until `letGo` (returns the note's id, 0 when
-   * this track is not on the synth). Played straight: the page works out arpeggios itself.
+   * Tell the canvas of a piano or synth note (when it is listening). `held`: a key held down by
+   * hand, whose length is not known until it comes up; returns the number its release is told by.
+   */
+  private tell(midi: number, when: number, velocity: number, len: number, o: NoteOpts = {}, held = false): number {
+    if (!this.harp.tag || !listening()) return 0;
+    const synth = this.tone.inst === "synth";
+    const k = synth ? (this.shape ??= synthShape(this.synth)) : pianoShape(this.tone.keys === "electric", midi);
+    const hold = held ? holdId() : undefined;
+    // (a synth can hold a note for a whole section, a drone: it is painted for as long as it is held; a piano dies away)
+    pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(synth ? 60 : 8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: k.cutoff, octave: 0, sound: keysSound(midi, k), hold });
+    return hold ?? 0;
+  }
+
+  /**
+   * A key held down on the screen: the piano or the synth sounds until `letGo` (returns the
+   * note's id; 0 when this track is on the strings, which have no keys). Played straight: the page
+   * works out arpeggios itself. The canvas is told of it as it is heard, and of when it stops.
    */
   hold(midi: number, when: number, velocity: number): number {
     const inst = this.inst;
-    if (this.gone || this.offline || !(inst instanceof SynthInstrument)) return 0;
-    return inst.hold(midi, when, velocity);
+    if (this.gone || this.offline || !inst) return 0;
+    let note = 0;
+    if (inst instanceof SynthInstrument) note = inst.hold(midi, when, velocity);
+    else if (isKeys(inst)) {
+      // each key held by hand has a lane of its own, so lifting it lets go of that note alone
+      note = HAND_LANE + Math.round(midi);
+      inst.play(midi, when, velocity, Infinity, note);
+    }
+    if (!note) return 0;
+    const id = ++this.handIds;
+    this.hands.set(id, { inst, note, pulse: this.tell(midi, when, velocity, Infinity, {}, true) });
+    return id;
   }
   letGo(id: number, when: number) {
-    const inst = this.inst;
-    if (id && inst instanceof SynthInstrument) inst.release(id, when);
+    const h = this.hands.get(id);
+    if (!h) return;
+    this.hands.delete(id);
+    // (the instrument was swapped while the key was down: the old one has already let go of everything)
+    if (h.inst === this.inst) {
+      if (h.inst instanceof SynthInstrument) h.inst.release(h.note, when);
+      else if (isKeys(h.inst)) h.inst.lift(h.note, when);
+    }
+    if (h.pulse) pulseRelease(h.pulse, when);
   }
 
   /** The pianist's pedal change at a new chord: up for a moment, then down again (only when Pedal is on). */
