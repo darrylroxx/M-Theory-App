@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
-import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, reviveClips } from "./clip";
+import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, reviveClips, undoFits } from "./clip";
 import { addNewSection, ensureSong, sections, selectBlock } from "./structure";
 import { TICKS } from "./melody";
 
@@ -111,5 +111,16 @@ describe("copy and paste between sections", () => {
     expect(kept.drums?.from).toBe("A");
     expect(reviveClips(undefined)).toEqual({});
     expect(reviveClips({ rhythm: { from: "A", key: G, chords: [], pattern: "no-such-style" }, drums: { from: "A", key: G, beat: 7 }, melody: { from: 3 } })).toEqual({});
+  });
+});
+
+describe("taking a paste back", () => {
+  it("only in the section and on the track it was pasted into", () => {
+    const u = { block: "a", track: "chords", before: { chords: [] } };
+    expect(undoFits(u, "a", "chords")).toBe(true);
+    // another chords track brought forward: the page holds its music now
+    expect(undoFits(u, "a", "pad1")).toBe(false);
+    expect(undoFits(u, "b", "chords")).toBe(false);
+    expect(undoFits(null, "a", "chords")).toBe(false);
   });
 });

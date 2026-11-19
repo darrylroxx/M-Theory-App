@@ -14,15 +14,15 @@
 import type { ProgChord, Progression } from "../ui/state";
 import type { Key } from "../theory/keys";
 import { HARMONY_OPTIONS, harmonize, harmonyOptions, type HarmonizeInput, type HarmonizeOutput, type HarmonyKind, type HarmonyOption, type SourceKind } from "../theory/harmonize";
-import { pc } from "../theory/notes";
 import { TICKS, hasTune, type Melody, type MelodyNote } from "./melody";
 import { barsOr } from "./frame";
 import { isCompound, sigBeats, type TimeSig } from "./meter";
 import { sigOf } from "./unity";
 import { commit, letters, type SongPart } from "./structure";
-import { allTracks, insteadTarget, normalize, refocus, type HarmonyMark, type Layer, type Layers, type Track } from "./tracks";
+import { allTracks, insteadTarget, muteInstead, normalize, refocus, unmuteInstead, type HarmonyMark, type Layer, type Layers, type Track } from "./tracks";
 import { onKeys, synthOf, toneOf, type Tone } from "../audio/tone";
 import { keyStyleOf } from "../keys/voicing";
+import { chordPrint, fnv, outPrint, tunePrint } from "./prints";
 
 /** What a harmony track is written from and how. */
 export interface HarmonyPlan {
@@ -115,15 +115,6 @@ function heardChords(p: Progression, s: Spot, self: string): ProgChord[] {
   return s.chords;
 }
 
-/** A number from a string, the same every time (FNV-1a), for seeds and fingerprints. */
-function fnv(s: string): number {
-  let h = 0x811c9dc5;
-  for (let i = 0; i < s.length; i++) {
-    h ^= s.charCodeAt(i);
-    h = Math.imul(h, 0x01000193);
-  }
-  return h >>> 0;
-}
 /** The seed for one track in one section: the same harmony every time it is written there. */
 export const seedOf = (track: string, part: string): number => fnv(`${track}|${part}`) || 1;
 
@@ -156,10 +147,6 @@ function inputIn(p: Progression, s: Spot, key: Key, kind: HarmonyKind, from: str
 
 // ── Fingerprints ───────────────────────────────────────────────
 
-const chordPrint = (cs: ProgChord[] | undefined) => (cs ?? []).map((c) => (c.rest ? `-${c.beats}` : `${pc(c.ref.root)}${c.ref.typeId}/${c.ref.bass ? pc(c.ref.bass) : ""}:${c.beats}${c.voicingId ? `@${c.voicingId}` : ""}`)).join(" ");
-const tunePrint = (m: Melody | undefined) => (m ? `${m.div}${m.on === false ? "x" : ""}:${[...m.notes].sort((a, b) => a.at - b.at || a.midi - b.midi).map((n) => `${n.at}.${n.midi}`).join(" ")}` : "");
-/** What a track holds in a section, as a short fingerprint. */
-const outPrint = (l: Layer | undefined): string => fnv(`${chordPrint(l?.chords)}|${tunePrint(l?.melody)}`).toString(36);
 /** What the source and the section were when the harmony was written (everything that decides it, but the option). */
 const srcPrint = (input: HarmonizeInput | null): string =>
   input ? fnv(JSON.stringify([input.key.tonic, input.key.scaleId, chordPrint(input.source.chords), tunePrint(input.source.melody), chordPrint(input.under), input.bar, input.bars, !!input.compound])).toString(36) : "-";
@@ -299,12 +286,8 @@ function toneFor(p: Progression, kind: HarmonyKind, from: string, srcKind: Sourc
   return undefined;
 }
 
-/** The song's mixer with the source of a re-harmonisation muted (it plays instead), or unmuted again. */
-function muteFor(p: Progression, from: string, mute: boolean): Progression["mix"] {
-  const m = p.mix?.[from];
-  if (!!m?.mute === mute) return p.mix;
-  return { ...p.mix, [from]: { ...m, mute } };
-}
+/** The song's mixer with the source of a re-harmonisation muted (it plays instead), or unmuted again (only if it was muted for that). */
+const muteFor = (p: Progression, from: string, mute: boolean): Progression["mix"] => (mute ? muteInstead(p.mix, from) : unmuteInstead(p.mix, from));
 
 /**
  * Add a harmony track: written from `plan.from` with `plan.option` in every section that track
@@ -366,6 +349,19 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   const q: Progression = { ...put(p, id, w.layers), tracks, ...(tones ? { tones } : {}), ...(mix ? { mix } : {}) };
   return refocus(q, p0.focus);
 }
+
+/**
+ * How a harmony track was last written (empty for any other track): it changes when the track is
+ * written again, or that is taken back, and never with a change made by hand. A page's undo
+ * starts afresh when it changes, so it never puts back notes from before the track was rewritten.
+ */
+export function writtenAs(p: Progression, id: string): string {
+  const h = p.tracks?.find((t) => t.id === id)?.harmony;
+  return h ? JSON.stringify(h) : "";
+}
+
+/** Is this still a harmony track of the song, there to be written again? (Removed, or its source removed: no.) */
+export const isHarmony = (p: Progression, id: string): boolean => !!p.tracks?.some((t) => t.id === id && !!t.harmony);
 
 /** Hear a harmony before it is kept: the song with it added (or written again), the page left as it is. */
 export function previewHarmony(p: Progression, key: Key, plan: HarmonyPlan, id: string): Progression {

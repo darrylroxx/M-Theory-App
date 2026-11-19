@@ -24,6 +24,21 @@ export interface SecChord {
 }
 
 /**
+ * A track's chords as a run of items plays them: only what lies in [from, to) beats of the
+ * section, so a chord over a loop's edge is cut there (it neither goes missing nor runs on into
+ * the next time round).
+ */
+export function clipChords<T extends SecChord>(list: T[], from: number, to: number): T[] {
+  const out: T[] = [];
+  for (const c of list) {
+    const a = Math.max(c.at, from);
+    const b = Math.min(c.at + c.beats, to);
+    if (b - a > 1e-6) out.push(a === c.at && b === c.at + c.beats ? c : { ...c, at: a, beats: b - a });
+  }
+  return out;
+}
+
+/**
  * A synth track's chords for a whole section, played its way (an arpeggio runs on across the
  * chords, a drone holds through them). Worked out once per section and kept here; each chord then
  * plays the notes that start under it. Times in seconds on the audio clock.
@@ -64,9 +79,11 @@ export function playChord(v: TrackVoice, item: PlayItem, t: number, spb: number,
   if (!item.midi.some((m) => m !== null)) return;
   if (v.tone.inst === "synth") {
     const s = section();
-    // each note is played once, by the chord it falls under (a little early, so a humanised note pushed ahead of its chord is not lost)
+    // each note is played once, by the chord it falls under (a little early, so a humanised note pushed ahead of its chord is not lost);
+    // the last chord before a rest or the end of the section takes everything up to there, so its last step is not lost
     const from = t - EARLY;
-    const end = t + item.beats * spb - EARLY;
+    const next = s.chords.reduce((n, c) => (c.at > at + 1e-6 && c.at < n && c.midi.some((m) => m !== null) ? c.at : n), Infinity);
+    const end = Number.isFinite(next) ? t + (next - at) * spb - EARLY : Infinity;
     playSpan(v, synthSection(cache, s.key, v, s.t0, spb, () => s.chords), from, end);
     return;
   }

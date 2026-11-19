@@ -30,7 +30,8 @@ import { fitChordBeats, fitMelody, isCompound, reviveSig, sigBeats, type TimeSig
 import { conform, sectionSig, sigOf } from "./unity";
 import { barsOr } from "./frame";
 import { commit, ensureSong, replaceSection, reviveSettings, sections, soloSection, type Settings } from "./structure";
-import { isFirst, normalize, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
+import { forget, insteadTarget, isFirst, muteInstead, normalize, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
+import { reviveTones, type Tones } from "../audio/tone";
 import { groupsOf } from "./takes";
 
 export type ClipKind = "rhythm" | "melody" | "drums";
@@ -74,6 +75,8 @@ export interface SectionClip extends ClipBase {
   layers?: Layers;
   /** the added tracks it has something on, so they can be found (or made) in another idea; vocal tracks carry only the takes recorded in it */
   tracks: Track[];
+  /** the instruments those tracks play, by track id (a track the paste makes plays the same one) */
+  tones?: Tones;
 }
 export interface Clips {
   rhythm?: RhythmClip;
@@ -154,7 +157,8 @@ export function copySection(p0: Progression, blockId: string, key: Key, idea: st
     return [{ ...t, takes: (t.takes ?? []).filter((k) => groups.includes(k.group)), active }];
   });
   const settings: Settings = tidy({ style: sec.style, feel: sec.feel, sound: sec.sound, tuneSound: sec.tuneSound, groove: sec.groove, kit: sec.kit });
-  return clone({ from: sec.label, key, block: sec.blockId, part: sec.partId || undefined, idea, meter: sec.meter ?? sigOf(p), bars: barsOr(sec.bars), chords: sec.chords, melody: sec.melody, settings, layers: sec.layers, tracks });
+  const tones: Tones = Object.fromEntries(tracks.filter((t) => p.tones?.[t.id]).map((t) => [t.id, p.tones![t.id]]));
+  return clone({ from: sec.label, key, block: sec.blockId, part: sec.partId || undefined, idea, meter: sec.meter ?? sigOf(p), bars: barsOr(sec.bars), chords: sec.chords, melody: sec.melody, settings, layers: sec.layers, tracks, ...(Object.keys(tones).length ? { tones } : {}) });
 }
 
 /** Is anything written in a section: chords, notes, drums of its own, recordings? (Pasting over it asks first.) */
@@ -240,7 +244,18 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   });
   const part = q.song?.blocks.find((b) => b.id === target)?.partId;
   const harmonies = part ? vocals.map((t) => harmonyAfterPaste(t, c, to, made, part, vocals)) : vocals;
-  return { ...q, tracks: harmonies.length ? harmonies : undefined };
+  // a track the paste made plays the instrument it played there, and one that played instead of chords there does here too (they are muted)
+  let tones = q.tones;
+  let mix = q.mix;
+  for (const [from, nid] of to) {
+    if (!made.has(nid)) continue;
+    const tone = c.tones?.[from];
+    if (tone) tones = { ...tones, [nid]: clone(tone) };
+    const t = harmonies.find((x) => x.id === nid);
+    const replaced = t && insteadTarget(t, harmonies);
+    if (replaced) mix = muteInstead(mix, replaced);
+  }
+  return { ...q, tracks: harmonies.length ? harmonies : undefined, ...(tones ? { tones } : {}), ...(mix ? { mix } : {}) };
 }
 
 /**
@@ -257,10 +272,7 @@ function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, ma
   const here = (id: string | undefined) => (id === undefined ? undefined : isFirst(id) ? id : to.get(id) ?? (tracks.some((x) => x.id === id) ? id : undefined));
   const fresh = made.has(t.id);
   const from = fresh ? here(t.harmony.from) : t.harmony.from;
-  if (!from || (!isFirst(from) && !tracks.some((x) => x.id === from))) {
-    const { harmony: _, ...rest } = t;
-    return rest;
-  }
+  if (!from || (!isFirst(from) && !tracks.some((x) => x.id === from))) return forget(t, tracks);
   const same = !!ct.harmony && ct.harmony.option === t.harmony.option && here(ct.harmony.from) === from;
   const mark = same && c.part ? ct.harmony?.marks?.[c.part] : undefined;
   const { [part]: _, ...others } = fresh ? {} : t.harmony.marks ?? {};
@@ -268,6 +280,21 @@ function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, ma
   return { ...t, harmony: { from, option: t.harmony.option, ...(Object.keys(marks).length ? { marks } : {}) } };
 }
 export const pasteSection = settled(pasteSectionN);
+
+/** What a page held before a paste, for the section and the track it was pasted into, while it can be taken back. */
+export interface PasteUndo {
+  block: string;
+  track: string;
+  before: Partial<Progression>;
+}
+/**
+ * Can a paste be taken back here? Only in the section and on the track it was pasted into: the
+ * page's fields hold whichever track is brought forward, so taken back on another track it would
+ * write the old music over that track's.
+ */
+export function undoFits(u: PasteUndo | null, block: string, track: string): u is PasteUndo {
+  return !!u && u.block === block && u.track === track;
+}
 
 /** Is there anything on this page of the section on screen? (Pasting over it can be undone.) */
 export function hasPart(p: Progression, kind: ClipKind): boolean {
@@ -312,7 +339,7 @@ export function reviveClips(raw: unknown): Clips {
     const tracks = reviveTracks(se.tracks) ?? [];
     out.section = tidy({
       ...sb, block: se.block, part: typeof se.part === "string" ? se.part : undefined, idea: typeof se.idea === "string" ? se.idea : null, meter, bars: barsOr(se.bars), chords: chordsOf(se.chords), melody: reviveMelody(se.melody),
-      settings: reviveSettings(se.settings as Settings | undefined), layers: reviveLayers(se.layers, tracks), tracks,
+      settings: reviveSettings(se.settings as Settings | undefined), layers: reviveLayers(se.layers, tracks), tracks, tones: reviveTones(se.tones, tracks.map((t) => t.id)),
     });
   }
   const me = r.melody;

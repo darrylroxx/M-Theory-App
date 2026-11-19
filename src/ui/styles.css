@@ -973,6 +973,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tl-bar i { position: absolute; top: 5px; left: 4px; overflow: hidden; text-overflow: ellipsis; font-style: normal; font-size: 0.66rem; font-weight: 750; color: var(--muted); white-space: nowrap; }
 .tl-takes { position: absolute; left: 0; right: 0; top: 22px; bottom: 2px; }
 .tl-take { position: absolute; height: 16px; padding: 0 5px; border: none; border-radius: 5px; text-align: left; overflow: hidden; white-space: nowrap; font-size: 0.66rem; font-weight: 800; color: var(--text); background: color-mix(in srgb, var(--third, #3d8bfd) 30%, transparent); box-shadow: inset 2px 0 0 var(--third, #3d8bfd); }
+span.tl-take { line-height: 16px; cursor: default; }
 .tl-take.keep { background: color-mix(in srgb, var(--star) 30%, transparent); box-shadow: inset 2px 0 0 var(--star); }
 .tl-more { position: absolute; right: 6px; bottom: 0; font-size: 0.66rem; font-weight: 750; color: var(--muted); }
 .tl-head { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--text); opacity: 0; pointer-events: none; }

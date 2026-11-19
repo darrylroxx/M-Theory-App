@@ -6,10 +6,11 @@ import { pc } from "../theory/notes";
 import { scalePcs } from "../theory/scales";
 import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, type Song } from "./structure";
-import { focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
-import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, previewHarmony, rewriteHarmony } from "./harmony";
+import { addTrack, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
+import { setSig } from "./unity";
+import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { reviveIdea, sameMusic } from "./library";
-import { copySection, pasteSection } from "./clip";
+import { copySection, pasteSection, reviveClips } from "./clip";
 import { keysVoicings, reviveTones } from "../audio/tone";
 
 const C: Key = { tonic: "C", scaleId: "ionian" };
@@ -390,5 +391,79 @@ describe("a harmony as the song around it grows", () => {
     // the strings chosen by hand are kept
     const chosen = rewriteHarmony({ ...p, tones: { ...p.tones, s: { inst: "guitar" } } }, C, "s", "shell");
     expect(chosen.tones?.s).toEqual({ inst: "guitar" });
+  });
+});
+
+describe("the chords a re-harmonisation mutes", () => {
+  it("are heard again when it goes, though its source went first", () => {
+    for (const option of ["borrowed", "fit"]) {
+      // a tune on Melody 2, chords written from it in place of the song's
+      const base = addTrack(song(), "melody", "m2").p;
+      const withTune = { ...base, melody: tune([64, 65, 67, 69, 67, 65, 64, 62]) };
+      const p = addHarmony(withTune, C, { kind: "chords", from: "m2", option }, "b").p;
+      expect(p.mix?.chords?.mute, option).toBe(true);
+      const q = removeTrack(removeTrack(p, "m2"), "b");
+      expect(q.mix?.chords?.mute, option).toBeFalsy();
+    }
+  });
+  it("stay muted when they were muted by hand before it came", () => {
+    const p0 = { ...song(), mix: { chords: { mute: true } } };
+    const p = addHarmony(p0, C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
+    expect(removeTrack(p, "b").mix?.chords?.mute).toBe(true);
+    expect(rewriteHarmony(p, C, "b", "pad").mix?.chords?.mute).toBe(true);
+    // muted by the harmony itself: heard again when it goes
+    const q = addHarmony(song(), C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
+    expect(removeTrack(q, "b").mix?.chords?.mute).toBe(false);
+  });
+});
+
+describe("a harmony track through a change of time signature", () => {
+  for (const option of ["third-above", "counter"]) {
+    it(`${option}: nothing looks changed by hand that was not`, () => {
+      const p = addHarmony(song(), C, { kind: "melody", from: "melody", option }, "h1").p;
+      expect(harmonyState(p, C, "h1").edited).toEqual([]);
+      const q = setSig(p, { num: 3, den: 4 });
+      expect(harmonyState(q, C, "h1").edited).toEqual([]);
+    });
+  }
+  it("a section changed by hand before still shows", () => {
+    const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
+    const m = p.melody!;
+    const edited = { ...p, melody: { ...m, notes: m.notes.slice(1) } };
+    expect(harmonyState(setSig(edited, { num: 3, den: 4 }), C, "h1").edited).toEqual(["A"]);
+  });
+});
+
+describe("a harmony track as the pages see it", () => {
+  it("how it was written changes when it is written again, not with a change by hand", () => {
+    const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
+    const was = writtenAs(p, "h1");
+    expect(was).not.toBe("");
+    const tapped = { ...p, melody: { ...p.melody!, notes: p.melody!.notes.slice(1) } };
+    expect(writtenAs(tapped, "h1")).toBe(was);
+    expect(writtenAs(rewriteHarmony(tapped, C, "h1", "sixth-below"), "h1")).not.toBe(was);
+    expect(writtenAs(p, "melody")).toBe("");
+  });
+  it("one removed is no longer there to write again", () => {
+    const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "counter" }, "h1").p;
+    expect(isHarmony(p, "h1")).toBe(true);
+    expect(isHarmony(removeTrack(p, "h1"), "h1")).toBe(false);
+  });
+});
+
+describe("a re-harmonisation pasted into another idea", () => {
+  it("comes on its instrument, and in place of that idea's chords", () => {
+    const p0 = addHarmony(song(), C, { kind: "chords", from: "chords", option: "tritone" }, "tt").p;
+    const p = { ...p0, tones: { ...p0.tones, tt: { inst: "piano" as const } } };
+    const clip = copySection(p, "a", C, "idea-1")!;
+    const other = loadCurrent({ chords: [ch("C", 4)], bpm: 90, pattern: "ring", loop: true, bars: 1, meter: { num: 4, den: 4 }, song: { parts: [{ id: "X", chords: [ch("C", 4)], bars: 1 }], blocks: [{ id: "x", partId: "X" }], current: "x" } });
+    // (the clipboard is kept between sessions: the instrument with it)
+    expect(reviveClips(JSON.parse(JSON.stringify({ section: clip }))).section?.tones).toEqual({ tt: { inst: "piano" } });
+    const into = pasteSection(other, "x", clip, C, id);
+    const t = into.tracks!.find((x) => x.name === "Tritone swap")!;
+    expect(into.tones?.[t.id]).toEqual({ inst: "piano" });
+    expect(into.mix?.chords?.mute).toBe(true);
+    // and taking it away lets the chords be heard again
+    expect(removeTrack(into, t.id).mix?.chords?.mute).toBe(false);
   });
 });

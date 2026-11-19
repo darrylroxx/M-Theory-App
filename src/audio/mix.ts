@@ -11,6 +11,8 @@ export interface TrackMix {
   /** volume, in dB (0 = as the instrument is set; −60 or less = silent) */
   db?: number;
   mute?: boolean;
+  /** muted because a harmony track plays instead of it: heard again when that goes (one muted by hand is not) */
+  instead?: boolean;
   solo?: boolean;
 }
 export type Mix = Record<TrackId, TrackMix | undefined>;
@@ -42,7 +44,7 @@ export function reviveMix(raw: unknown): Mix | undefined {
     const t = r[id];
     if (!t || typeof t !== "object") continue;
     const db = typeof t.db === "number" && Number.isFinite(t.db) ? Math.max(MIN_DB, Math.min(MAX_DB, Math.round(t.db * 10) / 10)) : undefined;
-    const m: TrackMix = { ...(db !== undefined && db !== 0 ? { db } : {}), ...(t.mute ? { mute: true } : {}), ...(t.solo ? { solo: true } : {}) };
+    const m: TrackMix = { ...(db !== undefined && db !== 0 ? { db } : {}), ...(t.mute ? { mute: true, ...(t.instead ? { instead: true } : {}) } : {}), ...(t.solo ? { solo: true } : {}) };
     if (Object.keys(m).length) out[id] = m;
   }
   return Object.keys(out).length ? out : undefined;

@@ -633,4 +633,29 @@ describe("the Canvas's link to the neural split", () => {
     expect(calls.filter((c) => c.cmd === "stems_prepare")).toHaveLength(2);
     expect(next.view.phase).toBe("fetching");
   });
+
+  it("a download stopped while it waits for the last one to end never starts", async () => {
+    const n = native({ status: status({}, false) });
+    const ask = n.ask;
+    answer = (cmd, args) => (cmd === "stems_cancel" ? Promise.resolve(true) : ask(cmd, args));
+    const link = new StemLink(song(), sink());
+    await link.start();
+    void link.fetch();
+    await settle();
+    link.stop();
+    const next = new StemLink(song(), sink());
+    await next.start();
+    void next.fetch();
+    await settle();
+    expect(next.view.phase).toBe("fetching");
+    // ✕ while it waits: the offer comes back at once
+    next.cancelFetch();
+    expect(next.view.phase).toBe("need");
+    // the first download ends: the second does not begin
+    answer = ask;
+    await ask("stems_cancel", { id: "prepare-x" });
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_prepare")).toHaveLength(1);
+    expect(next.view.phase).toBe("need");
+  });
 });

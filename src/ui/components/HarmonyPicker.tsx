@@ -12,7 +12,7 @@
  * written over after a yes.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { addHarmony, harmonyMenu, harmonySources, harmonyState, optionOf, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
+import { addHarmony, harmonyMenu, harmonySources, harmonyState, isHarmony, optionOf, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
 import type { Track } from "../../song/tracks";
 import { newId, useApp, type AppState } from "../state";
@@ -56,6 +56,11 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
   const menu = useMemo(() => (from ? harmonyMenu(p, state.key, kind, from, id) : []), [p, state.key, kind, from, id]);
   const status = useMemo(() => (track ? harmonyState(p, state.key, track.id) : null), [track, p, state.key]);
   const hearing = !!preview && preview.id === id;
+  // the track went while its sheet was open (removed, or its source was): there is nothing left to write again
+  const gone = !!track && !isHarmony(p, track.id);
+  useEffect(() => {
+    if (gone) onClose();
+  }, [gone, onClose]);
   const opt = option ? optionOf(kind, option) : undefined;
 
   // the sheet goes: the audition stops and the loop is put back
@@ -80,6 +85,7 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
   }, [onClose]);
 
   const pick = (o: string) => {
+    if (gone) return;
     setOption(o);
     if (from) hear({ plan: { kind, from, option: o }, id });
   };
@@ -89,7 +95,7 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
   };
   /** Keep it: add the track, or write it again; either can be taken back while nothing else has changed. */
   const keep = () => {
-    if (!from || !option || !opt) return;
+    if (!from || !option || !opt || gone) return;
     const before = state.progression;
     const key = state.key;
     let after: typeof before;

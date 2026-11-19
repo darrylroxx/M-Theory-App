@@ -163,6 +163,8 @@ export class StemLink {
   private status: NeuralStatus | null = null;
   private model: string | undefined;
   private prep: Job<NeuralStatus> | null = null;
+  /** downloads asked for: one stopped while it still waits for an earlier one to end does not start */
+  private fetches = 0;
   private job: SplitJob | null = null;
   /** the stems' files (in the order the model makes them) and their rate, once the split has started */
   private files: { name: StemName; path: string }[] = [];
@@ -215,9 +217,10 @@ export class StemLink {
     const m = status.models.find((x) => x.id === this.model);
     const got = new Fetched({ runtime: status.runtime.present ? 0 : status.runtime.bytes, model: m && (!m.present || m.error) ? m.bytes : 0 });
     this.set({ phase: "fetching", fetched: 0, reason: null });
+    const mine = ++this.fetches;
     // (a download stopped a moment ago may still be ending: two at once would be refused)
     await ending.get(this.api);
-    if (this.stopped) return;
+    if (this.stopped || mine !== this.fetches) return;
     const prep = (this.prep = this.api.prepare({ model: this.model, onProgress: (p) => this.set({ fetched: got.take(p) }) }));
     try {
       const after = await prep.done;
@@ -237,7 +240,14 @@ export class StemLink {
 
   /** Stop a download under way (the painter changed their mind). */
   cancelFetch() {
-    if (!this.prep) return;
+    if (!this.prep) {
+      // still waiting for an earlier download to end: it never starts, and the offer comes back
+      if (this.view.phase === "fetching") {
+        this.fetches++;
+        this.set({ phase: "need", reason: null });
+      }
+      return;
+    }
     windDown(this.api, this.prep.done);
     void this.prep.cancel().catch(() => false);
   }

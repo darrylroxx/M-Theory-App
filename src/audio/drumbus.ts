@@ -22,7 +22,7 @@ import { atRenderTime, audioContext, audioIfStarted, isRendering } from "./conte
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem, untapStem } from "./stems";
-import { fader } from "./mix";
+import { fader, levelOf } from "./mix";
 
 /** A drum sound, measured (once for each recording). */
 const measured = new WeakMap<AudioBuffer, Sound>();
@@ -229,8 +229,9 @@ function getBus(track = FIRST_DRUMS): Bus {
   const out = fader(track, c);
   const tail = c.createGain();
   mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(tail).connect(out);
-  // the canvas hears every drums track here, after everything that is done to it (the fader too)
-  tapStem("drums", out, track);
+  // the canvas hears every drums track here, after everything that is done to it (the fader too);
+  // only the live desk: a render's desk would take the track's tap away from the one that is heard
+  if (!isRendering()) tapStem("drums", out, track);
 
   const channels = {} as Record<DrumId, Channel>;
   for (const id of DRUM_IDS) {
@@ -308,7 +309,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   if (fx.noise !== was.noise || fx.noiseAmt !== was.noiseAmt) {
     // −66 dB at the bottom of the knob, about −30 dB at the top
     to(b.bed.gain, fx.noise === "off" ? 0 : Math.pow(10, (-66 + 36 * fx.noiseAmt) / 20) * BED_LEVEL[fx.noise], 0.05);
-    if (fx.noise !== was.noise && desk.bedOn) startBed(desk, fx.noise);
+    if (fx.noise !== was.noise && desk.bedOn) startBed(desk, fx.noise, t);
   }
   desk.pump = fx.pump;
   if (fx.echo !== was.echo) {
@@ -412,10 +413,11 @@ function takeFor(c: AudioContext, beat: Beat, id: DrumId): AudioBuffer {
 // ── noise bed ──
 const BED_LEVEL: Record<NoiseBed, number> = { off: 0, vinyl: 1, tape: 1, room: 1.4, hum: 0.8 };
 const beds = new Map<NoiseBed, AudioBuffer>();
-function stopBed(d: Desk) {
+/** (`at`: from when, on the audio clock; a render's beds change where their sections start) */
+function stopBed(d: Desk, at = 0) {
   if (d.bedSrc) {
     try {
-      d.bedSrc.stop();
+      d.bedSrc.stop(at);
     } catch {
       /* stopped */
     }
@@ -423,9 +425,9 @@ function stopBed(d: Desk) {
   }
   d.bedType = "off";
 }
-function startBed(d: Desk, type: NoiseBed) {
+function startBed(d: Desk, type: NoiseBed, at = 0) {
   const c = audioContext();
-  stopBed(d);
+  stopBed(d, at);
   d.bedType = type;
   if (type === "off") return;
   let buf = beds.get(type);
@@ -440,13 +442,14 @@ function startBed(d: Desk, type: NoiseBed) {
   d.bedSrc.buffer = buf;
   d.bedSrc.loop = true;
   d.bedSrc.connect(d.bus.bed);
-  d.bedSrc.start();
+  d.bedSrc.start(at);
 }
 /**
  * A track's noise bed runs while its drums are playing: a track whose drums stop (switched off, or
- * a section without them) goes quiet too. With no track and no beat, every track's stops.
+ * a section without them) goes quiet too. With no track and no beat, every track's stops. `at`:
+ * from when (a render's sections each start the bed they have where they start).
  */
-export function setBedPlaying(on: boolean, beat: Beat | null, track?: string) {
+export function setBedPlaying(on: boolean, beat: Beat | null, track?: string, at?: number) {
   if (!beat) {
     const set = desks.get(audioContext());
     for (const [id, d] of set ?? []) {
@@ -459,8 +462,8 @@ export function setBedPlaying(on: boolean, beat: Beat | null, track?: string) {
   const d = deskOf(track ?? FIRST_DRUMS);
   d.bedOn = on && !!beat.on;
   const want = d.bedOn ? fxOf(beat).noise : "off";
-  if (want === "off") stopBed(d);
-  else if (!d.bedSrc || d.bedType !== want) startBed(d, want);
+  if (want === "off") stopBed(d, at);
+  else if (!d.bedSrc || d.bedType !== want) startBed(d, want, at);
 }
 
 // ── pump: other instruments duck under the kick ──
@@ -515,7 +518,8 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   }
   live.add(r);
   src.onended = () => live.delete(r);
-  if (id === "kick" && desk.pump > 0 && onKick) onKick(t, desk.pump * velocity);
+  // (a kick that cannot be heard, muted or soloed out, pumps nothing)
+  if (id === "kick" && desk.pump > 0 && onKick && levelOf(track) > 0) onKick(t, desk.pump * velocity);
 }
 
 /** Play one step of a track's grid for a drum, respecting mute, solo and the "human" setting. */

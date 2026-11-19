@@ -23,6 +23,7 @@ import type { ProgChord, Progression } from "../ui/state";
 import { reviveFx, type VocalFx } from "../audio/vocalfx";
 import { reviveTakes, type Take } from "./takes";
 import { withoutTone } from "../audio/tone";
+import type { Mix } from "../audio/mix";
 import { HARMONY_OPTIONS } from "../theory/harmonize";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
@@ -50,6 +51,8 @@ export interface Track {
   role?: "harmony";
   /** a harmony track: what it was written from and how (see song/harmony), so it can be written again */
   harmony?: HarmonyOf;
+  /** a chords track that played instead of another and lost its source: the one it still plays instead of */
+  replaces?: string;
 }
 
 /**
@@ -211,13 +214,14 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, layers: without(x.layers, id) })) } : p.song;
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
   // tracks written from it keep their notes, but can no longer be written again from it
-  const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t) : t));
-  // a re-harmonisation that went: the chords it played instead of are heard again (unless another still replaces them)
+  const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t, p.tracks ?? [], id) : t));
+  // a re-harmonisation that went: the chords it played instead of are heard again (unless another still
+  // replaces them, or they were muted by hand before it came)
   const gone = p.tracks?.find((t) => t.id === id);
   const target = gone && insteadTarget(gone, p.tracks ?? []);
-  if (mix && target && mix[target]?.mute && !tracks.some((t) => insteadTarget(t, tracks) === target)) mix[target] = { ...mix[target], mute: false };
+  const freed = target && !tracks.some((t) => insteadTarget(t, tracks) === target) ? unmuteInstead(mix, target) : mix;
   // its instrument goes with it
-  return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: mix && Object.keys(mix).length ? mix : undefined }, id), focus);
+  return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: freed && Object.keys(freed).length ? freed : undefined }, id), focus);
 }
 
 /**
@@ -228,7 +232,8 @@ export function removeTrack(p0: Progression, id: string): Progression {
  */
 export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
   const h = t.harmony;
-  if (t.kind !== "chords" || !h) return undefined;
+  if (t.kind !== "chords") return undefined;
+  if (!h) return t.replaces;
   const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === h.option);
   if (!opt || !(opt.instead || opt.id === "fit")) return undefined;
   return h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords";
@@ -250,10 +255,32 @@ export function carryMarks(tracks: Track[] | undefined, from: string, to: string
   });
 }
 
-/** A harmony track without its source (it stays a harmony line; it just can no longer be written again). */
-function forget(t: Track): Track {
+/**
+ * A harmony track without its source (it stays a harmony line; it just can no longer be written
+ * again). One that plays instead of chords still does (`gone`: a track going out of the song),
+ * so those chords are heard again when it goes.
+ */
+export function forget(t: Track, tracks: Track[], gone?: string): Track {
+  const target = insteadTarget(t, tracks);
   const { harmony: _, ...rest } = t;
-  return rest;
+  return target && target !== gone ? { ...rest, replaces: target } : rest;
+}
+
+/**
+ * The mixer with a track muted because a harmony track plays instead of it, and marked so, so it
+ * is heard again when that goes. One already muted (by hand) is left as it is, and stays muted.
+ */
+export function muteInstead(mix: Mix | undefined, id: string): Mix | undefined {
+  const m = mix?.[id];
+  if (m?.mute) return mix;
+  return { ...mix, [id]: { ...m, mute: true, instead: true } };
+}
+/** The mixer with a track heard again that was muted only because a harmony track played instead of it. */
+export function unmuteInstead(mix: Mix | undefined, id: string): Mix | undefined {
+  const m = mix?.[id];
+  if (!m?.mute || !m.instead) return mix;
+  const { instead: _, ...rest } = m;
+  return { ...mix, [id]: { ...rest, mute: false } };
 }
 
 /** Rename a track (the first three keep their names). */
@@ -279,11 +306,12 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
       ...(r.kind === "vocals" && r.active && typeof r.active === "object" ? { active: Object.fromEntries(Object.entries(r.active).filter(([, v]) => typeof v === "string")) } : {}),
       ...((r.kind === "melody" || r.kind === "chords") && r.role === "harmony" ? { role: "harmony" as const } : {}),
       ...(r.kind === "melody" || r.kind === "chords" ? reviveHarmony(r.harmony, r.kind) : {}),
+      ...(r.kind === "chords" && typeof r.replaces === "string" && r.replaces ? { replaces: r.replaces } : {}),
     });
   }
   // a harmony's source must still be a chords or melody track of the song (and not itself)
   const ok = (h: HarmonyOf, self: string) => h.from !== self && (h.from === "chords" || h.from === "melody" || out.some((t) => t.id === h.from && (t.kind === "chords" || t.kind === "melody")));
-  const fixed = out.map((t) => (t.harmony && !ok(t.harmony, t.id) ? forget(t) : t));
+  const fixed = out.map((t) => (t.harmony && !ok(t.harmony, t.id) ? forget(t, out) : t));
   return fixed.length ? fixed : undefined;
 }
 

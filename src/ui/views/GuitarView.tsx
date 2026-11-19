@@ -3,7 +3,7 @@ import { DEFAULT_BEAT, applyPattern, grooveOf, kitOfBeat, type Beat, type BeatPa
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, keepTracks, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, keepTracks, letGoOfKeys, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
 import { VOICINGS, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
 import { pianoVoicing } from "../../keys/voicing";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
@@ -33,7 +33,7 @@ import { HarpPanel, type Link, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { AuditionCtx, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
-import { previewHarmony } from "../../song/harmony";
+import { previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
@@ -42,6 +42,7 @@ import { activeTake, groupsOf, type Take } from "../../song/takes";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { letterClass } from "../letters";
+import { lastOnly } from "../latest";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
 import { conform, sectionSig, setSig, sigOf } from "../../song/unity";
 import { sameMusic } from "../../song/library";
@@ -49,7 +50,7 @@ import { FrameSections } from "../components/FrameSections";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { chordBeats, fitBeats, newId, useApp, type ArrangeSettings, type Pane, type ProgChord, type Progression } from "../state";
-import { copyDrums, copyMelody, copyRhythm, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, type ClipKind, type Clips } from "../../song/clip";
+import { copyDrums, copyMelody, copyRhythm, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, undoFits, type ClipKind, type Clips, type PasteUndo } from "../../song/clip";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
@@ -394,6 +395,8 @@ export function GuitarView() {
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
   const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
+  // the pages stay put while hidden: a key held or latched on one is let go when another page is shown
+  useEffect(() => letGoOfKeys(), [pane]);
   // bars on screen and Follow, the same on every editing page
   const { shown, follow } = useBarsView();
   const followRef = useRef(follow);
@@ -411,6 +414,9 @@ export function GuitarView() {
   playingRef.current = playing;
 
   const stopPlay = () => {
+    // (a start still waiting for a piano or a synth is called off)
+    starts.cancel();
+    waiting.current = false;
     player.current?.stop();
     playBlock.current = null;
     setPlaying(false);
@@ -422,6 +428,8 @@ export function GuitarView() {
    */
   /** true while ▶ waits for a piano or a synth to be ready */
   const waiting = useRef(false);
+  /** that wait: stopped (■, an audition closed, a recording started) before it ends, nothing plays */
+  const starts = useMemo(lastOnly, []);
   const startPlay = () => {
     // while the Vocals page records, the song plays through the interface: a second one here would sound over it
     if (recording || waiting.current) return;
@@ -432,7 +440,9 @@ export function GuitarView() {
       .filter(([, t]) => onKeys(t))
       .map(([id]) => ({ id, kind: (id === "melody" || heard.tracks?.some((t) => t.id === id && t.kind === "melody") ? "melody" : "chord") as "melody" | "chord" }));
     waiting.current = true;
+    const mine = starts.begin();
     void readyTracks(keys).then(() => {
+      if (!mine() || recordingRef.current) return;
       waiting.current = false;
       go();
     });
@@ -456,7 +466,7 @@ export function GuitarView() {
     p.start(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, from);
     setPlaying(true);
   };
-  const togglePlay = () => (playing ? stopPlay() : startPlay());
+  const togglePlay = () => (playing || waiting.current ? stopPlay() : startPlay());
   // the loop was changed while playing: start again with the new bars
   const loopKey = loop ? `${loop.from.block}:${loop.from.bar}-${loop.to.block}:${loop.to.bar}` : "";
   const lastLoop = useRef(loopKey);
@@ -740,8 +750,8 @@ export function GuitarView() {
         </div>
         <div className="pane" hidden={pane !== "melody"}>
           <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
-          {/* undo belongs to one melody track: switching track starts it afresh, so one track's past can never be written over another */}
-          <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
+          {/* undo belongs to one melody track: switching track (or writing a harmony track again) starts it afresh, so one track's past can never be written over another */}
+          <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
@@ -1089,9 +1099,12 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
   const pane = state.pane;
   const what = CLIP_NAME[kind];
   /** what the page held before the last paste, while it can still be taken back */
-  const [undo, setUndo] = useState<{ block: string; before: Partial<Progression> } | null>(null);
-  // the undo belongs to the section and the page it was pasted into
-  useEffect(() => setUndo(null), [block, pane, state.ideaId]);
+  const [undo, setUndo] = useState<PasteUndo | null>(null);
+  // the tracks of this kind: the page edits one of them at a time
+  const ek: EditKind = kind === "rhythm" ? "chords" : kind;
+  const on = state.progression.focus?.[ek] ?? ek;
+  // the undo belongs to the section, the page and the track it was pasted into (another track brought forward holds other music)
+  useEffect(() => setUndo(null), [block, pane, state.ideaId, on]);
   useEffect(() => {
     if (!undo) return;
     const t = window.setTimeout(() => setUndo(null), 20000);
@@ -1107,23 +1120,20 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
     const before = state.progression;
     const next = pasteOf(kind, before, state.clip ?? {}, state.key);
     set((s) => ({ ...s, progression: { ...s.progression, ...pageOf(pasteOf(kind, s.progression, s.clip ?? {}, s.key), kind) } }));
-    setUndo({ block, before: pageOf(before, kind) });
+    setUndo({ block, track: on, before: pageOf(before, kind) });
     onPasted();
     const moved = kind !== "drums" && keyShift(clip.key, state.key) !== 0;
     const lost = pastFrame(next, kind, frame);
     toast(`${clip.from}'s ${what} pasted into ${label}${moved ? `, moved to ${displayNote(state.key.tonic)}` : ""}${lost ? `. Some is past the end of ${label}` : ""}`);
   };
   const takeBack = () => {
-    if (!undo) return;
+    if (!undoFits(undo, block, on)) return;
     set((s) => ({ ...s, progression: { ...s.progression, ...undo.before } }));
     setUndo(null);
     onPasted();
     toast("Paste undone");
   };
-  // the tracks of this kind: the page edits one of them at a time
-  const ek: EditKind = kind === "rhythm" ? "chords" : kind;
   const list = tracksOf(normalize(state.progression), ek);
-  const on = state.progression.focus?.[ek] ?? ek;
   /** Another track of this kind (a second set of chords, another melody, more drums), ready to write in. */
   const add = () => {
     const id = newId();
@@ -1154,7 +1164,7 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
       <span className="spacer" />
       <BarsControl />
       <button className="icon-btn" title="Copy" aria-label={`Copy the ${what} of ${label}`} onClick={copy}><CopyIcon /></button>
-      {undo && undo.block === block ? (
+      {undoFits(undo, block, on) ? (
         <button className="icon-btn" aria-label="Undo the paste" title="Undo" onClick={takeBack}>↶</button>
       ) : (
         <button className="icon-btn clip-paste" disabled={!clip} aria-label={clip ? `Paste the ${what} of ${clip.from} into ${label}` : `Paste: copy a ${what} first`} title={clip ? `Paste ${clip.from}` : "Paste"} onClick={paste}>

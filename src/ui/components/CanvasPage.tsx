@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { audioContext, audioIfStarted } from "../../audio/context";
 import { saveFile } from "../../audio/midi";
+import { lastOnly } from "../latest";
 import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
 import { fader, levelOf } from "../../audio/mix";
 import { due, dropPulses, dueReleases, listen as listenPulses } from "../../audio/pulse";
@@ -152,6 +153,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const [song, setSong] = useState<Song | null>(null);
   const [songOn, setSongOn] = useState(false);
   const [opening, setOpening] = useState(false);
+  /** the file being read: only the last one dropped is opened */
+  const opens = useMemo(lastOnly, []);
   const filePlayer = useRef<Player | null>(null);
   const reader = useRef<Reader | null>(null);
   const fileLayers = useRef<FileLayers | null>(null);
@@ -553,8 +556,11 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     if (!file) return;
     stopSong();
     setOpening(true);
+    // (a file still being read when another is dropped, or the song is closed, is not opened after all)
+    const mine = opens.begin();
     try {
       const s = await openSong(file, audioContext());
+      if (!mine()) return;
       painter.current?.fresh();
       fileLayers.current?.close();
       // heard layer by layer, ahead, from the moment it is opened
@@ -563,11 +569,13 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
       songFile.current = file;
       setSong(s);
     } catch {
-      toast("Can't read that file as sound");
+      if (mine()) toast("Can't read that file as sound");
     }
-    setOpening(false);
+    if (mine()) setOpening(false);
   };
   const closeSong = () => {
+    opens.cancel();
+    setOpening(false);
     stems.current?.stop();
     songFile.current = null;
     stopSong();

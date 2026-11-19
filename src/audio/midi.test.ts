@@ -160,3 +160,49 @@ describe("midi export with a time signature for each section", () => {
     expect([...a]).toEqual([...b]);
   });
 });
+
+/** Every program change in a file: the channel and the instrument it sets. */
+function programs(b: Uint8Array): { ch: number; prog: number }[] {
+  const out: { ch: number; prog: number }[] = [];
+  let i = 14;
+  while (i < b.length) {
+    const end = i + 8 + ((b[i + 4] << 24) | (b[i + 5] << 16) | (b[i + 6] << 8) | b[i + 7]);
+    i += 8;
+    let status = 0;
+    const vlq = () => {
+      let n = 0;
+      let x: number;
+      do {
+        x = b[i++];
+        n = (n << 7) | (x & 0x7f);
+      } while (x & 0x80);
+      return n;
+    };
+    while (i < end) {
+      vlq();
+      if (b[i] & 0x80) status = b[i++];
+      if (status === 0xff) {
+        i++;
+        const len = vlq();
+        i += len;
+      } else if ((status & 0xf0) === 0xc0) out.push({ ch: status & 0x0f, prog: b[i++] });
+      else if ((status & 0xf0) === 0xd0) i++;
+      else i += 2;
+    }
+  }
+  return out;
+}
+
+describe("midi export of many added tracks", () => {
+  it("never puts two instruments on one channel: past the sixteenth, a track shares one with the same instrument", () => {
+    const tracks = Array.from({ length: 16 }, (_, k) => `c${k}`);
+    const extra: ExtraPlay = { chords: tracks.map((track) => ({ track, at: 0, beats: 4, midi: [48, 52, 55], style: "ring" as const, sound: SOUND_DEFAULT })), tunes: [], drums: [] };
+    const tones = Object.fromEntries(tracks.map((t, k) => [t, k % 2 ? { inst: "piano" as const } : { inst: "synth" as const }]));
+    const b = progressionToMidi([{ midi: [48, 52, 55], beats: 4, section: true, extra }], 100, "ring", "x", null, null, {}, { num: 4, den: 4 }, tones);
+    const set = programs(b);
+    expect(set.length).toBeGreaterThanOrEqual(17);
+    const on = new Map<number, Set<number>>();
+    for (const { ch, prog } of set) on.set(ch, (on.get(ch) ?? new Set()).add(prog));
+    for (const [ch, progs] of on) expect(progs.size, `channel ${ch + 1}`).toBe(1);
+  });
+});

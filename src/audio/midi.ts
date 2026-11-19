@@ -121,15 +121,22 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     it.extra?.tunes.forEach((t) => ids.tunes.add(t.track));
     it.extra?.drums.forEach((d) => ids.drums.add(d.track));
   }
+  // each track a channel of its own while there are channels (10 is the drums'); past that, a track
+  // shares one with a track on the same instrument, as a channel plays one instrument at a time
+  const programs = new Map<number, number>([[0, program("chords")], [1, program("melody")]]);
   let ch = 2;
-  const nextCh = () => {
-    const c = ch === 9 ? ++ch : ch;
-    ch = Math.min(15, c + 1);
-    return c;
+  const nextCh = (prog: number) => {
+    if (ch === 9) ch++;
+    if (ch <= 15) {
+      programs.set(ch, prog);
+      return ch++;
+    }
+    for (const [c, p] of programs) if (p === prog) return c;
+    return 15;
   };
-  for (const id of ids.chords) tracks.push(harpTrack(extraChordItems(items, id), pattern, beat, bpm, clock, nextCh(), names[id] ?? "Chords", totalTicks, [], [], program(id), held(id)));
+  for (const id of ids.chords) tracks.push(harpTrack(extraChordItems(items, id), pattern, beat, bpm, clock, nextCh(program(id)), names[id] ?? "Chords", totalTicks, [], [], program(id), held(id)));
   for (const id of ids.tunes) {
-    const t = tuneTrack(itemTune(items.map((it) => ({ ...it, tune: it.extra?.tunes.find((x) => x.track === id)?.tune ?? null })), null), clock, nextCh(), names[id] ?? "Melody", totalTicks, program(id));
+    const t = tuneTrack(itemTune(items.map((it) => ({ ...it, tune: it.extra?.tunes.find((x) => x.track === id)?.tune ?? null })), null), clock, nextCh(program(id)), names[id] ?? "Melody", totalTicks, program(id));
     if (t) tracks.push(t);
   }
   for (const id of ids.drums) {

@@ -158,6 +158,8 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   const setTrack = (id: TrackId, patch: Partial<TrackMix>) =>
     set((s) => {
       const t: TrackMix = { ...s.progression.mix?.[id], ...patch };
+      // muted or unmuted by hand: no longer a mute a harmony track made (it is the songwriter's own now)
+      if ("mute" in patch) delete t.instead;
       const next: Mix = { ...s.progression.mix, [id]: t };
       return { ...s, progression: { ...s.progression, mix: next } };
     });

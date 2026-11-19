@@ -30,6 +30,7 @@ import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, fitBars, frameItems 
 import { DEFAULT_SIG, fitRhythm, isCompound, mapLayers, mapList, refit, reviveSig, sameSig, sigBeats, type TimeSig } from "./meter";
 import type { ProgChord, Progression } from "../ui/state";
 import { carryMarks, normalize, reviveLayers, settled, type Layers, type Track } from "./tracks";
+import { outPrint } from "./prints";
 
 /**
  * What a section sounds like, apart from its notes: how the chords are played, the two harps'
@@ -468,7 +469,21 @@ function retimeN(p0: Progression, meter: TimeSig, one: { block: string; sig: Tim
     want.set(x.id, { ...w, groove: i === 0 ? w.groove && f.rhythm!(w.groove) : owns("groove", x) ? y.groove : undefined });
     return y;
   });
-  const q: Progression = { ...p, meter };
+  // a harmony track fitted to the new bars is still what was written, only fitted: its record of
+  // each section follows (unless changed by hand before), so it does not look changed by hand now
+  const tracks = p.tracks?.map((t) => {
+    const marks = t.harmony?.marks;
+    if (!marks) return t;
+    let next = marks;
+    song.parts.forEach((x, i) => {
+      const k = marks[x.id] ? x.id : song.parts.length === 1 && marks[""] ? "" : null;
+      const m = k === null ? undefined : marks[k];
+      if (!m || parts[i].layers === x.layers || m.out !== outPrint(x.layers?.[t.id])) return;
+      next = { ...next, [k!]: { ...m, out: outPrint(parts[i].layers?.[t.id]) } };
+    });
+    return next === marks ? t : { ...t, harmony: { ...t.harmony!, marks: next } };
+  });
+  const q: Progression = { ...p, meter, ...(tracks ? { tracks } : {}) };
   return show(q, rebase(q, { ...song, parts }, want), song.current);
 }
 

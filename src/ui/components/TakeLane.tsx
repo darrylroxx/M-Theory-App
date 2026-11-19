@@ -21,7 +21,7 @@ const HOLD_MS = 1500;
  * with ‹ ›). The take that plays from each recording is drawn where it sits, and a line moves
  * with the music while it plays or records. A thin line along the top fills as each pass goes
  * by. With Follow on, the lane turns a page when the music runs off it; with Follow off it
- * never moves on its own. Tap a take to hear it alone.
+ * never moves on its own. Tap a take to hear it alone (in the desktop app).
  */
 export function TakeLane({ bars, takes, bpm, where, live, onPick, shown, follow }: {
   bars: LaneBar[];
@@ -174,10 +174,17 @@ export function TakeLane({ bars, takes, bpm, where, live, onPick, shown, follow 
               {drawn.map(({ take, label, i }, r) => {
                 // in bars as the lane has them, so a take that runs on into a bar of another meter is drawn to where it ends
                 const w = barsInto(bars, takeBars(take, bpm, 1), i);
-                return (
-                  <button key={take.id} className={`tl-take${take.keep ? " keep" : ""}`} style={{ left: `${(i / n) * 100}%`, width: `${(Math.max(0.15, w) / n) * 100}%`, top: r * 18 }} title="Hear it alone" aria-label={`${label}: hear it alone`} onClick={() => onPick?.(take)}>
+                const cls = `tl-take${take.keep ? " keep" : ""}`;
+                const style = { left: `${(i / n) * 100}%`, width: `${(Math.max(0.15, w) / n) * 100}%`, top: r * 18 };
+                // (where a take cannot be played on its own, in the browser, it is only shown)
+                return onPick ? (
+                  <button key={take.id} className={cls} style={style} title="Hear it alone" aria-label={`${label}: hear it alone`} onClick={() => onPick(take)}>
                     {label}
                   </button>
+                ) : (
+                  <span key={take.id} className={cls} style={style} title={label}>
+                    {label}
+                  </span>
                 );
               })}
             </div>

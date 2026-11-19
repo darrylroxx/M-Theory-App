@@ -20,7 +20,7 @@ import { TrackVoice, type VoiceKind } from "./trackvoice";
 import { GUITAR, type Tone, type Tones } from "./tone";
 import { playNotes, type PlayNote } from "../synth/play";
 import type { LiveOut } from "../synth/live";
-import { TUNE_LIFT, TUNE_SLOT, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
+import { TUNE_LIFT, TUNE_SLOT, clipChords, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
 
 
 // ── the live voices ──────────────────────────────────────────
@@ -184,13 +184,39 @@ export function liveKeys(kind: "chord" | "melody"): LiveOut {
     void x.load().catch(() => {});
     return x;
   };
+  // each note is let go on the voice that played it, though the page may edit another track by then
+  // (every voice numbers its own notes, so an id alone could reach another track's note)
+  const held = new Map<number, { v: TrackVoice; id: number }>();
+  let ids = 0;
   return {
     now: () => v().c.currentTime,
     bpm: () => tempo,
-    on: (midi, when, velocity) => v().hold(midi, when, velocity),
-    off: (id, when) => v().letGo(id, when),
+    on: (midi, when, velocity) => {
+      const x = v();
+      const id = x.hold(midi, when, velocity);
+      if (!id) return 0;
+      held.set(++ids, { v: x, id });
+      return ids;
+    },
+    off: (id, when) => {
+      const h = held.get(id);
+      if (!h) return;
+      held.delete(id);
+      h.v.letGo(h.id, when);
+    },
     note: (midi, when, velocity, length) => v().note(midi, when, velocity, length),
+    onCut: (fn) => {
+      cuts.add(fn);
+      return () => void cuts.delete(fn);
+    },
   };
+}
+
+/** The on-screen keys, told when every sound is stopped (the transport) or the page changes: their keys go up. */
+const cuts = new Set<() => void>();
+/** Let go of every key held or latched on the screen. */
+export function letGoOfKeys() {
+  for (const fn of [...cuts]) fn();
 }
 
 /** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. On a synth, the synth's own way of playing. */
@@ -214,6 +240,8 @@ export function strum(midi: (number | null)[], opts: { when?: number; dir?: "dow
 
 export function stopAll() {
   if (!audioIfStarted()) return;
+  // (the keys on the screen let go too, so none stays lit over a note that was silenced)
+  letGoOfKeys();
   for (const v of voices.values()) v.stopAll();
 }
 
@@ -399,6 +427,8 @@ export class ProgressionPlayer {
     this.beat = beat;
     this.tune = tune;
     this.setItems(this.fill(items));
+    // a new tempo: every drums track's desk (its echo) follows at once, not only when its beat changes
+    if (bpm !== this.bpm) for (const [track, lane] of this.lanes) if (lane.synced) syncDrums(lane.synced, bpm, track);
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
@@ -451,16 +481,17 @@ export class ProgressionPlayer {
         }
         return { key: `chords@${t0.toFixed(4)}`, t0, chords };
       });
-      // the extra chords tracks: every chord that starts while this item plays
+      // the extra chords tracks: every chord that starts while this item plays (cut to the run of items it is in: a loop's edges)
       const ex = item.extra;
       if (ex) {
         const s1 = s0 + item.beats;
-        for (const ch of ex.chords)
+        const run = clipChords(ex.chords, s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0), s0 + (this.secs.rest[i] ?? item.beats));
+        for (const ch of run)
           if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
             playChord(voiceOf(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
               key: `${ch.track}@${t0.toFixed(4)}`,
               t0,
-              chords: ex.chords.filter((x) => x.track === ch.track),
+              chords: run.filter((x) => x.track === ch.track),
             }));
         // recorded takes: from their start, or part-way in when playing starts in the middle of one
         for (const tk of ex.takes ?? []) {
@@ -471,7 +502,9 @@ export class ProgressionPlayer {
           src.buffer = tk.buffer;
           src.connect(fader(tk.track, c));
           const skip = starts ? 0 : (s0 - tk.at) * spb;
-          src.start(Math.max(c.currentTime, t + (starts ? (tk.at - s0) * spb : 0)), tk.offset + skip, Math.max(0.01, tk.dur - skip));
+          // going round, a take stops where the loop ends (the next time round starts it again)
+          const left = this.loop ? (this.items.slice(i).reduce((a, x) => a + x.beats, 0) - (starts ? tk.at - s0 : 0)) * spb : Infinity;
+          src.start(Math.max(c.currentTime, t + (starts ? (tk.at - s0) * spb : 0)), tk.offset + skip, Math.max(0.01, Math.min(tk.dur - skip, left)));
           this.sources.add(src);
           src.onended = () => this.sources.delete(src);
         }
@@ -644,9 +677,11 @@ export class ProgressionPlayer {
     this.onDrumStep(-1);
     dropPulses();
     setBedPlaying(false, null);
-    for (const v of voices.values()) {
+    for (const [id, v] of voices) {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
+      // the sections' own sounds were played on each track's voice: it goes back to the one its page is set to
+      v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     }
     stopAll();
     stopDrums();
@@ -692,6 +727,8 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       if (!b || synced.get(track) === b) return;
       synced.set(track, b);
       syncDrums(b, o.bpm, track, at);
+      // its noise bed too, from where the section starts (live, the player runs it)
+      setBedPlaying(true, b, track, at);
     };
     let at = 0;
     items.forEach((item, i) => {
@@ -731,12 +768,16 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
         });
       }
       const ex = item.extra;
-      for (const ch of ex?.chords ?? [])
+      // (cut to the run of items it is in, as the live player does: a loop's edges)
+      let first = i;
+      while (first > 0 && Math.abs(secs.origin[first - 1] - origin) < 1e-6) first--;
+      const run = clipChords(ex?.chords ?? [], s0 - items.slice(first, i).reduce((n, it) => n + it.beats, 0), s0 + secs.rest[i]);
+      for (const ch of run)
         if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
           playChord(voice(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
             key: `${ch.track}@${t0.toFixed(4)}`,
             t0,
-            chords: (ex?.chords ?? []).filter((x) => x.track === ch.track),
+            chords: run.filter((x) => x.track === ch.track),
           }));
       // every drums track on its own desk, each section's drum sound from where the section starts
       const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
@@ -754,12 +795,20 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
           }
         }
       }
+      // the takes, as the live player plays them: one under way where the loop starts comes in part-way,
+      // and going round (folded) none runs past the end, where it would come round again over itself
       for (const tk of ex?.takes ?? []) {
-        if (tk.track === o.skip || tk.at < s0 - 1e-6 || tk.at >= s1 - 1e-6) continue;
+        if (tk.track === o.skip) continue;
+        const starts = tk.at >= s0 - 1e-6 && tk.at < s1 - 1e-6;
+        const under = i === 0 && tk.at < s0 - 1e-6 && tk.at + tk.dur / spb > s0;
+        if (!starts && !under) continue;
+        const skip = starts ? 0 : (s0 - tk.at) * spb;
+        const when = t + (starts ? (tk.at - s0) * spb : 0);
+        const left = o.fold === false ? Infinity : beats * spb - when;
         const src = off.createBufferSource();
         src.buffer = tk.buffer;
         src.connect(fader(tk.track, off));
-        src.start(t + (tk.at - s0) * spb, tk.offset, tk.dur);
+        src.start(when, tk.offset + skip, Math.max(0.01, Math.min(tk.dur - skip, left)));
       }
       at += item.beats;
     });

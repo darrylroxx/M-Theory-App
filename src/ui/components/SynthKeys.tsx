@@ -58,6 +58,15 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
     setLit([]);
   }, [play.mode, live]);
   useEffect(() => () => live.releaseAll(), [live]);
+  // every sound stopped (the transport), or another page shown: the keys go up, so none stays lit over a silenced note
+  useEffect(
+    () =>
+      out.onCut?.(() => {
+        live.releaseAll();
+        setLit([]);
+      }),
+    [out, live],
+  );
 
   const press = (midi: number, vel = 0.8) => {
     live.press(midi, vel);

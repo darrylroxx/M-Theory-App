@@ -27,6 +27,8 @@ export interface LiveOut {
   off(id: number, when: number): void;
   /** a note with an end of its own (an arpeggio's step) */
   note(midi: number, when: number, velocity: number, length: number): void;
+  /** be told when every key must go up (all sound stopped, or the page left); returns how to stop being told */
+  onCut?(fn: () => void): () => void;
 }
 
 /** How far ahead the arpeggio is scheduled (seconds): enough to ride over a late timer, short enough to stop promptly. */

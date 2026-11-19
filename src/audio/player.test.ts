@@ -1,0 +1,227 @@
+/**
+ * The song player and the song's render, on a pretend audio context: what each track is asked
+ * to play, where loops cut it, what a render keeps of the live desks, and the keys on the screen.
+ */
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
+import type { FakeSource } from "../keys/fakeaudio";
+import { DEFAULT_BEAT, ECHO_TIMES, fxOf, type Beat } from "./beats";
+import { SOUND_DEFAULT, type HarpSound } from "./rack";
+import { TrackVoice } from "./trackvoice";
+import { Harp } from "./plucked";
+import { fader, setMix } from "./mix";
+import { onKickHit, playStep, syncDrums } from "./drumbus";
+import type { ExtraPlay, PlayItem } from "./patterns";
+import { LiveKeys } from "../synth/live";
+import { DEFAULT_PLAY } from "../synth/params";
+
+/** The live context: made by the app as `new AudioContext()`. */
+let live: FakeAudio;
+const starts: { ctx: FakeAudio; buffer: unknown; when: number; offset: number; dur?: number; loop: boolean }[] = [];
+/** Every buffer source a context starts, with how long it was asked to play. */
+function watch(c: FakeAudio) {
+  const make = c.createBufferSource.bind(c);
+  c.createBufferSource = () => {
+    const s = make() as unknown as FakeSource;
+    const go = s.start.bind(s);
+    s.start = (when = 0, offset = 0, dur?: number) => {
+      starts.push({ ctx: c, buffer: s.buffer, when, offset, dur, loop: s.loop });
+      go(when, offset);
+    };
+    return s as never;
+  };
+}
+class LiveCtx extends FakeAudio {
+  constructor() {
+    super();
+    live = this;
+    watch(this);
+  }
+}
+const renders: FakeOffline[] = [];
+class Render extends FakeOffline {
+  constructor(_channels: number, length: number, rate: number) {
+    super(rate, length);
+    renders.push(this);
+    watch(this);
+  }
+}
+
+beforeEach(() => {
+  vi.useFakeTimers();
+  vi.stubGlobal("window", globalThis);
+  vi.stubGlobal("AudioContext", LiveCtx);
+  vi.stubGlobal("OfflineAudioContext", Render);
+  starts.length = 0;
+  renders.length = 0;
+  setMix(undefined);
+});
+afterEach(() => {
+  vi.restoreAllMocks();
+  vi.clearAllTimers();
+  vi.unstubAllGlobals();
+  vi.useRealTimers();
+});
+
+const S = await import("./synth");
+
+/** Every note a track's voice is asked for (nothing is really played: the strings are not made). */
+function notes() {
+  const log: { track: string; midi: number; when: number; length: number; v: TrackVoice }[] = [];
+  vi.spyOn(Harp.prototype, "buffer").mockImplementation(() => null as never);
+  vi.spyOn(TrackVoice.prototype, "note").mockImplementation(function (this: TrackVoice, midi: number, when: number, _v: number, length: number) {
+    log.push({ track: this.track ?? this.kind, midi, when, length, v: this });
+  });
+  return log;
+}
+const CHORD = [48, 52, 55];
+const chordTrack = (at: number, beats: number): ExtraPlay => ({ chords: [{ track: "c2", at, beats, midi: CHORD, style: "ring", sound: SOUND_DEFAULT }], tunes: [], drums: [] });
+const ends = (log: ReturnType<typeof notes>, track: string) => Math.max(...log.filter((n) => n.track === track).map((n) => n.when + (Number.isFinite(n.length) ? n.length : 0)));
+
+describe("an added chords track in a loop", () => {
+  // a two-bar section (8 beats at 120: half a second a beat) whose added track holds one chord over both bars
+  const extra = chordTrack(0, 8);
+  it("a loop on its second bar hears the chord that started in the first", () => {
+    const log = notes();
+    const p = new S.ProgressionPlayer();
+    p.start([{ midi: CHORD, beats: 4, from: 4, section: true, extra }], 120, "ring", true);
+    p.stop();
+    expect(log.filter((n) => n.track === "c2").length).toBeGreaterThan(0);
+  });
+  it("a loop on its first bar cuts the chord at the loop's end, so the next time round does not double it", () => {
+    const log = notes();
+    const p = new S.ProgressionPlayer();
+    p.start([{ midi: CHORD, beats: 4, from: 0, section: true, extra }], 120, "ring", true);
+    p.stop();
+    const t0 = log.find((n) => n.track === "c2")!.when;
+    expect(ends(log, "c2")).toBeLessThanOrEqual(t0 + 2 + 1e-6);
+  });
+  it("the recording backing does the same", async () => {
+    const log = notes();
+    await S.renderSong([{ midi: CHORD, beats: 4, from: 4, section: true, extra }], { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    expect(log.filter((n) => n.track === "c2").length).toBeGreaterThan(0);
+    log.length = 0;
+    await S.renderSong([{ midi: CHORD, beats: 4, from: 0, section: true, extra }], { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    expect(ends(log, "c2")).toBeLessThanOrEqual(2 + 1e-6);
+  });
+});
+
+describe("a recorded take in a loop", () => {
+  // the take covers four bars from the start of its section (8 s at 120); the loop is bars 2 and 3
+  const buffer = { duration: 8 } as unknown as AudioBuffer;
+  const items: PlayItem[] = [{ midi: CHORD, beats: 8, from: 4, section: true, extra: { chords: [], tunes: [], drums: [], takes: [{ track: "v1", buffer, at: 0, offset: 0, dur: 8 }] } }];
+  it("live, it stops where the loop ends, so the next time round does not play over it", () => {
+    notes();
+    const p = new S.ProgressionPlayer();
+    p.start(items, 120, "ring", true);
+    p.stop();
+    const take = starts.find((s) => s.buffer === buffer)!;
+    expect(take.offset).toBeCloseTo(2, 6);
+    expect(take.dur).toBeCloseTo(4, 6);
+  });
+  it("in the recording backing, a take under way where the loop starts is heard, as it is live", async () => {
+    notes();
+    await S.renderSong(items, { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    const take = starts.find((s) => s.buffer === buffer && s.ctx === renders[0]);
+    expect(take).toBeTruthy();
+    expect(take!.when).toBeCloseTo(0, 6);
+    expect(take!.offset).toBeCloseTo(2, 6);
+    expect(take!.dur).toBeCloseTo(4, 6);
+  });
+});
+
+describe("a section's own sound", () => {
+  it("is let go when the music stops: the page's own sound is heard again", () => {
+    const log = notes();
+    const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
+    const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
+    S.setHarpSound(verse, 120);
+    const p = new S.ProgressionPlayer();
+    p.start([{ midi: CHORD, beats: 4, section: true, sound: chorus }], 120, "ring", false);
+    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
+    expect(v.sound).toEqual(chorus);
+    p.stop();
+    expect(v.sound).toEqual(verse);
+  });
+});
+
+describe("the drum desks", () => {
+  const beat = (over: Partial<Beat> = {}): Beat => ({ ...DEFAULT_BEAT, on: true, ...over });
+  it("a render leaves the canvas listening to the drums that are heard", async () => {
+    notes();
+    S.getAudio();
+    syncDrums(beat(), 120, "drums");
+    const tapped = () => (fader("drums", asAudio(live)) as unknown as FakeAny).outputs.some((n) => (n as FakeAny).fftSize === 8192);
+    expect(tapped()).toBe(true);
+    await S.renderSong([{ midi: CHORD, beats: 4, section: true }], { bpm: 120, pattern: "ring", beat: beat(), rate: 8000 });
+    expect(renders[0].nodes.some((n) => (n as FakeAny).fftSize === 8192)).toBe(false);
+    expect(tapped()).toBe(true);
+  });
+  it("a render has the noise bed the drums have live", async () => {
+    notes();
+    await S.renderSong([{ midi: [], beats: 4, section: true }], { bpm: 120, pattern: "ring", beat: beat({ noise: "vinyl", noiseAmt: 0.6 }), rate: 8000 });
+    expect(starts.filter((s) => s.ctx === renders[0] && s.loop).length).toBe(1);
+  });
+  it("a new tempo while playing moves an added drums track's echo to it", () => {
+    notes();
+    const echo = beat({ echo: 0.5 });
+    const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, extra: { chords: [], tunes: [], drums: [{ track: "d2", beat: echo }] } }];
+    const p = new S.ProgressionPlayer();
+    p.start(items, 90, "ring", true);
+    p.update(items, 140, "ring", true);
+    p.stop();
+    const want = Math.min(1.9, (ECHO_TIMES.find((e) => e.id === fxOf(echo).echoTime)!.beats * 60) / 140);
+    const set = live.nodes.some((n) => (n as FakeAny).delayTime?.events.some((e) => Math.abs(e.v - want) < 1e-9));
+    expect(set).toBe(true);
+  });
+  it("a kick that cannot be heard (its track muted, or another soloed) pumps nothing", () => {
+    S.getAudio();
+    const pumped: number[] = [];
+    onKickHit((when) => pumped.push(when));
+    const pump = beat({ pump: 0.6 });
+    syncDrums(pump, 120, "d2");
+    setMix({ d2: { mute: true } });
+    playStep(pump, "kick", 3, 0.1, "d2");
+    setMix({ chords: { solo: true } });
+    playStep(pump, "kick", 3, 0.2, "d2");
+    expect(pumped).toEqual([]);
+    setMix(undefined);
+    playStep(pump, "kick", 3, 0.3, "d2");
+    expect(pumped).toEqual([0.3]);
+    onKickHit(null);
+  });
+});
+
+describe("the keys on the screen", () => {
+  const drone = { ...DEFAULT_PLAY, mode: "drone" as const };
+  it("a note is let go on the track that played it, though the page now edits another", () => {
+    S.setTones({ chords: { inst: "synth" }, c2: { inst: "synth" } });
+    S.hearOn("chord", null);
+    const out = S.liveKeys("chord");
+    const keys = new LiveKeys(out, () => drone);
+    keys.press(60);
+    const gone: string[] = [];
+    vi.spyOn(TrackVoice.prototype, "letGo").mockImplementation(function (this: TrackVoice) {
+      gone.push(this.track ?? this.kind);
+    });
+    S.hearOn("chord", { id: "c2", sound: SOUND_DEFAULT });
+    // the latched key tapped again
+    keys.press(60);
+    expect(gone).toEqual(["chord"]);
+    S.hearOn("chord", null);
+    S.setTones(undefined);
+  });
+  it("when every sound is stopped, the keys go up with it", () => {
+    S.setTones({ chords: { inst: "synth" } });
+    const out = S.liveKeys("chord");
+    const keys = new LiveKeys(out, () => drone);
+    const stop = out.onCut?.(() => keys.releaseAll());
+    keys.press(60);
+    keys.press(64);
+    expect(keys.keys).toEqual([60, 64]);
+    S.stopAll();
+    expect(keys.keys).toEqual([]);
+    stop?.();
+    S.setTones(undefined);
+  });
+});
