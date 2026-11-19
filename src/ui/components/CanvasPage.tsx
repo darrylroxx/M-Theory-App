@@ -5,7 +5,7 @@ import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
 import { fader, levelOf } from "../../audio/mix";
 import { due, dropPulses, listen as listenPulses } from "../../audio/pulse";
 import { STEMS, readStem } from "../../audio/stems";
-import { songWhen, fileWhen } from "../../canvas/clock";
+import { songWhen, fileWhen, heardTime } from "../../canvas/clock";
 import { Cover, STEM_IDS, type StemId } from "../../canvas/cover";
 import { cueOfPulse } from "../../canvas/cues";
 import { LAYER_INFO, LAYER_ORDER, type LayerKind } from "../../canvas/layers";
@@ -45,21 +45,6 @@ const PASSES = [{ value: 8, label: "8 s" }, { value: 15, label: "15 s" }, { valu
 
 /** Marks land this long (seconds) before their sound is heard: the eye forgives paint a little early, never late. */
 const LEAD = 0.012;
-
-/** The moment of the music being heard now, on the audio clock (the clock the app schedules its sounds by runs a little ahead of the speakers). */
-function heardAt(c: AudioContext): number {
-  const now = c.currentTime;
-  try {
-    const ts = c.getOutputTimestamp?.();
-    if (ts && ts.contextTime !== undefined && ts.performanceTime) {
-      const t = ts.contextTime + Math.max(0, (performance.now() - ts.performanceTime) / 1000);
-      if (t <= now + 0.01 && t > now - 0.5) return Math.min(now, t);
-    }
-  } catch {
-    // not given: estimated below
-  }
-  return now - (c.outputLatency || 0) - (c.baseLatency || 0);
-}
 
 /**
  * The canvas: while music plays, it paints itself.
@@ -399,7 +384,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           clock.beat = spot.beat;
           const pg = pageOf(spot, width);
           passSeconds = pg.perPage * spot.bar * spot.spb;
-          const nowHeard = heardAt(c) + LEAD;
+          const nowHeard = heardTime(c) + LEAD;
           const plans = lv.plans;
           const hand = handOf(plans);
           const layer = layerOf(plans);

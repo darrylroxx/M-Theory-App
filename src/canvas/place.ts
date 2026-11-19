@@ -147,8 +147,12 @@ export class Sweep extends Layout {
 /** The canvas flows left; paint is laid in where the current is now. */
 export class River extends Layout {
   readonly id: LayoutId = "river";
-  /** where across the canvas the newest paint lands */
-  static HEAD = 0.78;
+  /**
+   * Where across the canvas the newest paint lands: at the right-hand margin, so the whole width
+   * between the margins is painted (the present at the right, the past drifting off to the left)
+   * and nothing is left bare on the right.
+   */
+  static HEAD = 1 - MARGIN;
   speed(w: When) {
     return (this.w * (1 - 2 * MARGIN)) / this.crossing(w);
   }

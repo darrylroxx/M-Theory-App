@@ -153,6 +153,14 @@ interface Stroke {
   laidAt: { x: number; y: number } | null;
   /** for the harmony's hatching: where it has been */
   marks: number;
+  /** the pitch (semitones) the brush is making for, and the height on the frequency scale it was last at */
+  aim: number;
+  up: number;
+  /**
+   * A line's way from one pitch to the next (melody, harmony, bass, voice): from the height of
+   * `from` to that of `to` (on the frequency scale), starting at `t0`, over `dur` seconds.
+   */
+  glide?: { from: number; to: number; t0: number; dur: number };
 }
 
 const TAU = Math.PI * 2;
@@ -162,6 +170,20 @@ const SPRING = 54.3;
 const DAMP = 72;
 /** Notes closer together than this (seconds) are one gesture: the line carries on. */
 const JOIN = 0.14;
+/**
+ * A line goes from one pitch to the next no steeper than this (height over length, along the way
+ * the music runs): a brush follows a line, it does not climb a stair. How long a glide takes
+ * follows from this and from how fast the music runs across the canvas.
+ */
+export const MAX_SLOPE = 1.2;
+/** ...but a glide never takes longer than this (seconds), nor more than this part of its note: it is the way into the note, not all of it. */
+const GLIDE_MAX = 0.4;
+const GLIDE_PART = 0.9;
+/** A tone's pitch moving less than this (semitones: vibrato, a slide the ear follows) is followed as it comes. */
+const GLIDE_FROM = 0.5;
+/** Eased in and out: a glide sets off and arrives without a corner. */
+const smooth = (x: number) => (x <= 0 ? 0 : x >= 1 ? 1 : x * x * (3 - 2 * x));
+const isLine = (l: LayerKind) => l === "melody" || l === "harmony" || l === "bass" || l === "vocals";
 /** The noise bands up among the cymbals (above about 5 kHz). */
 const HIGH_BANDS = Array.from({ length: NOISE_BANDS }, (_, b) => noiseHz(b)).filter((hz) => hz >= 5000).length;
 /** Shorter than this is a stab: a dab, a slab or a block. */
@@ -513,6 +535,8 @@ export class LayerHand {
       laid: c.t,
       laidAt: null,
       marks: 0,
+      aim: midiOfHz(c.hz),
+      up: upOfHz(c.hz),
     };
     s.py = s.y;
     // a line: a note that follows closely on the last carries on from where that one's brush was
@@ -530,6 +554,11 @@ export class LayerHand {
       // the line keeps one paint: a new note tints it, it does not change it (and the same note picked up again is the same paint)
       s.rgb = again ? ln.rgb : mixRgb(ln.rgb, rgb, 0.35);
       s.k = again ? ln.k : paintOf(s.rgb);
+      // the line goes on to the new pitch from the last one: it glides there, as a brush would
+      if (!again) {
+        s.up = upOfHz(ln.hz);
+        s.glide = this.glideTo(s.up, upOfHz(c.hz), c.t, c.len);
+      }
     }
     if (this.layer === "vocals") {
       const n = 12;
@@ -586,7 +615,7 @@ export class LayerHand {
     while (at < t - 1e-6) {
       const dt = Math.min(1 / 60, t - at);
       at += dt;
-      const p = this.where(at, upOfHz(s.hz));
+      const p = this.where(at, this.upOf(s, at));
       if (!p) {
         s.until = Math.min(s.until, at);
         break;
@@ -628,6 +657,50 @@ export class LayerHand {
       s.t = at;
     }
     if (this.layer === "melody" || this.layer === "harmony" || this.layer === "bass" || this.layer === "vocals") this.line = this.memory(s, false);
+  }
+
+  /**
+   * How a line goes from height `from` to height `to` (on the frequency scale), starting at `t`:
+   * as long as it takes to climb no steeper than `MAX_SLOPE` at the speed the music runs across
+   * the canvas there, within `GLIDE_MAX` and a part of what is left of the note (`len`, when known).
+   */
+  private glideTo(from: number, to: number, t: number, len?: number): Stroke["glide"] {
+    const a = this.where(t, from);
+    const b = this.where(t, to);
+    const ahead = this.where(t + 0.05, to);
+    if (!a || !b || !ahead || ahead.seg !== b.seg) return undefined;
+    const rise = Math.hypot(b.x - a.x, b.y - a.y);
+    const speed = Math.hypot(ahead.x - b.x, ahead.y - b.y) / 0.05;
+    // (an eased glide is steepest in its middle: half as steep again as on average)
+    const want = (1.5 * rise) / Math.max(1e-6, MAX_SLOPE * speed);
+    const dur = Math.min(want, GLIDE_MAX, len !== undefined ? GLIDE_PART * Math.max(0.02, len) : GLIDE_MAX);
+    return dur > 1e-3 ? { from, to, t0: t, dur } : undefined;
+  }
+
+  /** The height on the frequency scale a brush is at, at `t`: a line glides from pitch to pitch; anything else is where its sound is. */
+  private upOf(s: Stroke, t: number): number {
+    const up = upOfHz(s.hz);
+    if (!isLine(this.layer)) return up;
+    const midi = midiOfHz(s.hz);
+    if (Math.abs(midi - s.aim) > GLIDE_FROM) {
+      // the tone stepped to another pitch (the ear followed it there): a glide from where the line is
+      const left = s.cue.len !== undefined ? Math.max(0, s.cue.t + s.cue.len - t) : undefined;
+      s.glide = this.glideTo(s.up, up, t, left);
+    } else if (s.glide && midi !== s.aim) {
+      // it moved a little (vibrato, a slide): the way there moves with it
+      const d = up - s.glide.to;
+      s.glide = { ...s.glide, from: s.glide.from + d, to: up };
+    }
+    s.aim = midi;
+    let out = up;
+    const g = s.glide;
+    if (g) {
+      const f = (t - g.t0) / g.dur;
+      if (f >= 1) s.glide = undefined;
+      else out = g.from + (g.to - g.from) * smooth(f);
+    }
+    s.up = out;
+    return out;
   }
 
   private memory(s: Stroke, short: boolean): Lifted {
