@@ -40,6 +40,9 @@ sha2 = "0.10"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy", "stream"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+# zip asks for flate2 without picking a backend. On Linux another crate happens to pick one; on
+# Windows only a build-time crate does, and that does not reach the app, so pick the pure-Rust one here.
+flate2 = { version = "1", default-features = false, features = ["rust_backend"] }
 
 # On Windows the app talks to audio interfaces through their ASIO drivers (Steinberg ASIO SDK, GPLv3 option).
 [target.'cfg(target_os = "windows")'.dependencies]
