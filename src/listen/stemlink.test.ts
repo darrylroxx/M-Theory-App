@@ -367,7 +367,7 @@ describe("the Canvas's link to the neural split", () => {
     expect(calls).toHaveLength(0);
     // a computer without the runtime it needs
     desktop = true;
-    native({ status: status({ available: false, reason: "A Visual C++ runtime is missing; install it and restart the app." }) });
+    native({ status: status({ available: false, reason: "A runtime library is missing; install it and restart the app." }) });
     const pc = new StemLink(song(), s);
     await pc.start();
     expect(pc.view.phase).toBe("off");

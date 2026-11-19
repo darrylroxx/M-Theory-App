@@ -1142,9 +1142,9 @@ span.cv-better { cursor: default; }
 .cv-better-bar i { position: absolute; inset: 0 auto 0 0; background: var(--accent); transition: width 0.2s; }
 @keyframes cv-better-pulse { 50% { opacity: 0.45; } }
 @media (prefers-reduced-motion: reduce) { .cv-better.on.busy { animation: none; } }
-/* the time line: a hairline along the bottom of the canvas; where the song is, and how far the better layers reach */
-.cv-line { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: 3px; pointer-events: none; background: color-mix(in srgb, var(--card) 40%, transparent); }
-.cv-line i { position: absolute; top: 0; bottom: 0; left: 0; }
-.cv-line-at { width: 100%; transform-origin: left; transform: scaleX(0); background: color-mix(in srgb, var(--text, #888) 45%, transparent); }
-.cv-line-better { top: auto !important; height: 2px; width: 0; background: var(--accent); }
+/* the time line: a hairline along the bottom of the canvas in two lanes; above, how far the song has played; below, how far the better layers reach */
+.cv-line { position: absolute; left: 0; right: 0; bottom: 0; z-index: 3; height: 4px; pointer-events: none; background: color-mix(in srgb, var(--card) 45%, transparent); }
+.cv-line i { position: absolute; left: 0; height: 2px; }
+.cv-line-at { top: 0; width: 100%; transform-origin: left; transform: scaleX(0); background: color-mix(in srgb, var(--text) 55%, transparent); }
+.cv-line-better { bottom: 0; width: 0; background: var(--accent); }
 .cv.full .cv-line { bottom: env(safe-area-inset-bottom, 0px); }
