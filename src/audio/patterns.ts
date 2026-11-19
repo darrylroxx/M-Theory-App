@@ -24,6 +24,7 @@ import type { HarpSound } from "./rack";
 import type { Tone } from "./tone";
 import { STYLES, type Style } from "./styles";
 import type { TimeSig } from "../song/meter";
+import type { PlayTake } from "./takeplay";
 
 export type PatternId = string;
 
@@ -266,8 +267,9 @@ export interface ExtraPlay {
   tunes: { track: string; tune: PlayTune }[];
   /** extra drum tracks */
   drums: { track: string; beat: Beat }[];
-  /** recorded takes that start in this section: where (beats into the section), and which part of the recording */
-  takes?: { track: string; buffer: AudioBuffer; at: number; offset: number; dur: number }[];
+  /** recorded takes that sound in this section: where each starts (beats into the section: before it, for one
+   * that began in a section before and runs on into this one), and which part of its buffer plays */
+  takes?: PlayTake[];
 }
 
 /**

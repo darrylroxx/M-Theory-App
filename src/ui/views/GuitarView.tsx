@@ -38,9 +38,10 @@ import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
-import { activeTake, groupsOf, type Take } from "../../song/takes";
+import { activeTake, groupsOf, layTakes, type Take } from "../../song/takes";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
+import { stopAlone } from "../../audio/takeplay";
 import { letterClass } from "../letters";
 import { lastOnly, lastOnlyEach } from "../latest";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
@@ -194,6 +195,17 @@ export function GuitarView() {
     const nBeat = np.beat ?? DEFAULT_BEAT;
     const row: Section[] = playSecs.length ? playSecs : [soloSection(np)];
     const editingOther = normalize(prog) !== prog && !!prog.focus?.chords;
+    // the take chosen from each recording, laid in the song where it was sung: one sung over a stretch of several
+    // sections is listed in each, at where it starts counted from that section's start (before it, for the
+    // sections after the first), so the player knows its place wherever the music is
+    const laid = layTakes(
+      row.map((sec) => {
+        const secBar = sigBeats(sec.meter ?? songSig);
+        return { block: sec.blockId, bar: secBar, beats: frameBeats(sec.bars, secBar) };
+      }),
+      (np.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])).filter((x): x is Take => !!x).map((x) => ({ ...x, track: t.id })) : [])),
+      np.bpm,
+    );
     // what plays each track: the item carries it, so the player, the WAV and the backing all play the same instrument
     const firstTone = toneOf(np, "chords");
     const tuneTone = toneOf(np, "melody");
@@ -215,15 +227,10 @@ export function GuitarView() {
         } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound), tone: toneOf(np, t.id) } });
         else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
       }
-      // recorded takes that start in this section (the take chosen from each recording)
-      for (const t of np.tracks ?? []) {
-        if (t.kind !== "vocals") continue;
-        for (const g of groupsOf(t.takes)) {
-          const tk = activeTake(t.takes ?? [], g, t.active?.[g]);
-          const buffer = tk && tk.at.block === sec.blockId ? takeBuffer(tk) : undefined;
-          // the buffer holds just the take, so it plays from its start
-          if (tk && buffer) (ex.takes ??= []).push({ track: t.id, buffer, at: tk.at.bar * secBar, offset: 0, dur: tk.frames / tk.rate });
-        }
+      // recorded takes that lie under this section (the buffer holds just the take, so it plays from its start)
+      for (const { take: tk, at } of laid[sec.blockId] ?? []) {
+        const buffer = takeBuffer(tk);
+        if (buffer) (ex.takes ??= []).push({ track: tk.track, buffer, at, offset: 0, dur: tk.frames / tk.rate, id: tk.id });
       }
       return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
     };
@@ -481,6 +488,8 @@ export function GuitarView() {
     starts.cancel();
     waiting.current = false;
     player.current?.stop();
+    // ■ stops every take, a take heard alone on the Vocals page too
+    stopAlone();
     playBlock.current = null;
     setPlaying(false);
     setNowIdx(-1);
@@ -497,6 +506,8 @@ export function GuitarView() {
     // while the Vocals page records, the song plays through the interface: a second one here would sound over it
     if (recording || waiting.current) return;
     if (!planRef.current.any || !listRef.current.items.length) return toast("Add chords, a melody or drums first");
+    // a take heard alone stops: it would sound over its own copy in the song
+    stopAlone();
     getAudio();
     // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
     const keys = Object.entries(heard.tones ?? {})
@@ -832,7 +843,7 @@ export function GuitarView() {
             sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} harmonizing={!!hz?.page} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
-          <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
+          <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} onAlone={stopPlay} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
           <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
