@@ -4,7 +4,7 @@ import { MAX_SECTION_BARS, QUICK_BARS, barsText, stepBars } from "../../song/fra
 import { hasTune } from "../../song/melody";
 import { TIME_SIGS, sameSig, sigName, type TimeSig } from "../../song/meter";
 import { MAX_NAME, addNewSection, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, unlinkBlock, type Section } from "../../song/structure";
-import { activeTake, groupsOf } from "../../song/takes";
+import { placedClips } from "../../song/clips";
 import { allTracks, focusTrack, isFirst, normalize, type Track, type TrackKind } from "../../song/tracks";
 import { copySection, keyShift, pasteSection, sectionHasContent } from "../../song/clip";
 import { conform, setSectionSig, sigOf } from "../../song/unity";
@@ -80,7 +80,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
   /** what one track holds in a section: how many chords, a melody, a beat, how many recordings */
   const filled = (x: Section, t: Track): number => {
     const sec = secs.find((y) => y.blockId === x.blockId);
-    if (t.kind === "vocals") return groupsOf(t.takes).filter((g) => activeTake(t.takes ?? [], g, t.active?.[g])?.at.block === x.blockId).length;
+    if (t.kind === "vocals") return new Set(placedClips(t).filter(({ take }) => take.at.block === x.blockId).map(({ take }) => take.group)).size;
     if (!isFirst(t.id)) {
       const l = (sec ? sec.layers : np.layers)?.[t.id];
       return t.kind === "chords" ? (l?.chords ?? []).filter((c) => !c.rest).length : t.kind === "melody" ? Number(hasTune(l?.melody)) : Number(!!l?.beat?.on);

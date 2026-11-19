@@ -101,19 +101,6 @@ export function toggled(marks: ReadonlySet<number>, n: number): Set<number> {
 }
 
 /**
- * The takes of one recording to list. A long session can leave hundreds, so only these show:
- * the keepers (★), the one that plays, and the newest few; the rest wait behind "+N". Short
- * last passes are left out unless asked for (or marked, or playing).
- */
-export function shownTakes(takes: Take[], group: string, o: { active?: string; newest?: number; shorts?: boolean; all?: boolean } = {}): { shown: Take[]; more: number } {
-  const mine = takes.filter((t) => t.group === group && (o.shorts || !t.short || t.keep || t.id === o.active));
-  if (o.all) return { shown: mine, more: 0 };
-  const newest = o.newest ?? 8;
-  const shown = mine.filter((t, i) => t.keep || t.id === o.active || i >= mine.length - newest);
-  return { shown, more: mine.length - shown.length };
-}
-
-/**
  * The click under a recording: how many beats each bar of the loop has (whole beats, at least
  * one, as the time signatures give them), and a count-in of `countIn` bars in the meter of the
  * loop's first bar, the one that comes straight after it. A loop that crosses from a 4/4
@@ -141,41 +128,6 @@ export function barsInto(bars: readonly { beats: number }[], beats: number, from
   }
   return Math.max(0, bars.length - from);
 }
-
-/**
- * Where takes lie in the song: for every section (in the song's order, each with the beats in a
- * bar and the beats it lasts), the takes that sound in it, each with where it starts counted
- * from the section's start, in beats. A take starts on the bar it was sung from, and one longer
- * than its section (a loop sung across several sections) is listed in each section after it
- * that it reaches too, at a place before that section's start: wherever the music is, the
- * player then knows which part of which take lies under it. A take whose section is gone is
- * left out.
- */
-export function layTakes<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], takes: readonly T[], bpm: number): Record<string, { take: T; at: number }[]> {
-  const start: Record<string, { at: number; bar: number }> = {};
-  let pos = 0;
-  for (const s of secs) {
-    start[s.block] = { at: pos, bar: s.bar };
-    pos += s.beats;
-  }
-  const out: Record<string, { take: T; at: number }[]> = {};
-  for (const s of secs) out[s.block] = [];
-  const spb = 60 / Math.max(1, bpm);
-  for (const take of takes) {
-    const from = start[take.at.block];
-    if (!from || !(take.frames > 0) || !(take.rate > 0)) continue;
-    const begin = from.at + take.at.bar * from.bar;
-    const len = take.frames / take.rate / spb;
-    for (const s of secs) {
-      const at = begin - start[s.block].at;
-      if (at < s.beats - 1e-6 && at + len > 1e-6) out[s.block].push({ take, at });
-    }
-  }
-  return out;
-}
-
-/** How many bars a take lasts at a tempo (the Track page and the Vocals lane draw it this long). */
-export const takeBars = (t: Take, bpm: number, beatsPerBar: number): number => t.frames / t.rate / (60 / bpm) / Math.max(1, beatsPerBar);
 
 /**
  * A short name for a vocal sound, kept on each take to tell whether its file was made with the

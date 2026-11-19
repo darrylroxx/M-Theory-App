@@ -38,7 +38,7 @@ import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
-import { activeTake, groupsOf, layTakes, type Take } from "../../song/takes";
+import { layClips, placedClips, playedTakes as takesPlayed, sixteenths } from "../../song/clips";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { stopAlone } from "../../audio/takeplay";
@@ -166,7 +166,7 @@ export function GuitarView() {
 
   // recorded takes are read from disk once (just the take, not the whole recording), then play with the song
   const [takesReady, setTakesReady] = useState(0);
-  const playedTakes = useMemo(() => (prog.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])) : [])).filter((x): x is Take => !!x), [prog.tracks]);
+  const playedTakes = useMemo(() => (prog.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? takesPlayed(t) : [])), [prog.tracks]);
   const playedKey = playedTakes.map(takeKey).join("|");
   useEffect(() => {
     let live = true;
@@ -195,15 +195,15 @@ export function GuitarView() {
     const nBeat = np.beat ?? DEFAULT_BEAT;
     const row: Section[] = playSecs.length ? playSecs : [soloSection(np)];
     const editingOther = normalize(prog) !== prog && !!prog.focus?.chords;
-    // the take chosen from each recording, laid in the song where it was sung: one sung over a stretch of several
-    // sections is listed in each, at where it starts counted from that section's start (before it, for the
-    // sections after the first), so the player knows its place wherever the music is
-    const laid = layTakes(
+    // every clip of the vocal tracks (a stretch of a take, as edited on the Vocals lane), laid in the song where it
+    // plays: one over a stretch of several sections is listed in each, at where it starts counted from that section's
+    // start (before it, for the sections after the first), so the player knows its place wherever the music is
+    const laid = layClips(
       row.map((sec) => {
         const secBar = sigBeats(sec.meter ?? songSig);
         return { block: sec.blockId, bar: secBar, beats: frameBeats(sec.bars, secBar) };
       }),
-      (np.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])).filter((x): x is Take => !!x).map((x) => ({ ...x, track: t.id })) : [])),
+      (np.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? placedClips(t).map(({ clip, take }) => ({ clip, take: { ...take, track: t.id } })) : [])),
       np.bpm,
     );
     // what plays each track: the item carries it, so the player, the WAV and the backing all play the same instrument
@@ -227,10 +227,10 @@ export function GuitarView() {
         } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound), tone: toneOf(np, t.id) } });
         else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
       }
-      // recorded takes that lie under this section (the buffer holds just the take, so it plays from its start)
-      for (const { take: tk, at } of laid[sec.blockId] ?? []) {
+      // the clips that lie under this section (the buffer holds just the take: a clip plays its stretch of it)
+      for (const { clip, take: tk, at, offset, dur, joined } of laid[sec.blockId] ?? []) {
         const buffer = takeBuffer(tk);
-        if (buffer) (ex.takes ??= []).push({ track: tk.track, buffer, at, offset: 0, dur: tk.frames / tk.rate, id: tk.id });
+        if (buffer) (ex.takes ??= []).push({ track: tk.track, buffer, at, offset, dur, id: clip.id, ...(joined ? { joined } : {}) });
       }
       return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
     };
@@ -623,7 +623,7 @@ export function GuitarView() {
     const b = plan.per.findIndex((x) => x.block === span.to.block);
     for (let k = Math.max(0, a); k <= b; k++) {
       const x = plan.per[k];
-      for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar });
+      for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar, sub: sixteenths(!!x.items[0]?.meter?.triplet) });
     }
     return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : all.length > 1 ? `to ${plan.per.find((x) => x.block === span.to.block)?.label ?? ""} (all between)` : "and on"}`, bars };
   }, [runs, layout, curBlock, sliceLoop, plan.per, bar, prog.bpm, prog.pattern, firstBeat]);
@@ -1402,8 +1402,8 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   const np = useMemo(() => normalize(prog), [prog]);
   const tracks = useMemo(() => allTracks(np), [np]);
   const vocals = tracks.filter((t) => t.kind === "vocals");
-  /** the takes that play (one from each recording) */
-  const playing = vocals.flatMap((t) => groupsOf(t.takes).map((g) => activeTake(t.takes ?? [], g, t.active?.[g])).filter((x): x is Take => !!x));
+  /** the takes that play (those the vocal clips play) */
+  const playing = vocals.flatMap((t) => takesPlayed(t));
   const change = (fn: (p: Progression) => Progression) => set((s) => ({ ...s, progression: fn(s.progression) }));
   // a recording keeps the tempo and key it was sung in
   const sungAt = [...new Set(playing.map((k) => k.bpm).filter((b): b is number => !!b))];

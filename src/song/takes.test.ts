@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, shownTakes, soundTag, takeBars, toggled, type Recorded, type Take } from "./takes";
+import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, soundTag, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -113,24 +113,6 @@ describe("a flow session: pass after pass until stopped", () => {
     expect(reviveTakes([old])).toEqual([{ ...old, n: 1 }]);
   });
 
-  it("hundreds of passes: the list shows the keepers, the one playing and the newest, the rest behind +N", () => {
-    const takes = cutTakes(long(300, 20_000), { group: "g", at, id, kept: [5, 120] });
-    takes.push(...cutTakes(long(2), { group: "other", at, id }));
-    const active = activeTake(takes, "g")!;
-    const { shown, more } = shownTakes(takes, "g", { active: active.id });
-    expect(shown.map((t) => t.n)).toEqual([5, 120, 293, 294, 295, 296, 297, 298, 299, 300]);
-    expect(more).toBe(290);
-    // the short tail is hidden unless asked for
-    expect(shownTakes(takes, "g", { active: active.id, shorts: true }).shown.map((t) => t.n).slice(-2)).toEqual([300, 301]);
-    // a take chosen from deep in the list shows too
-    expect(shownTakes(takes, "g", { active: takes[40].id }).shown.map((t) => t.n)).toContain(41);
-    // "+N" opened: every one
-    expect(shownTakes(takes, "g", { all: true }).shown).toHaveLength(300);
-    expect(shownTakes(takes, "g", { all: true, shorts: true }).shown).toHaveLength(301);
-    // a short recording shows whole
-    const few = cutTakes(long(3), { group: "f", at, id });
-    expect(shownTakes(few, "f")).toEqual({ shown: few, more: 0 });
-  });
 
   it("each take keeps a short name of the vocal sound it was made with, not the whole sound", () => {
     const fx = { on: true, verb: 0.25, echo_type: "tape", level: 0 };
@@ -145,12 +127,6 @@ describe("a flow session: pass after pass until stopped", () => {
     expect(sameSound({ sound: JSON.stringify(fx) } as Take, fx)).toBe(true);
     // a take made with no vocal sound (it plays dry) never matches
     expect(sameSound({ sound: "" } as Take, fx)).toBe(false);
-  });
-
-  it("a take is as many bars long as its sound at the tempo", () => {
-    const t = { frames: 192000, rate: 48000 } as Take;
-    expect(takeBars(t, 120, 4)).toBe(2); // 4 s at 120 bpm: 8 beats
-    expect(takeBars(t, 90, 3)).toBe(2); // 6 beats of 3
   });
 });
 

@@ -8,6 +8,7 @@ vi.mock("./mix", () => ({ fader: () => ({}) }));
 vi.mock("./context", () => ({
   audioContext: () => ({
     currentTime: 1,
+    createGain: () => ({ gain: { setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() {}, disconnect() {} }),
     createBufferSource: () => {
       const s = { buffer: null as unknown, started: undefined as number | undefined, stopped: false, connect() {}, start(w: number) { s.started = w; }, stop() { s.stopped = true; }, onended: null };
       sources.push(s);

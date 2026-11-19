@@ -33,6 +33,7 @@ import { commit, ensureSong, replaceSection, reviveSettings, sections, soloSecti
 import { forget, insteadTarget, isFirst, muteInstead, normalize, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
 import { reviveTones, type Tones } from "../audio/tone";
 import { groupsOf } from "./takes";
+import { clipsOf } from "./clips";
 
 export type ClipKind = "rhythm" | "melody" | "drums";
 
@@ -154,7 +155,10 @@ export function copySection(p0: Progression, blockId: string, key: Key, idea: st
     const groups = groupsOf(t.takes).filter((g) => (t.takes ?? []).some((k) => k.group === g && k.at.block === sec.blockId));
     if (!groups.length) return [];
     const active = Object.fromEntries(Object.entries(t.active ?? {}).filter(([g]) => groups.includes(g)));
-    return [{ ...t, takes: (t.takes ?? []).filter((k) => groups.includes(k.group)), active }];
+    const takes = (t.takes ?? []).filter((k) => groups.includes(k.group));
+    // what plays of them, as edited
+    const clips = clipsOf(t).filter((c) => takes.some((k) => k.id === c.take));
+    return [{ ...t, takes, active, clips }];
   });
   const settings: Settings = tidy({ style: sec.style, feel: sec.feel, sound: sec.sound, tuneSound: sec.tuneSound, groove: sec.groove, kit: sec.kit });
   const tones: Tones = Object.fromEntries(tracks.filter((t) => p.tones?.[t.id]).map((t) => [t.id, p.tones![t.id]]));
@@ -202,7 +206,7 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
       continue;
     }
     const nid = isFirst(t.id) || tracks.some((x) => x.id === t.id) ? id() : t.id;
-    const { takes: _t, active: _a, ...rest } = t;
+    const { takes: _t, active: _a, clips: _c, ...rest } = t;
     tracks.push({ ...clone(rest), id: nid });
     made.add(nid);
     to.set(t.id, nid);
@@ -229,6 +233,7 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
     if (t.kind !== "vocals") return t;
     const takes = (t.takes ?? []).filter((k) => k.at.block !== target);
     const active: Record<string, string> = Object.fromEntries(Object.entries(t.active ?? {}).filter(([g]) => takes.some((k) => k.group === g)));
+    const clips = clipsOf(t).filter((c) => takes.some((k) => k.id === c.take));
     for (const ct of c.tracks) {
       if (ct.kind !== "vocals" || to.get(ct.id) !== t.id) continue;
       const groups = new Map<string, string>();
@@ -239,8 +244,10 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
         takes.push({ ...clone(k), id: ids.get(k.id)!, group: groups.get(k.group)!, at: { block: target, bar: k.at.bar } });
       }
       for (const [g, k] of Object.entries(ct.active ?? {})) if (groups.has(g) && ids.has(k)) active[groups.get(g)!] = ids.get(k)!;
+      // the copy's clips, on its takes here
+      for (const c of clipsOf(ct)) if (ids.has(c.take)) clips.push({ ...clone(c), id: id(), take: ids.get(c.take)! });
     }
-    return tidy({ ...t, takes: takes.length ? takes : undefined, active: Object.keys(active).length ? active : undefined });
+    return tidy({ ...t, takes: takes.length ? takes : undefined, active: Object.keys(active).length ? active : undefined, clips: takes.length ? clips : undefined });
   });
   const part = q.song?.blocks.find((b) => b.id === target)?.partId;
   const harmonies = part ? vocals.map((t) => harmonyAfterPaste(t, c, to, made, part, vocals)) : vocals;
