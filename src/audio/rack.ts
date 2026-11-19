@@ -282,7 +282,12 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   // an offline render has no time to wait for a knob to settle (it has resume() too, so ask for what only it has)
   const live = !("startRendering" in c);
   let when = 0;
-  const to = (p: AudioParam, v: number, tc = 0.03) => (was.level === undefined ? (p.value = v) : p.setTargetAtTime(v, when, tc));
+  // a change booked for later that never came (playing stopped or jumped just before a section with a
+  // sound of its own) must not land on top of this one: anything booked from this moment on goes
+  const to = (p: AudioParam, v: number, tc = 0.03) => {
+    if (was.level === undefined) p.value = v;
+    else p.cancelScheduledValues(when).setTargetAtTime(v, when, tc);
+  };
   const room = (s: HarpSound) => {
     const sides = renderSpace(c.sampleRate, s.size, drumRng(11), s.verb);
     const buf = c.createBuffer(2, sides[0].length, c.sampleRate);

@@ -6,6 +6,7 @@ import { setDrumFx } from "./drumbus";
 import { fxOf } from "./beats";
 import { TrackVoice, FADE } from "./trackvoice";
 import { GUITAR } from "./tone";
+import { FakeParam } from "../keys/fakeaudio";
 
 const convolvers = (c: FakeAudio) => c.nodes.filter((n) => "normalize" in n && (n as FakeAny).normalize === false) as FakeAny[];
 
@@ -60,6 +61,20 @@ describe("a section's own room in a WAV", () => {
     expect(verb.buffer).not.toBe(first);
     vi.unstubAllGlobals();
     vi.useRealTimers();
+  });
+});
+
+describe("a section's sound booked for later", () => {
+  it("does not land after playing stopped just before it and started again", () => {
+    const c = new FakeAudio();
+    const rack = createRack(asAudio(c));
+    rack.set(SOUND_DEFAULT, 90);
+    // the next section, with an echo of its own, is booked 0.2 s ahead; playing stops, and starts again at once
+    rack.set({ ...SOUND_DEFAULT, echo: 0.9, chorus: 0.7 }, 90, 0.2);
+    c.currentTime = 0.05;
+    rack.set(SOUND_DEFAULT, 90, 0.05);
+    const params = c.nodes.flatMap((n) => Object.values(n).filter((v): v is FakeParam => v instanceof FakeParam));
+    expect(params.filter((p) => p.events.some((e) => e.t > 0.06))).toEqual([]);
   });
 });
 

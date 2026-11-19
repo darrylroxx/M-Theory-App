@@ -3,7 +3,7 @@ import { withContext } from "./context";
 import { FakeAudio, asAudio, type FakeAny } from "./fakectx";
 import { FakeParam } from "../keys/fakeaudio";
 import { fader } from "./mix";
-import { playStep, setDrumFx, setDrumSolo, syncDrums } from "./drumbus";
+import { playStep, setBedPlaying, setDrumFx, setDrumSolo, syncDrums } from "./drumbus";
 import { DEFAULT_BEAT, fxOf, type Beat } from "./beats";
 
 const kit = (k: Beat["kit"]): Beat => ({ ...DEFAULT_BEAT, on: true, kit: k });
@@ -68,5 +68,39 @@ describe("every drums track has a desk of its own", () => {
     const g = c.started[0].outputs[0] as unknown as FakeAny;
     // the hit itself is played at full strength: the fader alone sets the track's level
     expect(g.gain.value).toBeCloseTo(1.1, 5);
+  });
+});
+
+describe("a section's drum sound booked for later", () => {
+  it("does not land after playing stopped just before it and started again", () => {
+    const c = new FakeAudio();
+    const dry = kit("909");
+    const wet = { ...kit("909"), space: 1, echo: 0.8 };
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "drums");
+      // the next section, with its own sound, is booked 0.2 s ahead; playing stops, and starts again at once
+      syncDrums(wet, 100, "drums", 0.2);
+      c.currentTime = 0.05;
+      syncDrums(dry, 100, "drums", 0.05);
+    });
+    const now = booked(c).filter((x) => x.p.events.some((e) => e.t > 0.06));
+    expect(now).toEqual([]);
+  });
+});
+
+describe("every drums track has a noise bed of its own", () => {
+  it("one track's bed stops when its drums stop, and the other's runs on", () => {
+    const c = new FakeAudio();
+    const noisy = { ...kit("909"), noise: "vinyl" as const, noiseAmt: 0.6 };
+    withContext(asAudio(c), () => {
+      setBedPlaying(true, noisy, "drums");
+      setBedPlaying(true, noisy, "d2");
+    });
+    const beds = c.nodes.filter((n) => (n as unknown as { loop?: boolean }).loop === true) as unknown as { stops: number[] }[];
+    expect(beds.length).toBe(2);
+    withContext(asAudio(c), () => setBedPlaying(false, null, "d2"));
+    expect(beds.map((b) => b.stops.length > 0)).toEqual([false, true]);
+    withContext(asAudio(c), () => setBedPlaying(false, null));
+    expect(beds.every((b) => b.stops.length > 0)).toBe(true);
   });
 });

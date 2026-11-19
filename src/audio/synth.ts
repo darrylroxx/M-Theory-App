@@ -347,7 +347,7 @@ export class ProgressionPlayer {
     this.passBeat = list.slice(0, fromIndex).reduce((a, x) => a + x.beats, 0);
     this.origin = 0;
     this.endAt = null;
-    setBedPlaying(true, beat);
+    setBedPlaying(true, beat, FIRST_DRUMS);
     if (beat) {
       syncDrums(beat, bpm);
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
@@ -375,7 +375,7 @@ export class ProgressionPlayer {
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
-    setBedPlaying(this.playing, beat);
+    setBedPlaying(this.playing, beat, FIRST_DRUMS);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
   }
@@ -575,11 +575,11 @@ export class ProgressionPlayer {
    */
   private syncLane(track: string, lane: Lane, a: Anchor) {
     const b = this.beatOf(track, a);
-    if (!b || b === lane.synced) return;
-    const first = lane.synced === null;
+    if (b === lane.synced) return;
     lane.synced = b;
-    syncDrums(b, this.bpm, track, a.time);
-    if (first && track !== FIRST_DRUMS) setBedPlaying(true, b, track);
+    if (b) syncDrums(b, this.bpm, track, a.time);
+    // an added track's noise bed runs only while its drums play (the first track's follows the page's beat)
+    if (track !== FIRST_DRUMS) setBedPlaying(!!b, b, track);
   }
 
   private tick() {

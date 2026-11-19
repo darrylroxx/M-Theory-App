@@ -78,6 +78,21 @@ describe("a track's voice", () => {
     // each note played once, by the chord it falls under
     expect(notes.length).toBeLessThanOrEqual(34);
   });
+  it("on the synth, a chord changed while its section plays is heard from the next chord on", () => {
+    const c = new FakeAudio();
+    const { v } = voice(c);
+    v.setTone(arp);
+    const cache: SynthCache = new Map();
+    const F = [53, 57, 60, 65];
+    const G = [55, 59, 62, 67];
+    playChord(v, { midi: C, beats: 4 }, 0, 0.5, "ring", 0, null, cache, () => ({ key: "s", t0: 0, chords: [{ midi: C, at: 0, beats: 4 }, { midi: F, at: 4, beats: 4 }] }));
+    const before = ons(v).length;
+    // the second chord is changed from F to G before it comes round
+    playChord(v, { midi: G, beats: 4 }, 2, 0.5, "ring", 4, null, cache, () => ({ key: "s", t0: 0, chords: [{ midi: C, at: 0, beats: 4 }, { midi: G, at: 4, beats: 4 }] }));
+    const second = ons(v).slice(before);
+    expect(second.length).toBeGreaterThan(8);
+    expect(second.every((n) => G.map((m) => m % 12).includes(n.midi % 12))).toBe(true);
+  });
   it("on the synth as written, the chord is held for its length", () => {
     const c = new FakeAudio();
     const { v } = voice(c);

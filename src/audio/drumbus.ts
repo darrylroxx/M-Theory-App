@@ -290,7 +290,8 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   const fx = fxOf(settings);
   const desk = deskOf(track);
   const was = desk.applied;
-  const to = (param: AudioParam, value: number, tc = 0.03) => param.setTargetAtTime(value, t, tc);
+  // (a section's sound booked for later that never came, because playing stopped or jumped, is let go)
+  const to = (param: AudioParam, value: number, tc = 0.03) => param.cancelScheduledValues(t).setTargetAtTime(value, t, tc);
   if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
   if (fx.size !== was.size || fx.verb !== was.verb) {
     // building a room takes a moment: wait until the knob stops moving (a section's own room: until its moment)
@@ -351,10 +352,10 @@ export function syncDrums(beat: Beat, bpm: number, track = FIRST_DRUMS, at?: num
     if (mixed.get(id) === key) continue;
     mixed.set(id, key);
     const ch = b.channels[id];
-    ch.input.gain.setTargetAtTime(p.level / 0.8, t, 0.015);
-    ch.pan.pan.setTargetAtTime(p.pan, t, 0.015);
-    ch.space.gain.setTargetAtTime(p.space, t, 0.015);
-    ch.echo.gain.setTargetAtTime(p.echo, t, 0.015);
+    ch.input.gain.cancelScheduledValues(t).setTargetAtTime(p.level / 0.8, t, 0.015);
+    ch.pan.pan.cancelScheduledValues(t).setTargetAtTime(p.pan, t, 0.015);
+    ch.space.gain.cancelScheduledValues(t).setTargetAtTime(p.space, t, 0.015);
+    ch.echo.gain.cancelScheduledValues(t).setTargetAtTime(p.echo, t, 0.015);
   }
 }
 
@@ -440,16 +441,21 @@ function startBed(d: Desk, type: NoiseBed) {
   d.bedSrc.connect(d.bus.bed);
   d.bedSrc.start();
 }
-/** A track's noise bed runs while its drums are playing (a `null` beat: every track's stops). */
-export function setBedPlaying(on: boolean, beat: Beat | null, track = FIRST_DRUMS) {
+/**
+ * A track's noise bed runs while its drums are playing: a track whose drums stop (switched off, or
+ * a section without them) goes quiet too. With no track and no beat, every track's stops.
+ */
+export function setBedPlaying(on: boolean, beat: Beat | null, track?: string) {
   if (!beat) {
-    for (const d of desks.get(audioContext())?.values() ?? []) {
+    const set = desks.get(audioContext());
+    for (const [id, d] of set ?? []) {
+      if (track !== undefined && id !== track) continue;
       d.bedOn = false;
       stopBed(d);
     }
     return;
   }
-  const d = deskOf(track);
+  const d = deskOf(track ?? FIRST_DRUMS);
   d.bedOn = on && !!beat.on;
   const want = d.bedOn ? fxOf(beat).noise : "off";
   if (want === "off") stopBed(d);

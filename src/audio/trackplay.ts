@@ -28,12 +28,16 @@ export interface SecChord {
  */
 export type SynthCache = Map<string, SynthNote[]>;
 const EARLY = 0.05;
-export function synthSection(cache: SynthCache, key: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[]): SynthNote[] {
+export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[]): SynthNote[] {
+  const list = chords();
+  const play = v.synth.play;
+  // a chord changed (or the way of playing) while the section plays is heard from the next chord on, as on the other instruments
+  const key = `${section}|${JSON.stringify(list)}|${JSON.stringify(play)}`;
   let notes = cache.get(key);
   if (!notes) {
     const written: PlayNote[] = [];
-    for (const c of chords()) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity: 0.78 });
-    notes = playNotes(written, v.synth.play, { bpm: 60 / spb, origin: t0, seed: 11 });
+    for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity: 0.78 });
+    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11 });
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);
   }
