@@ -97,7 +97,7 @@ On the **Chords** page:
    - Rows are notes, two octaves from the key's home note, named the way the key names them. **Rows that belong to the key are lit** and the home note is brightest; the others are grey. **Key only** hides the grey rows, so no tap can be out of key.
    - **A dot marks the notes of the chord playing underneath**, and each chord's name sits above the step where it comes in. A tune that keeps to lit rows and dots cannot sound wrong.
    - **Grid**: ♩ ♪ ♪3 ♬ sets how many steps there are to a beat. Notes never move when you change it. **Bar** tabs choose a bar (**‹ ›** turn a page of bars), ⧉ copies the bar before into the chosen one, ↶ Undo, Clear empties it. With the mouse, drag along a row to write (or rub out) several notes at once. A line shows where the music is (see *Bars on screen*).
-   - **It has an instrument of its own**, under the grid: **Guitar**, **Piano** or **Synth**, with its own sound and effects on a channel separate from the chords. Echo on the melody is not echo on the chords. On the strings each note rings until the next one; on the keys and the synth it is held until the next one (never past the end of its section).
+   - **It has an instrument of its own**, under the grid: **Guitar**, **Piano** or **Synth**, with its own sound and effects on a channel separate from the chords. Echo on the melody is not echo on the chords. On the strings each note rings until the next one; on the keys and the synth it is held until the next one (never past the end of its section). On the synth the tune is played its way too: a lead glides from note to note, an arp or a pulse runs through each note, a drone holds under the tune.
    - **↶** undoes the last note on the melody track you are on; switching track starts its undo afresh.
    - Every section of the song has its own melody. A melody shorter than its section comes round again; one that is longer makes the chords repeat under it. It plays without any chords too. MIDI export puts it on a track of its own.
 8. **The chords' instrument** (on the Chords page, under the tray). **Guitar · Piano · Synth**: each chords track plays one of them, chosen there.
@@ -283,7 +283,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 985 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing, each track's instrument and drum desk
+npm test          # 990 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing, each track's instrument and drum desk
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

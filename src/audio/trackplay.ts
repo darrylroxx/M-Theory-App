@@ -7,6 +7,8 @@ import type { Beat } from "./beats";
 import { meterOf, styleNotes, type PatternId, type PlayItem } from "./patterns";
 import type { HarpSound } from "./rack";
 import type { TrackVoice } from "./trackvoice";
+import { synthOf } from "./tone";
+import { tuneBetween, type Melody } from "../song/melody";
 import { playNotes, type PlayNote, type SynthNote } from "../synth/play";
 
 /** The melody's own strings: a new note stops the one before it, so a tune stays a tune and does not smear. */
@@ -28,7 +30,7 @@ export interface SecChord {
  */
 export type SynthCache = Map<string, SynthNote[]>;
 const EARLY = 0.05;
-export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[]): SynthNote[] {
+export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[], velocity = 0.78): SynthNote[] {
   const list = chords();
   const play = v.synth.play;
   // a chord changed (or the way of playing) while the section plays is heard from the next chord on, as on the other instruments
@@ -36,7 +38,7 @@ export function synthSection(cache: SynthCache, section: string, v: TrackVoice, 
   let notes = cache.get(key);
   if (!notes) {
     const written: PlayNote[] = [];
-    for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity: 0.78 });
+    for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity });
     notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11 });
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);
@@ -59,7 +61,7 @@ export function playChord(v: TrackVoice, item: PlayItem, t: number, spb: number,
     // each note is played once, by the chord it falls under (a little early, so a humanised note pushed ahead of its chord is not lost)
     const from = t - EARLY;
     const end = t + item.beats * spb - EARLY;
-    for (const n of synthSection(cache, s.key, v, s.t0, spb, () => s.chords)) if (n.start >= from && n.start < end) v.note(n.midi, Math.max(n.start, 0), n.velocity, n.length, { slot: n.slot });
+    playSpan(v, synthSection(cache, s.key, v, s.t0, spb, () => s.chords), from, end);
     return;
   }
   const keys = !!v.instrument;
@@ -79,9 +81,51 @@ export function playChord(v: TrackVoice, item: PlayItem, t: number, spb: number,
   }
 }
 
+/** The synth's notes that start in [from, to): each is played once, by the stretch of time it falls in. */
+function playSpan(v: TrackVoice, notes: SynthNote[], from: number, to: number) {
+  for (const n of notes) if (n.start >= from && n.start < to) v.note(n.midi, Math.max(n.start, 0), n.velocity, n.length, { slot: n.slot });
+}
+
+/** Does the track's synth play a melody its own way (an arp, a pulse, a glide, a drone, or loosened), not note for note? */
+export function synthWay(v: TrackVoice): boolean {
+  if (v.tone.inst !== "synth") return false;
+  // (asked every twelfth of a beat: the track's own settings are read as they are, not made afresh)
+  const play = synthOf(v.tone, v.kind === "chord" ? "chords" : "melody").play;
+  return play.mode !== "sustain" || play.humanise > 0;
+}
+
+/**
+ * A melody's notes over a whole section (`len` beats), each held until the next one comes and
+ * never past the section's end: what a synth's way of playing is worked out from.
+ */
+export function tuneSection(m: Melody, bar: number, swing: number, len: number): SecChord[] {
+  const hits = tuneBetween(m, bar, 0, len, swing);
+  const out: SecChord[] = [];
+  for (const h of hits) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last.at - h.beat) < 1e-6) last.midi.push(h.midi);
+    else out.push({ midi: [h.midi], at: h.beat, beats: 0 });
+  }
+  out.forEach((c, i) => (c.beats = (out[i + 1]?.at ?? len) - c.at));
+  return out;
+}
+
+/** The melody's velocity: as the notes it plays one by one. */
+const TUNE_VELOCITY = 0.9;
+
+/**
+ * A melody on a synth with a way of its own, for the stretch [from, to) of a section that started
+ * at `t0` and is `len` beats long: the whole section is worked out once (so a lead glides from
+ * note to note, an arp runs through each note, a drone holds under the tune) and the notes that
+ * start in this stretch are played.
+ */
+export function playTuneSpan(v: TrackVoice, cache: SynthCache, key: string, tune: { m: Melody; bar: number; swing: number }, t0: number, spb: number, len: number, from: number, to: number) {
+  playSpan(v, synthSection(cache, key, v, t0, spb, () => tuneSection(tune.m, tune.bar, tune.swing, len), TUNE_VELOCITY), from - EARLY, to - EARLY);
+}
+
 /** One melody note: on the strings it rings until the next; on the keys and the synth it is held until the next note, and never past the section's end. */
 export function playTuneNote(v: TrackVoice, midi: number, when: number, gap: number, sectionEnd: number, lane: number, as?: HarpSound) {
   if (!v.instrument) v.note(midi, when, 0.9, Infinity, { slot: TUNE_SLOT + lane, lift: TUNE_LIFT, as, until: gap });
-  else v.note(midi, when, 0.9, Math.max(0.05, Math.min(gap, sectionEnd - when)), { as });
+  else v.note(midi, when, TUNE_VELOCITY, Math.max(0.05, Math.min(gap, sectionEnd - when)), { as });
 }
 

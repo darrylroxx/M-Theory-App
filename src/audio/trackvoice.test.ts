@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
 import { TrackVoice } from "./trackvoice";
-import { playChord, playTuneNote, type SynthCache } from "./trackplay";
+import { playChord, playTuneNote, playTuneSpan, synthWay, tuneSection, type SynthCache } from "./trackplay";
 import { SOUND_DEFAULT } from "./rack";
 import { GUITAR, type Tone } from "./tone";
 import { presetById } from "../synth/presets";
@@ -145,6 +145,59 @@ describe("a track's voice", () => {
     expect(v.instrument).toBeNull();
     playChord(v, { midi: [40, 47, 52, 56, 59, 64], beats: 4 }, 0, 0.5, "ring", 0, null, new Map(), () => ({ key: "g", t0: 0, chords: [] }));
     expect(c.started.length).toBeGreaterThanOrEqual(6);
+  });
+});
+
+describe("a melody on the synth, played its way", () => {
+  const lead = presetById("pwm-lead")!.params;
+  const way = (play: Partial<typeof lead.play>): Tone => ({ inst: "synth", synth: { ...lead, play: { ...lead.play, ...play } } });
+  // C E G, a beat each, then a rest to the end of a 4-beat section (12 ticks a beat)
+  const tune = { m: { div: 1 as const, bars: 1, notes: [{ at: 0, midi: 72 }, { at: 12, midi: 76 }, { at: 24, midi: 79 }] }, bar: 4, swing: 0 };
+  const spb = 0.5;
+  /** the section played a twelfth of a beat at a time, as the live player does */
+  const play = (tone: Tone) => {
+    const c = new FakeAudio();
+    const { v } = voice(c, "melody");
+    v.setTone(tone);
+    const cache: SynthCache = new Map();
+    for (let k = 0; k < 48; k++) playTuneSpan(v, cache, "m", tune, 1, spb, 4, 1 + (k * spb) / 12, 1 + ((k + 1) * spb) / 12);
+    return v;
+  };
+  const lengths = (v: TrackVoice) => {
+    const ev = synthEvents(v);
+    return ons(v).map((on) => ({ midi: on.midi, t: on.t, len: (ev.find((e) => e.type === "off" && e.id === on.id) as { t: number }).t - on.t }));
+  };
+
+  it("reads the section's notes, each held until the next and the last to the end", () => {
+    expect(tuneSection(tune.m, tune.bar, 0, 4)).toEqual([{ midi: [72], at: 0, beats: 1 }, { midi: [76], at: 1, beats: 1 }, { midi: [79], at: 2, beats: 2 }]);
+  });
+  it("note for note only when it is set to Hold, so nothing changes for a plain lead", () => {
+    const c = new FakeAudio();
+    expect(synthWay(voice(c, "melody").v)).toBe(false);
+    const { v } = voice(c, "melody");
+    v.setTone(way({ mode: "sustain", humanise: 0 }));
+    expect(synthWay(v)).toBe(false);
+    v.setTone(way({ mode: "glide" }));
+    expect(synthWay(v)).toBe(true);
+  });
+  it("Glide: each note is held into the next, so the lead slides, and every note is played once", () => {
+    const n = lengths(play(way({ mode: "glide", humanise: 0 })));
+    expect(n.map((x) => x.midi)).toEqual([72, 76, 79]);
+    expect(n[0].len).toBeGreaterThan(spb);
+    expect(n[1].len).toBeGreaterThan(spb);
+    expect(n[0].t).toBeCloseTo(1, 5);
+  });
+  it("Arp: a held note runs at its rate", () => {
+    const n = lengths(play(way({ mode: "arp", rate: "1/8", octaves: 2, pattern: "up", humanise: 0 })));
+    // C for a beat in eighths over two octaves: C, C an octave up; then E, E'; then G, G' for two beats
+    expect(n.map((x) => x.midi)).toEqual([72, 84, 76, 88, 79, 91, 79, 91]);
+  });
+  it("Drone: the home note is held under the tune for the whole section", () => {
+    const n = lengths(play(way({ mode: "drone", humanise: 0 })));
+    // the home note low down and its fifth, from the first note to the end of the section
+    const held = n.filter((x) => Math.abs(x.t - 1) < 1e-6 && Math.abs(x.len - 4 * spb) < 1e-3).map((x) => x.midi);
+    expect(held).toContain(36);
+    expect(held).toContain(43);
   });
 });
 

@@ -19,7 +19,7 @@ import type { HarpString } from "./harp";
 import { TrackVoice, type VoiceKind } from "./trackvoice";
 import { GUITAR, type Tone, type Tones } from "./tone";
 import { playNotes, type PlayNote } from "../synth/play";
-import { TUNE_LIFT, TUNE_SLOT, playChord, playTuneNote, type SecChord, type SynthCache } from "./trackplay";
+import { TUNE_LIFT, TUNE_SLOT, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
 
 
 // ── the live voices ──────────────────────────────────────────
@@ -163,7 +163,13 @@ export function playNote(midi: number, when?: number, velocity = 0.8, slot?: num
   const v = tune ? tuneVoice() : chordVoice();
   // a keyboard or a synth holds a note as long as the key is down: a tapped note is a short one
   const len = v.instrument && !Number.isFinite(lengthSec) ? 0.6 : lengthSec;
-  v.note(midi, when ?? v.c.currentTime + 0.01, velocity, len, { slot, lift: tune ? TUNE_LIFT : 1 });
+  const t0 = when ?? v.c.currentTime + 0.01;
+  // a synth with a way of its own plays even a tapped note its way (an arp runs, a pulse repeats it), so the way is heard
+  if (synthWay(v)) {
+    for (const n of playNotes([{ midi, start: t0, length: len, velocity }], v.synth.play, { bpm: tempo, origin: t0 })) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot });
+    return;
+  }
+  v.note(midi, t0, velocity, len, { slot, lift: tune ? TUNE_LIFT : 1 });
 }
 
 /** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. On a synth, the synth's own way of playing. */
@@ -486,29 +492,26 @@ export class ProgressionPlayer {
       if (!next && base >= this.nextTime - 1e-4) return;
       if (base >= horizon) return;
       const at = (beat: number) => cur.time + (cur.origin + beat - cur.beat) * cur.spb;
+      // the first melody track and every added one, each on its own voice
       const t = this.tuneAt(cur);
-      if (t && t.m.on !== false && t.m.notes.length) {
-        const hits = tuneBetween(t.m, t.bar, this.tTick / 12, (this.tTick + 1) / 12, t.swing);
-        if (hits.length) {
-          const v = voiceOf("melody");
-          if (t.tone) v.setTone(t.tone);
-          if (t.sound) v.setSound(t.sound, this.bpm, at(hits[0].beat));
-          // (for the canvas, and the keys' held notes: a melody note sounds until the next one comes)
-          const gap = nextNote(t.m, t.bar, this.tTick / 12) * cur.spb;
-          hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), t.sound));
+      const tunes: { id: string; t: PlayTune }[] = [...(t ? [{ id: "melody", t }] : []), ...(this.items[cur.index]?.extra?.tunes ?? []).map((x) => ({ id: x.track, t: x.tune }))];
+      for (const { id, t: tune } of tunes) {
+        if (tune.m.on === false || !tune.m.notes.length) continue;
+        const v = voiceOf(id, "melody");
+        if (tune.tone) v.setTone(tune.tone);
+        if (synthWay(v)) {
+          // a synth with a way of its own plays the whole section its way: this twelfth of a beat plays what starts in it
+          const t0 = at(0);
+          if (tune.sound) v.setSound(tune.sound, this.bpm, Math.max(base, t0));
+          playTuneSpan(v, this.synthNotes, `${id}~${t0.toFixed(4)}`, tune, t0, cur.spb, (cur.end - t0) / cur.spb, base, base + cur.spb / 12);
+          continue;
         }
-      }
-      // the extra melody tracks, each on its own voice
-      for (const x of this.items[cur.index]?.extra?.tunes ?? []) {
-        const xt = x.tune;
-        if (xt.m.on === false || !xt.m.notes.length) continue;
-        const hits = tuneBetween(xt.m, xt.bar, this.tTick / 12, (this.tTick + 1) / 12, xt.swing);
+        const hits = tuneBetween(tune.m, tune.bar, this.tTick / 12, (this.tTick + 1) / 12, tune.swing);
         if (!hits.length) continue;
-        const gap = nextNote(xt.m, xt.bar, this.tTick / 12) * cur.spb;
-        const v = voiceOf(x.track, "melody");
-        if (xt.tone) v.setTone(xt.tone);
-        if (xt.sound) v.setSound(xt.sound, this.bpm, at(hits[0].beat));
-        hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), xt.sound));
+        if (tune.sound) v.setSound(tune.sound, this.bpm, at(hits[0].beat));
+        // (for the canvas, and the keys' held notes: a melody note sounds until the next one comes)
+        const gap = nextNote(tune.m, tune.bar, this.tTick / 12) * cur.spb;
+        hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), tune.sound));
       }
       this.tTick++;
     }
@@ -695,6 +698,10 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
         if (tune.tone) v.setTone(tune.tone);
         if (tune.sound) v.setSound(tune.sound, o.bpm, t);
         v.repedal(t);
+        if (synthWay(v)) {
+          playTuneSpan(v, cache, `${id}~${t0.toFixed(4)}`, tune, t0, spb, s0 + secs.rest[i], t, t + item.beats * spb);
+          continue;
+        }
         const hits = tuneBetween(tune.m, tune.bar, s0, s1, tune.swing);
         hits.forEach((h, k) => {
           const after = hits.slice(k + 1).find((x) => x.beat > h.beat + 1e-6);
