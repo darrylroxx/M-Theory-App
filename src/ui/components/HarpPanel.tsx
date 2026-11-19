@@ -4,9 +4,50 @@ import { HARP_VOICES, STRING_DEFAULT, VOICE_GROUPS } from "../../audio/harp";
 import { FEEL_DEFAULT, STYLES, STYLE_GROUPS, getStyle, type Feel, type PatternId, type StyleGroup } from "../../audio/patterns";
 import { DRIVES, FX_DEFAULT, HARP_VERBS, TREM_SPEEDS, type HarpSound } from "../../audio/rack";
 import { SOUNDS, sameSound, soundName, soundOfPreset } from "../../audio/sounds";
+import { INSTRUMENTS, KEYS_MODELS, synthOf, type InstId, type Tone } from "../../audio/tone";
+import type { SynthParams } from "../../synth/params";
 import { newId, useApp } from "../state";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
+import { SynthPanel } from "./SynthPanel";
+
+/** The instruments' small pictures, for the switch and the Track page. */
+export function InstIcon({ inst }: { inst: InstId }) {
+  const d =
+    inst === "piano" ? "M2 3h12v10H2zM5.5 3v6M8 3v6M10.5 3v6M5.5 9v4M8 9v4M10.5 9v4"
+    : inst === "synth" ? "M1.5 8h2l1.5-4 2 8 2-8 2 8 1.5-4h2"
+    : "M11.5 2.5l2 2M12.5 3.5l-5 5M7.5 8.5a2.6 2.6 0 1 0-3.6 3.6 2.6 2.6 0 0 0 3.6-3.6zM5.6 10.4l.01 0";
+  return (
+    <svg className="inst-icon" viewBox="0 0 16 16" width="15" height="15" aria-hidden="true">
+      <path d={d} fill="none" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
+  );
+}
+
+/** What a track's instrument is set to, and how to change it (only chords and melody tracks have one). */
+export interface ToneProps {
+  tone: Tone;
+  setTone: (patch: Partial<Tone>) => void;
+  /** the track is chords or a melody (a new synth starts on a pad or a lead) */
+  kind: "chords" | "melody";
+  /** its piano or synth is still loading */
+  loading?: boolean;
+}
+
+/** Guitar, Piano or Synth for one track. */
+function InstSwitch({ tone, setTone, loading }: ToneProps) {
+  return (
+    <div className="seg inst-switch" role="radiogroup" aria-label="Instrument">
+      {INSTRUMENTS.map((x) => (
+        <button key={x.id} role="radio" aria-checked={tone.inst === x.id} className={tone.inst === x.id ? "on" : ""} title={x.name} onClick={() => tone.inst !== x.id && setTone({ inst: x.id })}>
+          <InstIcon inst={x.id} />
+          <span>{x.name}</span>
+          {loading && tone.inst === x.id && <i className="inst-loading" aria-label="Loading" />}
+        </button>
+      ))}
+    </div>
+  );
+}
 
 /** Whether the section on screen follows the song's settings or has its own, for one group of them. */
 export interface Link {
@@ -31,7 +72,7 @@ export function LinkChip({ link, what }: { link?: Link; what: string }) {
  * One harp's sound: which instrument, a ready-made sound, and (when asked for) the knobs for
  * the strings and the effects. Used twice: for the harp that plays the chords and the one that plays the melody.
  */
-export function SoundControls({ sound, setSound, onHear, link, children }: {
+export function SoundControls({ sound, setSound, onHear, link, children, inst: instProps }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   /** play something once, to hear a change (when nothing is playing) */
@@ -39,11 +80,16 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
   link?: Link;
   /** more pickers for the same row */
   children?: (drawer: string | null, toggle: (d: string) => void) => { pickers: React.ReactNode; drawers: React.ReactNode };
+  /** the track's instrument (the strings when not given) */
+  inst?: ToneProps;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.mySounds;
   const [drawer, setDrawer] = useState<string | null>(null);
   const [panel, setPanel] = useState<"strings" | "fx" | null>(null);
+  const inst = instProps?.tone.inst ?? "guitar";
+  const tone = instProps?.tone;
+  const strings = inst === "guitar";
   const toggle = (d: string) => setDrawer(drawer === d ? null : d);
   const extra = children?.(drawer, toggle);
 
@@ -74,16 +120,26 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
   return (
     <>
       <div className="dm-head sound-row">
+        {instProps && <InstSwitch {...instProps} />}
         {extra?.pickers}
-        <Picker label="Harp" name={HARP_VOICES[voiceAt]?.name ?? ""} open={drawer === "harp"} onOpen={() => toggle("harp")} onStep={(dir) => pickVoice(voiceAt + dir)} />
-        <span className="pick-wrap">
-          <Picker label="Sound" name={soundName(sound, mine) ?? "Custom"} open={drawer === "sound"} onOpen={() => toggle("sound")}
-            onStep={(dir) => pickSound(sounds[(Math.max(at, 0) + dir + sounds.length) % sounds.length])} />
-          <LinkChip link={link} what="instrument and sound" />
-        </span>
+        {strings && <Picker label="Harp" name={HARP_VOICES[voiceAt]?.name ?? ""} open={drawer === "harp"} onOpen={() => toggle("harp")} onStep={(dir) => pickVoice(voiceAt + dir)} />}
+        {strings && (
+          <span className="pick-wrap">
+            <Picker label="Sound" name={soundName(sound, mine) ?? "Custom"} open={drawer === "sound"} onOpen={() => toggle("sound")}
+              onStep={(dir) => pickSound(sounds[(Math.max(at, 0) + dir + sounds.length) % sounds.length])} />
+            <LinkChip link={link} what="instrument and sound" />
+          </span>
+        )}
+        {inst === "piano" && tone && (
+          <Seg value={tone.keys ?? "grand"} options={KEYS_MODELS.map((k) => ({ value: k.id, label: k.name }))} onChange={(v) => instProps!.setTone({ keys: v })} label="Which piano" />
+        )}
+        {!strings && <LinkChip link={link} what="effects" />}
       </div>
       {extra?.drawers}
-      {drawer === "harp" && (
+      {inst === "synth" && instProps && (
+        <SynthPanel compact params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} />
+      )}
+      {strings && drawer === "harp" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Instrument">
           {VOICE_GROUPS.map((g) => (
             <div key={g} className="voice-group">
@@ -99,7 +155,7 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
           ))}
         </div>
       )}
-      {drawer === "sound" && (
+      {strings && drawer === "sound" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Sound">
           <div className="dm-tiles">
             {sounds.filter((x) => !x.own).map((x) => (
@@ -122,11 +178,24 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
       )}
 
       <div className="dm-tabs">
-        <button className={`chip${panel === "strings" ? " on" : ""}`} aria-expanded={panel === "strings"} onClick={() => setPanel(panel === "strings" ? null : "strings")}>Strings</button>
+        {inst !== "synth" && <button className={`chip${panel === "strings" ? " on" : ""}`} aria-expanded={panel === "strings"} onClick={() => setPanel(panel === "strings" ? null : "strings")}>{strings ? "Strings" : "Keys"}</button>}
         <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
       </div>
 
-      {panel === "strings" && (
+      {panel === "strings" && inst === "piano" && tone && (
+        <div className="dm-panel dm-mix" role="group" aria-label="Keys">
+          <div className="knobs">
+            <Knob label="Bright" title="Duller or brighter than the piano was recorded" value={tone.bright ?? 0.5} def={0.5} onChange={(v) => { instProps!.setTone({ bright: v }); onHear(); }} />
+            <Knob label="Volume" value={sound.level} def={d.level} onChange={(v) => turn({ level: v })} />
+            <div className="knob wide">
+              <span><i>Pedal</i></span>
+              <button className={`chip${tone.pedal ? " on" : ""}`} aria-pressed={!!tone.pedal} title="The sustain pedal, changed with every chord" onClick={() => { instProps!.setTone({ pedal: !tone.pedal }); onHear(); }}>{tone.pedal ? "On" : "Off"}</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {panel === "strings" && strings && (
         <div className="dm-panel dm-mix" role="group" aria-label="Strings">
           <div className="knobs">
             <Knob label="Pluck" title="Where the finger plucks. Left: the middle of the string, round and hollow. Right: by the soundboard, thin and bright." value={sound.pluck} def={d.pluck} onChange={(v) => turn({ pluck: v }, true)} />
@@ -169,7 +238,7 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
             <Knob label="Reverb" value={sound.space} def={d.space} onChange={(v) => turn({ space: v })} />
             <Choice label="Reverb type" value={sound.verb} options={HARP_VERBS} onChange={(v) => { turn({ verb: v }); window.setTimeout(onHear, 200); }} />
             <Knob label="Size" title="Small and short … big and long" value={sound.size} def={d.size} onChange={(v) => turn({ size: v })} />
-            <Knob label="Shimmer" title="A halo an octave above, heard in the reverb" value={sound.shimmer} def={0} onChange={(v) => turn({ shimmer: v })} />
+            {strings && <Knob label="Shimmer" title="A halo an octave above, heard in the reverb" value={sound.shimmer} def={0} onChange={(v) => turn({ shimmer: v })} />}
           </div>
         </div>
       )}
@@ -181,7 +250,7 @@ export function SoundControls({ sound, setSound, onHear, link, children }: {
  * How the chords are played (the style and its feel) and what plays them (the harp and its effects).
  * Small at first: the style, the instrument and the sound. The knobs open when asked for.
  */
-export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, styleLink, soundLink }: {
+export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, styleLink, soundLink, inst }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   style: PatternId;
@@ -193,8 +262,12 @@ export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHe
   onHear: () => void;
   styleLink?: Link;
   soundLink?: Link;
+  /** the track's instrument */
+  inst?: ToneProps;
 }) {
   const st = getStyle(style);
+  // on the synth its own way of playing takes the place of the playing style
+  const styled = inst?.tone.inst !== "synth";
   const [group, setGroup] = useState<StyleGroup>(st.group);
   const stepStyle = (dir: -1 | 1) => {
     const pool = STYLES.filter((x) => x.group === st.group);
@@ -205,18 +278,15 @@ export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHe
 
   return (
     <section className="card harp" aria-label="How the chords are played">
-      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={soundLink}>
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={soundLink} inst={inst}>
         {(drawer, toggle) => ({
-          pickers: (
-            <>
-              <h2>Harp</h2>
-              <span className="pick-wrap">
-                <Picker label="Style" name={st.name} open={drawer === "style"} onOpen={() => { setGroup(st.group); toggle("style"); }} onStep={stepStyle} />
-                <LinkChip link={styleLink} what="playing style" />
-              </span>
-            </>
+          pickers: styled && (
+            <span className="pick-wrap">
+              <Picker label="Style" name={st.name} open={drawer === "style"} onOpen={() => { setGroup(st.group); toggle("style"); }} onStep={stepStyle} />
+              <LinkChip link={styleLink} what="playing style" />
+            </span>
           ),
-          drawers: drawer === "style" && (
+          drawers: styled && drawer === "style" && (
             <div className="dm-drawer">
               <div className="dm-chips" role="radiogroup" aria-label="Kind of style">
                 {STYLE_GROUPS.map((g) => <button key={g.id} role="radio" aria-checked={group === g.id} className={`chip${group === g.id ? " on" : ""}`} onClick={() => setGroup(g.id)}>{g.name}</button>)}

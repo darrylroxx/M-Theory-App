@@ -11,10 +11,14 @@
  * Every sound is rendered in three slightly different takes that are played in turn
  * (round robin), so repeated hits never sound machine-gunned.
  *
+ * Every drums track has a desk of its own (its own effects, noise bed, hat choke, pump and drum
+ * solo), going out through its own fader: Drums 2 drenched in reverb leaves Drums 1 dry, and
+ * soloing or muting one never touches the other. The first drums track's desk is "drums".
+ *
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
-import { audioContext, audioIfStarted, isRendering } from "./context";
+import { atRenderTime, audioContext, audioIfStarted, isRendering } from "./context";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem } from "./stems";
@@ -85,22 +89,42 @@ function trim(fx: BeatFx): number {
 const IN = 0.44;
 const OUT = 1.7;
 
-/** One desk per audio context: the one you hear, and one made for each offline render of the song. */
-interface Desk { bus: Bus; applied: Partial<BeatFx> & { bpm?: number }; mixed: Map<DrumId, string> }
-const desks = new WeakMap<BaseAudioContext, Desk>();
-const deskOf = (): Desk => {
-  getBus();
-  return desks.get(audioContext())!;
+/** The first drums track (its desk is the one the canvas listens to by name). */
+export const FIRST_DRUMS = "drums";
+
+/**
+ * One desk per drums track and audio context: the one you hear, and one made for each offline
+ * render of the song. Everything that belongs to one track's sound lives on its desk.
+ */
+interface Desk {
+  bus: Bus;
+  /** after the soft ceiling: fades out a removed track without a click */
+  tail: GainNode;
+  /** the tape's wobble oscillators, stopped when the desk goes */
+  lfos: OscillatorNode[];
+  applied: Partial<BeatFx> & { bpm?: number };
+  mixed: Map<DrumId, string>;
+  openHat: Ringing | null;
+  pump: number;
+  sizeTimer?: number;
+  bedSrc: AudioBufferSourceNode | null;
+  bedType: NoiseBed;
+  bedOn: boolean;
+}
+const desks = new WeakMap<BaseAudioContext, Map<string, Desk>>();
+const deskOf = (track = FIRST_DRUMS): Desk => {
+  getBus(track);
+  return desks.get(audioContext())!.get(track)!;
 };
 const drumBuffers = new Map<string, AudioBuffer>();
 const live = new Set<Ringing>();
-let openHat: Ringing | null = null;
-let solo: DrumId | null = null;
-let sizeTimer: number | undefined;
+/** each track's drum heard on its own (none = all of them): set on the Drums page, never saved */
+const solos = new Map<string, DrumId>();
 
-/** Hear one drum on its own (null = all of them). Not saved with the beat. */
-export function setDrumSolo(id: DrumId | null) {
-  solo = id;
+/** Hear one drum of a track on its own (null = all of them). Not saved with the beat. */
+export function setDrumSolo(id: DrumId | null, track = FIRST_DRUMS) {
+  if (id) solos.set(track, id);
+  else solos.delete(track);
 }
 
 /** The level a typical drum arrives at: what the saturation is told to expect. */
@@ -124,9 +148,11 @@ function impulse(c: AudioContext, size: number, type: VerbId): AudioBuffer {
   return buf;
 }
 
-function getBus(): Bus {
+function getBus(track = FIRST_DRUMS): Bus {
   const c = audioContext();
-  const had = desks.get(c);
+  let set = desks.get(c);
+  if (!set) desks.set(c, (set = new Map()));
+  const had = set.get(track);
   if (had) return had.bus;
   const dry = c.createGain();
   dry.gain.value = IN;
@@ -165,8 +191,10 @@ function getBus(): Bus {
   // tape: a very short delay whose length drifts (slow "wow") and shivers (fast "flutter")
   const tape = c.createDelay(0.05);
   tape.delayTime.value = 0;
+  const lfos: OscillatorNode[] = [];
   const lfo = (freq: number) => {
     const osc = c.createOscillator();
+    lfos.push(osc);
     osc.frequency.value = freq;
     const depth = c.createGain();
     depth.gain.value = 0;
@@ -197,10 +225,12 @@ function getBus(): Bus {
   const bed = c.createGain();
   bed.gain.value = 0;
   bed.connect(mix);
-  const out = fader("drums", c);
-  mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(out);
-  // the canvas hears the drums here, after everything that is done to them (the fader too)
-  tapStem("drums", out);
+  // each track goes out through its own fader (volume, mute and solo for the whole song)
+  const out = fader(track, c);
+  const tail = c.createGain();
+  mix.connect(tape).connect(low).connect(high).connect(air).connect(comp).connect(makeup).connect(limiter).connect(tail).connect(out);
+  // the canvas hears the first drums here, after everything that is done to them (the fader too)
+  if (track === FIRST_DRUMS) tapStem("drums", out);
 
   const channels = {} as Record<DrumId, Channel>;
   for (const id of DRUM_IDS) {
@@ -215,32 +245,71 @@ function getBus(): Bus {
     channels[id] = { input, pan, space, echo: send };
   }
   const bus: Bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
-  desks.set(c, { bus, applied: {}, mixed: new Map() });
+  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, bedSrc: null, bedType: "off", bedOn: false });
   return bus;
 }
 
-/** Set the effects for the whole kit. Only what changed is touched, so it is cheap to call often. */
-export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
-  const b = getBus();
+/**
+ * Let go of the desks of drums tracks that are no longer in the song (live only). Each fades out
+ * over a few hundredths of a second first, so a track removed while it plays does not click.
+ */
+export function keepDrums(tracks: string[]) {
+  const c = audioIfStarted();
+  const set = c && desks.get(c);
+  if (!c || !set) return;
+  for (const [track, d] of set) {
+    if (track === FIRST_DRUMS || tracks.includes(track)) continue;
+    set.delete(track);
+    solos.delete(track);
+    stopBed(d);
+    d.tail.gain.setTargetAtTime(0, c.currentTime, 0.015);
+    window.setTimeout(() => {
+      for (const o of d.lfos) {
+        try {
+          o.stop();
+        } catch {
+          /* already stopped */
+        }
+        o.disconnect();
+      }
+      d.tail.disconnect();
+    }, 150);
+  }
+}
+
+/**
+ * Set the effects for a track's whole kit: now, or from `at` (seconds on the audio clock) where a
+ * song section with a drum sound of its own starts. Only what changed is touched, so it is cheap
+ * to call often.
+ */
+export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DRUMS, at?: number) {
+  const b = getBus(track);
   const c = audioContext();
-  const t = c.currentTime;
+  const t = Math.max(at ?? 0, c.currentTime);
+  const later = t - c.currentTime;
   const fx = fxOf(settings);
-  const desk = deskOf();
+  const desk = deskOf(track);
   const was = desk.applied;
-  const to = (param: AudioParam, value: number, tc = 0.03) => param.setTargetAtTime(value, t, tc);
+  // (a section's sound booked for later that never came, because playing stopped or jumped, is let go)
+  const to = (param: AudioParam, value: number, tc = 0.03) => param.cancelScheduledValues(t).setTargetAtTime(value, t, tc);
   if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
   if (fx.size !== was.size || fx.verb !== was.verb) {
-    // building a room takes a moment: wait until the knob stops moving
-    window.clearTimeout(sizeTimer);
-    if (isRendering() || !b.verb.buffer) b.verb.buffer = impulse(c, fx.size, fx.verb);
-    else sizeTimer = window.setTimeout(() => (b.verb.buffer = impulse(c, fx.size, fx.verb)), 140);
+    // building a room takes a moment: wait until the knob stops moving (a section's own room: until its moment)
+    window.clearTimeout(desk.sizeTimer);
+    const room = () => (b.verb.buffer = impulse(c, fx.size, fx.verb));
+    if (!b.verb.buffer) room();
+    else if (isRendering()) {
+      // in a render the room changes exactly where the section starts (see atRenderTime)
+      if (later <= 0.001) room();
+      else atRenderTime(c, t, room);
+    } else desk.sizeTimer = window.setTimeout(room, later > 0.001 ? later * 1000 : 140);
   }
   if (fx.noise !== was.noise || fx.noiseAmt !== was.noiseAmt) {
     // −66 dB at the bottom of the knob, about −30 dB at the top
     to(b.bed.gain, fx.noise === "off" ? 0 : Math.pow(10, (-66 + 36 * fx.noiseAmt) / 20) * BED_LEVEL[fx.noise], 0.05);
-    if (fx.noise !== was.noise && bedOn) startBed(fx.noise);
+    if (fx.noise !== was.noise && desk.bedOn) startBed(desk, fx.noise);
   }
-  pump = fx.pump;
+  desk.pump = fx.pump;
   if (fx.echo !== was.echo) {
     to(b.echoWet.gain, fx.echo * 1.8);
     to(b.echoFb.gain, fx.echo > 0 ? 0.25 + 0.4 * fx.echo : 0);
@@ -271,22 +340,22 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100) {
   desk.applied = { ...fx, bpm };
 }
 
-/** Bring the desk in line with a beat: effects, and each drum's level, pan and sends. */
-export function syncDrums(beat: Beat, bpm: number) {
-  setDrumFx(beat, bpm);
-  const b = getBus();
-  const t = audioContext().currentTime;
-  const mixed = deskOf().mixed;
+/** Bring a track's desk in line with a beat (now, or from `at`): effects, and each drum's level, pan and sends. */
+export function syncDrums(beat: Beat, bpm: number, track = FIRST_DRUMS, at?: number) {
+  setDrumFx(beat, bpm, track, at);
+  const b = getBus(track);
+  const t = Math.max(at ?? 0, audioContext().currentTime);
+  const mixed = deskOf(track).mixed;
   for (const id of DRUM_IDS) {
     const p = soundOf(beat, id);
     const key = `${p.level}|${p.pan}|${p.space}|${p.echo}`;
     if (mixed.get(id) === key) continue;
     mixed.set(id, key);
     const ch = b.channels[id];
-    ch.input.gain.setTargetAtTime(p.level / 0.8, t, 0.015);
-    ch.pan.pan.setTargetAtTime(p.pan, t, 0.015);
-    ch.space.gain.setTargetAtTime(p.space, t, 0.015);
-    ch.echo.gain.setTargetAtTime(p.echo, t, 0.015);
+    ch.input.gain.cancelScheduledValues(t).setTargetAtTime(p.level / 0.8, t, 0.015);
+    ch.pan.pan.cancelScheduledValues(t).setTargetAtTime(p.pan, t, 0.015);
+    ch.space.gain.cancelScheduledValues(t).setTargetAtTime(p.space, t, 0.015);
+    ch.echo.gain.cancelScheduledValues(t).setTargetAtTime(p.echo, t, 0.015);
   }
 }
 
@@ -342,17 +411,21 @@ function takeFor(c: AudioContext, beat: Beat, id: DrumId): AudioBuffer {
 // ── noise bed ──
 const BED_LEVEL: Record<NoiseBed, number> = { off: 0, vinyl: 1, tape: 1, room: 1.4, hum: 0.8 };
 const beds = new Map<NoiseBed, AudioBuffer>();
-let bedSrc: AudioBufferSourceNode | null = null;
-let bedType: NoiseBed = "off";
-let bedOn = false;
-function startBed(type: NoiseBed) {
-  const c = audioContext();
-  const b = getBus();
-  if (bedSrc) {
-    try { bedSrc.stop(); } catch { /* stopped */ }
-    bedSrc = null;
+function stopBed(d: Desk) {
+  if (d.bedSrc) {
+    try {
+      d.bedSrc.stop();
+    } catch {
+      /* stopped */
+    }
+    d.bedSrc = null;
   }
-  bedType = type;
+  d.bedType = "off";
+}
+function startBed(d: Desk, type: NoiseBed) {
+  const c = audioContext();
+  stopBed(d);
+  d.bedType = type;
   if (type === "off") return;
   let buf = beds.get(type);
   if (!buf) {
@@ -362,27 +435,34 @@ function startBed(type: NoiseBed) {
     buf.getChannelData(1).set(r);
     beds.set(type, buf);
   }
-  bedSrc = c.createBufferSource();
-  bedSrc.buffer = buf;
-  bedSrc.loop = true;
-  bedSrc.connect(b.bed);
-  bedSrc.start();
+  d.bedSrc = c.createBufferSource();
+  d.bedSrc.buffer = buf;
+  d.bedSrc.loop = true;
+  d.bedSrc.connect(d.bus.bed);
+  d.bedSrc.start();
 }
-/** The noise bed runs while the drums are playing. */
-export function setBedPlaying(on: boolean, beat: Beat | null) {
-  bedOn = on && !!beat?.on;
-  const want = bedOn ? fxOf(beat!).noise : "off";
-  if (want === "off") {
-    if (bedSrc) {
-      try { bedSrc.stop(); } catch { /* stopped */ }
-      bedSrc = null;
+/**
+ * A track's noise bed runs while its drums are playing: a track whose drums stop (switched off, or
+ * a section without them) goes quiet too. With no track and no beat, every track's stops.
+ */
+export function setBedPlaying(on: boolean, beat: Beat | null, track?: string) {
+  if (!beat) {
+    const set = desks.get(audioContext());
+    for (const [id, d] of set ?? []) {
+      if (track !== undefined && id !== track) continue;
+      d.bedOn = false;
+      stopBed(d);
     }
-    bedType = "off";
-  } else if (!bedSrc || bedType !== want) startBed(want);
+    return;
+  }
+  const d = deskOf(track ?? FIRST_DRUMS);
+  d.bedOn = on && !!beat.on;
+  const want = d.bedOn ? fxOf(beat).noise : "off";
+  if (want === "off") stopBed(d);
+  else if (!d.bedSrc || d.bedType !== want) startBed(d, want);
 }
 
 // ── pump: other instruments duck under the kick ──
-let pump = 0;
 let onKick: ((when: number, depth: number) => void) | null = null;
 /** The guitar registers here to duck under the kick when Pump is turned up. */
 export function onKickHit(fn: ((when: number, depth: number) => void) | null) {
@@ -403,17 +483,18 @@ function damp(r: Ringing, at: number) {
  * Play one hit of a beat's drum. Softer hits are also a little duller, as on a real drum, and
  * a closed or open hat cuts off a ringing open hat. `human` adds small differences between hits.
  */
-export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, human = 0, gain = 1, track?: string) {
+export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, human = 0, track = FIRST_DRUMS) {
   const c = audioContext();
-  const b = getBus();
+  const b = getBus(track);
+  const desk = deskOf(track);
   const t = when ?? c.currentTime + 0.01;
   const src = c.createBufferSource();
   src.buffer = takeFor(c, beat, id);
   // for the canvas: what this hit is made of, measured from the hit itself
-  if (listening() && !isRendering()) pulse({ kind: "drum", track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
+  if (listening() && !isRendering()) pulse({ kind: "drum", track: track === FIRST_DRUMS ? undefined : track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
   if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
   const g = c.createGain();
-  g.gain.value = velocity * velocity * 1.1 * gain;
+  g.gain.value = velocity * velocity * 1.1;
   let tail: AudioNode = src.connect(g);
   if (velocity < 0.7 && id !== "kick") {
     const soft = c.createBiquadFilter();
@@ -428,23 +509,24 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   // (an offline render plays every hit as written: no choking hats, no pumping harps)
   if (isRendering()) return;
   if (id === "hat" || id === "open") {
-    if (openHat) damp(openHat, t);
-    openHat = id === "open" ? r : null;
+    if (desk.openHat) damp(desk.openHat, t);
+    desk.openHat = id === "open" ? r : null;
   }
   live.add(r);
   src.onended = () => live.delete(r);
-  if (id === "kick" && pump > 0 && onKick) onKick(t, pump * velocity);
+  if (id === "kick" && desk.pump > 0 && onKick) onKick(t, desk.pump * velocity);
 }
 
-/** Play one step of the grid for a drum, respecting mute, solo and the "human" setting. */
-export function playStep(beat: Beat, id: DrumId, level: number, when: number, gain = 1, track?: string) {
+/** Play one step of a track's grid for a drum, respecting mute, solo and the "human" setting. */
+export function playStep(beat: Beat, id: DrumId, level: number, when: number, track = FIRST_DRUMS) {
+  const solo = solos.get(track);
   if (solo ? solo !== id : beat.mutes?.includes(id)) return;
   const human = beat.human ?? 0;
-  if (!human) return playDrum(beat, id, when, STEP_VELOCITY[level], 0, gain, track);
+  if (!human) return playDrum(beat, id, when, STEP_VELOCITY[level], 0, track);
   // a player is never exactly on the grid, and never hits twice the same; the kick stays tightest
   const late = (Math.random() - 0.35) * 0.02 * human * (id === "kick" ? 0.35 : 1);
   const touch = 1 + (Math.random() - 0.5) * 0.3 * human;
-  playDrum(beat, id, when + Math.max(0, late), Math.min(1, STEP_VELOCITY[level] * touch), human, gain, track);
+  playDrum(beat, id, when + Math.max(0, late), Math.min(1, STEP_VELOCITY[level] * touch), human, track);
 }
 
 /** Render a beat's sounds ahead of time so the first bar plays without a hiccup. */
@@ -465,5 +547,5 @@ export function stopDrums() {
   if (!c) return;
   for (const r of live) damp(r, c.currentTime);
   live.clear();
-  openHat = null;
+  for (const d of desks.get(c)?.values() ?? []) d.openHat = null;
 }

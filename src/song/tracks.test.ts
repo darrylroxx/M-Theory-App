@@ -155,4 +155,24 @@ describe("tracks", () => {
     expect(a.layers?.m2.melody?.notes[0].midi).toBe(69);
     expect(b.layers?.m2.melody?.notes[0].midi).toBe(66);
   });
+
+  it("an added drums track starts a new section on its own kit, not on the first drums' one", () => {
+    let p: Progression = { ...base(["G"]), beat: { ...DEFAULT_BEAT, on: true, kit: "909" } };
+    p = addTrack(p, "drums", "d2").p;
+    // Drums 2 is given a kit of its own in A
+    p = { ...p, beat: { ...p.beat!, kit: "mod", on: true } };
+    p = addNewSection(p, id); // B, still on Drums 2
+    expect(p.focus?.drums).toBe("d2");
+    expect(p.beat?.kit).toBe("mod");
+    expect(p.beat?.on).toBe(false);
+    // and the first drums keep theirs
+    expect(focusTrack(p, "drums", "drums").beat?.kit).toBe("909");
+  });
+
+  it("a track removed takes its instrument with it", () => {
+    let p = addTrack(base(["G"]), "chords", "c2").p;
+    p = { ...p, tones: { chords: { inst: "piano" }, c2: { inst: "synth" } } };
+    const q = removeTrack(p, "c2");
+    expect(q.tones).toEqual({ chords: { inst: "piano" } });
+  });
 });

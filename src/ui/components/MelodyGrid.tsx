@@ -6,7 +6,7 @@ import { chordSymbol, refPcs } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
 import { displayNote, mod12 } from "../../theory/notes";
 import type { HarpSound } from "../../audio/rack";
-import { SoundControls, type Link } from "./HarpPanel";
+import { SoundControls, type Link, type ToneProps } from "./HarpPanel";
 import type { ProgChord } from "../state";
 import { Seg } from "./common";
 
@@ -23,9 +23,11 @@ const HOLD_MS = 1500;
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  * As many bars as are chosen sit side by side, each with its own steps, its number and its line.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, shown, follow, active }: {
-  /** changes when another section is shown or something is pasted: undo starts afresh */
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, shown, follow, active, inst }: {
+  /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
+  /** the melody track's instrument */
+  inst?: ToneProps;
   /** changes when another section or idea is opened: the view goes back to bar 1 */
   place?: string;
   /** the section's melody, as long as the section */
@@ -323,7 +325,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
           {shownBars.map((b) => <MelodyBar key={b} b={b} rows={rows} steps={steps} div={melody.div} lit={lit[b] ?? ""} fits={fits?.[b] ?? null} head={many} sel={many && b === at} named={bars > 1} />)}
         </div>
       </div>
-      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={link} />
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={link} inst={inst} />
     </section>
   );
 });

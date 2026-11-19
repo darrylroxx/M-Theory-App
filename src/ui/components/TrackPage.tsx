@@ -14,6 +14,8 @@ import { shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
 import { newId, useApp, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
+import { InstIcon } from "./HarpPanel";
+import { toneOf } from "../../audio/tone";
 
 /** One section as the Track page draws it. */
 export interface TrackSection {
@@ -196,7 +198,12 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
             const db = m?.db ?? 0;
             return (
               <div key={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}`} role="group" aria-label={`${t.name} track`}>
-                <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>{t.name}{!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}</button>
+                {/* one line: what plays it, its name (a long one is cut short), and ✕ for an added track */}
+                <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
+                  {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(state.progression, t.id).inst} />}
+                  <span className="tv-label">{t.name}</span>
+                  {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
+                </button>
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>

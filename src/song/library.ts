@@ -6,7 +6,8 @@
 import { reviveSig, sigName } from "./meter";
 import { conform, sigOf } from "./unity";
 import { reviveMix } from "../audio/mix";
-import { normalize, reviveLayers, reviveTracks } from "./tracks";
+import { normalize, reviveLayers, reviveTracks, type Track } from "./tracks";
+import { reviveTones } from "../audio/tone";
 import { reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
@@ -33,7 +34,8 @@ export function snapshot(key: Key, progression: Progression, capo: number, tunin
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
   const p = commit(normalize(s.progression));
-  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}) };
+  // (ideas from before tracks had instruments of their own have no tones, and keep the fingerprint they had)
+  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}), ...(p.tones ? { tones: p.tones } : {}) };
   // with a song, everything on the page is a copy of one section: the song itself is what counts
   if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
@@ -72,6 +74,9 @@ export function describeIdea(i: SavedProgression): string {
 /** Does any section of a stored song have a melody? */
 const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
 
+/** The tracks that can have an instrument: every chords and melody track. */
+const toneTracks = (tracks: Track[] | undefined) => ["chords", "melody", ...(tracks ?? []).filter((t) => t.kind === "chords" || t.kind === "melody").map((t) => t.id)];
+
 /** Make a stored idea safe to load (older versions, hand-edited backups). */
 export function reviveIdea(raw: unknown): SavedProgression | null {
   const i = raw as Partial<SavedProgression> | null;
@@ -91,6 +96,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(reviveSig(p.meter) ? { meter: reviveSig(p.meter) } : {}),
     ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
     ...(tracks ? { tracks } : {}), ...(reviveLayers(p.layers, tracks) ? { layers: reviveLayers(p.layers, tracks) } : {}),
+    ...(reviveTones(p.tones, toneTracks(tracks)) ? { tones: reviveTones(p.tones, toneTracks(tracks)) } : {}),
   })));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression: conform(progression), savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }

@@ -3,7 +3,11 @@ import { DEFAULT_BEAT, applyPattern, grooveOf, kitOfBeat, type Beat, type BeatPa
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, playNote, playSequence, prepFor, prepareNotes, renderSong, setHarpSound, setTuneSound, strum } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, keepTracks, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
+import { VOICINGS, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
+import { pianoVoicing } from "../../keys/voicing";
+import { KeyboardDiagram } from "../components/KeyboardDiagram";
+import { midiToName } from "../../theory/notes";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
@@ -24,7 +28,7 @@ import type { BarsShown } from "../../song/window";
 import { CanvasPage } from "../components/CanvasPage";
 import type { Spot } from "../../canvas/layout";
 import { DrumMachine } from "../components/DrumMachine";
-import { HarpPanel, type Link } from "../components/HarpPanel";
+import { HarpPanel, type Link, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
@@ -95,6 +99,16 @@ export function GuitarView() {
   );
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const voicings = useMemo(() => voicingsOf(prog.chords), [chordsKey, voicingsOf]);
+  // the chords track on the page may play the keys (a piano or the synth): its chords are then
+  // keyboard shapes, laid out together so the hands move least, and those are the notes it plays
+  const chordsId = prog.focus?.chords ?? "chords";
+  const chordTone = toneOf(prog, chordsId);
+  const chordKeys = onKeys(chordTone);
+  const keyStyle = voicingOf(chordTone);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const keyVs = useMemo(() => (chordKeys ? keysVoicings(prog.chords, chordTone) : null), [chordsKey, chordKeys, keyStyle]);
+  /** what each chord in the tray plays: its keys, or its guitar shape */
+  const trayMidi = useCallback((i: number): (number | null)[] => (keyVs ? keyVs[i] ?? [] : voicings[i]?.midi ?? []), [keyVs, voicings]);
 
   /** Set one spot's shape by hand. Everything else keeps the shape it has now. */
   const pinSlot = (slotId: string, voicingId: string) =>
@@ -172,6 +186,9 @@ export function GuitarView() {
     const nBeat = np.beat ?? DEFAULT_BEAT;
     const row: Section[] = secs.length ? secs : [soloSection(np)];
     const editingOther = np !== prog && !!prog.focus?.chords;
+    // what plays each track: the item carries it, so the player, the WAV and the backing all play the same instrument
+    const firstTone = toneOf(np, "chords");
+    const tuneTone = toneOf(np, "melody");
     /** What the tracks added on the Track page play in a section. */
     const extrasOf = (sec: Section, len: number, secBar: number, style: PatternId, swing: number): ExtraPlay | undefined => {
       const ex: ExtraPlay = { chords: [], tunes: [], drums: [] };
@@ -179,13 +196,15 @@ export function GuitarView() {
         const l = sec.layers?.[t.id];
         if (!l) continue;
         if (t.kind === "chords" && l.chords?.length) {
+          const tone = toneOf(np, t.id);
           const vs = voicingsOf(l.chords);
+          const kv = onKeys(tone) ? keysVoicings(l.chords, tone) : null;
           let at = 0;
           for (const { item: c, index: i } of inFrame(l.chords, len)) {
-            ex.chords.push({ track: t.id, at, beats: c.beats, midi: c.rest ? [] : vs[i]?.midi ?? [], style: t.style ?? style, feel: t.feel, sound: reviveSound(t.sound) });
+            ex.chords.push({ track: t.id, at, beats: c.beats, midi: c.rest ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], style: t.style ?? style, feel: t.feel, sound: reviveSound(t.sound), tone });
             at += c.beats;
           }
-        } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound) } });
+        } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound), tone: toneOf(np, t.id) } });
         else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: l.beat });
       }
       // recorded takes that start in this section (the take chosen from each recording)
@@ -202,6 +221,7 @@ export function GuitarView() {
     };
     for (const sec of row) {
       const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords);
+      const kv = onKeys(firstTone) ? keysVoicings(sec.chords, firstTone) : null;
       const drums: Beat = { ...nBeat, ...sec.kit, ...sec.groove, on: sec.groove?.on ?? nBeat.on };
       const style = sec.style ?? prog.pattern;
       const feel = sec.feel;
@@ -210,7 +230,7 @@ export function GuitarView() {
       const secSig = sec.meter ?? songSig;
       const secBar = sigBeats(secSig);
       const secMeter = { bar: secBar, triplet: isCompound(secSig), sig: secSig };
-      const secTune: PlayTune | null = hasTune(sec.melody) ? { m: inBars(sec.melody, barsOr(sec.bars)), bar: secBar, swing: drums.on && drums.div === 4 ? drums.swing : 0, sound: reviveSound(sec.tuneSound) } : null;
+      const secTune: PlayTune | null = hasTune(sec.melody) ? { m: inBars(sec.melody, barsOr(sec.bars)), bar: secBar, swing: drums.on && drums.div === 4 ? drums.swing : 0, sound: reviveSound(sec.tuneSound), tone: tuneTone } : null;
       parts.push({ sec, voicings: vs });
       // the section's frame: everything in it plays in its own bar, for exactly this long
       const len = frameBeats(sec.bars, secBar);
@@ -220,13 +240,13 @@ export function GuitarView() {
       const own: PlayItem[] = [];
       const idx: number[] = [];
       inside.forEach(({ item: c, index: i }, k) => {
-        own.push({ midi: c.rest ? [] : vs[i]?.midi ?? [], beats: c.beats, drums, style, feel, sound: harp, tune: secTune, section: k === 0, extra, meter: secMeter });
+        own.push({ midi: c.rest ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], beats: c.beats, drums, style, feel, sound: harp, tone: firstTone, tune: secTune, section: k === 0, extra, meter: secMeter });
         idx.push(i);
       });
       // after the last chord the section goes on to the end of its last bar: drums and melody carry on, the harp is silent
       const played = inside.reduce((a, x) => a + x.item.beats, 0);
       if (played < len - 1e-6) {
-        own.push({ midi: [], beats: len - played, drums, style, tune: secTune, section: !inside.length, pad: true, extra, meter: secMeter });
+        own.push({ midi: [], beats: len - played, drums, style, sound: harp, tone: firstTone, tune: secTune, section: !inside.length, pad: true, extra, meter: secMeter });
         idx.push(-1);
       }
       per.push({ block: sec.blockId, partId: sec.partId, label: sec.label, color: sec.color, bars: barsOr(sec.bars), bar: secBar, items: own, idx });
@@ -235,7 +255,7 @@ export function GuitarView() {
       if (sec.chords.some((c) => !c.rest) || drums.on || secTune || extra) any = true;
     }
     return { items: list, map, parts: secs.length ? parts : [], lengths, any, per };
-  }, [secs, voicings, voicingsOf, beat, songSig.num, songSig.den, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound, prog.tracks, takesReady]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [secs, voicings, voicingsOf, beat, songSig.num, songSig.den, prog.pattern, prog.chords, prog.melody, prog.bars, prog.feel, prog.sound, prog.tuneSound, prog.tracks, prog.tones, takesReady]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── looping: nothing loops until some bars are chosen; then those bars go round and round ──
   const [span, setSpan] = useState<LoopSpan | null>(null);
@@ -279,8 +299,10 @@ export function GuitarView() {
   // (the page's knobs set the track being edited; the first tracks' harps always keep their own sound)
   const sound = useMemo(() => reviveSound(prog.sound), [prog.sound]);
   const hear = useRef(0);
-  const voicingsRef = useRef(voicings);
-  voicingsRef.current = voicings;
+  const trayRef = useRef(trayMidi);
+  trayRef.current = trayMidi;
+  const nChords = useRef(0);
+  nChords.current = prog.chords.length;
   const editChords = prog.focus?.chords && prog.focus.chords !== "chords" ? prog.focus.chords : null;
   const editTune = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : null;
   const firstSound = editChords ? (prog.layers?.chords?.sound ?? prog.sound) : prog.sound;
@@ -302,8 +324,9 @@ export function GuitarView() {
   const hearSoon = useCallback(() => {
     window.clearTimeout(hear.current);
     hear.current = window.setTimeout(() => {
-      const v = voicingsRef.current.find((x) => x);
-      if (!playingRef.current) strum(v?.midi ?? [48, 55, 60, 64, 67, 72]);
+      let v: (number | null)[] = [];
+      for (let i = 0; i < nChords.current && !v.some((m) => m !== null); i++) v = trayRef.current(i);
+      if (!playingRef.current) strum(v.some((m) => m !== null) ? v : [48, 55, 60, 64, 67, 72]);
     }, 240);
   }, []);
   const setSound = useCallback((patch: Partial<HarpSound>) => set((s) => ({ ...s, progression: { ...s.progression, sound: { ...reviveSound(s.progression.sound), ...patch } } })), [set]);
@@ -315,6 +338,40 @@ export function GuitarView() {
     window.clearTimeout(hear.current);
     hear.current = window.setTimeout(() => !playingRef.current && playNote(melodyBase(keyRef.current) + 12, undefined, 0.86, 48), 240);
   }, []);
+  // ── what plays each track (Guitar, Piano or Synth) ──
+  const tuneId = editTune ?? "melody";
+  const tuneTone = toneOf(prog, tuneId);
+  useEffect(() => setTones(prog.tones), [prog.tones]);
+  // a track that is removed lets go of its instrument and its drum desk (they fade out)
+  const trackIds = (prog.tracks ?? []).map((t) => t.id).join("|");
+  useEffect(() => keepTracks(trackIds ? trackIds.split("|") : []), [trackIds]);
+  /** the track whose piano or synth is loading after it was chosen */
+  const [loading, setLoading] = useState<string | null>(null);
+  /** Change a track's instrument: the song keeps it, and the track's voice takes it at once (loading starts now), then it is heard. */
+  const toneSetter = useCallback((id: string, kind: "chords" | "melody", tone: Tone, hearIt: () => void) => (patch: Partial<Tone>) => {
+    const next: Tone = { ...tone, ...patch };
+    // a track's first synth starts on a sound made for its part, kept from then on
+    if (next.inst === "synth" && !next.synth) next.synth = synthOf(next, kind);
+    set((s) => ({ ...s, progression: withTone(s.progression, id, next) }));
+    if (patch.inst !== undefined || patch.keys !== undefined) {
+      setLoading(id);
+      void warmTrack(id, kind, next).then(
+        () => {
+          setLoading((x) => (x === id ? null : x));
+          hearIt();
+        },
+        () => setLoading((x) => (x === id ? null : x)),
+      );
+    } else void warmTrack(id, kind, next);
+  }, [set]);
+  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, toneSetter, hearSoon]);
+  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, toneSetter, hearTune]);
+  /** the keys a chord in the sheet plays: the tray's own, or a fresh voicing for a chord not in the tray */
+  const sheetKeys = useCallback((ref: ChordRef, slotId?: string) => {
+    const i = slotId ? prog.chords.findIndex((c) => c.id === slotId) : -1;
+    return i >= 0 && keyVs ? keyVs[i] : pianoVoicing(ref, { style: keyStyle });
+  }, [prog.chords, keyVs, keyStyle]);
+
   // what the section on screen has of its own, and which section the rest follows
   const linked = useMemo(() => linkState(prog), [prog]);
   const editDrums = prog.focus?.drums && prog.focus.drums !== "drums" ? prog.focus.drums : null;
@@ -353,12 +410,25 @@ export function GuitarView() {
    * Play. With no loop: from the section on screen, on through the song to its end (with Follow
    * on, the page goes along). With a loop: the looped bars, round and round.
    */
+  /** true while ▶ waits for a piano or a synth to be ready */
+  const waiting = useRef(false);
   const startPlay = () => {
     // while the Vocals page records, the song plays through the interface: a second one here would sound over it
-    if (recording) return;
-    const list = listRef.current;
-    if (!planRef.current.any || !list.items.length) return toast("Add chords, a melody or drums first");
+    if (recording || waiting.current) return;
+    if (!planRef.current.any || !listRef.current.items.length) return toast("Add chords, a melody or drums first");
     getAudio();
+    // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
+    const keys = Object.entries(prog.tones ?? {})
+      .filter(([, t]) => onKeys(t))
+      .map(([id]) => ({ id, kind: (id === "melody" || prog.tracks?.some((t) => t.id === id && t.kind === "melody") ? "melody" : "chord") as "melody" | "chord" }));
+    waiting.current = true;
+    void readyTracks(keys).then(() => {
+      waiting.current = false;
+      go();
+    });
+  };
+  const go = () => {
+    const list = listRef.current;
     const p = (player.current ??= new ProgressionPlayer());
     const from = list.loop ? 0 : Math.max(0, list.map.findIndex((m) => m.block === curRef.current));
     playBlock.current = list.map[from]?.block ?? null;
@@ -615,15 +685,16 @@ export function GuitarView() {
           {sheet && <div style={{ height: dockH.current }} />}
           <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
             {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
-            <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} />
-            <Dock ref={dockRef} voicings={voicings} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} />
+            <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
+            <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} />
           </div>
-          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={links.style} soundLink={links.sound} />
+          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={links.style} soundLink={links.sound} inst={chordInst} />
         </div>
         <div className="pane" hidden={pane !== "melody"}>
           <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
-          <MelodyGrid fresh={`${curBlock}:${pasted}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
-            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} />
+          {/* undo belongs to one melody track: switching track starts it afresh, so one track's past can never be written over another */}
+          <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
+            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
@@ -637,7 +708,7 @@ export function GuitarView() {
         </div>
       </div>
       {pane === "rhythm" && away && !sheet && (
-        <MiniTray ref={miniRef} chords={prog.chords} voicings={voicings} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
+        <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
           onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
       )}
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
@@ -763,8 +834,16 @@ function CapoPick() {
   );
 }
 
+/** The chords track on the page plays the keys: how its chords are voiced (null: it plays Guitar). */
+function useKeys(): NonNullable<Tone["voicing"]> | null {
+  const { state } = useApp();
+  const t = toneOf(state.progression, state.progression.focus?.chords ?? "chords");
+  return onKeys(t) ? voicingOf(t) : null;
+}
+
 const ChordBoard = memo(function ChordBoard() {
   const { state, set, openSheet, addChord, toast } = useApp();
+  const keys = useKeys();
   const [sel, setSel] = useState<ChordRef | null>(null);
   const pickCtx = useMemo(() => ({ sel, setSel }), [sel]);
   const key = state.key;
@@ -793,12 +872,13 @@ const ChordBoard = memo(function ChordBoard() {
         )}
         <span className="board-set">
           <button className="key-chip" title="The key of the song: change it on the Frame page" onClick={() => set((s) => ({ ...s, pane: "frame" }))}>{displayNote(key.tonic)} {scale.short}</button>
-          <CapoPick />
+          {/* the capo is a guitar's: a chords track on the keys has none */}
+          {!keys && <CapoPick />}
         </span>
         {sel && picked && (
           <div className="pick-bar">
             <b>{chordSymbol(sel)}</b>
-            <button className="shapes-btn" onClick={() => openSheet({ ref: sel })}><ShapesIcon />Shapes</button>
+            {!keys && <button className="shapes-btn" onClick={() => openSheet({ ref: sel })}><ShapesIcon />Shapes</button>}
             <button className="kc-add" aria-label={`Add ${chordSymbol(sel)}`} onClick={() => { addChord(sel); toast(`${chordSymbol(sel)} added`); }}>+</button>
           </div>
         )}
@@ -843,6 +923,7 @@ function ChordCard({ c, on, onPick }: { c: KeyChord; on: boolean; onPick: () => 
   const { state, openSheet, audition, addChord, shapeOf } = useApp();
   const { capo, labels, leftHanded } = state.settings;
   const v = shapeOf(c.ref);
+  const keys = useKeys();
   const tap = () => { audition(c.ref); onPick(); };
   const d = useDraggable({ ref: c.ref }, tap);
   const name = chordSymbol(c.ref);
@@ -854,9 +935,10 @@ function ChordCard({ c, on, onPick }: { c: KeyChord; on: boolean; onPick: () => 
         {c.signature && <span className="kc-star">★</span>}
       </span>
       <span className="kc-name">{name}</span>
-      {v && <ChordDiagram voicing={v} root={c.ref.root} labels={labels} width={120} leftHanded={leftHanded} capo={capo} />}
+      {keys ? <KeyboardDiagram notes={pianoVoicing(c.ref, { style: keys })} chord={c.ref} keyOf={state.key} labels={labels === "fingers" ? "intervals" : labels} width={120} compact />
+        : v && <ChordDiagram voicing={v} root={c.ref.root} labels={labels} width={120} leftHanded={leftHanded} capo={capo} />}
       <div className="kc-actions" data-nodrag>
-        <button className="shapes-btn" aria-label={`Other ways to play ${name}`} title="Other ways to play it" aria-haspopup="dialog" onClick={(e) => { e.stopPropagation(); openSheet({ ref: c.ref }); }}><ShapesIcon />Shapes</button>
+        {!keys && <button className="shapes-btn" aria-label={`Other ways to play ${name}`} title="Other ways to play it" aria-haspopup="dialog" onClick={(e) => { e.stopPropagation(); openSheet({ ref: c.ref }); }}><ShapesIcon />Shapes</button>}
         <button className="kc-add" aria-label={`Add ${name}`} onClick={(e) => { e.stopPropagation(); addChord(c.ref); }}>+</button>
       </div>
     </div>
@@ -1156,25 +1238,30 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   const hasChords = np.chords.length > 0 || !!plan?.parts.some((x) => x.sec.chords.length) || chordTracks.some((t) => (plan ? plan.parts.map((x) => x.sec.layers) : [np.layers]).some((l) => l?.[t.id]?.chords?.length));
   const chart = () => {
     const stringNames = tuning.notes.map((m) => ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][(m + state.settings.capo) % 12]);
-    const head = `${name || "Untitled"} | ${state.key.tonic} ${scale.name} | ${prog.bpm} bpm${state.settings.capo ? ` | Capo ${state.settings.capo}` : ""}`;
-    const block = (chords: ProgChord[], vs: (Voicing | undefined)[]) => {
+    // the capo is only for the chords that are played on the guitar
+    const guitar = tracks.some((t) => t.kind === "chords" && !onKeys(toneOf(np, t.id)));
+    const head = `${name || "Untitled"} | ${state.key.tonic} ${scale.name} | ${prog.bpm} bpm${state.settings.capo && guitar ? ` | Capo ${state.settings.capo}` : ""}`;
+    /** a track on the keys: its chords' keys by name, in place of the guitar tab */
+    const keysOf = (id: string, chords: ProgChord[]) => (onKeys(toneOf(np, id)) ? keysVoicings(chords, toneOf(np, id)) : null);
+    const block = (chords: ProgChord[], vs: (Voicing | undefined)[], keys: number[][] | null = null) => {
       const names = chords.map((c) => (c.rest ? "-" : chordSymbolAscii(c.ref)));
-      const real = chords.map((c, i) => ({ c, v: vs[i], name: names[i] })).filter((x) => !x.c.rest);
-      return ["| " + names.join(" | ") + " |", "  " + chords.map((c) => (c.rest ? "-" : analyzeChord(c.ref, state.key).roman)).join("  "), "", tabText(real.map((x) => x.v), real.map((x) => x.name), stringNames)];
+      const real = chords.map((c, i) => ({ c, v: vs[i], k: keys?.[i] ?? [], name: names[i] })).filter((x) => !x.c.rest);
+      const shapes = keys ? real.map((x) => `${x.name}: ${x.k.map((m) => midiToName(m)).join(" ")}`).join("\n") : tabText(real.map((x) => x.v), real.map((x) => x.name), stringNames);
+      return ["| " + names.join(" | ") + " |", "  " + chords.map((c) => (c.rest ? "-" : analyzeChord(c.ref, state.key).roman)).join("  "), "", shapes];
     };
     /** the added chords tracks in a section, each under its name */
     const added = (layers: Layers | undefined) => chordTracks.flatMap((t) => {
       const cs = layers?.[t.id]?.chords ?? [];
-      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs))] : [];
+      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs), keysOf(t.id, cs))] : [];
     });
-    if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords)), ...added(np.layers)].join("\n");
+    if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords), keysOf("chords", np.chords)), ...added(np.layers)].join("\n");
     // a song: the running order, then each different section once
     const out = [head, "", plan.parts.map((x) => x.sec.label).join(" "), ""];
     const done = new Set<string>();
     for (const { sec, voicings: vs } of plan.parts) {
       if (done.has(sec.partId)) continue;
       done.add(sec.partId);
-      out.push(`[${sec.label}] ${barsOr(sec.bars)} bars${sec.meter ? ` in ${sigName(sec.meter)}` : ""}`,...(sec.chords.length ? block(sec.chords, vs) : ["(no chords)"]), ...added(sec.layers), "");
+      out.push(`[${sec.label}] ${barsOr(sec.bars)} bars${sec.meter ? ` in ${sigName(sec.meter)}` : ""}`,...(sec.chords.length ? block(sec.chords, vs, keysOf("chords", sec.chords)) : ["(no chords)"]), ...added(sec.layers), "");
     }
     return out.join("\n");
   };
@@ -1191,7 +1278,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   const file = (name || "m-theory-idea").replace(/[^\w-]+/g, "-");
   const midi = async () => {
     const names = Object.fromEntries(tracks.map((t) => [t.id, t.name]));
-    const r = await saveFile(progressionToMidi(all, prog.bpm, prog.pattern, name || "M-Theory idea", beat, null, names, sigOf(prog)), `${file}.mid`, "audio/midi");
+    const r = await saveFile(progressionToMidi(all, prog.bpm, prog.pattern, name || "M-Theory idea", beat, null, names, sigOf(prog), np.tones ?? {}), `${file}.mid`, "audio/midi");
     toast(r === "saved" ? "MIDI saved" : r === "failed" ? "Can't save files here" : "Cancelled");
   };
   /** the whole song as you hear it, every track and the recorded vocals, through the mixer */
@@ -1262,7 +1349,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
         <div className="fr-head"><h2>Export</h2></div>
         <div className="fr-row">
           <button className="btn" disabled={!canExport || rendering} title="The whole song as you hear it: every track and the recorded vocals, with the Track page's levels, mute and solo (24-bit WAV)" onClick={() => void wav()}>{rendering ? "…" : "WAV"}</button>
-          <button className="btn" disabled={!canExport} title="Every track as notes, each on its own MIDI track with its name: the chords as the harp plays them, the melodies and the drums (recorded vocals are audio, so they are in the WAV)" onClick={midi}>MIDI</button>
+          <button className="btn" disabled={!canExport} title="Every track as notes, each on its own MIDI track with its name and instrument: the chords as they are played, the melodies and the drums (recorded vocals are audio, so they are in the WAV)" onClick={midi}>MIDI</button>
           <button className="btn" disabled={!hasChords} title="Chord names and guitar tab, as text (the added chords tracks too)" onClick={copy}><CopyIcon /> Chords + tab</button>
         </div>
       </section>
@@ -1270,9 +1357,13 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   );
 }
 
-function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, length, label, onFit, shown, follow }: {
+function Dock({ ref, voicings, keys, keyStyle, onKeyStyle, nowIdx, drag, onStep, onArrange, bar, onLengths, length, label, onFit, shown, follow }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
+  /** the track plays the keys: each chord's keys (null: it plays Guitar), how they are voiced, and a way to change that */
+  keys: number[][] | null;
+  keyStyle: NonNullable<Tone["voicing"]>;
+  onKeyStyle: (v: NonNullable<Tone["voicing"]>) => void;
   nowIdx: number;
   drag: (Payload & { index: number | null }) | null;
   onStep: (i: number, dir: -1 | 1) => void;
@@ -1292,6 +1383,9 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
   const chords = state.progression.chords;
   const arr = state.progression.arrange ?? null;
   const span = fretSpan(voicings);
+  // every keyboard in the tray shows the same stretch of keys, so the voice leading can be seen
+  const all = keys?.flat() ?? [];
+  const keySpan = all.length ? { lo: Math.min(...all), hi: Math.max(...all) } : undefined;
   // with Follow on, the chord that is sounding is kept in sight in its row (sideways only)
   const slotsRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -1315,14 +1409,22 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
     }
     // a chord that starts after the section has ended is never reached
     const out = chords.slice(0, i).reduce((a, x) => a + x.beats, 0) >= length - 1e-6;
-    els.push(<Slot key={c.id} c={c} i={i} v={voicings[i]} now={nowIdx === i} dragged={isDragged} out={out} onStep={(d) => onStep(i, d)} />);
+    els.push(<Slot key={c.id} c={c} i={i} v={voicings[i]} keys={keys ? keys[i] ?? [] : undefined} keySpan={keySpan} now={nowIdx === i} dragged={isDragged} out={out} onStep={(d) => onStep(i, d)} />);
   });
   if (drag && drag.index !== null && drag.index >= k) els.push(marker);
 
   return (
     <div className={`dock${chords.length ? "" : " bare"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref}>
       <div className="dock-inner">
-        {chords.length >= 2 && (
+        {keys && chords.length > 0 && (
+          <div className="arrange">
+            <span className="kb-label">Voicing</span>
+            <div className="seg" role="radiogroup" aria-label="How the chords are laid out on the keys">
+              {VOICINGS.map((x) => <button key={x.id} role="radio" aria-checked={keyStyle === x.id} className={keyStyle === x.id ? "on" : ""} title={x.hint} onClick={() => onKeyStyle(x.id)}>{x.name}</button>)}
+            </div>
+          </div>
+        )}
+        {!keys && chords.length >= 2 && (
           <div className="arrange">
             <span className="kb-label">Arrange</span>
             <div className="seg" role="radiogroup" aria-label="Arrange all chords in one area of the neck">
@@ -1363,10 +1465,11 @@ function Dock({ ref, voicings, nowIdx, drag, onStep, onArrange, bar, onLengths, 
  * The tray in one line, shown while the tray itself is off screen: play, the chords by name, and a way back.
  * Chords can be dropped on it; tap a name to hear it.
  */
-function MiniTray({ ref, chords, voicings, nowIdx, playing, onPlay, drag, canPlay, onOpen }: {
+function MiniTray({ ref, chords, play, nowIdx, playing, onPlay, drag, canPlay, onOpen }: {
   ref: React.Ref<HTMLDivElement>;
   chords: ProgChord[];
-  voicings: (Voicing | undefined)[];
+  /** what each chord plays (its keys, or its guitar shape) */
+  play: (i: number) => (number | null)[];
   nowIdx: number;
   playing: boolean;
   onPlay: () => void;
@@ -1380,7 +1483,7 @@ function MiniTray({ ref, chords, voicings, nowIdx, playing, onPlay, drag, canPla
   chords.forEach((c, i) => {
     if (drag && drag.index === i) els.push(marker);
     const st = c.rest ? "rest" : analyzeChord(c.ref, state.key).status;
-    els.push(<button key={c.id} data-slot={c.id} className={`mini-chip st-${st}${nowIdx === i ? " now" : ""}`} aria-label={c.rest ? "Rest" : undefined} onClick={() => { const v = voicings[i]; if (v) strum(v.midi); }}>{c.rest ? "–" : chordSymbol(c.ref)}</button>);
+    els.push(<button key={c.id} data-slot={c.id} className={`mini-chip st-${st}${nowIdx === i ? " now" : ""}`} aria-label={c.rest ? "Rest" : undefined} onClick={() => { const v = play(i); if (v.length) strum(v); }}>{c.rest ? "–" : chordSymbol(c.ref)}</button>);
   });
   if (drag && drag.index !== null && drag.index >= chords.length) els.push(marker);
   return (
@@ -1392,9 +1495,10 @@ function MiniTray({ ref, chords, voicings, nowIdx, playing, onPlay, drag, canPla
   );
 }
 
-function Slot({ c, i, v, now, dragged, out, onStep }: { c: ProgChord; i: number; v?: Voicing; now: boolean; dragged: boolean; out?: boolean; onStep: (d: -1 | 1) => void }) {
+function Slot({ c, i, v, keys, keySpan, now, dragged, out, onStep }: { c: ProgChord; i: number; v?: Voicing; keys?: number[]; keySpan?: { lo: number; hi: number }; now: boolean; dragged: boolean; out?: boolean; onStep: (d: -1 | 1) => void }) {
   const { state, set, openSheet } = useApp();
-  const play = () => v && strum(v.midi);
+  // on the keys a chord plays the keys shown; on the guitar, its shape
+  const play = () => (keys ? keys.length && strum(keys) : v && strum(v.midi));
   const d = useDraggable({ ref: c.ref, slotId: c.id }, play);
   const a = analyzeChord(c.ref, state.key);
   const name = chordSymbol(c.ref);
@@ -1412,13 +1516,19 @@ function Slot({ c, i, v, now, dragged, out, onStep }: { c: ProgChord; i: number;
     <div className={`slot draggable st-${a.status}${now ? " now" : ""}${dragged ? " dragged" : ""}${out ? " out" : ""}`} data-slot={c.id} role="button" tabIndex={0}
       aria-label={`Chord ${i + 1}: ${name}${out ? ", past the end of the section" : ""}. Play`} {...d} onKeyDown={(e) => { if (e.key === "Enter" && e.target === e.currentTarget) play(); }}>
       <span className="sym">{name}</span>
-      {v && <ChordDiagram voicing={v} root={c.ref.root} bass={c.ref.bass} labels={state.settings.labels} width={116} compact leftHanded={state.settings.leftHanded} capo={state.settings.capo} />}
+      {keys ? <KeyboardDiagram notes={keys} chord={c.ref} keyOf={state.key} labels={state.settings.labels === "fingers" ? "intervals" : state.settings.labels} width={116} compact span={keySpan} />
+        : v && <ChordDiagram voicing={v} root={c.ref.root} bass={c.ref.bass} labels={state.settings.labels} width={116} compact leftHanded={state.settings.leftHanded} capo={state.settings.capo} />}
       <button className="slot-x" data-nodrag aria-label={`Remove ${name}`} onClick={remove}>✕</button>
-      <div className="slot-step" data-nodrag onClick={(e) => e.stopPropagation()}>
+      {/* on the keys: the chord's sheet (flavour, move, length, its keys), without the guitar's shape steppers */}
+      {keys ? (
+        <div className="slot-step" data-nodrag onClick={(e) => e.stopPropagation()}>
+          <button className="slot-more" aria-label={`${name}: flavour, length and more`} title="More" aria-haspopup="dialog" onClick={() => openSheet({ ref: c.ref, slotId: c.id })}>⋯</button>
+        </div>
+      ) : <div className="slot-step" data-nodrag onClick={(e) => e.stopPropagation()}>
         <button aria-label={`Previous shape for ${name}`} title="Previous shape that fits here" onClick={() => onStep(-1)}>‹</button>
         <button className="slot-shapes" aria-label={`Other ways to play ${name}`} title="All shapes, length, remove" aria-haspopup="dialog" onClick={() => openSheet({ ref: c.ref, slotId: c.id })}><ShapesIcon /></button>
         <button aria-label={`Next shape for ${name}`} title="Next shape that fits here" onClick={() => onStep(1)}>›</button>
-      </div>
+      </div>}
     </div>
   );
 }

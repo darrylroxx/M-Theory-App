@@ -26,3 +26,45 @@ export function audioContext(): AudioContext {
 
 /** The context if sound has already started, without starting it. */
 export const audioIfStarted = (): AudioContext | null => ctx;
+
+/**
+ * Do something at a moment of an offline render (a section's own room, say). An offline render
+ * runs as fast as it can, so a timer would land at a different place on every export: instead
+ * the render is paused at exactly that moment (`OfflineAudioContext.suspend`), the change is made,
+ * and it carries on. Everything asked for at one moment shares one pause. Returns false when the
+ * moment cannot be reached this way (a live context, a browser that cannot pause a render, or a
+ * moment past the end); the caller then makes the change some other way, or not at all.
+ */
+type Suspendable = BaseAudioContext & { suspend?: (t: number) => Promise<void>; resume?: () => Promise<void>; length?: number };
+const pauses = new WeakMap<BaseAudioContext, Map<number, (() => void)[]>>();
+export function atRenderTime(c: BaseAudioContext, t: number, fn: () => void): boolean {
+  const off = c as Suspendable;
+  const isOffline = "startRendering" in c;
+  if (!isOffline || typeof off.suspend !== "function" || typeof off.resume !== "function") return false;
+  // a render pauses only on the edge of a block of 128 frames: the moment is rounded to the one it would land on
+  const frame = Math.max(0, Math.round((t * c.sampleRate) / 128) * 128);
+  if (typeof off.length === "number" && frame >= off.length) return false;
+  if (frame === 0) {
+    fn();
+    return true;
+  }
+  let at = pauses.get(c);
+  if (!at) pauses.set(c, (at = new Map()));
+  const list = at.get(frame);
+  if (list) {
+    list.push(fn);
+    return true;
+  }
+  const jobs = [fn];
+  at.set(frame, jobs);
+  off.suspend(frame / c.sampleRate).then(
+    () => {
+      for (const j of jobs) j();
+      void off.resume!();
+    },
+    () => {
+      /* the render cannot pause there: the change is not made */
+    },
+  );
+  return true;
+}

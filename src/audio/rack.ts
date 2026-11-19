@@ -13,6 +13,7 @@
  * Works on any audio context, live or offline, so the same chain can be measured in tests.
  */
 import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
+import { atRenderTime } from "./context";
 import { renderSpace, drumRng } from "./drums";
 import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
 import { SAT_TYPES, createSaturator, type SatType } from "./saturation";
@@ -28,7 +29,7 @@ export const TREM_SPEEDS: { id: TremSpeed; name: string; hint: string; perBeat: 
 ];
 export type HarpVerb = Exclude<VerbId, "gated">;
 export const HARP_VERBS: { id: HarpVerb; name: string; hint: string }[] = [
-  { id: "hall", name: "Hall", hint: "A concert hall: long and smooth, the harp's natural home" },
+  { id: "hall", name: "Hall", hint: "A concert hall: long and smooth" },
   { id: "room", name: "Room", hint: "A small wooden room: close and real" },
   { id: "plate", name: "Plate", hint: "Dense and bright: the studio classic" },
   { id: "spring", name: "Spring", hint: "The drippy reverb inside a guitar amp" },
@@ -111,7 +112,14 @@ export interface Rack {
   halo: GainNode;
   /** dips under each kick when the drums' Pump is up */
   duck: GainNode;
-  set(s: HarpSound, bpm: number): void;
+  /**
+   * Set the sound: now, or from `at` (seconds on the audio clock) when a song section with a sound
+   * of its own starts there. A room is rebuilt at that moment too: live by a timer, in an offline
+   * render by pausing the render there (see atRenderTime), so every export is the same.
+   */
+  set(s: HarpSound, bpm: number, at?: number): void;
+  /** Stop its oscillators and let go of everything (the track is gone). */
+  dispose(): void;
 }
 
 /**
@@ -149,8 +157,10 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
     f.gain.value = db;
     return f;
   };
+  const oscs: OscillatorNode[] = [];
   const lfo = (hz: number, type: OscillatorType = "sine") => {
     const o = c.createOscillator();
+    oscs.push(o);
     o.type = type;
     o.frequency.value = hz;
     o.start();
@@ -269,8 +279,15 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
 
   let was: Partial<HarpSound> & { bpm?: number } = {};
   let timer: ReturnType<typeof setTimeout> | undefined;
-  const live = "resume" in c; // an offline render has no time to wait for a knob to settle
-  const to = (p: AudioParam, v: number, tc = 0.03) => (was.level === undefined ? (p.value = v) : p.setTargetAtTime(v, c.currentTime, tc));
+  // an offline render has no time to wait for a knob to settle (it has resume() too, so ask for what only it has)
+  const live = !("startRendering" in c);
+  let when = 0;
+  // a change booked for later that never came (playing stopped or jumped just before a section with a
+  // sound of its own) must not land on top of this one: anything booked from this moment on goes
+  const to = (p: AudioParam, v: number, tc = 0.03) => {
+    if (was.level === undefined) p.value = v;
+    else p.cancelScheduledValues(when).setTargetAtTime(v, when, tc);
+  };
   const room = (s: HarpSound) => {
     const sides = renderSpace(c.sampleRate, s.size, drumRng(11), s.verb);
     const buf = c.createBuffer(2, sides[0].length, c.sampleRate);
@@ -282,7 +299,8 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
     input,
     halo,
     duck,
-    set(s, bpm) {
+    set(s, bpm, at) {
+      when = Math.max(at ?? 0, c.currentTime);
       if (s.squeeze !== was.squeeze) {
         to(comp.threshold, -34 * s.squeeze);
         to(comp.ratio, 1 + 4 * s.squeeze);
@@ -329,11 +347,28 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
       if (s.size !== was.size || s.verb !== was.verb) {
         // building a room takes a moment: wait until the knob stops moving
         clearTimeout(timer);
-        if (!verb.buffer || !live) room(s);
-        else timer = setTimeout(() => room(s), 140);
+        const later = when - c.currentTime;
+        if (!verb.buffer) room(s);
+        else if (!live) {
+          // a section's own room, in a render: at exactly its moment (a render that cannot pause keeps the room it has)
+          if (later <= 0.001) room(s);
+          else atRenderTime(c, when, () => room(s));
+        } else timer = setTimeout(() => room(s), later > 0.001 ? later * 1000 : 140);
       }
       if (s.level !== was.level) to(level.gain, s.level * s.level * 1.25);
       was = { ...s, bpm };
+    },
+    dispose() {
+      clearTimeout(timer);
+      for (const o of oscs) {
+        try {
+          o.stop();
+        } catch {
+          /* already stopped */
+        }
+        o.disconnect();
+      }
+      top.disconnect();
     },
   };
 }

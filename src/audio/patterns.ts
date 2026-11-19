@@ -21,6 +21,7 @@
 import { barBeats, type Beat } from "./beats";
 import { tuneBetween, type Melody, type TuneHit } from "../song/melody";
 import type { HarpSound } from "./rack";
+import type { Tone } from "./tone";
 import { STYLES, type Style } from "./styles";
 import type { TimeSig } from "../song/meter";
 
@@ -245,6 +246,8 @@ export interface PlayItem {
   tune?: PlayTune | null;
   /** the harp this chord is played on, when its section has a sound of its own (missing = the harp as it is set) */
   sound?: HarpSound;
+  /** the instrument the track plays (missing = as it is set) */
+  tone?: Tone;
   /** not a chord: the silence between a section's last chord and its end */
   pad?: boolean;
   /** how many beats into its section this item starts (given when playing starts or loops part-way through a section) */
@@ -256,7 +259,7 @@ export interface PlayItem {
 /** What the tracks added on the Track page play in one section. */
 export interface ExtraPlay {
   /** extra chords tracks: each chord with where it starts in the section, in beats */
-  chords: { track: string; at: number; beats: number; midi: (number | null)[]; style: PatternId; feel?: Partial<Feel>; sound: HarpSound }[];
+  chords: { track: string; at: number; beats: number; midi: (number | null)[]; style: PatternId; feel?: Partial<Feel>; sound: HarpSound; tone?: Tone }[];
   /** extra melody tracks */
   tunes: { track: string; tune: PlayTune }[];
   /** extra drum tracks */
@@ -278,6 +281,8 @@ export interface PlayTune {
   swing: number;
   /** the melody harp's sound in this section (missing = as it is set) */
   sound?: HarpSound;
+  /** the instrument the melody track plays (missing = as it is set) */
+  tone?: Tone;
 }
 
 /** Every melody note of a run of chords, with the time (in beats from the start) each one sounds. */

@@ -1,0 +1,321 @@
+/**
+ * One chords or melody track's sound, from the notes to its fader:
+ *
+ *   instrument (the strings, a piano or the synth) ─ effects rack ─ out ─ fader(track)
+ *
+ * The instrument can change while the track plays (the Guitar / Piano / Synth switch): the old
+ * one fades out over a few hundredths of a second and is freed, the new one comes in through the
+ * same rack and fader, so the track's effects, level, mute and solo stay as they were.
+ *
+ * The same voice serves the live player and an offline render (a WAV, the recording engine's
+ * backing). Offline, a keyboard's notes are written down first; `prepare()` then loads exactly
+ * the recordings they need at the render's sample rate and plays them, and the synth is played
+ * before its processor is made, so every note is in the render however long loading takes.
+ */
+import type { Instrument } from "./instrument";
+import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
+import { STRING_KEYS } from "./harp";
+import { Harp } from "./plucked";
+import { GUITAR, instKey, synthOf, type Tone } from "./tone";
+import { listening, pulse } from "./pulse";
+import type { Sound } from "./describe";
+import { createElectricPiano, createPiano } from "../keys/piano";
+import { Sampler } from "../keys/sampler";
+import type { EPiano } from "../keys/epiano";
+import { SynthInstrument } from "../synth/instrument";
+import { reviveSynth, type SynthParams } from "../synth/params";
+
+/** How long an instrument takes to fade out when it is swapped, or its track is removed. */
+export const FADE = 0.06;
+const TAU = FADE / 4;
+
+/**
+ * Levels on the way into the rack (dB), so a track switched between instruments keeps its place
+ * in the mix: measured by exporting the same chords and melodies on each instrument and on the
+ * strings. The keyboards and the synth presets are all calibrated to one loudness of their own;
+ * against the strings (which strum six notes, and lift a melody note over the chords) a piano's
+ * chords sat about 6 dB under (its single melody notes 9 dB) and a synth pad 10 dB. The electric piano's chords come out 3–4 dB
+ * above the grand's, so they get less.
+ */
+export const LEVEL_DB: Record<"grand" | "electric" | "synth", Record<VoiceKind, number>> = {
+  grand: { chord: 6, melody: 9 },
+  electric: { chord: 2.5, melody: 4 },
+  synth: { chord: -3, melody: -5.5 },
+};
+const db = (v: number) => Math.pow(10, v / 20);
+
+export type VoiceKind = "chord" | "melody";
+type Keys = Sampler | EPiano;
+
+/** What a piano or synth note is like, for the canvas (the strings measure their own recordings). */
+const sounds = new Map<string, Sound>();
+function keysSound(midi: number, inst: "piano" | "synth", ring: number): Sound {
+  const key = `${inst}|${midi}|${ring.toFixed(1)}`;
+  let s = sounds.get(key);
+  if (!s) {
+    const hz = 440 * Math.pow(2, (midi - 69) / 12);
+    const parts = [1, 2, 3, 4, 5].map((h) => ({ hz: hz * h, width: 0.02, gain: inst === "piano" ? 1 / (h * h) : 1 / h, ring: ring / h, noise: 0, glide: 0 }));
+    s = { ring, attack: inst === "piano" ? 0.9 : 0.5, level: 0.5, centre: hz * 2.2, parts };
+    sounds.set(key, s);
+  }
+  return s;
+}
+
+export interface NoteOpts {
+  /** a lane: a new note on the same one takes over from the one before */
+  slot?: number;
+  /** a muted, cut-short note (the strings damp it quickly) */
+  cut?: boolean;
+  /** played this much louder (a melody note over a chord, on the strings) */
+  lift?: number;
+  /** a song section's own sound (the strings are rendered that way) */
+  as?: HarpSound;
+  /** for the canvas: when the next note of this voice comes, if sooner than the note ends */
+  until?: number;
+}
+
+export class TrackVoice {
+  readonly rack: Rack;
+  /** after the rack: a removed track fades out here */
+  readonly out: GainNode;
+  readonly harp: Harp;
+  /** the strings' own way into the rack (faded out while another instrument plays) */
+  private harpIn: GainNode;
+  tone: Tone = GUITAR;
+  private key = "guitar";
+  private inst: Instrument | null = null;
+  /** the instrument's own way into the rack, its brightness and level */
+  private instIn: GainNode | null = null;
+  private shelf: BiquadFilterNode | null = null;
+  sound: HarpSound = SOUND_DEFAULT;
+  private soundKey = "";
+  private toneKey = "";
+  private settle: ReturnType<typeof setTimeout> | undefined;
+  readonly offline: boolean;
+  /** offline: what a keyboard plays, written down until its recordings are loaded */
+  private later: (() => void)[] = [];
+  private wanted: { midi: number; velocity: number }[] = [];
+  private gone = false;
+
+  constructor(
+    readonly c: BaseAudioContext,
+    dest: AudioNode,
+    readonly kind: VoiceKind,
+    /** an added track's id (the first tracks are reported by kind) */
+    readonly track?: string,
+  ) {
+    this.offline = "startRendering" in c;
+    this.out = c.createGain();
+    this.out.connect(dest);
+    this.rack = createRack(c, this.out);
+    this.rack.set(this.sound, 90);
+    this.harpIn = c.createGain();
+    this.harpIn.connect(this.rack.input);
+    this.harp = new Harp(c, { input: this.harpIn, halo: this.rack.halo });
+    this.harp.tag = kind;
+    this.harp.track = track;
+  }
+
+  /** The instrument playing now (none: the strings). */
+  get instrument(): Instrument | null {
+    return this.inst;
+  }
+
+  /**
+   * Set the track's sound and effects: now, or from `at` (a song section with a sound of its own
+   * starting there). Nothing is done when it is already set that way. `strings: false` keeps the
+   * strings' notes as they are (a knob is still turning: new notes wait until it stops).
+   */
+  setSound(s: HarpSound, bpm: number, at?: number, strings = true): boolean {
+    const key = JSON.stringify(s) + bpm;
+    if (key === this.soundKey) return false;
+    this.soundKey = key;
+    this.sound = s;
+    this.rack.set(s, bpm, at);
+    this.harp.setSound(s, strings);
+    return true;
+  }
+
+  /**
+   * A knob turned on the page: the effects follow at once, new strings only once the knob has
+   * stopped for a moment (making notes takes time). `settled` is called when they are made.
+   */
+  turn(s: HarpSound, bpm: number, settled?: () => void) {
+    const same = STRING_KEYS.every((k) => this.harp.strings[k] === s[k]);
+    this.setSound(s, bpm, undefined, same);
+    clearTimeout(this.settle);
+    if (!same)
+      this.settle = setTimeout(() => {
+        this.harp.setSound(this.sound);
+        settled?.();
+      }, 150);
+  }
+
+  /** Play on another instrument, or the same one set another way. Cheap when nothing changed. */
+  setTone(tone: Tone): void {
+    if (this.gone) return;
+    const k = JSON.stringify(tone);
+    if (k === this.toneKey) return;
+    this.toneKey = k;
+    const prev = this.tone;
+    this.tone = tone;
+    const ik = instKey(tone);
+    if (ik !== this.key) this.swap(ik);
+    else if (tone.inst === "synth" && this.inst instanceof SynthInstrument && JSON.stringify(prev.synth) !== JSON.stringify(tone.synth)) this.inst.set(this.synth);
+    if (this.shelf) this.shelf.gain.setTargetAtTime(brightDb(tone), this.c.currentTime, 0.02);
+    if (!tone.pedal && prev.pedal && isKeys(this.inst)) this.inst.pedal(false);
+  }
+
+  /** The synth's sound for this track (its own, or the one a new synth track starts with). */
+  get synth(): SynthParams {
+    return reviveSynth(synthOf(this.tone, this.kind === "chord" ? "chords" : "melody"));
+  }
+
+  private swap(next: string) {
+    const c = this.c;
+    const now = c.currentTime;
+    this.key = next;
+    // the instrument being left fades out, then lets go of what it holds
+    const old = this.inst;
+    const oldIn = this.instIn;
+    if (old && oldIn) {
+      if (this.offline) {
+        old.dispose();
+        oldIn.disconnect();
+      } else {
+        oldIn.gain.cancelScheduledValues(now);
+        oldIn.gain.setTargetAtTime(0, now, TAU);
+        old.stopAll(now + FADE);
+        setTimeout(() => {
+          old.dispose();
+          oldIn.disconnect();
+        }, FADE * 2000);
+      }
+    }
+    this.inst = null;
+    this.instIn = null;
+    this.shelf = null;
+    // the strings come and go the same way
+    this.harpIn.gain.cancelScheduledValues(now);
+    if (next === "guitar") this.harpIn.gain.setTargetAtTime(1, now, TAU);
+    else {
+      this.harpIn.gain.setTargetAtTime(0, now, TAU);
+      this.harp.stopAll(now + FADE);
+    }
+    if (next === "guitar") return;
+    const inst: Instrument = this.tone.inst === "synth" ? new SynthInstrument(c, this.synth, { seed: 7 }) : this.tone.keys === "electric" ? createElectricPiano(c) : createPiano(c);
+    const g = c.createGain();
+    const level = db(LEVEL_DB[this.tone.inst === "synth" ? "synth" : this.tone.keys === "electric" ? "electric" : "grand"][this.kind]);
+    // a new voice starts at its level outright, so a render that begins on a chord begins at the right level
+    if (this.offline || !old) g.gain.value = level;
+    else {
+      g.gain.value = 0;
+      g.gain.setTargetAtTime(level, now, TAU);
+    }
+    inst.output.connect(g);
+    if (this.tone.inst === "piano") {
+      // Bright: a shelf over the top of the piano, duller or brighter than it was recorded
+      const shelf = c.createBiquadFilter();
+      shelf.type = "highshelf";
+      shelf.frequency.value = 2500;
+      shelf.gain.value = brightDb(this.tone);
+      g.connect(shelf).connect(this.rack.input);
+      this.shelf = shelf;
+    } else g.connect(this.rack.input);
+    this.inst = inst;
+    this.instIn = g;
+    if (!this.offline) void inst.load().catch(() => {});
+  }
+
+  /** Ready to sound at once? (A piano still loading its recordings is not.) */
+  ready(): boolean {
+    return !this.inst || this.inst.ready();
+  }
+  /** Resolves when the instrument can sound. */
+  load(): Promise<void> {
+    return this.inst ? this.inst.load() : Promise.resolve();
+  }
+
+  /** Play one note. `length` in seconds (Infinity: the strings ring on; the keys and the synth are held until stopped). */
+  note(midi: number, when: number, velocity: number, length: number, o: NoteOpts = {}) {
+    if (this.gone) return;
+    const inst = this.inst;
+    if (!inst) {
+      this.harp.play(midi, when, velocity, o.slot, length, !!o.cut, o.lift ?? 1, o.as, o.until);
+      return;
+    }
+    const len = o.cut ? Math.min(length, 0.12) : length;
+    if (this.harp.tag && listening()) {
+      const synth = this.tone.inst === "synth";
+      pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: 8000, octave: 0, sound: keysSound(midi, synth ? "synth" : "piano", synth ? 2 : 4) });
+    }
+    // the synth takes its notes ahead of loading (they are handed to its processor when it is made); a keyboard needs its recordings first
+    if (this.offline && isKeys(inst)) {
+      this.wanted.push({ midi, velocity });
+      this.later.push(() => inst.play(midi, when, velocity, len, o.slot));
+      return;
+    }
+    inst.play(midi, when, velocity, len, o.slot);
+  }
+
+  /** The pianist's pedal change at a new chord: up for a moment, then down again (only when Pedal is on). */
+  repedal(at: number) {
+    const inst = this.inst;
+    if (!this.tone.pedal || !isKeys(inst)) return;
+    const go = () => {
+      inst.pedal(false, Math.max(0, at - 0.01));
+      inst.pedal(true, at + 0.03);
+    };
+    if (this.offline) this.later.push(go);
+    else go();
+  }
+
+  /** The song starts at `when`: the synth's movement starts over, so playing from here sounds like a render from here. */
+  sync(when: number) {
+    if (this.inst instanceof SynthInstrument) this.inst.sync(when);
+  }
+
+  /** Let every note go from `at`. */
+  stopAll(at = this.c.currentTime) {
+    clearTimeout(this.settle);
+    this.harp.stopAll(at);
+    const inst = this.inst;
+    if (!inst) return;
+    if (isKeys(inst)) inst.pedal(false, at);
+    inst.stopAll(at);
+  }
+
+  /** Offline, before the render: load what the notes need, then play what was written down. */
+  async prepare(): Promise<void> {
+    const inst = this.inst;
+    if (!inst) return;
+    if (inst instanceof Sampler) await inst.prepare(this.wanted);
+    else await inst.load();
+    for (const f of this.later) f();
+    this.later = [];
+  }
+
+  /** Free everything. Live, the track fades out first so nothing clicks (a track removed while it plays). */
+  dispose() {
+    if (this.gone) return;
+    this.gone = true;
+    clearTimeout(this.settle);
+    const inst = this.inst;
+    const end = () => {
+      inst?.dispose();
+      this.rack.dispose();
+      this.out.disconnect();
+    };
+    if (this.offline) return end();
+    const now = this.c.currentTime;
+    this.out.gain.cancelScheduledValues(now);
+    this.out.gain.setTargetAtTime(0, now, TAU);
+    this.harp.stopAll(now + FADE);
+    inst?.stopAll(now + FADE);
+    setTimeout(end, FADE * 2000);
+  }
+}
+
+const isKeys = (i: Instrument | null): i is Keys => !!i && "pedal" in i;
+/** Bright: ±8 dB over the top. */
+const brightDb = (t: Tone) => ((t.bright ?? 0.5) - 0.5) * 16;

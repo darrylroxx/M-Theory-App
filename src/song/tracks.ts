@@ -22,6 +22,7 @@ import { reviveMelody, type Melody } from "./melody";
 import type { ProgChord, Progression } from "../ui/state";
 import { reviveFx, type VocalFx } from "../audio/vocalfx";
 import { reviveTakes, type Take } from "./takes";
+import { withoutTone } from "../audio/tone";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
 /** The kinds a page edits by bringing a track forward. */
@@ -128,9 +129,16 @@ export function normalize(p: Progression): Progression {
   return q;
 }
 
+/** An added drums track's own kit, from a section that has a beat on it (none yet: undefined). */
+function ownBeat(p: Progression, id: string): Beat | undefined {
+  for (const part of p.song?.parts ?? []) if (part.layers?.[id]?.beat) return part.layers[id].beat;
+  return p.layers?.[id]?.beat;
+}
+
 /**
  * Bring tracks forward for editing (one per kind): `focus` says which. A track that does not
- * exist is left alone; the first track needs nothing.
+ * exist is left alone; the first track needs nothing. An added drums track with nothing yet in
+ * this section starts on its own kit (from another section), not on the first drums' one.
  */
 export function refocus(q0: Progression, focus: Focus | undefined): Progression {
   const q1 = normalize(q0);
@@ -148,7 +156,7 @@ export function refocus(q0: Progression, focus: Focus | undefined): Progression 
     const layer: Layer =
       kind === "chords" ? { chords: mine.chords ?? [], pattern: t.style ?? first.pattern, feel: t.feel, sound: t.sound }
       : kind === "melody" ? { melody: mine.melody, tuneSound: t.sound }
-      : { beat: mine.beat ?? emptyBeat(first.beat ?? DEFAULT_BEAT) };
+      : { beat: mine.beat ?? emptyBeat(ownBeat(q, id) ?? first.beat ?? DEFAULT_BEAT) };
     q = putLive({ ...q, layers: { ...without(q.layers, id), [kind]: first } }, kind, layer);
   }
   return Object.keys(keep).length ? { ...q, focus: keep } : q;
@@ -184,7 +192,8 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, layers: without(x.layers, id) })) } : p.song;
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
   const tracks = (p.tracks ?? []).filter((t) => t.id !== id);
-  return refocus({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: mix && Object.keys(mix).length ? mix : undefined }, focus);
+  // its instrument goes with it
+  return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: mix && Object.keys(mix).length ? mix : undefined }, id), focus);
 }
 
 /** Rename a track (the first three keep their names). */

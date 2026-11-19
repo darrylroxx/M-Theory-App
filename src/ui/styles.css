@@ -563,6 +563,19 @@ button.dm-strip-name:hover { color: var(--accent); }
 .pane { display: flex; flex-direction: column; gap: 14px; }
 .pane[hidden] { display: none; }
 .sound-row { padding-top: 2px; }
+/* ── a track's instrument: Guitar, Piano or Synth ── */
+.inst-switch button { display: inline-flex; align-items: center; gap: 5px; position: relative; }
+.inst-icon { flex: none; }
+.inst-loading { position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); animation: inst-pulse 0.9s ease-in-out infinite; }
+@keyframes inst-pulse { 50% { opacity: 0.25; } }
+@media (max-width: 520px) { .inst-switch button span { display: none; } .inst-switch button { padding-inline: 10px; } }
+/* the synth's panel sits inside the track's card, not as a card of its own */
+.card .card.synth { border: none; background: none; box-shadow: none; padding: 0; margin: 0; border-radius: 0; }
+/* a keyboard track's chord: its sheet, in place of the guitar's shape steppers */
+.slot-step .slot-more { width: auto; padding: 0 12px; font-weight: 900; letter-spacing: 0.08em; }
+.finder-keys { display: block; padding: 6px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--card-2); max-width: 100%; overflow: hidden; color: inherit; }
+.finder-keys:hover { border-color: var(--accent); }
+.finder-keys svg { max-width: 100%; height: auto; }
 .link-chip { flex: 0 1 auto; display: inline-block; line-height: 24px; max-width: 12em; overflow: hidden; text-overflow: ellipsis; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--faint); font-size: 0.74rem; font-weight: 800; white-space: nowrap; }
 .link-chip.own { border-style: solid; border-color: var(--accent); color: var(--accent); cursor: pointer; }
 
@@ -840,11 +853,14 @@ button.dm-strip-name:hover { color: var(--accent); }
 /* ── Track page: the whole song, left to right ── */
 .track-page { display: flex; flex-direction: column; gap: 10px; }
 .tv { display: flex; border: 1px solid var(--border); border-radius: 12px; overflow: hidden; background: var(--card-2); }
-.tv-heads { flex: none; width: 168px; border-right: 1px solid var(--border); background: var(--card); z-index: 1; }
+.tv-heads { flex: none; width: 180px; border-right: 1px solid var(--border); background: var(--card); z-index: 1; }
 .tv-corner { height: 34px; border-bottom: 1px solid var(--border); }
 .tv-head { height: 52px; display: grid; grid-template-columns: 1fr auto; grid-template-rows: auto auto; align-items: center; gap: 2px 6px; padding: 4px 8px; border-bottom: 1px solid var(--border); }
 .tv-head.quiet .tv-name { opacity: 0.45; }
-.tv-name { text-align: left; font-weight: 800; font-size: 0.86rem; background: none; border: none; padding: 0; color: var(--text); }
+.tv-name { text-align: left; font-weight: 800; font-size: 0.86rem; background: none; border: none; padding: 0; color: var(--text); display: flex; align-items: center; gap: 3px; min-width: 0; white-space: nowrap; }
+.tv-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.tv-name .inst-icon { flex: none; color: var(--muted); }
+.tv-name .tv-x { flex: none; margin-left: 2px; padding: 0 2px; }
 .tv-btns { display: inline-flex; gap: 3px; }
 .tv-ms { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--card-2); font-size: 0.7rem; font-weight: 900; color: var(--muted); padding: 0; }
 .tv-ms.on { background: var(--tension, #c0392b); border-color: transparent; color: #fff; }
@@ -876,7 +892,9 @@ button.dm-strip-name:hover { color: var(--accent); }
 @media (max-width: 520px) {
   .tv-heads { width: 116px; }
   .tv-head { grid-template-columns: auto 1fr; grid-template-areas: "name name" "btns vol"; padding: 4px 6px; }
-  .tv-name { grid-area: name; }
+  /* tighter on a phone, so "Chords 2" keeps its number beside the icon and the ✕ */
+  .tv-name { grid-area: name; gap: 2px; }
+  .tv-name .inst-icon { width: 12px; height: 12px; }
   .tv-btns { grid-area: btns; }
   .tv-vol { grid-area: vol; min-width: 0; }
   .tv-db, .track-page .dm-head .kb-label { display: none; }
