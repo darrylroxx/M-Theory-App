@@ -79,4 +79,17 @@ describe("which parts of the app's own song the canvas listens to", () => {
     expect(planKey(planTaps({ tracks }))).toBe(planKey(plans));
     expect(planKey(planTaps({ tracks: tracks.slice(1) }))).not.toBe(planKey(plans));
   });
+
+  it("a swap that plays instead of the chords is painted as the chords; a pad beside them as a harmony", () => {
+    const swap = t("c2", "chords", { role: "harmony", harmony: { from: "chords", option: "tritone", marks: {} } });
+    const pad = t("c3", "chords", { role: "harmony", harmony: { from: "chords", option: "pad", marks: {} } });
+    const fit = t("c4", "chords", { role: "harmony", harmony: { from: "melody", option: "fit", marks: {} } });
+    const plans = planTaps({ tracks: [swap, pad, fit], mix: { chords: { mute: true } } });
+    const layer = layerOf(plans);
+    expect(layer("c2")).toBe("chords");
+    expect(layer("c3")).toBe("harmony");
+    expect(layer("c4")).toBe("chords");
+    // the chords it replaces are muted, so they get no hand at all
+    expect(heardIn(plans)("chords")).toBe(false);
+  });
 });

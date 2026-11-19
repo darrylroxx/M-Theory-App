@@ -16,7 +16,7 @@
  * there are never more than six: beyond that, tracks painted in the same layer share an ear (and
  * a hand).
  */
-import { allTracks, type Track } from "../song/tracks";
+import { allTracks, insteadTarget, type Track } from "../song/tracks";
 import type { Progression } from "../ui/state";
 import { gainOf } from "../audio/mix";
 import { layerOfTrack, type LayerKind } from "./layers";
@@ -40,10 +40,14 @@ export interface TapPlan {
 /** The ears for a song's tracks. */
 export function planTaps(p: Pick<Progression, "tracks" | "mix">): TapPlan[] {
   const plans: TapPlan[] = [];
-  for (const t of allTracks(p)) {
+  const tracks = allTracks(p);
+  for (const t of tracks) {
     // (a fader all the way down is as silent as a mute)
     if (gainOf(p.mix, t.id) <= 0) continue;
-    plans.push({ key: t.id, layer: layerOfTrack(t as Track), faders: [t.id], members: [t.id], light: t.kind !== "vocals" });
+    // a swap written "instead" of the chords (or chords fitted to the tune) is the chords now heard,
+    // not a part beside them: it is painted as the chords, bass and all
+    const layer = insteadTarget(t as Track, tracks as Track[]) ? "chords" : layerOfTrack(t as Track);
+    plans.push({ key: t.id, layer, faders: [t.id], members: [t.id], light: t.kind !== "vocals" });
   }
   // too many ears: tracks of one layer share one. Drums first (two kits' hits on one hand are still hits), then washes
   // and fog, then the voices; two melodies sharing a hand would be one line jumping between them, so they share last.
