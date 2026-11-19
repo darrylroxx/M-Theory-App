@@ -167,4 +167,10 @@ describe("the Track page shows the section being worked on", () => {
     expect(showSection(1, 4, 0, 8)).toBe(0);
     expect(showSection(0, 4, 2, 8)).toBe(0);
   });
+  it("while the music plays (any length counts as longer than the screen): only a start off screen moves the lanes", () => {
+    // four bars on screen, sections of three: B (bars 3 to 5) starts in view, so the lanes wait for the page to turn
+    expect(showSection(0, 4, 3, Infinity)).toBe(0);
+    expect(showSection(4, 4, 6, Infinity)).toBe(4);
+    expect(showSection(0, 4, 9, Infinity)).toBe(9);
+  });
 });

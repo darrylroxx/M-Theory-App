@@ -155,12 +155,20 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     const x = starts.at[current || "a"];
     const sec = sections.find((s) => (s.block || "a") === (current || "a"));
     if (!active || !sc || x === undefined || !sec || !sc.clientWidth) return;
-    // (the first time the page is shown its bars are not measured yet: how many fit is worked out
-    // from its width now, and once the bars are drawn that wide the lanes go to the same bar again)
+    // (the first time the page is shown, or after the window was resized while it was hidden, its
+    // bars are not measured yet: they are measured now, before anything is painted, and the lanes
+    // are moved once they are drawn that wide. Moving them while they are still drawn with the old
+    // width would be cut short at their old end, and the bar it stopped at would be kept.)
+    const w = sc.clientWidth;
+    const real = Math.max(MIN_BAR, w / count);
     const left = sc.scrollLeft / bw;
-    const fit = sc.clientWidth / Math.max(MIN_BAR, sc.clientWidth / count);
-    const to = showSection(left, fit, x / bw, sec.bars);
-    if (to !== left) {
+    // (while the music plays the lanes turn a page at a time: a section is only gone to when its
+    // start is off screen, so the lanes do not jump at every section as well)
+    const to = showSection(left, w / real, x / bw, playing ? Infinity : sec.bars);
+    if (Math.abs(real - bw) > 1e-6) {
+      leftBar.current = to;
+      setRoom(w);
+    } else if (to !== left) {
       sc.scrollLeft = to * bw;
       leftBar.current = to;
     }
