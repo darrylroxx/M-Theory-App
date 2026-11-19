@@ -29,7 +29,7 @@ import { melodyBeats, reviveMelody, tileMelody, type Melody } from "./melody";
 import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, fitBars, frameItems } from "./frame";
 import { DEFAULT_SIG, fitRhythm, isCompound, mapLayers, mapList, refit, reviveSig, sameSig, sigBeats, type TimeSig } from "./meter";
 import type { ProgChord, Progression } from "../ui/state";
-import { normalize, reviveLayers, settled, type Layers, type Track } from "./tracks";
+import { carryMarks, normalize, reviveLayers, settled, type Layers, type Track } from "./tracks";
 
 /**
  * What a section sounds like, apart from its notes: how the chords are played, the two harps'
@@ -254,7 +254,9 @@ function ensureSongN(p: Progression, id: () => string = uid): Progression {
   const part: SongPart = tidy({ id: id(), color: 0, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers });
   const block: SongBlock = { id: id(), partId: part.id };
   // what was sung over the page (before it had sections) was sung in section A: it goes with it
-  const tracks = p.tracks && mapList(p.tracks, (t) => (t.takes?.some((k) => !k.at.block) ? { ...t, takes: t.takes.map((k) => (k.at.block ? k : { ...k, at: { ...k.at, block: block.id } })) } : t));
+  const sung = p.tracks && mapList(p.tracks, (t) => (t.takes?.some((k) => !k.at.block) ? { ...t, takes: t.takes.map((k) => (k.at.block ? k : { ...k, at: { ...k.at, block: block.id } })) } : t));
+  // and a harmony written on the page was written in section A
+  const tracks = carryMarks(sung, "", part.id);
   return { ...p, ...(tracks ? { tracks } : {}), song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
 }
 
@@ -431,7 +433,10 @@ function unlinkBlockN(p0: Progression, blockId: string, id: () => string = uid):
   // the first section's settings are the song's: the copy follows them, like any new section. It has its own colour, and its letter until it is named.
   const copy: SongPart = tidy({ ...part, id: id(), name: undefined, color: freeColor(song.parts), chords: part.chords.map((c) => ({ ...c, id: id() })) });
   const next = lead(p, { ...song, parts: [...song.parts, copy], blocks: song.blocks.map((b) => (b.id === blockId ? { ...b, partId: copy.id } : b)) });
-  return song.current === blockId ? { ...p, chords: copy.chords, song: next } : { ...p, song: next };
+  // a harmony in the copy is what was written there, not a change by hand
+  const tracks = carryMarks(p.tracks, part.id, copy.id);
+  const q = tracks === p.tracks ? p : { ...p, tracks };
+  return song.current === blockId ? { ...q, chords: copy.chords, song: next } : { ...q, song: next };
 }
 
 /**

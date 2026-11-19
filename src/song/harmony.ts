@@ -354,7 +354,9 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   const renamed = was && next !== h.option && (t.name === was.label || t.name.startsWith(`${was.label} `)) ? freeName(p, opt.label, id) : t.name;
   const tracks = (p.tracks ?? []).map((x) => (x.id === id ? { ...x, name: renamed, role: "harmony" as const, harmony: { from: h.from, option: next, marks: w.marks } } : x));
   const tone = p.tones?.[id];
-  const tones = kind === "chords" && tone && onKeys(tone) && next !== h.option ? { ...p.tones, [id]: { ...withoutRegister(tone), ...keysWay(w.hint) } } : p.tones;
+  // a track whose instrument was never chosen starts on the one that suits the new option, as a new track would
+  const fresh = !tone && next !== h.option ? toneFor(p, kind, h.from, srcKind, opt, w.hint) : undefined;
+  const tones = fresh ? { ...p.tones, [id]: fresh } : kind === "chords" && tone && onKeys(tone) && next !== h.option ? { ...p.tones, [id]: { ...withoutRegister(tone), ...keysWay(w.hint) } } : p.tones;
   // a re-harmonisation plays instead of the chords it replaces; going back to a layer lets them play again
   const before = insteadOf(p, kind, h.option, h.from, srcKind);
   const after = insteadOf(p, kind, next, h.from, srcKind);
@@ -426,12 +428,19 @@ export function harmonyState(p0: Progression, key: Key, id: string): HarmonyStat
   for (const s of all) {
     const l = s.layers?.[id];
     const m = markOf(s.part);
-    if (m ? m.out !== outPrint(l) : !emptyLayer(l)) edited.push(label.get(s.part) ?? "A");
-    if (stale) continue;
+    const now = outPrint(l);
     const input = inputIn(p, s, key, t.kind, h.from, srcKind, h.option, id);
+    const sameOut = m ? m.out === now : emptyLayer(l);
+    const sameSrc = m ? m.src === srcPrint(input) : !input;
+    if (sameOut && sameSrc) continue;
+    // what writing it now would give: when that is what the section holds (the whole song was
+    // moved to another key, say, the harmony with it), nothing would be lost and nothing is out of date
+    const fresh = input ? outPrint(layerOf(harmonize(input), t.kind, input)) : outPrint(undefined);
+    if (fresh === now) continue;
+    if (!sameOut) edited.push(label.get(s.part) ?? "A");
     // the source changed here: out of date only if writing it again would give something else
     // (a pad does not care that the tune changed; a swap checked against the tune might)
-    if (m ? m.src !== srcPrint(input) : !!input) stale = (input ? outPrint(layerOf(harmonize(input), t.kind, input)) : outPrint(undefined)) !== m?.out;
+    if (!sameSrc && fresh !== m?.out) stale = true;
   }
   return { edited, stale, source: true };
 }

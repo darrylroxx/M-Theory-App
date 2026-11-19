@@ -234,6 +234,22 @@ export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
   return h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords";
 }
 
+/**
+ * Harmony tracks' record of what they wrote in one section, given to another section that now
+ * holds the same music: the page that became section A, or a section given a copy of its own.
+ * Without it those notes would look changed by hand and out of date, though nobody touched them.
+ */
+export function carryMarks(tracks: Track[] | undefined, from: string, to: string): Track[] | undefined {
+  if (!tracks?.some((t) => t.harmony?.marks?.[from] && !t.harmony.marks[to])) return tracks;
+  return tracks.map((t) => {
+    const m = t.harmony?.marks?.[from];
+    if (!t.harmony || !m || t.harmony.marks?.[to]) return t;
+    // the page's record moves (it has no page of its own any more); a section's is shared with its copy
+    const { [from]: _, ...rest } = t.harmony.marks ?? {};
+    return { ...t, harmony: { ...t.harmony, marks: { ...(from === "" ? rest : t.harmony.marks), [to]: m } } };
+  });
+}
+
 /** A harmony track without its source (it stays a harmony line; it just can no longer be written again). */
 function forget(t: Track): Track {
   const { harmony: _, ...rest } = t;

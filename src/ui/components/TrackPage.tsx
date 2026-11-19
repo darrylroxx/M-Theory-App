@@ -202,14 +202,15 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
             const on = audible(mix, t.id);
             const db = m?.db ?? 0;
             return (
-              <div key={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}`} role="group" aria-label={`${t.name} track`}>
+              <div key={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}${t.harmony ? " hz" : ""}`} role="group" aria-label={`${t.name} track`}>
                 {/* one line: what plays it, its name (a long one is cut short), and ✕ for an added track */}
                 <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
                   {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(state.progression, t.id).inst} />}
                   <span className="tv-label">{t.name}</span>
-                  {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setSheet({ kind: t.kind as "chords" | "melody", track: t })} />}
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
+                {/* ⟳ beside the volume, so the name keeps the room (on a phone it ends the name's line) */}
+                {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setSheet({ kind: t.kind as "chords" | "melody", track: t })} />}
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>

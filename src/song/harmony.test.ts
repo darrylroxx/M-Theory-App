@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { ProgChord, Progression } from "../ui/state";
 import type { Key } from "../theory/keys";
-import { keyScale } from "../theory/keys";
+import { keyScale, transposeRef } from "../theory/keys";
 import { pc } from "../theory/notes";
 import { scalePcs } from "../theory/scales";
-import { TICKS, type Melody } from "./melody";
-import { loadCurrent, sections, selectBlock, type Song } from "./structure";
+import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
+import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
 import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, previewHarmony, rewriteHarmony } from "./harmony";
 import { reviveIdea, sameMusic } from "./library";
@@ -337,5 +337,58 @@ describe("a harmony against what is heard", () => {
     expect(addHarmony(plain(), C, { kind: "melody", from: "melody", option: "third-above" }, "t").p.mix?.t).toEqual({ db: HARMONY_DB });
     expect(HARMONY_DB).toBeLessThan(0);
     expect(addHarmony(plain(), C, { kind: "chords", from: "chords", option: "pad" }, "p").p.mix?.p).toBeUndefined();
+  });
+});
+
+describe("a harmony as the song around it grows", () => {
+  /** An old song: one page, no sections yet. */
+  const page = (): Progression => ({ chords: [ch("G", 4), ch("E", 4, "min"), ch("C", 4), ch("D", 4)], bpm: 100, pattern: "ring", loop: true, bars: 4, melody: tune([67, 71, 74, 71, 72, 71, 69, 67, 66, 67, 69, 71, 72, 74, 69, 66]) });
+  const G: Key = { tonic: "G", scaleId: "ionian" };
+
+  it("written on a page that then gets sections: section A is what was written, not changed by hand or out of date", () => {
+    const p = addHarmony(page(), G, { kind: "melody", from: "melody", option: "third-above" }, "h").p;
+    const q = addNewSection(p);
+    expect(harmonyState(q, G, "h")).toEqual({ edited: [], stale: false, source: true });
+    // and a copy of A pasted into the new section is what was written there too
+    const a = q.song!.blocks[0].id;
+    const b = q.song!.blocks[1].id;
+    const r = pasteSection(q, b, copySection(q, a, G, null)!, G, id);
+    expect(layer(r, r.song!.blocks[1].partId, "h")).toBeDefined();
+    expect(harmonyState(r, G, "h")).toEqual({ edited: [], stale: false, source: true });
+    // a real change by hand is still caught
+    const s = focusTrack(selectBlock(r, a), "melody", "h");
+    const edited = { ...s, melody: { ...s.melody!, notes: [...s.melody!.notes, { at: 0, midi: 50 }] } };
+    expect(harmonyState(edited, G, "h").edited).toEqual(["A"]);
+  });
+
+  it("a section played twice and then given its own copy keeps what was written in both", () => {
+    const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "counter" }, "h").p;
+    // A plays twice; the second time becomes a section of its own
+    const q = unlinkBlock(p, "a2");
+    expect(normalize(q).song!.parts.length).toBe(5);
+    expect(harmonyState(q, C, "h")).toEqual({ edited: [], stale: false, source: true });
+  });
+
+  it("the whole song moved to another key (the harmony with it): still what was written, nothing to ask about", () => {
+    const p = addHarmony(addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h").p, C, { kind: "chords", from: "chords", option: "pad" }, "pad").p;
+    // as the page's − ½ / + ½ does it: every chord and every melody, the added tracks' too
+    const D: Key = { tonic: "D", scaleId: "ionian" };
+    const by = melodyBase(D) - melodyBase(C);
+    const q = mapAllMelodies(mapAllChords(p, (c) => ({ ...c, ref: transposeRef(c.ref, 2, D), voicingId: undefined })), (m) => transposeMelody(m, by));
+    expect(harmonyState(q, D, "h")).toEqual({ edited: [], stale: false, source: true });
+    expect(harmonyState(q, D, "pad")).toEqual({ edited: [], stale: false, source: true });
+    // a note changed by hand after that is still caught
+    const s = focusTrack(q, "melody", "h");
+    expect(harmonyState({ ...s, melody: { ...s.melody!, notes: [...s.melody!.notes, { at: 0, midi: 50 }] } }, D, "h").edited).toEqual(["A"]);
+  });
+
+  it("written again with another option, a track whose instrument was never chosen moves to the one that suits it; a chosen one stays", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "sus" }, "s").p;
+    expect(p.tones?.s).toBeUndefined();
+    const shell = rewriteHarmony(p, C, "s", "shell");
+    expect(shell.tones?.s).toMatchObject({ inst: "piano", voicing: "shell" });
+    // the strings chosen by hand are kept
+    const chosen = rewriteHarmony({ ...p, tones: { ...p.tones, s: { inst: "guitar" } } }, C, "s", "shell");
+    expect(chosen.tones?.s).toEqual({ inst: "guitar" });
   });
 });

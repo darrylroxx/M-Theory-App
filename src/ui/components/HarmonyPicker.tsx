@@ -82,7 +82,7 @@ export function HarmonyPicker({ kind, track, onEmpty, onClose, onAdded }: {
     let after: typeof before;
     let msg: string;
     if (track) {
-      if (status?.edited.length && !window.confirm(`${track.name} was changed by hand in ${status.edited.join(", ")}. Write over it?`)) return;
+      if (status?.edited.length && !window.confirm(`${track.name} was changed in ${status.edited.join(", ")} since it was written. Write over it?`)) return;
       after = rewriteHarmony(before, key, track.id, option);
       msg = `${after.tracks?.find((t) => t.id === track.id)?.name ?? track.name} ⟳`;
     } else {
