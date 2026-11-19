@@ -1,5 +1,7 @@
 import { Component, useState, type ReactNode } from "react";
 import { IdeasPanel } from "./components/IdeasPanel";
+import { useBarsView } from "./components/BarsControl";
+import { barsOr } from "../song/frame";
 import { DraftBadge, UpdateBar } from "./components/Desktop";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, PANES, useApp, type Pane } from "./state";
@@ -37,6 +39,10 @@ function Shell() {
     else toast("Saved");
   };
   const page = state.pane ?? "frame";
+  // a page that shows more than one bar at a time gets the whole width of the screen
+  // (a section of one bar is one bar, whatever is chosen; the Track page always has the whole song)
+  const { shown } = useBarsView();
+  const wide = shown !== 1 && (page === "track" || ((page === "rhythm" || page === "melody" || page === "drums") && barsOr(state.progression.bars) > 1));
   /** Open a page at its top. (On a phone the first row of the bar scrolls away; the page tabs stay.) */
   const go = (pane: Pane) => {
     set((s) => ({ ...s, pane }));
@@ -61,7 +67,7 @@ function Shell() {
         </div>
       </header>
       <UpdateBar />
-      <main>
+      <main className={wide ? "wide" : undefined}>
         <ViewBoundary onReset={() => go("frame")}>
           <GuitarView />
         </ViewBoundary>

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { barsOf, levelAt, type Beat } from "../../audio/beats";
 import type { DrumId } from "../../audio/drums";
 import { MAX_DB, MIN_DB, audible, type Mix, type TrackId, type TrackMix } from "../../audio/mix";
@@ -10,8 +10,10 @@ import { activeTake, groupsOf } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
+import { shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
 import { newId, useApp, type Pane, type ProgChord } from "../state";
+import { BarsControl } from "./BarsControl";
 
 /** One section as the Track page draws it. */
 export interface TrackSection {
@@ -45,14 +47,18 @@ const LANES: { ids: DrumId[]; y: number }[] = [
   { ids: ["snare", "clap", "rim", "tom"], y: 0.5 },
   { ids: ["kick"], y: 0.82 },
 ];
-const ZOOMS = [28, 40, 56, 80, 112];
+/** The narrowest a bar is drawn: past this the song scrolls sideways instead. */
+const MIN_BAR = 12;
+/** How wide a bar is before the page has been measured (it is hidden until it is first opened). */
+const GUESS_BAR = 56;
 
 /**
  * The whole song on one page, left to right in bars: one row per instrument, one block per
  * section. What is written on the section pages shows here; a tap on a block opens that
  * section's page. Each track's head sets its volume, mute and solo for the whole song.
+ * As many bars as are chosen fill the width (All: the whole song); the rest scrolls sideways.
  */
-export function TrackPage({ sections, current, loop, layout, playing, getWhere }: {
+export const TrackPage = memo(function TrackPage({ sections, current, loop, layout, playing, getWhere, shown, follow, active }: {
   sections: TrackSection[];
   /** the section on screen */
   current: string;
@@ -61,15 +67,38 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
   playing: boolean;
   /** which section is sounding and how many beats into it (null = stopped) */
   getWhere: () => { block: string; beat: number } | null;
+  /** bars on screen (0 = the whole song) */
+  shown: BarsShown;
+  /** with the music: the lanes turn a page when the playhead runs off them */
+  follow: boolean;
+  /** the page is on screen (a hidden page does no work while the music plays) */
+  active: boolean;
 }) {
   const { state, set, toast } = useApp();
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
   const [adding, setAdding] = useState(false);
-  const [zoom, setZoom] = useState(2);
-  const bw = ZOOMS[zoom];
   const lineRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // the lanes' width, measured: the bars on screen share it out
+  const [room, setRoom] = useState(0);
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || typeof ResizeObserver === "undefined") return;
+    // a hidden page measures 0: it keeps the width it had, and is measured again when it is shown
+    const ro = new ResizeObserver(() => el.clientWidth > 0 && setRoom(el.clientWidth));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
+  const totalBars = sections.reduce((a, s) => a + s.bars, 0);
+  const count = shownCount(shown, totalBars);
+  const bw = room > 0 ? Math.max(MIN_BAR, room / count) : GUESS_BAR;
+  // when the bars get wider or narrower, the bar at the left edge stays at the left edge
+  const leftBar = useRef(0);
+  useLayoutEffect(() => {
+    const sc = scrollRef.current;
+    if (sc) sc.scrollLeft = leftBar.current * bw;
+  }, [bw]);
   // where each section starts, in pixels
   const starts = useMemo(() => {
     const out: Record<string, number> = {};
@@ -86,11 +115,12 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
     return all.length ? { lo: Math.min(...all) - 1, hi: Math.max(...all) + 1 } : { lo: 55, hi: 79 };
   }, [sections]);
 
-  // the playhead, moved every frame without redrawing the page
+  // the playhead, moved every frame without redrawing the page. With Follow on, the lanes turn a
+  // whole page (the bars on screen) when it runs off them; with Follow off they never move on their own.
   useEffect(() => {
     const el = lineRef.current;
     if (!el) return;
-    if (!playing) { el.style.display = "none"; return; }
+    if (!playing || !active) { el.style.display = "none"; return; }
     let raf = 0;
     const tick = () => {
       const w = getWhere();
@@ -99,15 +129,24 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
         const x = (starts.at[s.block || "a"] ?? 0) + Math.min(s.bars, w.beat / s.bar) * bw;
         el.style.display = "block";
         el.style.transform = `translateX(${x}px)`;
-        // keep the playhead in view
         const sc = scrollRef.current;
-        if (sc && (x < sc.scrollLeft || x > sc.scrollLeft + sc.clientWidth - 24)) sc.scrollLeft = Math.max(0, x - 24);
+        if (follow && sc && (x < sc.scrollLeft || x >= sc.scrollLeft + sc.clientWidth - 1)) {
+          const page = Math.max(1, Math.floor(sc.clientWidth / bw + 1e-6)) * bw;
+          sc.scrollLeft = Math.floor(x / page) * page;
+        }
       } else el.style.display = "none";
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [playing, getWhere, sections, starts, bw]);
+  }, [playing, active, follow, getWhere, sections, starts, bw]);
+  // a section chosen (here or on another page) is brought into view if it is off to one side
+  useEffect(() => {
+    const sc = scrollRef.current;
+    const x = starts.at[current || "a"];
+    if (!sc || x === undefined || !sc.clientWidth) return;
+    if (x < sc.scrollLeft || x >= sc.scrollLeft + sc.clientWidth - 1) sc.scrollLeft = x;
+  }, [current]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const setTrack = (id: TrackId, patch: Partial<TrackMix>) =>
     set((s) => {
@@ -138,15 +177,15 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };
   const choose = (block: string) => block && set((s) => ({ ...s, progression: selectBlock(s.progression, block) }));
-  const totalBars = sections.reduce((a, s) => a + s.bars, 0);
+  // bar numbers: every bar while there is room for them, else every second, fourth or eighth
+  const every = bw >= 40 ? 1 : bw >= 20 ? 2 : bw >= 10 ? 4 : 8;
 
   return (
     <section className="card track-page" aria-label="Track view: the whole song">
       <div className="dm-head">
         <span className="pill">{totalBars} bars</span>
         <span className="spacer" />
-        <button className="btn sm" aria-label="Zoom out" disabled={zoom === 0} onClick={() => setZoom(zoom - 1)}>−</button>
-        <button className="btn sm" aria-label="Zoom in" disabled={zoom === ZOOMS.length - 1} onClick={() => setZoom(zoom + 1)}>+</button>
+        <BarsControl />
       </div>
       <div className="tv">
         <div className="tv-heads">
@@ -176,14 +215,14 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
             ) : <button className="btn sm tv-plus" aria-label="Add a track" title="Add a track" onClick={() => setAdding(true)}>+</button>}
           </div>
         </div>
-        <div className="tv-scroll" ref={scrollRef}>
+        <div className="tv-scroll" ref={scrollRef} onScroll={(e) => { leftBar.current = e.currentTarget.scrollLeft / bw; }}>
           <div className="tv-lanes" style={{ width: starts.width }}>
             <div className="tv-row tv-ruler">
               {sections.map((s) => (
                 <div key={s.block || "a"} className={`tv-sec ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}>
                   <button className="tv-letter" aria-pressed={s.block === current} aria-label={`Section ${s.label}`} title={s.label} style={{ maxWidth: s.bars * bw - 6 }} onClick={() => choose(s.block)}>{s.label}</button>
-                  <span className="tv-bars" aria-hidden="true">
-                    {Array.from({ length: s.bars }, (_, k) => <i key={k} className={inLoop(layout, loop, { block: s.block, bar: k }) ? "in" : ""} style={{ width: bw }}>{bw >= 40 || k % 2 === 0 ? k + 1 : ""}</i>)}
+                  <span className={`tv-bars${bw < 40 ? " tight" : ""}`} aria-hidden="true">
+                    {Array.from({ length: s.bars }, (_, k) => <i key={k} className={inLoop(layout, loop, { block: s.block, bar: k }) ? "in" : ""} style={{ width: bw }}>{k % every === 0 && (k > 0 || bw >= 40) ? k + 1 : ""}</i>)}
                   </span>
                 </div>
               ))}
@@ -208,7 +247,7 @@ export function TrackPage({ sections, current, loop, layout, playing, getWhere }
       </div>
     </section>
   );
-}
+});
 
 function ChordBlock({ s, bw }: { s: TrackSection; bw: number }) {
   const { state } = useApp();
