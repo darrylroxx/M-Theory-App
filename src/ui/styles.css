@@ -233,9 +233,17 @@ label.field { display: flex; flex-direction: column; gap: 4px; font-size: 0.8rem
 .dock.armed .dock-inner { border-style: dashed; border-color: var(--accent); }
 .dock.over .dock-inner { background: color-mix(in srgb, var(--accent) 12%, var(--card)); }
 .dock-main { display: flex; align-items: center; gap: 10px; min-width: 0; }
-.arrange { display: flex; align-items: center; gap: 8px; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
-.arrange::-webkit-scrollbar { display: none; }
-.arrange > * { flex-shrink: 0; }
+/* the row's own controls slide sideways on a narrow screen; Harmonize stays in sight at its end */
+.arrange { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.arrange > .kb-label { flex: none; }
+.arrange-tools { display: flex; align-items: center; gap: 8px; flex: 1 1 auto; min-width: 0; overflow-x: auto; scrollbar-width: none; padding-bottom: 2px; }
+.arrange-tools::-webkit-scrollbar { display: none; }
+.arrange-tools > * { flex-shrink: 0; }
+.hz-go { flex: none; margin-left: auto; white-space: nowrap; gap: 4px; }
+.hz-go > span { font-weight: 850; color: var(--accent); }
+.hz-go.on > span { color: inherit; }
+/* on a phone Harmonize sits on the label's line and the row's own controls get a line of their own */
+@media (max-width: 620px) { .arrange { flex-wrap: wrap; row-gap: 6px; } .arrange-tools { order: 3; flex-basis: 100%; } .arrange-tools:empty { display: none; } }
 .arrange .seg { flex-wrap: nowrap; }
 .arrange .seg button, .arrange .chip { white-space: nowrap; }
 .arrange .span { font-size: 0.78rem; font-weight: 700; color: var(--accent-2); margin-left: auto; padding-left: 8px; }
@@ -343,6 +351,7 @@ input.idea-name:hover, input.idea-name:focus { border-color: var(--border-2); ba
 .d-tom { --dc: var(--fifth); } .d-rim { --dc: var(--seventh); } .d-shaker { --dc: var(--stable); } .d-bell { --dc: var(--borrowed); }
 .drums { display: flex; flex-direction: column; gap: 10px; scroll-margin-top: 66px; }
 .dm-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; }
+.dm-grid { display: inline-flex; align-items: center; gap: 10px; margin-left: auto; }
 .dm-head h2 { font-size: 1.35rem; letter-spacing: -0.02em; }
 .dm-meter { font-size: 0.78rem; padding: 3px 10px; }
 .play-btn.sm { width: 38px; height: 38px; font-size: 1rem; }
@@ -1223,6 +1232,8 @@ span.cv-better { cursor: default; }
 .hz-with { color: var(--muted); font-weight: 850; padding-inline: 2px; }
 .hz-src-now { font-size: 0.9rem; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hz-src-now b { color: var(--text); }
+.hz-src { width: auto; max-width: 160px; }
+.hz-kind { flex-wrap: nowrap; }
 .hz-x { width: 30px; height: 30px; font-size: 0.8rem; }
 .hz-opts .chip { padding: 5px 10px; }
 .hz-opts .chip:disabled { opacity: 0.38; border-style: dashed; cursor: default; }

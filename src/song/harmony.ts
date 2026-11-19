@@ -53,6 +53,23 @@ export const optionOf = (kind: HarmonyKind, id: string): HarmonyOption | undefin
 export function harmonySources(p: Progression): Track[] {
   return allTracks(normalize(p)).filter((t) => t.kind === "chords" || t.kind === "melody");
 }
+/**
+ * What a page's Harmonize button writes from: the track the page is editing (the chords or the
+ * melody brought forward), else the first track of that kind, else any track there is (null: none).
+ */
+export function harmonizeFrom(p: Progression, page: SourceKind): string | null {
+  const list = harmonySources(p);
+  const on = p.focus?.[page] ?? page;
+  return (list.find((t) => t.id === on) ?? list.find((t) => t.kind === page) ?? list[0])?.id ?? null;
+}
+/**
+ * The track a sheet writes from, as the song now stands: the one chosen while it is still a chords
+ * or melody track of the song, else `fallback` (the track on the page) if that is, else none.
+ */
+export function liveSource(p: Progression, from: string | null, fallback?: string | null): string | null {
+  const ids = new Set(harmonySources(p).map((t) => t.id));
+  return from && ids.has(from) ? from : fallback && ids.has(fallback) ? fallback : null;
+}
 const kindOf = (p: Progression, id: string): SourceKind | undefined => {
   const k = allTracks(p).find((t) => t.id === id)?.kind;
   return k === "chords" || k === "melody" ? k : undefined;

@@ -31,8 +31,8 @@ import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type Link, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
-import { AuditionCtx, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
-import { previewHarmony, writtenAs } from "../../song/harmony";
+import { AuditionCtx, HarmonizeButton, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
+import { harmonizeFrom, previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
@@ -404,6 +404,27 @@ export function GuitarView() {
   const pane: Pane = state.pane ?? "frame";
   // the pages stay put while hidden: a key held or latched on one is let go when another page is shown
   useEffect(() => letGoOfKeys(), [pane]);
+  // ── the harmony sheet: a page's Harmonize button, a track's + (Add) and ⟳ (write it again) ──
+  const [hz, setHz] = useState<HzOpen | null>(null);
+  // it belongs to this page and this idea
+  useEffect(() => setHz(null), [state.ideaId, pane]);
+  const closeHz = useCallback(() => setHz(null), []);
+  const progRef = useRef(prog);
+  progRef.current = prog;
+  /** Harmonize on the Chords or Melody page: the sheet, set to the track on the page (a second tap closes it). */
+  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null) => {
+    // the shape finder would sit under the sheet: it gives way
+    openSheet(null);
+    setHz((h) => (h?.page || !harmonizeFrom(progRef.current, page) ? null : { kind: page, page, anchor }));
+  }, [openSheet]);
+  // the shape finder opened over the sheet: the sheet gives way
+  useEffect(() => {
+    if (sheet) setHz(null);
+  }, [sheet]);
+  // what Harmonize writes from follows the page: another track brought forward (or this one removed) and the sheet goes with it
+  const hzSource = hz?.page ? harmonizeFrom(prog, hz.page) ?? undefined : undefined;
+  const harmonizeChords = useCallback((el: HTMLElement | null) => harmonize("chords", el), [harmonize]);
+  const harmonizeTune = useCallback((el: HTMLElement | null) => harmonize("melody", el), [harmonize]);
   // bars on screen and Follow, the same on every editing page
   const { shown, follow } = useBarsView();
   const followRef = useRef(follow);
@@ -749,22 +770,22 @@ export function GuitarView() {
           <FramePage secs={secs} lengths={plan.lengths} here={{ beats: frame, bar }} voicings={voicings} voicingsOf={voicingsOf} song={plan.items} any={plan.any} beat={beat} plan={secs.length ? plan : null} onPasted={onPasted} />
         </div>
         <div className="pane" hidden={pane !== "rhythm"}>
-          <ClipBar kind="rhythm" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
+          <ClipBar kind="rhythm" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} onSheet={setHz} />
           <ChordBoard />
           {/* The tray is part of the page. With the shape finder open it is lifted to the bottom of the screen, so shapes can be dragged straight in. */}
           {sheet && <div style={{ height: dockH.current }} />}
           <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
             {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
             <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
-            <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} />
+            <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} harmonizing={!!hz?.page} />
           </div>
           <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} styleLink={links.style} soundLink={links.sound} inst={chordInst} />
         </div>
         <div className="pane" hidden={pane !== "melody"}>
-          <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
+          <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} onSheet={setHz} />
           {/* undo belongs to one melody track: switching track (or writing a harmony track again) starts it afresh, so one track's past can never be written over another */}
           <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
-            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} />
+            sound={tuneSound} setSound={setTune} onHear={hearTune} link={links.tuneSound} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} harmonizing={!!hz?.page} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
@@ -777,6 +798,9 @@ export function GuitarView() {
           <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} kitLink={links.kit} grooveLink={links.groove} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
         </div>
       </div>
+      {hz && (pane === "rhythm" || pane === "melody") && (
+        <HarmonyPicker key={hz.track?.id ?? (hz.page ? `page:${hz.page}` : `new:${hz.kind}`)} kind={hz.kind} track={hz.track} source={hzSource} anchor={hz.anchor} onEmpty={hz.onEmpty} onClose={closeHz} />
+      )}
       {pane === "rhythm" && away && !sheet && (
         <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
           onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
@@ -1100,12 +1124,22 @@ function pasteOf(kind: ClipKind, p: Progression, clips: Clips, key: Key): Progre
   return clips.drums ? pasteDrums(p, clips.drums) : p;
 }
 
+/** The harmony sheet as a page opens it: a new track (from a source already chosen, or asking first), or a harmony track written again. */
+type HzOpen = {
+  kind: "chords" | "melody";
+  track?: Track;
+  /** opened by the page's Harmonize button: it writes from the track this page is editing */
+  page?: "chords" | "melody";
+  anchor?: HTMLElement | null;
+  onEmpty?: () => void;
+};
+
 /**
  * Copy and Paste for one page. Copy takes everything on this page of the section on screen; Paste
  * puts the last thing copied on this same page into the section on screen, in place of what is
  * there. Rhythm only goes to Rhythm, Melody to Melody, Drums to Drums. Undo takes a paste back.
  */
-function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; label: string; color: number; frame: number; onPasted: () => void }) {
+function ClipBar({ kind, label, color, frame, onPasted, onSheet }: { kind: ClipKind; label: string; color: number; frame: number; onPasted: () => void; onSheet?: (h: HzOpen) => void }) {
   const { state, set, toast } = useApp();
   const clip = state.clip?.[kind];
   const block = state.progression.song?.current ?? "";
@@ -1152,10 +1186,6 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
     const id = newId();
     set((s) => ({ ...s, progression: addTrack(s.progression, ek, id).p }));
   };
-  // a new chords or melody track can be written to go with another track (the drums: just a new track)
-  const [sheet, setSheet] = useState<{ track?: Track } | null>(null);
-  // it belongs to this page and this idea
-  useEffect(() => setSheet(null), [state.ideaId, pane]);
   const drop = (t: Track) => {
     if (!window.confirm(`Remove ${t.name} from every section?`)) return;
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
@@ -1168,11 +1198,11 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
         {list.map((t) => (
           <button key={t.id} role="radio" aria-checked={on === t.id} className={on === t.id ? "on" : ""} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, ek, t.id) }))}>
             {t.name}
-            {on === t.id && t.harmony && ek !== "drums" && <HarmonyAgain track={t} className="clip-hz" onOpen={() => setSheet({ track: t })} />}
+            {on === t.id && t.harmony && ek !== "drums" && <HarmonyAgain track={t} className="clip-hz" onOpen={() => onSheet?.({ kind: ek, track: t })} />}
             {on === t.id && !isFirst(t.id) && <i className="clip-x" role="button" aria-label={`Remove ${t.name}`} title="Remove" onClick={(e) => { e.stopPropagation(); drop(t); }}>✕</i>}
           </button>
         ))}
-        <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={() => (ek === "drums" ? add() : setSheet({}))}>+</button>
+        <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={() => (ek === "drums" || !onSheet ? add() : onSheet({ kind: ek, onEmpty: add }))}>+</button>
       </span>
       <span className="spacer" />
       <BarsControl />
@@ -1185,7 +1215,6 @@ function ClipBar({ kind, label, color, frame, onPasted }: { kind: ClipKind; labe
         </button>
       )}
     </div>
-    {sheet && ek !== "drums" && <HarmonyPicker key={sheet.track?.id ?? "new"} kind={ek} track={sheet.track} onEmpty={add} onClose={() => setSheet(null)} />}
     </>
   );
 }
@@ -1437,7 +1466,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   );
 }
 
-function Dock({ ref, voicings, keys, keyStyle, onKeyStyle, nowIdx, drag, onStep, onArrange, bar, onLengths, length, label, onFit, shown, follow }: {
+function Dock({ ref, voicings, keys, keyStyle, onKeyStyle, nowIdx, drag, onStep, onArrange, bar, onLengths, length, label, onFit, shown, follow, onHarmonize, harmonizing }: {
   ref: React.Ref<HTMLDivElement>;
   voicings: (Voicing | undefined)[];
   /** the track plays the keys: each chord's keys (null: it plays Guitar), how they are voiced, and a way to change that */
@@ -1458,9 +1487,14 @@ function Dock({ ref, voicings, keys, keyStyle, onKeyStyle, nowIdx, drag, onStep,
   /** bars across the ruler (0 = all of them), and whether the view goes along with the music */
   shown: BarsShown;
   follow: boolean;
+  /** open (or close) the sheet that writes a new track to go with these chords */
+  onHarmonize: (el: HTMLElement | null) => void;
+  harmonizing: boolean;
 }) {
   const { state, set } = useApp();
   const chords = state.progression.chords;
+  // something to harmonize: a chord that is not a rest
+  const real = chords.some((c) => !c.rest);
   const arr = state.progression.arrange ?? null;
   const span = fretSpan(voicings);
   // every keyboard in the tray shows the same stretch of keys, so the voice leading can be seen
@@ -1499,29 +1533,39 @@ function Dock({ ref, voicings, keys, keyStyle, onKeyStyle, nowIdx, drag, onStep,
         {keys && chords.length > 0 && (
           <div className="arrange">
             <span className="kb-label">Voicing</span>
-            <div className="seg" role="radiogroup" aria-label="How the chords are laid out on the keys">
-              {VOICINGS.map((x) => <button key={x.id} role="radio" aria-checked={keyStyle === x.id} className={keyStyle === x.id ? "on" : ""} title={x.hint} onClick={() => onKeyStyle(x.id)}>{x.name}</button>)}
+            <div className="arrange-tools">
+              <div className="seg" role="radiogroup" aria-label="How the chords are laid out on the keys">
+                {VOICINGS.map((x) => <button key={x.id} role="radio" aria-checked={keyStyle === x.id} className={keyStyle === x.id ? "on" : ""} title={x.hint} onClick={() => onKeyStyle(x.id)}>{x.name}</button>)}
+              </div>
             </div>
+            {real && <HarmonizeButton on={harmonizing} onClick={onHarmonize} title="A new track that goes with these chords" />}
           </div>
         )}
-        {!keys && chords.length >= 2 && (
+        {!keys && (chords.length >= 2 || real) && (
           <div className="arrange">
             <span className="kb-label">Arrange</span>
-            <div className="seg" role="radiogroup" aria-label="Arrange all chords in one area of the neck">
-              <button role="radio" aria-checked={!arr} className={arr ? "" : "on"} onClick={() => onArrange(null)}>My shapes</button>
-              {POSITIONS.slice(0, 5).map((p, z) => (
-                <button key={p} role="radio" aria-checked={arr?.zone === z} className={arr?.zone === z ? "on" : ""} title={z === 0 ? "Open position" : `Around frets ${p}`}
-                  onClick={() => onArrange({ strings: arr?.strings ?? "any", inversions: arr?.inversions ?? false, zone: z })}>{p}</button>
-              ))}
+            <div className="arrange-tools">
+              {chords.length >= 2 && (
+                <>
+                  <div className="seg" role="radiogroup" aria-label="Arrange all chords in one area of the neck">
+                    <button role="radio" aria-checked={!arr} className={arr ? "" : "on"} onClick={() => onArrange(null)}>My shapes</button>
+                    {POSITIONS.slice(0, 5).map((p, z) => (
+                      <button key={p} role="radio" aria-checked={arr?.zone === z} className={arr?.zone === z ? "on" : ""} title={z === 0 ? "Open position" : `Around frets ${p}`}
+                        onClick={() => onArrange({ strings: arr?.strings ?? "any", inversions: arr?.inversions ?? false, zone: z })}>{p}</button>
+                    ))}
+                  </div>
+                  {arr && (
+                    <>
+                      <span className="kb-label">Strings</span>
+                      <Seg value={arr.strings} options={[{ value: "any", label: "Any" }, { value: 3, label: "3" }, { value: 4, label: "4" }, { value: 5, label: "5–6" }]} onChange={(v) => onArrange({ ...arr, strings: v })} label="Strings per chord" />
+                      <button className={`chip${arr.inversions ? " on" : ""}`} aria-pressed={arr.inversions} title="Allow a different bass note for smoother changes" onClick={() => onArrange({ ...arr, inversions: !arr.inversions })}>Inversions</button>
+                    </>
+                  )}
+                  {span && <span className="span">frets {span[0]}–{span[1]}</span>}
+                </>
+              )}
             </div>
-            {arr && (
-              <>
-                <span className="kb-label">Strings</span>
-                <Seg value={arr.strings} options={[{ value: "any", label: "Any" }, { value: 3, label: "3" }, { value: 4, label: "4" }, { value: 5, label: "5–6" }]} onChange={(v) => onArrange({ ...arr, strings: v })} label="Strings per chord" />
-                <button className={`chip${arr.inversions ? " on" : ""}`} aria-pressed={arr.inversions} title="Allow a different bass note for smoother changes" onClick={() => onArrange({ ...arr, inversions: !arr.inversions })}>Inversions</button>
-              </>
-            )}
-            {span && <span className="span">frets {span[0]}–{span[1]}</span>}
+            {real && <HarmonizeButton on={harmonizing} onClick={onHarmonize} title="A new track that goes with these chords" />}
           </div>
         )}
         <div className="dock-main">
