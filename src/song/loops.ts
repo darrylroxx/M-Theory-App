@@ -125,20 +125,27 @@ export function placesOf(items: Item[], map: Where[], order: string[]): { sec: n
 /**
  * The loop changed while the music plays, and the music has come to the end of a section: where it
  * goes on in the new list. Just after where it was, if the new list has those bars too (a loop
- * that grew); else at the start of the next run of the new list later in the song than where it
- * was; else, round again from the new list's start. `next`: the item the old list would have played
- * next (its length: it came round).
+ * that grew, or let go: `on`, it follows straight on in the song); else at the start of the next
+ * run of the new list later in the song than where it was; else, round again from the new list's
+ * start, or, for a list that does not go round (`loop` false: the song straight through), its end:
+ * the music stops there. `next`: the item the old list would have played next (its length: it came round).
+ * `lens`: how many beats each section of `order` is, to tell that the start of the next section
+ * follows straight on from the end of one (without them, only the same place in the same section does).
  */
-export function entryAfter(old: { items: Item[]; map: Where[] }, next: number, neu: { items: Item[]; map: Where[] }, order: string[]): number {
-  if (!neu.items.length || next <= 0) return 0;
+export function entryOf(old: { items: Item[]; map: Where[] }, next: number, neu: { items: Item[]; map: Where[]; loop?: boolean }, order: string[], lens?: number[]): { at: number; on: boolean } {
+  if (!neu.items.length || next <= 0) return { at: 0, on: false };
   const was = placesOf(old.items, old.map, order);
   const last = was[Math.min(next, old.items.length) - 1];
-  if (!last) return 0;
+  if (!last) return { at: 0, on: false };
   const end = { sec: last.sec, at: last.at + old.items[Math.min(next, old.items.length) - 1].beats };
   const now = placesOf(neu.items, neu.map, order);
   const same = now.findIndex((p) => p.sec === end.sec && Math.abs(p.at - end.at) < 1e-6);
-  if (same >= 0) return same;
+  if (same >= 0) return { at: same, on: true };
   const starts = now.map((p, j) => j === 0 || neu.map[j].block !== neu.map[j - 1].block || Math.abs(now[j - 1].at + neu.items[j - 1].beats - p.at) > 1e-6);
   const later = now.findIndex((p, j) => starts[j] && (p.sec > end.sec || (p.sec === end.sec && p.at >= end.at - 1e-6)));
-  return later >= 0 ? later : 0;
+  if (later >= 0) return { at: later, on: !!lens && now[later].sec === end.sec + 1 && now[later].at < 1e-6 && Math.abs(end.at - (lens[end.sec] ?? NaN)) < 1e-6 };
+  return { at: neu.loop === false ? neu.items.length : 0, on: false };
 }
+
+/** Where a changed loop goes on (see `entryOf`): just the place in the new list. */
+export const entryAfter = (old: { items: Item[]; map: Where[] }, next: number, neu: { items: Item[]; map: Where[]; loop?: boolean }, order: string[]): number => entryOf(old, next, neu, order).at;

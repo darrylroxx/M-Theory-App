@@ -236,3 +236,90 @@ describe("the loop changed while playing", () => {
     expect(notesOf(got)).toEqual([70, 71]);
   });
 });
+
+describe("where the music jumps (a run of the loop that is not next to the one before)", () => {
+  /** every buffer source the player starts: when, from where in the buffer, for how long */
+  function takes() {
+    const out: { buffer: unknown; when: number; offset: number; dur?: number; src: { stops: number[] } }[] = [];
+    const make = live.createBufferSource.bind(live);
+    live.createBufferSource = () => {
+      const s = make() as unknown as { buffer: unknown; start: (w?: number, o?: number, d?: number) => void; stops: number[] };
+      const go = s.start.bind(s);
+      s.start = (when = 0, offset = 0, dur?: number) => {
+        out.push({ buffer: s.buffer, when, offset, dur, src: s });
+        go(when, offset);
+      };
+      return s as never;
+    };
+    return out;
+  }
+  const take = (dur: number) => ({ chords: [], tunes: [], drums: [], takes: [{ track: "v1", buffer: { duration: dur } as unknown as AudioBuffer, at: 0, offset: 0, dur }] });
+
+  it("two bits of A whose beats happen to line up (bars 1-2 of the first A, 3-4 of the second): a change still comes in where the first bit ends", () => {
+    const read = heard();
+    const p = new S.ProgressionPlayer();
+    const t0 = start();
+    // both bits count from the same beat (0 - 0 and 8 - 8): only the jump tells them apart
+    const items: PlayItem[] = [
+      { midi: [60], beats: 4, from: 0, section: true },
+      { midi: [61], beats: 4, from: 4 },
+      { midi: [92], beats: 4, from: 8, section: true, jump: true },
+      { midi: [93], beats: 4, from: 12 },
+    ];
+    p.start(items, 120, "ring", true);
+    runTo(t0 + 0.5);
+    p.queue(loopOf("b").items, true, () => 0);
+    runTo(t0 + 4 + 3 - 0.3);
+    const got = read();
+    p.stop();
+    expect(notesOf(got)).toEqual([60, 61, 70, 71]);
+  });
+
+  it("a take sung over B and on past it stops where B's run ends, so it is not heard over C", () => {
+    heard();
+    const p = new S.ProgressionPlayer();
+    start();
+    const srcs = takes();
+    const l = loopOf("b", "c");
+    // a 20 s take that starts with B (sung over B and the A after it)
+    l.items[0] = { ...l.items[0], extra: take(20) };
+    l.items[2] = { ...l.items[2], jump: true };
+    p.start(l.items, 120, "ring", true);
+    p.stop();
+    const tk = srcs.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
+    // B is 6 beats: 3 s at 120
+    expect(tk.dur).toBeCloseTo(3, 6);
+  });
+
+  it("the loop changed while a take sounds: where the music jumps the take stops; where it goes straight on it carries on", () => {
+    heard();
+    const p = new S.ProgressionPlayer();
+    const t0 = start();
+    const srcs = takes();
+    const all = song();
+    // playing straight through from B, whose take runs on over the second A
+    all.items[2] = { ...all.items[2], extra: take(20) };
+    p.start(all.items, 120, "ring", false, null, 2);
+    runTo(t0 + 0.5);
+    const tk = srcs.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
+    // B alone loops now: at B's end it goes round to B again, and the take stops there (B is 3 s)
+    p.queue(loopOf("b").items, true, () => ({ at: 0, on: false }));
+    runTo(t0 + 3.5);
+    expect(tk.src.stops.some((w) => Math.abs(w - (t0 + 3)) < 1e-6)).toBe(true);
+    p.stop();
+
+    // B looping, the loop let go: on into the second A, straight on: the take is left to play
+    const srcs2 = takes();
+    const t1 = (live.currentTime = 30) + 0.08;
+    const b = loopOf("b");
+    b.items[0] = { ...b.items[0], extra: take(20) };
+    p.start(b.items, 120, "ring", true);
+    runTo(t1 + 0.5);
+    const tk2 = srcs2.find((s) => (s.buffer as { duration: number })?.duration === 20)!;
+    const before = tk2.src.stops.length;
+    p.queue(all.items.map((x, i) => (i === 2 ? b.items[0] : x)), false, () => ({ at: 4, on: true }));
+    runTo(t1 + 3.5);
+    expect(tk2.src.stops.length).toBe(before);
+    p.stop();
+  });
+});

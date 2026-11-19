@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allBars, allLoop, entryAfter, fitBars, loopKeys, loopRuns, placesOf, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "./loops";
+import { allBars, allLoop, entryAfter, entryOf, fitBars, loopKeys, loopRuns, placesOf, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "./loops";
 
 // A B A C: A has 4 bars, B 2, A again 4, C 3 (the two A's are different places in the song)
 const layout = [{ block: "a1", bars: 4 }, { block: "b", bars: 2 }, { block: "a2", bars: 4 }, { block: "c", bars: 3 }];
@@ -133,5 +133,31 @@ describe("where a changed loop goes on", () => {
   it("the loop let go while playing: on through the song from the next section", () => {
     const old = list("b");
     expect(entryAfter(old, old.items.length, song(), order)).toBe(6);
+  });
+
+  it("the loop let go while the last section loops: the song ends there, it does not start again from the top", () => {
+    const old = list("c");
+    const all = { ...song(), loop: false };
+    expect(entryAfter(old, old.items.length, all, order)).toBe(all.items.length);
+    // (a new loop still goes round)
+    expect(entryAfter(old, old.items.length, { ...list("a1", "c"), loop: true }, order)).toBe(0);
+  });
+
+  it("says whether the music follows straight on in the song, or jumps", () => {
+    const lens = order.map((b) => BAR[b] * layout.find((s) => s.block === b)!.bars);
+    // a loop that grew: straight on
+    const grown = { items: [{ beats: 4, from: 0 }, { beats: 4, from: 4 }], map: [{ block: "a1" }, { block: "a1" }] };
+    expect(entryOf(grown, 2, list("a1"), order, lens)).toEqual({ at: 2, on: true });
+    // B looping, the loop let go: on into the second A, straight on
+    expect(entryOf(list("b"), 2, song(), order, lens)).toEqual({ at: 6, on: true });
+    // playing straight through, B and C picked during the first A: on into B, straight on
+    expect(entryOf(song(), 4, list("b", "c"), order, lens)).toEqual({ at: 0, on: true });
+    // B and C, C taken out at B's end: round to B again, a jump
+    expect(entryOf(list("b", "c"), 2, list("b"), order, lens)).toEqual({ at: 0, on: false });
+    // playing straight through, A and C picked during A: on to C, a jump (B and the second A are skipped)
+    expect(entryOf(song(), 4, list("a1", "c"), order, lens)).toEqual({ at: 4, on: false });
+    // the first two bars of A looping, B added: B follows A's bar 2, but A goes on to bar 4: a jump
+    const part = { items: [{ beats: 4, from: 0 }, { beats: 4, from: 4 }], map: [{ block: "a1" }, { block: "a1" }] };
+    expect(entryOf(part, 2, list("b"), order, lens)).toEqual({ at: 0, on: false });
   });
 });

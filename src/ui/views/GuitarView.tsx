@@ -13,7 +13,7 @@ import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { barsOr, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
-import { allBars, allLoop, entryAfter, loopKeys, loopRuns, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
+import { allBars, allLoop, entryOf, loopKeys, loopRuns, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
 import { linkState, mapAllChords, mapAllMelodies, relink, sections, selectBlock, soloSection, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
@@ -297,7 +297,8 @@ export function GuitarView() {
   const playList = useMemo(() => {
     if (!runs.length) return { items: plan.items, map: plan.map, loop: false };
     const parts = runs.map(sliceLoop);
-    return { items: parts.flatMap((x) => x.items), map: parts.flatMap((x) => x.map), loop: true };
+    // (where one run ends and the next begins, the song between is skipped: the music jumps)
+    return { items: parts.flatMap((x, k) => x.items.map((it, n) => (k > 0 && n === 0 ? { ...it, jump: true } : it))), map: parts.flatMap((x) => x.map), loop: true };
   }, [plan, runs, sliceLoop]);
   const listRef = useRef(playList);
   listRef.current = playList;
@@ -305,7 +306,9 @@ export function GuitarView() {
    * Every list the player has played lately, by its count (see ProgressionPlayer.gen): after the loop
    * changes while playing, the old list plays on to the end of its section, and its places are its own.
    */
-  const lists = useRef(new Map<number, { items: PlayItem[]; map: { block: string; idx: number }[] }>());
+  const lists = useRef(new Map<number, { items: PlayItem[]; map: { block: string; idx: number }[]; loop: boolean }>());
+  /** the next change of the loop starts the music again at once, instead of coming in where the section playing ends */
+  const restartRef = useRef(false);
   const mapOf = (gen: number) => lists.current.get(gen)?.map ?? listRef.current.map;
   /** the section that is sounding right now (it need not be the one on screen) */
   const playBlock = useRef<string | null>(null);
@@ -433,15 +436,19 @@ export function GuitarView() {
   useEffect(() => {
     const changed = lastLoop.current !== loopKey;
     lastLoop.current = loopKey;
+    const restart = restartRef.current;
+    restartRef.current = false;
     const p = player.current;
     if (!p?.playing) return;
     const list = playList;
+    // (a harmony audition starts its loop at once, as it always has: the candidate is heard straight away)
+    if (changed && restart) return startPlay();
     if (changed) {
-      const order = planRef.current.per.map((x) => x.block);
-      // (where it goes on is worked out against the list that is playing when its section ends)
+      // (where it goes on is worked out against the list that is playing when its section ends, and the new list as it is then: edits made meanwhile go to it)
       const gen = p.queue(list.items, list.loop, (next) => {
         const old = lists.current.get(gen - 1);
-        return old ? entryAfter(old, next, list, order) : 0;
+        const per = planRef.current.per;
+        return old ? entryOf(old, next, lists.current.get(gen) ?? list, per.map((x) => x.block), per.map((x) => x.bars * x.bar)) : 0;
       });
       lists.current.set(gen, list);
       for (const g of [...lists.current.keys()]) if (g < gen - 3) lists.current.delete(g);
@@ -557,6 +564,8 @@ export function GuitarView() {
     if (recordingRef.current) return;
     auditRef.current ??= { chosen: chosenRef.current, started: !playingRef.current };
     setPreview(pv);
+    // (playing already, on another loop: the section on screen goes round from now, not from where the one playing ends)
+    restartRef.current = playingRef.current;
     setChosen(sectionBars(layoutRef.current, curRef.current));
     if (!playingRef.current) setAudition((n) => n + 1);
   }, []);
@@ -1285,12 +1294,13 @@ function Transport({ locked, per, current, chosen, layout, onBar, onLoop, onSect
     const tick = () => {
       const b = getBar();
       const key = b ? `${b.block}:${b.bar}` : "";
-      if (key !== last) {
-        last = key;
+      const el = key ? r.querySelector<HTMLElement>(`[data-bar="${key}"]`) : null;
+      // (also when the strip was just drawn again, the loop changed while playing, and took the mark off)
+      if (key !== last || (el && !el.classList.contains("now"))) {
         clear();
-        const el = key ? r.querySelector<HTMLElement>(`[data-bar="${key}"]`) : null;
         el?.classList.add("now");
-        reveal(el);
+        if (key !== last) reveal(el);
+        last = key;
       }
       raf = requestAnimationFrame(tick);
     };

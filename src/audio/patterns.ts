@@ -242,6 +242,8 @@ export interface PlayItem {
   meter?: { bar: number; triplet?: boolean; sig?: TimeSig };
   /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
   section?: boolean;
+  /** the music jumps here: a run of a loop starts that is not next to the one before it in the song (what sounds from before stops here) */
+  jump?: boolean;
   /** the melody over this chord's section (missing = the player's own) */
   tune?: PlayTune | null;
   /** the harp this chord is played on, when its section has a sound of its own (missing = the harp as it is set) */
