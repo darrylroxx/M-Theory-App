@@ -1102,3 +1102,21 @@ main.wide { max-width: none; }
 main.wide .dock-inner { max-width: none; }
 main.wide .board, main.wide .harp { width: 100%; max-width: 1100px; margin-inline: auto; }
 main.wide .dm-panel, main.wide .dm-drawer { max-width: 1100px; }
+
+/* ── Keyboard diagram (piano chord shapes; KeyboardDiagram.tsx) ── */
+.kbd { --kb-white: #dfe2e8; --kb-black: #1a1d24; --kb-edge: #07080a; --kb-mark: #8a93a6; display: block; max-width: 100%; height: auto; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .kbd { --kb-white: #ffffff; --kb-black: #2b2e35; --kb-edge: #b9b2a3; --kb-mark: #8a90a0; }
+}
+:root[data-theme="light"] .kbd { --kb-white: #ffffff; --kb-black: #2b2e35; --kb-edge: #b9b2a3; --kb-mark: #8a90a0; }
+.kbd text { font-family: ui-sans-serif, system-ui, sans-serif; }
+.kbd-key.white { fill: var(--kb-white); stroke: var(--kb-edge); stroke-width: 1; }
+.kbd-key.black { fill: var(--kb-black); stroke: var(--kb-edge); stroke-width: 0.75; }
+.kbd-key.root { stroke: var(--root); stroke-width: 1.5; }
+.kbd-dot { stroke: var(--kb-edge); stroke-width: 0.75; }
+.kbd-dot.root { stroke: var(--text); stroke-width: 1.6; }
+.kbd-mid { fill: var(--kb-mark); }
+.kbd-label { font-size: 9.5px; font-weight: 800; }
+.kbd.compact .kbd-label { font-size: 9px; }
+.kbd-hand path { fill: none; stroke: var(--faint); stroke-width: 1; }
+.kbd-hand text { font-size: 8.5px; font-weight: 800; fill: var(--faint); }
