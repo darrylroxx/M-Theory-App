@@ -30,6 +30,8 @@ export interface PieceSpec {
   bass?: { level: number; pulse?: boolean };
   pad?: { level: number };
   pluck?: { level: number };
+  /** the plucked chords' pattern played on a piano instead (struck, dying away slower, rounder) */
+  keys?: { level: number };
   melody?: { level: number; staccato?: boolean; leaps?: boolean };
   harmony?: { level: number };
   vocal?: { level: number; breathy?: boolean };
@@ -130,6 +132,16 @@ export function renderPiece(spec: PieceSpec): Piece {
       }
     }
   }
+  if (spec.keys) {
+    const p = stem("other", -0.4);
+    for (let k = 0; k < bars; k++) {
+      const st = prog[k % 4];
+      for (let e = 0; e < 8; e++) {
+        const m = degree(st + [0, 2, 4, 7][e % 4], 3);
+        struck(p, sr, k * bar + e * beat * 0.5, hzOf(m), spec.keys.level * 0.6, notes, m);
+      }
+    }
+  }
   // ── melody: steps (or leaps) through the scale, a note a beat or two ──
   let line: { t: number; len: number; step: number }[] = [];
   if (spec.melody || spec.harmony || spec.vocal) {
@@ -216,6 +228,19 @@ function pluck(x: Float32Array, sr: number, t0: number, hz: number, amp: number,
     let s = 0;
     for (let k = 1; k <= 6; k++) if (hz * k < sr / 2) s += Math.exp(-t * (2 + 3 * k)) * Math.sin(TAU * hz * k * t) / k;
     x[i] += amp * Math.min(1, t / 0.002) * s;
+  }
+}
+
+/** A piano key: a hammer's knock, then the string dying away slowly, its upper overtones first. */
+function struck(x: Float32Array, sr: number, t0: number, hz: number, amp: number, notes: PieceNote[], midi: number) {
+  const from = Math.round(t0 * sr);
+  const len = 1.6;
+  notes.push({ layer: "other", t: t0, midi, len, vel: amp });
+  for (let i = from; i < Math.min(x.length, from + len * sr); i++) {
+    const t = (i - from) / sr;
+    let s = 0;
+    for (let k = 1; k <= 6; k++) if (hz * k < sr / 2) s += Math.exp(-t * (0.9 + 1.2 * k)) * Math.sin(TAU * hz * k * t * (1 + 0.0004 * k * k)) / (k * k);
+    x[i] += amp * 1.4 * Math.min(1, t / 0.003) * s;
   }
 }
 

@@ -23,7 +23,8 @@ import { createElectricPiano, createPiano } from "../keys/piano";
 import { Sampler } from "../keys/sampler";
 import type { EPiano } from "../keys/epiano";
 import { SynthInstrument } from "../synth/instrument";
-import { reviveSynth, type SynthParams } from "../synth/params";
+import { attackSec, cutoffHz, reviveSynth, timeSec, type SynthParams } from "../synth/params";
+import { soundFor } from "../synth/render";
 
 /** How long an instrument takes to fade out when it is swapped, or its track is removed. */
 export const FADE = 0.06;
@@ -47,16 +48,65 @@ const db = (v: number) => Math.pow(10, v / 20);
 export type VoiceKind = "chord" | "melody";
 type Keys = Sampler | EPiano;
 
-/** What a piano or synth note is like, for the canvas (the strings measure their own recordings). */
+/**
+ * What a piano or synth note is like, for the canvas (the strings measure their own recordings).
+ * A piano is struck and dies away, low notes ringing longest. A synth is shaped by its envelope:
+ * a pad swells in and holds for as long as its key is held, a pluck clicks and is gone, so the
+ * canvas paints a held pad as a held wash and a plucked synth as a dab, like the strings.
+ */
+export interface KeysShape {
+  /** 0 = swells in ... 1 = a click */
+  attack: number;
+  /** seconds to 30 dB down while the key is held (a held synth note: long) */
+  ring: number;
+  /** where its energy sits against its pitch (a dark sound lower, a bright one higher) */
+  tilt: number;
+  /** how much noise is in it, 0..1 */
+  noise: number;
+  /** the synth's filter cutoff (hertz): a brighter sound paints brighter */
+  cutoff: number;
+  /** each overtone's strength falls as 1/h^fall */
+  fall: number;
+}
+const clamp01 = (x: number) => Math.max(0, Math.min(1, x));
+/** A synth's sound as the canvas reads it, from its envelope, filter and noise. */
+export function synthShape(p: SynthParams): KeysShape {
+  const s = soundFor(p);
+  // how much the envelope shapes the loudness (the rest is a plain gate), and what it holds at
+  const amt = Math.min(1, 2 * (1 - s.balance));
+  // (an envelope on the filter alone still plucks: the note goes dark and thin as the filter closes)
+  const held = Math.max(0, 1 - (amt + 0.6 * Math.min(1, 2 * s.balance)) * (1 - s.sustain));
+  const rise = Math.max(0.001, attackSec(s.attack) * amt);
+  const cutoff = cutoffHz(s.cutoff);
+  return {
+    attack: clamp01(1 - Math.log10(rise / 0.002) / 2.7),
+    // the decay falls 60 dB in its time; a sound that holds at all is held until its key is let go
+    ring: held > 0.25 ? 12 + 24 * held : Math.max(0.12, 0.5 * timeSec(s.decay) + 2 * held),
+    tilt: Math.max(0.6, Math.min(4, Math.pow(cutoff / 2000, 0.35) * 2)),
+    noise: clamp01(2 * s.noise),
+    cutoff,
+    fall: 1,
+  };
+}
+/** A piano: struck, dying away over seconds (the low strings longest); the electric piano a little shorter and purer. */
+export const pianoShape = (electric: boolean, midi: number): KeysShape => ({
+  attack: electric ? 0.8 : 0.9,
+  ring: Math.max(1, Math.min(12, (electric ? 5 : 8) * Math.pow(2, -(midi - 48) / 24))),
+  tilt: electric ? 1.6 : 2.2,
+  noise: 0,
+  cutoff: electric ? 5000 : 8000,
+  fall: 2,
+});
 const sounds = new Map<string, Sound>();
-function keysSound(midi: number, inst: "piano" | "synth", ring: number): Sound {
-  const key = `${inst}|${midi}|${ring.toFixed(1)}`;
+function keysSound(midi: number, k: KeysShape): Sound {
+  const key = `${midi}|${k.attack.toFixed(2)}|${k.ring.toFixed(1)}|${k.tilt.toFixed(2)}|${k.noise.toFixed(2)}|${k.fall}`;
   let s = sounds.get(key);
   if (!s) {
     const hz = 440 * Math.pow(2, (midi - 69) / 12);
-    const parts = [1, 2, 3, 4, 5].map((h) => ({ hz: hz * h, width: 0.02, gain: inst === "piano" ? 1 / (h * h) : 1 / h, ring: ring / h, noise: 0, glide: 0 }));
-    s = { ring, attack: inst === "piano" ? 0.9 : 0.5, level: 0.5, centre: hz * 2.2, parts };
+    const parts = [1, 2, 3, 4, 5].map((h) => ({ hz: hz * h, width: 0.02, gain: 1 / Math.pow(h, k.fall), ring: k.ring / h, noise: k.noise, glide: 0 }));
+    s = { ring: k.ring, attack: k.attack, level: 0.5, centre: hz * k.tilt, parts };
     sounds.set(key, s);
+    if (sounds.size > 2000) sounds.delete(sounds.keys().next().value!);
   }
   return s;
 }
@@ -96,6 +146,8 @@ export class TrackVoice {
   private later: (() => void)[] = [];
   private wanted: { midi: number; velocity: number }[] = [];
   private gone = false;
+  /** the synth's sound as the canvas reads it (worked out again when the tone changes) */
+  private shape: KeysShape | null = null;
 
   constructor(
     readonly c: BaseAudioContext,
@@ -112,7 +164,8 @@ export class TrackVoice {
     this.harpIn = c.createGain();
     this.harpIn.connect(this.rack.input);
     this.harp = new Harp(c, { input: this.harpIn, halo: this.rack.halo });
-    this.harp.tag = kind;
+    // (an offline render's notes are on another clock and are not heard live: the canvas is not told of them)
+    this.harp.tag = this.offline ? undefined : kind;
     this.harp.track = track;
   }
 
@@ -159,6 +212,7 @@ export class TrackVoice {
     this.toneKey = k;
     const prev = this.tone;
     this.tone = tone;
+    this.shape = null;
     const ik = instKey(tone);
     if (ik !== this.key) this.swap(ik);
     else if (tone.inst === "synth" && this.inst instanceof SynthInstrument && JSON.stringify(prev.synth) !== JSON.stringify(tone.synth)) this.inst.set(this.synth);
@@ -247,7 +301,9 @@ export class TrackVoice {
     const len = o.cut ? Math.min(length, 0.12) : length;
     if (this.harp.tag && listening()) {
       const synth = this.tone.inst === "synth";
-      pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: 8000, octave: 0, sound: keysSound(midi, synth ? "synth" : "piano", synth ? 2 : 4) });
+      const k = synth ? (this.shape ??= synthShape(this.synth)) : pianoShape(this.tone.keys === "electric", midi);
+      // (a synth can hold a note for a whole section, a drone: it is painted for as long as it is held)
+      pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(synth ? 60 : 8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: k.cutoff, octave: 0, sound: keysSound(midi, k) });
     }
     // the synth takes its notes ahead of loading (they are handed to its processor when it is made); a keyboard needs its recordings first
     if (this.offline && isKeys(inst)) {

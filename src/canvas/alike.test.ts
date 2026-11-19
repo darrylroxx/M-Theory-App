@@ -17,6 +17,8 @@ import { Artist, type LayerCue } from "./painting";
 import { getPalette } from "./palettes";
 import { monoOf, renderPiece, type Piece, type PieceSpec } from "./pieces";
 import { lookDistance, lookOf, normalise, vibeDistance } from "./vibe";
+import { pianoShape, synthShape } from "../audio/trackvoice";
+import { presetById } from "../synth/presets";
 
 const base = (o: Partial<PieceSpec>): PieceSpec => ({ seed: 1, seconds: 10, bpm: 100, key: 0, ...o });
 /** Two kinds of music (as in the vibe's own tests): a busy plucked groove, and a slow breathy song over a pad. */
@@ -35,7 +37,7 @@ async function viaFile(p: Piece): Promise<Float32Array> {
  * The vibe of the app's own song, as the Canvas hears it while it plays: an ear on the mix and
  * one on every track (the live bank's), and every note and hit handed over as it is played.
  */
-function viaApp(p: Piece): Float32Array {
+function viaApp(p: Piece, chords: { attack: number; ring: number } = { attack: 0.5, ring: 1.5 }): Float32Array {
   const a = new Artist();
   a.size(1000, 560);
   a.setPalette(getPalette("woodblock"));
@@ -50,7 +52,7 @@ function viaApp(p: Piece): Float32Array {
   const cues: LayerCue[] = p.notes.map((n): LayerCue =>
     n.layer === "drums"
       ? { layer: "drums", key: "drums", hit: true, cue: { id: -1, t: n.t, hz: n.drum === "kick" ? 60 : n.drum === "snare" ? 1800 : 9000, amp: n.vel, attack: 1, bright: 0.6, rough: n.drum === "kick" ? 0.2 : 0.85, len: 0, ring: n.len, drum: n.drum } }
-      : { layer: layerOf(n.layer), key: n.layer, cue: { id: id++, t: n.t, hz: hzOfMidi(n.midi), amp: n.vel, attack: 0.5, bright: 0.5, rough: 0.1, len: n.len, ring: 1.5 } },
+      : { layer: layerOf(n.layer), key: n.layer, cue: { id: id++, t: n.t, hz: hzOfMidi(n.midi), amp: n.vel, attack: layerOf(n.layer) === "chords" ? chords.attack : 0.5, bright: 0.5, rough: 0.1, len: n.len, ring: layerOf(n.layer) === "chords" ? chords.ring : 1.5 } },
   ).sort((x, y) => x.cue.t - y.cue.t);
   const step = Math.round(p.sr / 60);
   let ci = 0;
@@ -80,5 +82,32 @@ describe("a song written in the app and the same music from a file land close to
     const look = (v: Float32Array) => lookOf(v);
     expect(lookDistance(look(fileA), look(appA))).toBeLessThan(lookDistance(look(fileA), look(appB)));
     expect(lookDistance(look(fileB), look(appB))).toBeLessThan(lookDistance(look(fileB), look(appA)));
+  });
+});
+
+describe("a song written in the app sounds like itself on any instrument", () => {
+  // the same song (drums, bass, melody) with its chords on the strings, on the piano in the same pattern, and on a synth pad held
+  const guitar = A;
+  const piano: PieceSpec = { ...A, pluck: undefined, keys: { level: 0.6 } };
+  const pad: PieceSpec = { ...A, pluck: undefined, pad: { level: 0.6 } };
+  const C = base({ seed: 5, bpm: 128, key: 7, drums: { level: 0.9, busy: true, open: true }, bass: { level: 0.9 }, pad: { level: 0.5 }, melody: { level: 0.6, leaps: true } });
+
+  it("on the piano or the synth it lands near the same song on the strings, far nearer than other music", () => {
+    const g = normalise(viaApp(renderPiece(guitar), { attack: 1, ring: 1.2 }));
+    const k = normalise(viaApp(renderPiece(piano), pianoShape(false, 60)));
+    const sy = normalise(viaApp(renderPiece(pad), synthShape(presetById("warm-pad")!.params)));
+    const b = normalise(viaApp(renderPiece(B)));
+    const c = normalise(viaApp(renderPiece(C)));
+    const far = Math.min(vibeDistance(g, b), vibeDistance(g, c));
+    // the piano plays the same pattern: nearly the same vibe
+    expect(vibeDistance(g, k)).toBeLessThan(0.4 * vibeDistance(g, b));
+    expect(vibeDistance(g, k)).toBeLessThan(far);
+    // a held pad in place of a strummed pattern is a real change (smoother, less busy), but the song is still nearer itself
+    expect(vibeDistance(g, sy)).toBeLessThan(0.6 * vibeDistance(g, b));
+    expect(vibeDistance(g, sy)).toBeLessThan(far);
+    expect(vibeDistance(g, k)).toBeLessThan(vibeDistance(g, sy));
+    // and it still paints like itself
+    expect(lookDistance(lookOf(g), lookOf(k))).toBeLessThan(lookDistance(lookOf(g), lookOf(b)));
+    expect(lookDistance(lookOf(g), lookOf(sy))).toBeLessThan(lookDistance(lookOf(g), lookOf(b)));
   });
 });

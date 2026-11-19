@@ -739,12 +739,19 @@ export class LayerHand {
     const lim = 64 * this.u;
     const r = s.rand;
     const rough = clamp(0.3 + 0.9 * s.cue.rough + 0.4 * this.texture.rough);
-    for (const q of this.partner.trail) {
+    // (a few links at a time: a harmony that follows its melody closely for a whole song would otherwise link every
+    // point to every point, tens of thousands of hairlines that the budget only throws away)
+    let links = 0;
+    const trail = this.partner.trail;
+    // (newest first: the hatching ties the harmony to where the melody is now)
+    for (let j = trail.length - 1; j >= 0 && links < 3; j--) {
+      const q = trail[j];
       const dx = q.x - x;
       const dy = q.y - y;
       const d = dx * dx + dy * dy;
       if (d > lim * lim || d < 9 * this.u * this.u) continue;
       if (r() > (1 - d / (lim * lim * 0.55)) * rough * 0.5) continue;
+      links++;
       const a = Math.atan2(dy, dx);
       const steps = Math.max(2, Math.round(Math.sqrt(d) * 0.4 / (1.2 * this.u)));
       for (let i = 0; i <= steps; i++) {

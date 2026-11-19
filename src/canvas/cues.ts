@@ -28,6 +28,9 @@ export function noisiness(s: Sound): number {
 /** How bright a sound is, 0..1, from where its energy sits. */
 export const brightness = (s: Sound) => clamp(Math.log2(Math.max(100, s.centre) / 300) / 4.5);
 
+/** The track a note or hit is from (the first tracks are told by their kind). */
+export const trackOfPulse = (p: Pulse) => p.track ?? (p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody");
+
 /**
  * A note or hit as a cue for a layer. `layerOf` says which layer a track is painted in (by its
  * id; the first tracks have their kind's name), `level` how far up its fader is (0..1+), `id` a
@@ -35,7 +38,7 @@ export const brightness = (s: Sound) => clamp(Math.log2(Math.max(100, s.centre) 
  * strings of a chords track have a hand of their own, the bass's).
  */
 export function cueOfPulse(p: Pulse, id: number, layerOf: (track: string) => LayerKind, level: (track: string) => number, handOf: (track: string) => string = (t) => t): LayerCue {
-  const track = p.track ?? (p.kind === "drum" ? "drums" : p.kind === "chord" ? "chords" : "melody");
+  const track = trackOfPulse(p);
   const fader = Math.min(1.5, level(track));
   if (p.kind === "drum") {
     const d = p as DrumPulse;

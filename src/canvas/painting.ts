@@ -191,6 +191,22 @@ export class Artist {
     for (const [key, h] of this.hands) if (key.startsWith(`${source}:`) && h.down > 0) lv = Math.max(lv, h.texture.level);
     return lv;
   }
+  /**
+   * Only these hands paint on (by their track's ear: a chords track's bass hand goes with it). A
+   * track muted while it plays stops being painted at once, a held pad or a drone included, rather
+   * than painting on for as long as it was told it would sound.
+   */
+  keepHands(keys: Iterable<string>) {
+    const keep = new Set(keys);
+    let gone = false;
+    for (const [k, h] of this.hands) {
+      if (keep.has(k.split(":")[0])) continue;
+      h.lift();
+      this.hands.delete(k);
+      gone = true;
+    }
+    if (gone) this.partners();
+  }
   /** Every hand of one layer. */
   handsOf(layer: LayerKind): LayerHand[] {
     return [...this.hands.values()].filter((h) => h.layer === layer);
