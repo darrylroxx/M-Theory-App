@@ -16,6 +16,7 @@ import { newId, useApp, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
 import { InstIcon } from "./HarpPanel";
 import { toneOf } from "../../audio/tone";
+import { HarmonyAgain, HarmonyPicker } from "./HarmonyPicker";
 
 /** One section as the Track page draws it. */
 export interface TrackSection {
@@ -80,6 +81,10 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
   const [adding, setAdding] = useState(false);
+  // a new chords or melody track: empty, or written to go with another track; or a harmony track written again
+  const [sheet, setSheet] = useState<{ kind: "chords" | "melody"; track?: Track } | null>(null);
+  // it belongs to this page and this idea
+  useEffect(() => setSheet(null), [state.ideaId, active]);
   const lineRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // the lanes' width, measured: the bars on screen share it out
@@ -202,6 +207,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                 <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
                   {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(state.progression, t.id).inst} />}
                   <span className="tv-label">{t.name}</span>
+                  {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setSheet({ kind: t.kind as "chords" | "melody", track: t })} />}
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
                 <span className="tv-btns">
@@ -216,7 +222,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
           <div className="tv-add">
             {adding ? (
               <span className="tv-kinds" role="group" aria-label="What kind of track">
-                {KINDS.map((k) => <button key={k} className="chip" onClick={() => add(k)}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
+                {KINDS.map((k) => <button key={k} className="chip" onClick={() => (k === "chords" || k === "melody" ? (setAdding(false), setSheet({ kind: k })) : add(k))}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
                 <button className="chip" aria-label="Cancel" onClick={() => setAdding(false)}>✕</button>
               </span>
             ) : <button className="btn sm tv-plus" aria-label="Add a track" title="Add a track" onClick={() => setAdding(true)}>+</button>}
@@ -252,6 +258,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
           </div>
         </div>
       </div>
+      {sheet && <HarmonyPicker key={sheet.track?.id ?? sheet.kind} kind={sheet.kind} track={sheet.track} onEmpty={() => add(sheet.kind)} onClose={() => setSheet(null)} />}
     </section>
   );
 });

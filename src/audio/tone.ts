@@ -8,7 +8,7 @@
  * `Progression.tones`, by track id; a track with nothing there plays Guitar, which is how every
  * song made before this sounds.
  */
-import { KEY_STYLES, arrangeKeys, type KeyStyle } from "../keys/voicing";
+import { KEY_STYLES, REGISTERS, arrangeKeys, type KeyStyle, type Register } from "../keys/voicing";
 import type { ChordRef } from "../theory/chords";
 import { reviveSynth, type SynthParams } from "../synth/params";
 import { presetById, type PresetCategory } from "../synth/presets";
@@ -37,6 +37,8 @@ export interface Tone {
   synth?: SynthParams;
   /** how chords are laid out on the keys (piano and synth) */
   voicing?: KeyStyle;
+  /** where its chords sit on the keys: a pad above the comping band, or low under it (not set = the comping band, C3–C5); a harmony layer sets it */
+  register?: Exclude<Register, "mid">;
 }
 export type Tones = Record<string, Tone>;
 
@@ -79,6 +81,7 @@ export function reviveTone(raw: unknown): Tone {
     ...(r.pedal ? { pedal: true } : {}),
     ...(r.synth && typeof r.synth === "object" ? { synth: reviveSynth(r.synth) } : {}),
     ...(KEY_STYLES.includes(r.voicing as KeyStyle) ? { voicing: r.voicing } : {}),
+    ...(r.register === "high" || r.register === "low" ? { register: r.register } : {}),
   };
 }
 
@@ -109,7 +112,8 @@ export function withoutTone<P extends { tones?: Tones }>(p: P, id: string): P {
 
 /** The keys a run of chords is played with on a keyboard track, laid out together so the hands move least. */
 export function keysVoicings(chords: { ref: ChordRef; rest?: boolean }[], t: Tone): number[][] {
-  return arrangeKeys(chords.map((c) => (c.rest ? null : c.ref)), { style: voicingOf(t) });
+  const band = t.register ? REGISTERS[t.register] : null;
+  return arrangeKeys(chords.map((c) => (c.rest ? null : c.ref)), { style: voicingOf(t), ...(band ? { low: band.low, high: band.high } : {}) });
 }
 
 /** Which instrument a key of the instrument switch is: one name for each sound, so a change of model is a change of instrument. */

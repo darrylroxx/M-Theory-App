@@ -1185,3 +1185,37 @@ span.cv-better { cursor: default; }
 }
 /* the pass's progress line stays across the lane as it stands, over the bars that scroll beneath it */
 .tl-wrap .tl-fill { z-index: 1; pointer-events: none; }
+
+/* ── Harmonize: a new track written to go with another (HarmonyPicker.tsx) ──
+   A sheet at the bottom of the screen: Empty or the track to go with, then the options (the ones
+   that would write nothing greyed, the swaps that play instead of their source apart), then ▶ to
+   hear the section with it and ✓ to keep it. ⟳ on a harmony track's head writes it again. */
+.hz-sheet { position: fixed; z-index: 60; left: 50%; bottom: calc(10px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); width: min(560px, calc(100vw - 16px)); max-height: min(70vh, 520px); overflow-y: auto; overscroll-behavior: contain; display: flex; flex-direction: column; gap: 8px; padding: 10px; background: var(--card); border: 1px solid var(--border-2); border-radius: 14px; box-shadow: var(--shadow); }
+.hz-row, .hz-opts, .hz-foot { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; min-width: 0; }
+.hz-with { color: var(--muted); font-weight: 850; padding-inline: 2px; }
+.hz-src-now { font-size: 0.9rem; color: var(--muted); min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hz-src-now b { color: var(--text); }
+.hz-x { width: 30px; height: 30px; font-size: 0.8rem; }
+.hz-opts .chip { padding: 5px 10px; }
+.hz-opts .chip:disabled { opacity: 0.38; border-style: dashed; cursor: default; }
+.hz-opts .chip:disabled:hover { border-color: var(--border-2); }
+.hz-instead { padding-top: 8px; border-top: 1px dashed var(--border-2); }
+.hz-tag { font-size: 0.72rem; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: 0.04em; }
+.hz-foot { flex-wrap: nowrap; }
+.hz-hint { flex: 1 1 auto; min-width: 0; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.hz-foot .icon-btn { width: 34px; height: 34px; }
+.hz-keep { min-width: 52px; justify-content: center; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 850; }
+.hz-keep:disabled { opacity: 0.4; }
+.hz-dot, .hz-again.stale::after { display: inline-block; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); vertical-align: top; margin-left: 3px; }
+.hz-again { position: relative; flex: none; font-style: normal; font-weight: 800; color: var(--accent); padding: 0 3px; cursor: pointer; }
+.hz-again.stale::after { content: ""; position: absolute; top: -1px; right: -3px; margin: 0; }
+.clip-hz { font-size: 0.8rem; margin-left: 6px; }
+.tv-name .tv-hz { font-size: 0.8rem; }
+/* the option a harmony track was written with, while another is being tried */
+.hz-opts .chip.now:not(.on) { border-color: var(--accent); }
+/* an undo offered while the sheet is open goes to the top, clear of it */
+body:has(.hz-sheet) .toast.act { top: calc(64px + env(safe-area-inset-top, 0px)); bottom: auto; }
+/* ✕ keeps the top right corner however the chips wrap */
+.hz-sheet > .hz-row:first-child { padding-right: 38px; }
+.hz-sheet .hz-x { position: absolute; top: 10px; right: 10px; }
+.hz-foot .hz-hint { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
