@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BARS_SHOWN, barAtBeat, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, shownCount, turnPage } from "./window";
+import { BARS_SHOWN, barAtBeat, barAtFrac, barWindow, clampStart, defaultShown, inWindow, isShown, pageStart, reveal, reviveView, scrolledWindow, shownCount, turnPage } from "./window";
 
 describe("bars on screen", () => {
   it("offers 1, 2, 4, 8 bars or the whole section", () => {
@@ -98,5 +98,34 @@ describe("the window of bars", () => {
     expect(barAtBeat(7.5, 3, 4)).toBe(2);
     expect(barAtBeat(-1, 4, 2)).toBe(1);
     expect(barAtBeat(Number.NaN, 4, 2)).toBe(0);
+  });
+});
+
+describe("the Vocals lane's window", () => {
+  it("finds the bar a point across the lane is in", () => {
+    expect(barAtFrac(0, 8)).toBe(0);
+    expect(barAtFrac(0.124, 8)).toBe(0);
+    expect(barAtFrac(0.125, 8)).toBe(1);
+    expect(barAtFrac(0.99, 8)).toBe(7);
+    expect(barAtFrac(1, 8)).toBe(7);
+    expect(barAtFrac(-0.2, 8)).toBe(0);
+    expect(barAtFrac(Number.NaN, 8)).toBe(0);
+  });
+  it("reads the bars on screen from how far the lane is scrolled", () => {
+    // 4 bars in 800 px: 200 px a bar
+    expect(scrolledWindow(0, 800, 4, 12)).toEqual({ start: 0, count: 4 });
+    expect(scrolledWindow(800, 800, 4, 12)).toEqual({ start: 4, count: 4 });
+    expect(scrolledWindow(890, 800, 4, 12)).toEqual({ start: 4, count: 4 });
+    expect(scrolledWindow(5000, 800, 4, 12)).toEqual({ start: 8, count: 4 });
+    // not laid out yet, or more bars asked for than there are
+    expect(scrolledWindow(300, 0, 4, 12)).toEqual({ start: 0, count: 4 });
+    expect(scrolledWindow(0, 800, 8, 3)).toEqual({ start: 0, count: 3 });
+  });
+  it("turns a whole page when the music leaves it, never a bar at a time", () => {
+    const w = scrolledWindow(0, 800, 4, 12);
+    expect(reveal(w, 3, 12)).toBe(0);
+    expect(reveal(w, 4, 12)).toBe(4);
+    // a loop of 6 bars, 4 on screen: the last page is kept full (bars 3 to 6)
+    expect(reveal(scrolledWindow(0, 800, 4, 6), 5, 6)).toBe(2);
   });
 });

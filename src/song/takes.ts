@@ -113,6 +113,19 @@ export function shownTakes(takes: Take[], group: string, o: { active?: string; n
   return { shown, more: mine.length - shown.length };
 }
 
+/**
+ * The click under a recording: how many beats each bar of the loop has (whole beats, at least
+ * one, as the time signatures give them), and a count-in of `countIn` bars in the meter of the
+ * loop's first bar, the one that comes straight after it. A loop that crosses from a 4/4
+ * section into a 3/4 one clicks 4 then 3. `fallback`: the beats to a bar when the bars are not known.
+ */
+export function clickPlan(bars: readonly { beats: number }[] | undefined, fallback: number, countIn: number): { beatsPerBar: number; countInBeats: number; bars: number[] } {
+  const whole = (b: number) => Math.max(1, Math.round(b) || 1);
+  const list = (bars ?? []).map((b) => whole(b.beats));
+  const beatsPerBar = list[0] ?? whole(fallback);
+  return { beatsPerBar, countInBeats: Math.max(0, Math.round(countIn) || 0) * beatsPerBar, bars: list };
+}
+
 /** How many bars a take lasts at a tempo (the Track page and the Vocals lane draw it this long). */
 export const takeBars = (t: Take, bpm: number, beatsPerBar: number): number => t.frames / t.rate / (60 / bpm) / Math.max(1, beatsPerBar);
 

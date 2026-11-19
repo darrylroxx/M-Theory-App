@@ -86,7 +86,8 @@ pub struct Settings {
 pub enum Cmd {
     Set(Box<Settings>),
     Backing(Vec<f32>),
-    Start { bpm: f64, count_in_beats: u32, per_bar: u32, rec: Option<rtrb::Producer<f32>> },
+    /// `downbeats`: one entry per beat of the loop, true where a bar begins (see `downbeats`)
+    Start { bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>> },
     Stop,
 }
 
@@ -95,6 +96,27 @@ pub enum Cmd {
 pub enum Trash {
     Backing(#[allow(dead_code)] Vec<f32>),
     Settings(#[allow(dead_code)] Box<Settings>),
+    Downbeats(#[allow(dead_code)] Vec<bool>),
+}
+
+/// The most beats a loop's accents are kept for (a loop longer than this clicks on, unaccented
+/// past it: far more bars than a song has).
+const MAX_BEATS: usize = 1 << 16;
+
+/// Which beats of a loop begin a bar, from how many beats each of its bars has. A loop that
+/// runs from a 4/4 section into a 3/4 one accents beat 1 of every bar as it is, not every
+/// fourth beat. Built off the audio thread, so the audio thread only looks it up.
+pub fn downbeats(bars: &[u32]) -> Vec<bool> {
+    let mut out = Vec::with_capacity(bars.iter().map(|b| (*b).max(1) as usize).sum::<usize>().min(MAX_BEATS));
+    for b in bars {
+        for i in 0..(*b).max(1) {
+            if out.len() >= MAX_BEATS {
+                return out;
+            }
+            out.push(i == 0);
+        }
+    }
+    out
 }
 
 /// The part of the engine that runs on the audio thread. It knows nothing of the driver, so it
@@ -120,7 +142,10 @@ pub struct Core {
     pos: u64,
     count_in: u64,
     beat: f64,
+    /// beats to a bar in the count-in (the meter of the loop's first bar)
     per_bar: u32,
+    /// the loop's beats, true where a bar begins; empty: every `per_bar` beats, as in the count-in
+    downbeats: Vec<bool>,
     mon: VecDeque<f32>,
     rec: Option<rtrb::Producer<f32>>,
     armed: bool,
@@ -172,6 +197,7 @@ impl Core {
             count_in: 0,
             beat: sr as f64 * 0.5,
             per_bar: 4,
+            downbeats: Vec::new(),
             mon: VecDeque::with_capacity(16384),
             rec: None,
             armed: false,
@@ -207,10 +233,7 @@ impl Core {
                 Some(Trash::Settings(s))
             }
             Cmd::Backing(b) => Some(Trash::Backing(std::mem::replace(&mut self.backing, b))),
-            Cmd::Start { bpm, count_in_beats, per_bar, rec } => {
-                self.start(bpm, count_in_beats, per_bar, rec);
-                None
-            }
+            Cmd::Start { bpm, count_in_beats, per_bar, downbeats, rec } => Some(Trash::Downbeats(self.start(bpm, count_in_beats, per_bar, downbeats, rec))),
             Cmd::Stop => {
                 self.stop();
                 None
@@ -230,10 +253,12 @@ impl Core {
         (self.backing.len() / 2) as u64
     }
     /// Start: the count-in, then the song round and round. With a recorder, everything sung is kept.
-    pub fn start(&mut self, bpm: f64, count_in_beats: u32, per_bar: u32, rec: Option<rtrb::Producer<f32>>) {
+    /// The accents of the loop before are handed back, to be freed off the audio thread.
+    pub fn start(&mut self, bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>>) -> Vec<bool> {
         self.beat = self.sr as f64 * 60.0 / bpm.max(20.0);
         self.count_in = (self.beat * count_in_beats as f64).round() as u64;
         self.per_bar = per_bar.max(1);
+        let old = std::mem::replace(&mut self.downbeats, downbeats);
         self.rec = rec;
         self.recording = false;
         self.armed = false;
@@ -247,6 +272,7 @@ impl Core {
         self.owed = 0;
         self.trim = 0;
         self.pending = true;
+        old
     }
     /// Stop playing and recording. Returns (heard-at, captured-at) of the first frames, if recorded.
     pub fn stop(&mut self) -> (Option<f64>, Option<f64>) {
@@ -371,14 +397,31 @@ impl Core {
     }
 
     fn click(&self, pos: u64) -> f32 {
-        let since = if pos < self.count_in { pos } else if self.click_on { pos - self.count_in } else { return 0.0 };
+        let counting = pos < self.count_in;
+        let since = if counting { pos } else if self.click_on { pos - self.count_in } else { return 0.0 };
+        // After the count-in the click is counted from the top of the loop on every pass, so it
+        // stays on the song's beats however long the session runs, and each bar is accented
+        // where it begins in its own section's meter.
+        let len = self.backing_frames();
+        let looped = !counting && !self.downbeats.is_empty();
+        let since = if looped && len > 0 { since % len } else { since };
         let beat = (since as f64 / self.beat).floor();
         let into = since as f64 - beat * self.beat;
         let t = into / self.sr as f64;
         if t > 0.06 {
             return 0.0;
         }
-        let first = (beat as u64) % self.per_bar as u64 == 0;
+        let first = if looped {
+            let n = beat as usize;
+            match self.downbeats.get(n) {
+                Some(d) => *d,
+                // only rounding at the loop's very end: the next pass's first beat is a frame away
+                None if len > 0 => return 0.0,
+                None => self.downbeats[n % self.downbeats.len()],
+            }
+        } else {
+            (beat as u64) % self.per_bar as u64 == 0
+        };
         let f = if first { 1760.0 } else { 1175.0 };
         let env = (-t * 70.0).exp() as f32;
         (2.0 * std::f64::consts::PI * f * t).sin() as f32 * env * self.click_gain * if first { 1.0 } else { 0.7 }
@@ -885,12 +928,14 @@ fn recordings_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 }
 
 /// Start: the count-in, then the song round and round; with `record`, everything sung is written to a new file.
+/// `bars`: how many beats each bar of the loop has, in order (sections can differ); without it,
+/// every bar has `beats_per_bar`.
 #[tauri::command]
-pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || start(app, bpm, count_in_beats, beats_per_bar, record, name)).await.map_err(|e| e.to_string())?
+pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Option<Vec<u32>>, record: bool, name: String) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || start(app, bpm, count_in_beats, beats_per_bar, bars.unwrap_or_default(), record, name)).await.map_err(|e| e.to_string())?
 }
 
-fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, record: bool, name: String) -> Result<Option<String>, String> {
+fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Vec<u32>, record: bool, name: String) -> Result<Option<String>, String> {
     // a recording still going is closed and kept, never thrown away
     if let Ok(Some(r)) = engine_stop_inner() {
         stash(r);
@@ -922,7 +967,7 @@ fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u3
             *g = Some(Recording { dry, stop, thread: Some(thread), rate, stats: l.stats.clone() });
         }
     }
-    l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, rec: producer });
+    l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, downbeats: downbeats(&bars), rec: producer });
     Ok(path)
 }
 
@@ -1053,7 +1098,7 @@ mod tests {
         let mut c = core();
         // a "song" of one bar at 120 bpm: 2 s of a steady level on the left
         c.set_backing((0..96000).flat_map(|_| [0.25f32, 0.0]).collect());
-        c.start(120.0, 4, 4, None);
+        c.start(120.0, 4, 4, vec![], None);
         let mut out = vec![0.0f32; 1024];
         let mut heard = vec![];
         for b in 0..450 {
@@ -1070,11 +1115,43 @@ mod tests {
     }
 
     #[test]
+    fn a_loop_across_meters_knows_where_each_bar_begins() {
+        assert_eq!(downbeats(&[4, 3]), vec![true, false, false, false, true, false, false]);
+        assert_eq!(downbeats(&[2, 0]), vec![true, false, true], "a bar has at least one beat");
+        assert!(downbeats(&[]).is_empty());
+        assert_eq!(downbeats(&[u32::MAX]).len(), MAX_BEATS, "never more than the cap");
+    }
+
+    #[test]
+    fn the_click_accents_each_bar_in_its_own_meter_on_every_pass() {
+        let mut c = core();
+        // a loop of a 4/4 bar then a 3/4 bar at 120 bpm: 7 beats of 24000 frames
+        c.set_backing(vec![0.0; 7 * 24000 * 2]);
+        c.click_on = true;
+        c.click_gain = 1.0;
+        c.start(120.0, 4, 4, downbeats(&[4, 3]), None);
+        let mut out = vec![0.0f32; 1024];
+        let mut heard = vec![];
+        while heard.len() < 96000 + 2 * 7 * 24000 {
+            c.on_output(&mut out, 0.0);
+            heard.extend(out.chunks(2).map(|f| f[0]));
+        }
+        // the loudest moment just after a beat: 1.0 where a bar begins, 0.7 on the other beats
+        let peak = |at: usize| heard[at..at + 1500].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        let beat = |k: usize| 96000 + k * 24000;
+        assert!(peak(0) > 0.9 && peak(24000) < 0.8, "the count-in: four beats, the first accented");
+        for (k, down) in [(0, true), (1, false), (4, true), (5, false), (7, true), (8, false), (11, true), (12, false)] {
+            assert_eq!(peak(beat(k)) > 0.9, down, "beat {k} of the loop (from the first pass)");
+            assert!(peak(beat(k)) > 0.5, "every beat clicks");
+        }
+    }
+
+    #[test]
     fn the_voice_is_recorded_from_the_first_click_with_both_moments_known() {
         let mut c = core();
         c.set_backing(vec![0.0; 2000]);
         let (p, mut cons) = rtrb::RingBuffer::<f32>::new(100000);
-        c.start(120.0, 4, 4, Some(p));
+        c.start(120.0, 4, 4, vec![], Some(p));
         let mut out = vec![0.0f32; 512];
         // before the output starts the count-in, nothing is kept
         c.on_input(&[0.5, 0.0, 0.5, 0.0], 0.0);
@@ -1115,7 +1192,7 @@ mod tests {
         assert!(c.monitor && c.input == 1 && c.backing_gain == 0.5 && c.click_on);
         c.apply(Cmd::Backing(vec![0.1; 400]));
         assert_eq!(c.backing_frames(), 200);
-        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, rec: None });
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, downbeats: vec![], rec: None });
         let mut out = vec![0.0f32; 512];
         c.on_output(&mut out, 0.0);
         assert!(c.stats.running.load(Ordering::Relaxed));
@@ -1222,7 +1299,7 @@ mod tests {
         let mut c = core();
         c.set_backing(vec![0.0; 2 * 4000]);
         let (p, mut cons) = rtrb::RingBuffer::<f32>::new(ring);
-        c.start(120.0, 0, 4, Some(p));
+        c.start(120.0, 0, 4, vec![], Some(p));
         let mut out = vec![0.0f32; B * 2];
         let mut file = vec![];
         for k in 0..periods {
@@ -1307,7 +1384,7 @@ mod tests {
         let mut c = core();
         c.set_backing(vec![0.0; 2 * 4000]);
         let (p, mut cons) = rtrb::RingBuffer::<f32>::new(1 << 16);
-        c.start(120.0, 0, 4, Some(p));
+        c.start(120.0, 0, 4, vec![], Some(p));
         let mut out = vec![0.0f32; B * 2];
         let block = vec![0.5f32; B * 2];
         // each period has one block each way, in either order, as two threads would have it
@@ -1337,7 +1414,7 @@ mod tests {
         let mut c = core();
         c.set_backing(vec![0.0; 2000]);
         let (p, _cons) = rtrb::RingBuffer::<f32>::new(10000);
-        c.start(120.0, 4, 4, Some(p));
+        c.start(120.0, 4, 4, vec![], Some(p));
         assert!(moment(&c.stats.play0).is_none() && moment(&c.stats.cap0).is_none());
         let mut out = vec![0.0f32; 512];
         c.on_output(&mut out, 2.5);

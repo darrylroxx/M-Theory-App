@@ -75,3 +75,22 @@ export function barAtBeat(beat: number, bar: number, total: number): number {
   const at = ((beat % len) + len) % len;
   return Math.max(0, Math.min(all - 1, Math.floor(at / bar + 1e-6)));
 }
+
+/** The bar a point `x` of the way across a run of `total` bars is in (the Vocals lane's line, 0..1). */
+export function barAtFrac(x: number, total: number): number {
+  const all = Math.max(1, Math.round(total) || 1);
+  if (!Number.isFinite(x)) return 0;
+  return Math.max(0, Math.min(all - 1, Math.floor(x * all + 1e-9)));
+}
+
+/**
+ * The bars a sideways scroll shows: `left` pixels scrolled, `width` pixels on screen for `count`
+ * bars. The lane of takes scrolls by hand as well as by page, so its window is read from where
+ * it has been scrolled to (to the nearest whole bar).
+ */
+export function scrolledWindow(left: number, width: number, count: number, total: number): BarWindow {
+  const all = Math.max(1, Math.round(total) || 1);
+  const n = Math.max(1, Math.min(Math.round(count) || 1, all));
+  const bw = width / n;
+  return { start: bw > 0 && Number.isFinite(left) ? clampStart(Math.round(left / bw), n, all) : 0, count: n };
+}

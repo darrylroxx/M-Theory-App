@@ -8,13 +8,14 @@ import { audioContext } from "../../audio/context";
 import { fader } from "../../audio/mix";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { activeTake, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
+import { activeTake, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, shownTakes, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
 import { TakeLane, type LaneBar } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
 import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
 import { EqGraph } from "./EqGraph";
 import { EarIcon } from "../icons";
+import { BarsControl, useBarsView } from "./BarsControl";
 import { sigName } from "../../song/meter";
 import { sectionSig } from "../../song/unity";
 
@@ -105,6 +106,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const fx: VocalFx = useMemo(() => reviveFx(track?.fx) ?? FX_DEFAULT, [track?.fx]);
   const desktop = isDesktop();
   const bpm = state.progression.bpm;
+  // bars on screen and Follow, shared with every other page
+  const { shown, follow } = useBarsView();
 
   const [hosts, setHosts] = useState<AudioHost[] | null>(null);
   const [opened, setOpened] = useState<EngineOpened | null>(null);
@@ -295,7 +298,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     try {
       const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: opened.rate, skip: record ? t?.id : undefined });
       await engineBacking(l, r);
-      const path = await engineStart({ bpm: plan.bpm, countInBeats: (studio.countIn ?? 1) * plan.beatsPerBar, beatsPerBar: plan.beatsPerBar, record, name: t?.name ?? "Vocal" });
+      // the count-in is in the meter of the loop's first bar; after it, every bar clicks in its own
+      const click = clickPlan(plan.bars, plan.beatsPerBar, studio.countIn ?? 1);
+      const path = await engineStart({ bpm: plan.bpm, countInBeats: click.countInBeats, beatsPerBar: click.beatsPerBar, bars: click.bars, record, name: t?.name ?? "Vocal" });
       pathRef.current = record ? path : null;
       setPhase(record ? "recording" : "rehearsing");
     } catch (e) {
@@ -517,6 +522,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     return i < 0 ? null : (i + (w.beat / per - k)) / bars.length;
   }, [getWhere]);
 
+  const lane = laneBars.length > 0 ? (
+    <TakeLane bars={laneBars} takes={laneTakes} bpm={bpm} where={where} shown={shown} follow={follow}
+      live={active && (playing || phase === "recording" || phase === "rehearsing")} onPick={desktop ? (t) => void preview(t) : undefined} />
+  ) : null;
+
   const takesBox = track && groups.length > 0 ? (
     <TakeList track={track} groups={groups} running={running} stale={stale} busy={busy} shorts={shorts} setShorts={setShorts} open={open} setOpen={setOpen}
       applySound={() => void applySound()} choose={choose} setKeep={setKeep} preview={(t) => void preview(t)} removeGroup={removeGroup} />
@@ -529,9 +539,13 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
           {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
           <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
         </span>
+        <span className="spacer" />
+        {laneBars.length > 0 && <BarsControl />}
       </div>
 
       {!desktop && <p className="small vc-note">Recording: in the Windows app.</p>}
+      {/* in the browser too: the takes already made, and the line while the song plays */}
+      {!desktop && lane}
 
       {desktop && (
         <>
@@ -554,7 +568,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
             <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click</label>
           </div>
 
-          {laneBars.length > 0 && <TakeLane bars={laneBars} takes={laneTakes} bpm={bpm} where={where} live={playing || phase === "recording" || phase === "rehearsing"} onPick={(t) => void preview(t)} />}
+          {lane}
           {phase === "recording" && (
             // every pass sung so far, and the one being sung: tap to keep ★. One row that scrolls, never grows.
             <div className="vc-passes" ref={rowRef} role="group" aria-label="Passes: tap to keep" onScroll={(e) => { const el = e.currentTarget; atEnd.current = el.scrollWidth - el.scrollLeft - el.clientWidth < 60; }}>
