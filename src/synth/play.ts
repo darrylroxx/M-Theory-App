@@ -6,13 +6,15 @@
  * Times are in seconds, like the audio clock; `bpm` (and `origin`, where beat 1 falls) are only
  * needed to turn musical step sizes (1/16, 1/8 triplets…) into seconds.
  *
- * Modes, after the research notes: Sustain (as written), Arp (up, down, up-down, random, chord,
- * crawl; 1/4 to 1/32 with triplets; 1 to 3 octaves; gate), Strum (spread and direction), Pulse
+ * Modes, after the research notes: Sustain (as written), Arp (up, down, up-down, as written,
+ * converge, diverge, thumb and pinky pedals, crawl, chord, random; 1/4 to 1/32, dotted and
+ * triplet; 1 to 4 octaves moving up, down or both ways; gate, swing, a rhythm of steps with
+ * accents, and repeats), Strum (spread and direction), Pulse
  * (the chord struck again on a rhythm), Drone (the home note and its fifth held under everything,
  * with a slow-moving voice above that follows the chords) and Glide (one line, notes joined so a
  * legato synth slides between them). Humanise loosens the timing and the touch of any of them.
  */
-import type { ArpPattern, PlaySettings, Rate, StrumDir, SynthParams } from "./params";
+import { type ArpPattern, type OctMove, type PlaySettings, type Rate, type StrumDir, type SynthParams, SWING_MAX } from "./params";
 
 export interface PlayNote {
   midi: number;
@@ -37,24 +39,16 @@ export interface PlayContext {
   seed?: number;
   /** the key's home note as a pitch class (0 = C) for the drone; default: the first chord's root */
   tonic?: number;
+  /** beats in a bar, counted from `origin`: an arp's rhythm of steps and its swing start again at each one (0 or missing: they run on) */
+  bar?: number;
 }
 
 /** The length of one step, in beats. */
 export function rateBeats(rate: Rate): number {
-  switch (rate) {
-    case "1/4":
-      return 1;
-    case "1/8":
-      return 0.5;
-    case "1/8T":
-      return 1 / 3;
-    case "1/16":
-      return 0.25;
-    case "1/16T":
-      return 1 / 6;
-    case "1/32":
-      return 0.125;
-  }
+  // a quarter note is one beat; "D" makes it half as long again, "T" fits three in the time of two
+  const m = /^1\/(\d+)([DT]?)$/.exec(rate);
+  const base = m ? 4 / Number(m[1]) : 0.25;
+  return m?.[2] === "D" ? base * 1.5 : m?.[2] === "T" ? (base * 2) / 3 : base;
 }
 
 const beatSec = (bpm: number) => 60 / Math.max(20, Math.min(400, bpm || 120));
@@ -103,12 +97,13 @@ export function sustain(notes: PlayNote[]): SynthNote[] {
   return notes.filter(valid).sort(byStart).map((n) => ({ ...n }));
 }
 
-/** The order an arpeggio walks a chord's notes (spread over `octaves`); "chord" is handled by the caller. */
-export function arpOrder(pitches: number[], pattern: ArpPattern, octaves: number, rand: () => number = Math.random): number[] {
-  const base = [...new Set(pitches)].sort((a, b) => a - b);
-  if (base.length === 0) return [];
-  const up: number[] = [];
-  for (let o = 0; o < octaves; o++) for (const p of base) up.push(p + 12 * o);
+/**
+ * One pass of a pattern over a pool of notes. `up` is the pool low to high, `played` the same
+ * notes in the order they were written (or the keys pressed); `base` and `octaves` are what the
+ * crawl needs to climb past the top of the pool.
+ */
+function walk(up: number[], played: number[], pattern: ArpPattern, rand: () => number, base: number[], octaves: number): number[] {
+  const n = up.length;
   switch (pattern) {
     case "up":
     case "chord":
@@ -116,7 +111,7 @@ export function arpOrder(pitches: number[], pattern: ArpPattern, octaves: number
     case "down":
       return [...up].reverse();
     case "updown":
-      return up.length > 2 ? [...up, ...up.slice(1, -1).reverse()] : up;
+      return n > 2 ? [...up, ...up.slice(1, -1).reverse()] : up;
     case "random": {
       const r = [...up];
       for (let i = r.length - 1; i > 0; i--) {
@@ -127,43 +122,172 @@ export function arpOrder(pitches: number[], pattern: ArpPattern, octaves: number
     }
     case "crawl": {
       // a window as wide as the chord, sliding up one note at a time: C E G, E G C', G C' E', …
-      const n = base.length;
+      const w = base.length;
       const ext = [...up, ...base.map((p) => p + 12 * octaves)];
       const out: number[] = [];
-      for (let i = 0; i + n <= ext.length; i++) out.push(...ext.slice(i, i + n));
+      for (let i = 0; i + w <= ext.length; i++) out.push(...ext.slice(i, i + w));
+      return out;
+    }
+    case "played":
+      return played;
+    case "converge": {
+      // from the outside in: lowest, highest, next lowest, next highest…
+      const out: number[] = [];
+      for (let i = 0, j = n - 1; i <= j; i++, j--) out.push(...(i === j ? [up[i]] : [up[i], up[j]]));
+      return out;
+    }
+    case "diverge": {
+      // from the middle out: the middle note, then one above, one below, and so on
+      const out: number[] = [];
+      const m = Math.floor((n - 1) / 2);
+      out.push(up[m]);
+      for (let d = 1; out.length < n; d++) {
+        if (m + d < n) out.push(up[m + d]);
+        if (m - d >= 0) out.push(up[m - d]);
+      }
+      return out;
+    }
+    case "thumb": {
+      // the lowest note between each of the others, as a thumb holding a pedal note
+      if (n < 3) return up;
+      const out: number[] = [];
+      for (let i = 1; i < n; i++) out.push(up[0], up[i]);
+      return out;
+    }
+    case "pinky": {
+      // the highest note between each of the others
+      if (n < 3) return [...up].reverse();
+      const out: number[] = [];
+      for (let i = 0; i < n - 1; i++) out.push(up[n - 1], up[i]);
       return out;
     }
   }
 }
 
-/** Arpeggio: each chord's notes one after another at `rate`, starting again at every chord. */
-export function arp(notes: PlayNote[], o: { pattern: ArpPattern; rate: Rate; octaves: number; gate: number }, ctx: PlayContext): SynthNote[] {
+/** The order the octaves come in, one pass of the pattern each: up, down from the top, or up and back. */
+export function octaveOrder(move: OctMove, octaves: number): number[] {
+  const up = Array.from({ length: Math.max(1, octaves) }, (_, i) => i);
+  if (move === "down") return up.reverse();
+  if (move === "bounce") return [...up, ...up.slice(1, -1).reverse()];
+  return up;
+}
+
+/**
+ * The order an arpeggio walks a chord's notes over `octaves`, one time round. `pitches` in the
+ * order written (or pressed), which only the "played" pattern listens to. "chord" is handled by
+ * the caller (it strikes them all at once). With `move` "span" the pattern runs over the whole
+ * range at once; otherwise it runs in one octave and that pass is moved through the octaves.
+ */
+export function arpOrder(pitches: number[], pattern: ArpPattern, octaves: number, rand: () => number = Math.random, move: OctMove = "span"): number[] {
+  const played = [...new Set(pitches)];
+  const base = [...played].sort((a, b) => a - b);
+  if (base.length === 0) return [];
+  if (move === "span" || octaves <= 1) {
+    const up: number[] = [];
+    const inOrder: number[] = [];
+    for (let o = 0; o < octaves; o++) {
+      for (const p of base) up.push(p + 12 * o);
+      for (const p of played) inOrder.push(p + 12 * o);
+    }
+    return walk(up, inOrder, pattern, rand, base, octaves);
+  }
+  const out: number[] = [];
+  // (a random pass is shuffled afresh in each octave)
+  for (const o of octaveOrder(move, octaves)) out.push(...walk(base, played, pattern, rand, base, 1).map((p) => p + 12 * o));
+  return out;
+}
+
+/** The arpeggiator's settings (the ones the newer controls added may be left out: they then play as before). */
+export interface ArpSettings {
+  pattern: ArpPattern;
+  rate: Rate;
+  octaves: number;
+  gate: number;
+  octMove?: OctMove;
+  swing?: number;
+  rhythm?: string;
+  ratchet?: number;
+}
+
+/** How much harder an accented step ("X") is struck, and how much softer the plain steps of a rhythm that has accents are. */
+export const ACCENT = 1.25;
+export const UNACCENTED = 0.8;
+
+/**
+ * One step of the arp's clock, `index` steps into the bar (or into the run of keys): how late it
+ * falls for the swing, how long it lasts (a swung pair still adds up to two steps), and whether it
+ * plays: 0 rests, 1 plays, 2 plays accented.
+ */
+export function arpStep(index: number, step: number, o: { swing?: number; rhythm?: string }): { shift: number; dur: number; hit: 0 | 1 | 2 } {
+  // the whole knob is three quarters: half way (0.375) pushes the second step a quarter of a step, to the triplet lilt
+  const sh = (Math.max(0, Math.min(SWING_MAX, o.swing ?? 0)) * 2 * step) / 3;
+  const odd = index % 2 === 1;
+  const r = o.rhythm ?? "";
+  const c = r ? r[index % r.length] : "x";
+  return { shift: odd ? sh : 0, dur: odd ? step - sh : step + sh, hit: c === "X" ? 2 : c === "x" ? 1 : 0 };
+}
+
+/** How far into its bar (in steps, counting from 0) a moment falls: the arp's rhythm and swing start again at each bar. */
+function stepIndex(t: number, origin: number, spb: number, step: number, bar: number): number {
+  let beats = (t - origin) / spb;
+  if (bar > 0) beats -= Math.floor(beats / bar + 1e-6) * bar;
+  return Math.max(0, Math.floor((beats * spb) / step + 1e-6));
+}
+
+/**
+ * Arpeggio: each chord's notes one after another at `rate`, starting again at every chord. A
+ * rhythm of steps rests some and leans on others (a rest does not use up a note: the next step
+ * that plays takes it), swing pushes every second step late, and a ratchet strikes each step
+ * more than once.
+ */
+export function arp(notes: PlayNote[], o: ArpSettings, ctx: PlayContext): SynthNote[] {
   const chords = chordsOf(notes);
-  const step = rateBeats(o.rate) * beatSec(ctx.bpm);
+  const spb = beatSec(ctx.bpm);
+  const step = rateBeats(o.rate) * spb;
   const gate = Math.max(0.05, Math.min(1, o.gate));
-  const octaves = Math.max(1, Math.min(3, Math.round(o.octaves)));
+  const octaves = Math.max(1, Math.min(4, Math.round(o.octaves)));
+  const move = o.octMove ?? "span";
+  const reps = Math.max(1, Math.min(4, Math.round(o.ratchet ?? 1)));
+  const accents = /X/.test(o.rhythm ?? "");
   const rand = rng((ctx.seed ?? 1) ^ 0xa5a5);
+  const origin = ctx.origin ?? 0;
+  const octs = octaveOrder(move === "span" ? "up" : move, octaves);
+  // the order the notes were written in, for the "played" pattern
+  const written = new Map(notes.map((n, i) => [n, i]));
   const out: SynthNote[] = [];
   chords.forEach((c, ci) => {
     const [start, end] = spanOf(chords, ci);
     const vel = Math.max(...c.map((n) => n.velocity));
-    let seq = arpOrder(c.map((n) => n.midi), o.pattern, octaves, rand);
+    const pitches = [...c].sort((a, b) => (written.get(a) ?? 0) - (written.get(b) ?? 0)).map((n) => n.midi);
+    let seq = arpOrder(pitches, o.pattern, octaves, rand, move);
     if (seq.length === 0) return;
     const base = [...new Set(c.map((n) => n.midi))].sort((a, b) => a - b);
-    const origin = ctx.origin ?? 0;
+    let played = 0;
     for (let k = 0; ; k++) {
       const t = start + k * step;
       if (t >= end - 1e-6) break;
-      const len = Math.min(step * gate, end - t);
-      // a little weight on the beat
-      const beatPos = (t - origin) / beatSec(ctx.bpm);
-      const accent = Math.abs(beatPos - Math.round(beatPos)) < 1e-3 ? 1 : 0.82;
-      if (o.pattern === "chord") {
-        const oct = 12 * (k % octaves);
-        for (const p of base) out.push({ midi: p + oct, start: t, length: len, velocity: vel * accent });
-      } else {
-        if (o.pattern === "random" && k > 0 && k % seq.length === 0) seq = arpOrder(c.map((n) => n.midi), "random", octaves, rand);
-        out.push({ midi: seq[k % seq.length], start: t, length: len, velocity: vel * accent });
+      const s = arpStep(stepIndex(t, origin, spb, step, ctx.bar ?? 0), step, o);
+      if (s.hit === 0) continue;
+      const at = t + s.shift;
+      if (at >= end - 1e-6) continue;
+      // a little weight on the beat (and more on an accented step)
+      const beatPos = (t - origin) / spb;
+      const lean = Math.abs(beatPos - Math.round(beatPos)) < 1e-3 ? 1 : 0.82;
+      const v = s.hit === 2 ? Math.min(1, vel * ACCENT) : vel * lean * (accents ? UNACCENTED : 1);
+      let midis: number[];
+      if (o.pattern === "chord") midis = base.map((p) => p + 12 * octs[played % octs.length]);
+      else {
+        if (o.pattern === "random" && played > 0 && played % seq.length === 0) seq = arpOrder(pitches, "random", octaves, rand, move);
+        midis = [seq[played % seq.length]];
+      }
+      played++;
+      const sub = s.dur / reps;
+      for (let r = 0; r < reps; r++) {
+        const ts = at + r * sub;
+        if (ts >= end - 1e-6) break;
+        const len = Math.min(sub * gate, end - ts);
+        // the repeats of a ratchet a touch softer than the strike they repeat
+        for (const m of midis) out.push({ midi: m, start: ts, length: len, velocity: r ? v * 0.9 : v });
       }
     }
   });
