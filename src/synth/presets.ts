@@ -328,7 +328,7 @@ export const PRESETS: SynthPreset[] = [
   preset("bubble-arp", "Bubble Arp", "arp", "Round, bubbling notes in a random order", {
     osc: "fm", texture: 0.3, mod: fm(2), cutoff: 4000, resonance: 0, balance: 0.3, attack: 0.001, decay: 0.15, sustain: 0, release: 0.1,
     fx: "delay", fxDepth: 0.35, echo: 0.3, reverb: 0.25, trim: 4.3,
-    play: { mode: "arp", pattern: "random", rate: "1/16T", octaves: 2, gate: 0.5 },
+    play: { mode: "arp", pattern: "random", rate: "1/16", octaves: 2, gate: 0.5 },
   }),
   preset("crawl-arp", "Crawling Arp", "arp", "Climbing patterns that creep up the chord", {
     osc: "saw", texture: 0.1, mod: 0.5, cutoff: 1200, resonance: 0.3, balance: 0.6, attack: 0.001, decay: 0.3, sustain: 0.2, release: 0.2,
@@ -376,3 +376,14 @@ export const PRESETS: SynthPreset[] = [
 
 export const presetById = (id: string): SynthPreset | undefined => PRESETS.find((p) => p.id === id);
 export const presetsIn = (c: PresetCategory): SynthPreset[] => PRESETS.filter((p) => p.category === c);
+
+/**
+ * A ready-made sound chosen for a track that plays `current`: it replaces everything but how loud
+ * the track is, and brings its own way of playing (a sound from the Arp kind plays as an arp, in
+ * its own style), except that an arp already running stays on as it was set: trying sounds while
+ * the arp plays does not switch it off.
+ */
+export function pickPreset(current: SynthParams, x: SynthPreset): SynthParams {
+  const keepArp = current.play.mode === "arp" && x.category !== "arp";
+  return { ...x.params, volume: current.volume, ...(keepArp ? { play: current.play } : {}) };
+}

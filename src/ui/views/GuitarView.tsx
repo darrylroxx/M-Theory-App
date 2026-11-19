@@ -3,7 +3,7 @@ import { DEFAULT_BEAT, applyPattern, grooveOf, kitOfBeat, type Beat, type BeatPa
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepTracks, letGoOfKeys, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepTracks, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
 import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
@@ -397,9 +397,8 @@ export function GuitarView() {
       );
     } else void warmTrack(id, kind, next);
   }, [set]);
-  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, toneSetter, hearSoon]);
-  const hand = useMemo(() => ({ chords: chordTone, melody: tuneTone }), [chordTone, tuneTone]);
-  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, toneSetter, hearTune]);
+  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, compound: meter.triplet, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, meter.triplet, toneSetter, hearSoon]);
+  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, compound: meter.triplet, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, meter.triplet, toneSetter, hearTune]);
   /** the keys a chord in the sheet plays: the tray's own, or a fresh voicing for a chord not in the tray */
   const sheetKeys = useCallback((ref: ChordRef, slotId?: string) => {
     const i = slotId ? prog.chords.findIndex((c) => c.id === slotId) : -1;
@@ -418,8 +417,6 @@ export function GuitarView() {
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
   const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
-  // the pages stay put while hidden: a key held or latched on one is let go when another page is shown
-  useEffect(() => letGoOfKeys(), [pane]);
   // ── the harmony sheet: a page's Harmonize button, a track's + (Add) and ⟳ (write it again) ──
   const [hz, setHz] = useState<HzOpen | null>(null);
   // it belongs to this page and this idea
@@ -838,7 +835,7 @@ export function GuitarView() {
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} />
         </div>
         <div className="pane" hidden={pane !== "canvas"}>
-          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} hand={hand} />
+          <CanvasPage active={pane === "canvas"} playing={playing} getSpot={getSpot} rest={restSpot} keyOf={state.key} onPlay={togglePlay} canPlay={plan.any} />
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <ClipBar kind="drums" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />

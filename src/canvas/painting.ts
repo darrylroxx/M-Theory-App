@@ -63,8 +63,6 @@ export interface LayerCue {
   cue: Cue;
   /** a hit (a drum), not a held sound */
   hit?: boolean;
-  /** the sound with this cue's id stops at its time (a key held by hand came up) */
-  stop?: boolean;
 }
 
 /** What one ear heard: a track's, a stem's, or a share of one, and the layer it is painted in. */
@@ -384,10 +382,6 @@ export class Artist {
     // notes known ahead
     for (const c of h.cues ?? []) {
       const hand = this.hand(c.key ?? c.layer, c.layer);
-      if (c.stop) {
-        hand.end(c.cue.id, c.cue.t);
-        continue;
-      }
       if (c.hit) hand.hit(c.cue);
       else hand.start(c.cue);
       const a = this.activity[c.layer];

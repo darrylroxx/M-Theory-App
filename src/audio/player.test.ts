@@ -1,6 +1,6 @@
 /**
  * The song player and the song's render, on a pretend audio context: what each track is asked
- * to play, where loops cut it, what a render keeps of the live desks, and the keys on the screen.
+ * to play, where loops cut it, and what a render keeps of the live desks.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
@@ -12,8 +12,6 @@ import { Harp } from "./plucked";
 import { fader, setMix } from "./mix";
 import { onKickHit, playStep, syncDrums } from "./drumbus";
 import type { ExtraPlay, PlayItem } from "./patterns";
-import { LiveKeys } from "../synth/live";
-import { DEFAULT_PLAY } from "../synth/params";
 import { presetById } from "../synth/presets";
 import type { Tone } from "./tone";
 
@@ -359,36 +357,3 @@ describe("a note played to be heard", () => {
   });
 });
 
-describe("the keys on the screen", () => {
-  const drone = { ...DEFAULT_PLAY, mode: "drone" as const };
-  it("a note is let go on the track that played it, though the page now edits another", () => {
-    S.setTones({ chords: { inst: "synth" }, c2: { inst: "synth" } });
-    S.hearOn("chord", null);
-    const out = S.liveKeys("chord");
-    const keys = new LiveKeys(out, () => drone);
-    keys.press(60);
-    const gone: string[] = [];
-    vi.spyOn(TrackVoice.prototype, "letGo").mockImplementation(function (this: TrackVoice) {
-      gone.push(this.track ?? this.kind);
-    });
-    S.hearOn("chord", { id: "c2", sound: SOUND_DEFAULT });
-    // the latched key tapped again
-    keys.press(60);
-    expect(gone).toEqual(["chord"]);
-    S.hearOn("chord", null);
-    S.setTones(undefined);
-  });
-  it("when every sound is stopped, the keys go up with it", () => {
-    S.setTones({ chords: { inst: "synth" } });
-    const out = S.liveKeys("chord");
-    const keys = new LiveKeys(out, () => drone);
-    const stop = out.onCut?.(() => keys.releaseAll());
-    keys.press(60);
-    keys.press(64);
-    expect(keys.keys).toEqual([60, 64]);
-    S.stopAll();
-    expect(keys.keys).toEqual([]);
-    stop?.();
-    S.setTones(undefined);
-  });
-});

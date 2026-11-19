@@ -17,14 +17,14 @@ import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 import { STRING_KEYS } from "./harp";
 import { Harp } from "./plucked";
 import { GUITAR, instKey, synthOf, type Tone } from "./tone";
-import { holdId, listening, pulse, pulseRelease } from "./pulse";
+import { listening, pulse } from "./pulse";
 import type { Sound } from "./describe";
 import { createElectricPiano, createPiano } from "../keys/piano";
 import { Sampler } from "../keys/sampler";
 import type { EPiano } from "../keys/epiano";
 import { SynthInstrument } from "../synth/instrument";
 import { STOP_FADE } from "../synth/kernel";
-import { attackSec, cutoffHz, reviveSynth, timeSec, type SynthParams } from "../synth/params";
+import { attackSec, cutoffHz, reviveSynth, timeSec, type PlaySettings, type SynthParams } from "../synth/params";
 import { soundFor } from "../synth/render";
 
 /** How long an instrument takes to fade out when it is swapped, or its track is removed. */
@@ -47,8 +47,21 @@ export const LEVEL_DB: Record<"grand" | "electric" | "synth", Record<VoiceKind, 
 const db = (v: number) => Math.pow(10, v / 20);
 
 export type VoiceKind = "chord" | "melody";
-/** The lanes of a keyboard's keys held down by hand (one a key), clear of the player's own. */
-export const HAND_LANE = 10_000;
+
+/**
+ * How much of the track's own reverb (its Reverb knob, in the rack after the instrument) and echo
+ * a synth's arp or pulse gets at most. The synth's own room is already kept small for them
+ * (play.ts ARP_REVERB), but the track's hall comes on top: at the Reverb every track starts with
+ * (0.3), a loud step filled it and the soft step after it rose only 2–4 dB out of it (measured in
+ * the app's WAV export: Soft Horns' Bounce, a fifth of its steps; Synth Brass and Choir Pad too).
+ */
+export const ARP_SPACE = 0.15;
+export const ARP_TRACK_ECHO = 0.3;
+/** The track's effects as they are heard behind its instrument: as set, except behind a synth's arp or pulse (see ARP_SPACE). */
+export function rackForPlay(s: HarpSound, play: PlaySettings | null): HarpSound {
+  if (!play || (play.mode !== "arp" && play.mode !== "pulse") || (s.space <= ARP_SPACE && s.echo <= ARP_TRACK_ECHO)) return s;
+  return { ...s, space: Math.min(s.space, ARP_SPACE), echo: Math.min(s.echo, ARP_TRACK_ECHO) };
+}
 type Keys = Sampler | EPiano;
 
 /**
@@ -125,6 +138,8 @@ export interface NoteOpts {
   as?: HarpSound;
   /** for the canvas: when the next note of this voice comes, if sooner than the note ends */
   until?: number;
+  /** the synth: a step of an arpeggio or a pulse, the next one this many seconds later (see SynthKernel.on) */
+  step?: number;
 }
 
 export class TrackVoice {
@@ -151,11 +166,10 @@ export class TrackVoice {
   private gone = false;
   /** the synth's sound as the canvas reads it (worked out again when the tone changes) */
   private shape: KeysShape | null = null;
-  /** keys held down by hand: the instrument, its note (the synth's id, or the keyboard's lane) and its number for the canvas */
-  private hands = new Map<number, { inst: Instrument; note: number; pulse: number }>();
-  private handIds = 0;
   /** ■ faded the track out (its room and echoes with it): the next note brings it back */
   private hushed = false;
+  /** the tempo the rack was last set for (its echo keeps time with it) */
+  private bpm = 90;
 
   constructor(
     readonly c: BaseAudioContext,
@@ -196,7 +210,8 @@ export class TrackVoice {
     if (key === this.soundKey) return false;
     this.soundKey = key;
     this.sound = s;
-    this.rack.set(s, bpm, at);
+    this.bpm = bpm;
+    this.rack.set(rackForPlay(s, this.steps), bpm, at);
     this.harp.setSound(s, strings);
     return true;
   }
@@ -223,13 +238,23 @@ export class TrackVoice {
     if (k === this.toneKey) return;
     this.toneKey = k;
     const prev = this.tone;
+    const stepped = this.steps;
     this.tone = tone;
     this.shape = null;
+    // a synth's arp or pulse turned on or off: the track's room and echo follow (see ARP_SPACE)
+    if (!!this.steps !== !!stepped) this.rack.set(rackForPlay(this.sound, this.steps), this.bpm);
     const ik = instKey(tone);
     if (ik !== this.key) this.swap(ik);
     else if (tone.inst === "synth" && this.inst instanceof SynthInstrument && JSON.stringify(prev.synth) !== JSON.stringify(tone.synth)) this.inst.set(this.synth);
     if (this.shelf) this.shelf.gain.setTargetAtTime(brightDb(tone), this.c.currentTime, 0.02);
     if (!tone.pedal && prev.pedal && isKeys(this.inst)) this.inst.pedal(false);
+  }
+
+  /** How the synth plays, when it plays an arp or a pulse (null: any other way, or not the synth). */
+  private get steps(): PlaySettings | null {
+    if (this.tone.inst !== "synth") return null;
+    const play = this.synth.play;
+    return play.mode === "arp" || play.mode === "pulse" ? play : null;
   }
 
   /** The synth's sound for this track (its own, or the one a new synth track starts with). */
@@ -319,54 +344,17 @@ export class TrackVoice {
       this.later.push(() => inst.play(midi, when, velocity, len, o.slot));
       return;
     }
-    inst.play(midi, when, velocity, len, o.slot);
+    if (inst instanceof SynthInstrument) inst.play(midi, when, velocity, len, o.slot, o.step);
+    else inst.play(midi, when, velocity, len, o.slot);
   }
 
-  /**
-   * Tell the canvas of a piano or synth note (when it is listening). `held`: a key held down by
-   * hand, whose length is not known until it comes up; returns the number its release is told by.
-   */
-  private tell(midi: number, when: number, velocity: number, len: number, o: NoteOpts = {}, held = false): number {
-    if (!this.harp.tag || !listening()) return 0;
+  /** Tell the canvas of a piano or synth note (when it is listening). */
+  private tell(midi: number, when: number, velocity: number, len: number, o: NoteOpts = {}) {
+    if (!this.harp.tag || !listening()) return;
     const synth = this.tone.inst === "synth";
     const k = synth ? (this.shape ??= synthShape(this.synth)) : pianoShape(this.tone.keys === "electric", midi);
-    const hold = held ? holdId() : undefined;
     // (a synth can hold a note for a whole section, a drone: it is painted for as long as it is held; a piano dies away)
-    pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(synth ? 60 : 8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: k.cutoff, octave: 0, sound: keysSound(midi, k), hold });
-    return hold ?? 0;
-  }
-
-  /**
-   * A key held down on the screen: the piano or the synth sounds until `letGo` (returns the
-   * note's id; 0 when this track is on the strings, which have no keys). Played straight: the page
-   * works out arpeggios itself. The canvas is told of it as it is heard, and of when it stops.
-   */
-  hold(midi: number, when: number, velocity: number): number {
-    const inst = this.inst;
-    if (this.gone || this.offline || !inst) return 0;
-    this.wake(when);
-    let note = 0;
-    if (inst instanceof SynthInstrument) note = inst.hold(midi, when, velocity);
-    else if (isKeys(inst)) {
-      // each key held by hand has a lane of its own, so lifting it lets go of that note alone
-      note = HAND_LANE + Math.round(midi);
-      inst.play(midi, when, velocity, Infinity, note);
-    }
-    if (!note) return 0;
-    const id = ++this.handIds;
-    this.hands.set(id, { inst, note, pulse: this.tell(midi, when, velocity, Infinity, {}, true) });
-    return id;
-  }
-  letGo(id: number, when: number) {
-    const h = this.hands.get(id);
-    if (!h) return;
-    this.hands.delete(id);
-    // (the instrument was swapped while the key was down: the old one has already let go of everything)
-    if (h.inst === this.inst) {
-      if (h.inst instanceof SynthInstrument) h.inst.release(h.note, when);
-      else if (isKeys(h.inst)) h.inst.lift(h.note, when);
-    }
-    if (h.pulse) pulseRelease(h.pulse, when);
+    pulse({ kind: this.harp.tag, track: this.track, time: when, midi, velocity, length: Math.min(synth ? 60 : 8, len, o.until ?? Infinity), slot: -1, gain: (o.as ?? this.sound).level, cutoff: k.cutoff, octave: 0, sound: keysSound(midi, k) });
   }
 
   /** The pianist's pedal change at a new chord: up for a moment, then down again (only when Pedal is on). */

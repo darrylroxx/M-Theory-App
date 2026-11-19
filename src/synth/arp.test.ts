@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PLAY, type PlaySettings, RATES, RHYTHMS, reviveSynth, sameSynth } from "./params";
 import { ACCENT, type PlayNote, type SynthNote, arp, arpOrder, arpStep, octaveOrder, playNotes, rateBeats } from "./play";
-import { LiveKeys, type LiveOut } from "./live";
 import { PRESETS, presetsIn } from "./presets";
 
 const chord = (midis: number[], start: number, length: number, velocity = 0.8): PlayNote[] => midis.map((midi) => ({ midi, start, length, velocity }));
@@ -315,90 +314,3 @@ describe("arp presets", () => {
   });
 });
 
-/** A pretend synth on a clock the test moves by hand. */
-function rig(patch: Partial<PlaySettings> = {}) {
-  const notes: { midi: number; when: number; length: number; vel: number }[] = [];
-  let t = 10;
-  const out: LiveOut = { now: () => t, bpm: () => 120, on: () => 1, off: () => {}, note: (midi, when, vel, length) => notes.push({ midi, when, length, vel }) };
-  const play: PlaySettings = { ...DEFAULT_PLAY, mode: "arp", ...patch };
-  const keys = new LiveKeys(out, () => play);
-  const run = (until: number) => {
-    for (let s = t; s <= until; s += 0.03) {
-      t = s;
-      keys.tick();
-    }
-  };
-  return { keys, notes, run, at: (s: number) => (t = s) };
-}
-
-describe("the arpeggiator on the keys", () => {
-  it("plays the new patterns, in the order the keys were pressed for as-played", () => {
-    const r = rig({ pattern: "played", rate: "1/8" });
-    for (const m of [67, 60, 64]) r.keys.press(m);
-    r.run(11.5);
-    expect(r.notes.slice(0, 4).map((n) => n.midi)).toEqual([67, 60, 64, 67]);
-    const t = rig({ pattern: "thumb", rate: "1/8" });
-    for (const m of [60, 64, 67]) t.keys.press(m);
-    t.run(11.5);
-    expect(t.notes.slice(0, 4).map((n) => n.midi)).toEqual([60, 64, 60, 67]);
-  });
-  it("follows the rhythm, the swing and the repeats", () => {
-    const r = rig({ rate: "1/8", rhythm: "X.x", swing: 0.375, ratchet: 2, gate: 1 });
-    r.keys.press(60);
-    r.keys.press(64);
-    r.run(12);
-    const first = r.notes[0].when;
-    const steps = r.notes.map((n) => Math.round(((n.when - first) / 0.25) * 1000) / 1000);
-    // steps 0 and 2 of each three play, struck twice each (the second step of each swung pair is a quarter of a step late, and shorter)
-    expect(steps.slice(0, 8)).toEqual([0, 0.625, 2, 2.625, 3.25, 3.625, 5.25, 5.625]);
-    expect(r.notes[0].vel).toBeGreaterThan(r.notes[2].vel);
-    expect(r.notes[2].midi).toBe(64);
-  });
-  it("latch: the arpeggio runs on after the keys are let go, a new chord takes over, and unlatching stops it", () => {
-    const r = rig({ rate: "1/8" });
-    r.keys.setLatch(true);
-    r.keys.press(60);
-    r.keys.press(64);
-    r.keys.release(60);
-    r.keys.release(64);
-    expect(r.keys.running).toBe(true);
-    expect(r.keys.keys).toEqual([60, 64]);
-    r.run(11);
-    const n = r.notes.length;
-    expect(n).toBeGreaterThan(2);
-    // a new chord, once every finger is up, replaces the latched one
-    r.keys.press(62);
-    r.keys.press(65);
-    expect(r.keys.keys).toEqual([62, 65]);
-    r.keys.release(62);
-    r.keys.release(65);
-    r.run(12);
-    expect(r.notes.slice(n + 1).every((x) => [62, 65].includes(x.midi))).toBe(true);
-    // unlatching lets go of every key no finger is on: it stops
-    r.keys.setLatch(false);
-    expect(r.keys.running).toBe(false);
-    const m = r.notes.length;
-    r.run(13);
-    expect(r.notes.length).toBe(m);
-  });
-  it("latch: a key still held stays when unlatched; stopping all sound unlatches", () => {
-    const r = rig();
-    r.keys.setLatch(true);
-    r.keys.press(60);
-    r.keys.press(67);
-    r.keys.release(67);
-    r.keys.setLatch(false);
-    expect(r.keys.keys).toEqual([60]);
-    r.keys.setLatch(true);
-    r.keys.unlatch();
-    expect(r.keys.latched).toBe(false);
-    expect(r.keys.running).toBe(false);
-    expect(r.keys.keys).toEqual([]);
-  });
-  it("without the latch, letting go stops it as before", () => {
-    const r = rig();
-    r.keys.press(60);
-    r.keys.release(60);
-    expect(r.keys.running).toBe(false);
-  });
-});

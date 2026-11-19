@@ -29,6 +29,8 @@ export interface PlayNote {
 export interface SynthNote extends PlayNote {
   /** a lane: a new note on the same slot takes over from the one before (see Instrument.play) */
   slot?: number;
+  /** a step of an arpeggio or a pulse: seconds until the next strike (the synth keeps each step apart, see SynthKernel.on; see stepSec) */
+  step?: number;
 }
 
 export interface PlayContext {
@@ -441,6 +443,14 @@ export function humanise<T extends PlayNote>(notes: T[], amount: number, seed = 
     .sort(byStart);
 }
 
+/**
+ * The most reverb, and the deepest echo, an arpeggio or a pulse is played with: a sound made for
+ * long held chords (a pad, a drone) has a hall big enough, and echoes long enough, to wash its
+ * steps into one another; within these its steps stay apart and still ring into the room.
+ */
+export const ARP_REVERB = 0.25;
+export const ARP_ECHO = 0.3;
+
 /** The least sustain a drone is played with: a drone is held, so a sound that dies away is kept sounding. */
 export const DRONE_SUSTAIN = 0.6;
 
@@ -451,9 +461,33 @@ export const DRONE_SUSTAIN = 0.6;
  * long before the passage ends).
  */
 export function voiceForPlay(p: SynthParams): SynthParams {
+  // (an arp's or a pulse's steps would blur together in a big hall: the room is kept smaller, see ARP_REVERB)
+  if (p.play.mode === "arp" || p.play.mode === "pulse") {
+    const echo = p.fx === "delay" && p.fxDepth > ARP_ECHO;
+    if (p.reverb > ARP_REVERB || echo) return { ...p, reverb: Math.min(p.reverb, ARP_REVERB), ...(echo ? { fxDepth: ARP_ECHO } : {}) };
+  }
   if (p.play.mode === "glide" && p.voice === "poly") return { ...p, voice: "legato", glide: p.glide > 0 ? p.glide : 0.35 };
   if (p.play.mode === "drone" && (p.voice !== "poly" || p.sustain < DRONE_SUSTAIN)) return { ...p, voice: "poly", sustain: Math.max(p.sustain, DRONE_SUSTAIN) };
   return p;
+}
+
+/**
+ * How far apart an arpeggio's or a pulse's strikes come (seconds, the shortest of them: a swung
+ * step, a repeat), so the synth can keep every one of them apart (see SynthKernel.on). 0 for the
+ * other ways of playing, which the synth plays as the sound is made.
+ */
+export function stepSec(play: PlaySettings, bpm: number): number {
+  if (play.mode !== "arp" && play.mode !== "pulse") return 0;
+  const step = rateBeats(play.rate) * beatSec(bpm);
+  if (play.mode === "pulse") return step;
+  const swung = step * (1 - (2 * Math.max(0, Math.min(SWING_MAX, play.swing))) / 3);
+  return swung / Math.max(1, Math.min(4, Math.round(play.ratchet)));
+}
+
+/** The notes of an arp or a pulse, each marked as a step (see stepSec); any other way of playing's as they are. */
+export function withSteps(notes: SynthNote[], play: PlaySettings, bpm: number): SynthNote[] {
+  const step = stepSec(play, bpm);
+  return step > 0 ? notes.map((n) => ({ ...n, step })) : notes;
 }
 
 /** Play written notes the way the settings say. */

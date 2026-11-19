@@ -7,7 +7,7 @@
  * from these is exact: a staccato note is a dab because it lasts 0.1 s, not because an ear
  * judged it short a moment late, and every mark can land with its sound.
  */
-import type { DrumPulse, NotePulse, NoteRelease, Pulse } from "../audio/pulse";
+import type { DrumPulse, NotePulse, Pulse } from "../audio/pulse";
 import type { Sound } from "../audio/describe";
 import { BASS_TOP_MIDI, type LayerKind } from "./layers";
 import { hzOfMidi } from "./layout";
@@ -74,32 +74,3 @@ export function cueOfPulse(p: Pulse, id: number, layerOf: (track: string) => Lay
   };
 }
 
-/**
- * The notes of keys held down by hand that have gone to the painting, until their keys come up:
- * then each is told to stop where it was let go (its length was not known when it began).
- */
-export class HeldCues {
-  private held = new Map<number, LayerCue>();
-
-  /** A note's cue on its way to the painting (kept when its key is held by hand). */
-  note(p: Pulse, c: LayerCue): LayerCue {
-    if (p.kind !== "drum" && p.hold) {
-      this.held.set(p.hold, c);
-      // (a key whose release never came, the page having been away: forgotten in time)
-      if (this.held.size > 256) this.held.delete(this.held.keys().next().value!);
-    }
-    return c;
-  }
-
-  /** Cues that stop the notes whose keys came up (a key not painted, a muted track's say, has nothing to stop). */
-  ends(rs: NoteRelease[]): LayerCue[] {
-    const out: LayerCue[] = [];
-    for (const r of rs) {
-      const c = this.held.get(r.hold);
-      if (!c) continue;
-      this.held.delete(r.hold);
-      out.push({ ...c, stop: true, cue: { ...c.cue, t: r.time } });
-    }
-    return out;
-  }
-}

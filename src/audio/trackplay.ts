@@ -9,7 +9,7 @@ import type { HarpSound } from "./rack";
 import type { TrackVoice } from "./trackvoice";
 import { synthOf } from "./tone";
 import { tuneBetween, type Melody } from "../song/melody";
-import { playNotes, type PlayNote, type SynthNote } from "../synth/play";
+import { playNotes, withSteps, type PlayNote, type SynthNote } from "../synth/play";
 
 /** The melody's own strings: a new note stops the one before it, so a tune stays a tune and does not smear. */
 export const TUNE_SLOT = 48;
@@ -61,7 +61,8 @@ export function synthSection(cache: SynthCache, section: string, v: TrackVoice, 
     const written: PlayNote[] = [];
     for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity });
     // (`bar`: an arp's rhythm of steps starts again on a bar line of the section, its swing on every one)
-    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home, bar });
+    // (each step of an arp or a pulse marked as one, so the synth keeps them apart)
+    notes = withSteps(playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home, bar }), play, 60 / spb);
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);
   }
@@ -107,7 +108,7 @@ export function playChord(v: TrackVoice, item: PlayItem, t: number, spb: number,
 
 /** The synth's notes that start in [from, to): each is played once, by the stretch of time it falls in. */
 function playSpan(v: TrackVoice, notes: SynthNote[], from: number, to: number) {
-  for (const n of notes) if (n.start >= from && n.start < to) v.note(n.midi, Math.max(n.start, 0), n.velocity, n.length, { slot: n.slot });
+  for (const n of notes) if (n.start >= from && n.start < to) v.note(n.midi, Math.max(n.start, 0), n.velocity, n.length, { slot: n.slot, step: n.step });
 }
 
 /** Does the track's synth play a melody its own way (an arp, a pulse, a glide, a drone, or loosened), not note for note? */

@@ -14,7 +14,7 @@
 import type { Instrument } from "../audio/instrument";
 import { SYNTH_PROCESSOR, type SynthEvent } from "./kernel";
 import { DEFAULT_PARAMS, type SynthParams, reviveSynth } from "./params";
-import { type PlayContext, type PlayNote, type SynthNote, playNotes } from "./play";
+import { type PlayContext, type PlayNote, type SynthNote, playNotes, withSteps } from "./play";
 import { soundFor, tail } from "./render";
 import type { SynthMessage, SynthProcessorOptions } from "./synth.worklet";
 import workletUrl from "./synth.worklet.ts?worker&url";
@@ -77,16 +77,17 @@ export class SynthInstrument implements Instrument {
     this.send({ type: "params", t: when, params: soundFor(p) });
   }
 
-  play(midi: number, when: number, velocity: number, length: number, slot?: number) {
-    const id = this.hold(midi, when, velocity, slot);
+  /** Play a note. `step`: it is a step of an arpeggio or a pulse, the next one this many seconds later (see SynthKernel.on). */
+  play(midi: number, when: number, velocity: number, length: number, slot?: number, step?: number) {
+    const id = this.hold(midi, when, velocity, slot, step);
     if (id && Number.isFinite(length)) this.release(id, when + Math.max(0, length));
   }
 
-  /** Start a note that sounds until `release` (a key held down on the screen). Returns its id (0: nothing was played). */
-  hold(midi: number, when: number, velocity: number, slot?: number): number {
+  /** Start a note that sounds until `release`. Returns its id (0: nothing was played). */
+  private hold(midi: number, when: number, velocity: number, slot?: number, step?: number): number {
     if (!Number.isFinite(midi) || !Number.isFinite(when)) return 0;
     const id = this.nextId++;
-    this.send({ type: "on", t: when, midi, vel: Math.max(0, Math.min(1, velocity)), id, slot: slot ?? -1 });
+    this.send({ type: "on", t: when, midi, vel: Math.max(0, Math.min(1, velocity)), id, slot: slot ?? -1, ...(step ? { step } : {}) });
     return id;
   }
 
@@ -100,8 +101,8 @@ export class SynthInstrument implements Instrument {
    * an arpeggio, strummed, pulsed, as a drone or as one gliding line. Returns what was played.
    */
   playWritten(notes: PlayNote[], ctx: PlayContext): SynthNote[] {
-    const out = playNotes(notes, this.p.play, ctx);
-    for (const n of out) this.play(n.midi, n.start, n.velocity, n.length, n.slot);
+    const out = withSteps(playNotes(notes, this.p.play, ctx), this.p.play, ctx.bpm);
+    for (const n of out) this.play(n.midi, n.start, n.velocity, n.length, n.slot, n.step);
     return out;
   }
 
@@ -217,7 +218,7 @@ export async function renderSynth(params: SynthParams, notes: SynthNote[], o: Re
   const ctx = new OfflineAudioContext({ numberOfChannels: 2, length: Math.max(1, Math.ceil(seconds * sr)), sampleRate: sr });
   const inst = new SynthInstrument(ctx, p, o);
   inst.output.connect(ctx.destination);
-  for (const n of notes) inst.play(n.midi, n.start, n.velocity, n.length, n.slot);
+  for (const n of notes) inst.play(n.midi, n.start, n.velocity, n.length, n.slot, n.step);
   await inst.load();
   return ctx.startRendering();
 }

@@ -374,19 +374,6 @@ export class LayerHand {
     }
     s.until = Math.min(s.until, t);
   }
-  /**
-   * A sound known in advance turned out shorter: it stops at `t` (a key held down by hand came
-   * up). One that has not begun yet keeps its start and is only made shorter.
-   */
-  end(id: number, t: number) {
-    const w = this.waiting.find((c) => c.id === id);
-    if (w) {
-      w.len = Math.max(0.01, Math.min(w.len ?? Infinity, t - w.t));
-      return;
-    }
-    const s = this.strokes.get(id);
-    if (s) s.until = Math.min(s.until, Math.max(s.cue.t + 0.01, t));
-  }
   /** A hit (a drum, or the attack of something struck). */
   hit(c: Cue) {
     if (this.now < 0 || c.t > this.now + 1e-4) {

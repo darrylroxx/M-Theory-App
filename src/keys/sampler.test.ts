@@ -444,25 +444,6 @@ describe("playing", () => {
     expect(d.audibleAt(7.5)).toBe(true);
   });
 
-  it("lets a key held by hand go when it is lifted, by its slot (and the pedal still holds it)", async () => {
-    const { ctx, sampler } = await ready();
-    sampler.play(60, 1, 0.7, Infinity, 10060);
-    sampler.play(64, 1, 0.7, Infinity, 10064);
-    sampler.lift(10060, 2);
-    const [a, b] = notesOf(ctx);
-    expect(a.stopsAt).toBeCloseTo(2 + fadeSeconds(damperTau(60)), 6);
-    expect(b.audibleAt(4)).toBe(true);
-    // a slot with nothing on it, or lifted twice: nothing happens
-    sampler.lift(999, 2.5);
-    sampler.lift(10060, 3);
-    expect(a.stopsAt).toBeCloseTo(2 + fadeSeconds(damperTau(60)), 6);
-    sampler.pedal(true, 4);
-    sampler.lift(10064, 5);
-    expect(b.audibleAt(5.5)).toBe(true);
-    sampler.pedal(false, 6);
-    expect(b.stopsAt).toBeCloseTo(6 + fadeSeconds(damperTau(64)), 6);
-  });
-
   it("keeps to its polyphony, letting released then oldest notes go, without clicks", async () => {
     const s = setup();
     const ctx = new FakeContext(48000);

@@ -4,11 +4,11 @@ import { saveFile } from "../../audio/midi";
 import { lastOnly } from "../latest";
 import { BANDS, F_LO, PER_OCTAVE } from "../../audio/describe";
 import { fader, levelOf } from "../../audio/mix";
-import { due, dropPulses, dueReleases, listen as listenPulses } from "../../audio/pulse";
+import { due, dropPulses, listen as listenPulses } from "../../audio/pulse";
 import { STEMS, readStem } from "../../audio/stems";
 import { songWhen, fileWhen, heardTime } from "../../canvas/clock";
 import { Cover, STEM_IDS, type StemId } from "../../canvas/cover";
-import { HeldCues, cueOfPulse, trackOfPulse } from "../../canvas/cues";
+import { cueOfPulse, trackOfPulse } from "../../canvas/cues";
 import { LAYER_INFO, LAYER_ORDER, type LayerKind } from "../../canvas/layers";
 import { MARGIN, REGIONS, RULER_HZ, hzLabel, pageOf, yOfHz, type Spot } from "../../canvas/layout";
 import { FADES, Painting, STYLES, type EarFrames, type LayerCue } from "../../canvas/painting";
@@ -32,8 +32,6 @@ import { getScale, scalePcs } from "../../theory/scales";
 import { useApp } from "../state";
 import { OpenIcon } from "../icons";
 import { Seg } from "./common";
-import { TrackKeys } from "./SynthKeys";
-import type { Tone } from "../../audio/tone";
 
 /** No more real pixels than this, however sharp the screen: paint has to keep up with the music. */
 const MAX_PIXELS = 1_500_000;
@@ -111,7 +109,7 @@ export function playAlone(appPlaying: boolean, stopApp: () => void, play: () => 
  * neighbours, mixes as pigment does and dries. No two paintings come out the same, and music
  * of one kind paints pictures of one kind.
  */
-export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay, hand }: {
+export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay }: {
   /** the page is on screen */
   active: boolean;
   playing: boolean;
@@ -123,8 +121,6 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   keyOf: Key;
   onPlay: () => void;
   canPlay: boolean;
-  /** the instruments of the chords and melody tracks the pages edit: one on keys can be played here, and is painted */
-  hand?: { chords: Tone; melody: Tone };
 }) {
   const { state, set, toast } = useApp();
   const prefs = state.canvas ?? { palette: DEFAULT_PALETTE };
@@ -373,8 +369,6 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     /** every note and hit the app plays, collected while the page is on screen */
     const stopPulses = listenPulses();
     let cueId = 1;
-    /** notes of keys held down by hand, until they come up */
-    const held = new HeldCues();
     /** the app's own song: when it started (audio clock), how many times it has jumped, and where it was last */
     const clock = { start: 0, jump: 0, key: "", beat: -1, on: false };
     /** a song from a file: how far it has been painted, its jumps, and the vibe last handed on */
@@ -453,9 +447,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
             // it started, or came round again
             if (!clock.on) {
               clock.start = at - spot.beat * spot.spb;
-              // notes played by hand before the song started (keys jammed while it was stopped) are not painted onto its start
+              // notes told of before the song started (a chord tapped to be heard while it was stopped) are not painted onto its start
               due(clock.start - 0.1);
-              dueReleases(clock.start - 0.1);
             }
             clock.jump++;
             clock.on = true;
@@ -477,8 +470,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           // (notes told of before their track was muted are not painted either)
           const cues: LayerCue[] = due(nowHeard + 0.3)
             .filter((pl) => heardNow(trackOfPulse(pl)))
-            .map((pl) => held.note(pl, cueOfPulse(pl, cueId++, layer, levelOf, hand)));
-          cues.push(...held.ends(dueReleases(nowHeard + 0.3)));
+            .map((pl) => cueOfPulse(pl, cueId++, layer, levelOf, hand));
           const ears: EarFrames[] = plans.map((pl) => ({ key: pl.key, layer: pl.layer, frames: heard.taps.get(pl.key) ?? none, exact: pl.light }));
           p.hear({ now: nowHeard, when: songWhen(spot, at, width, clock.start, clock.jump), mix: heard.mix, ears, cues });
           for (const s of STEMS) readStem(s, levels.current[s]);
@@ -718,7 +710,6 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
         </div>
       </div>
       <div className="cv-bar">
-        {hand && !song && <TrackKeys chords={hand.chords} melody={hand.melody} />}
         <div className="cv-layers" role="group" aria-label="Layers">
           {LAYER_ORDER.map((l) => {
             const off = hidden.has(l);

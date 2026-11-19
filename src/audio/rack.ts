@@ -134,6 +134,10 @@ export const SQUEEZE_DB = [0, -0.9, -4.3, -6, -5];
 export const DRIVE_TRIM: Record<DriveType, number[]> = { tape: [0, -0.1, -0.8, -2.4, -4.7], tube: [0, 0.2, 0.1, -0.5, -3.6], console: [0, -0.1, -0.4, -0.9, -2.7], crunch: [0, -0.1, -1.3, -4.2, -6.9], fuzz: [0, -1.4, -5.8, -7.9, -8.8], clip: [0, 0.3, -1.5, -4.3, -6.2] };
 /** each kind of reverb returns a different amount of what it is sent, once its lows are cut */
 const VERB_SEND: Record<HarpVerb, number> = { hall: 1, room: 1.13, plate: 1.35, spring: 0.87, dark: 0.75 };
+/** How much of the sound goes to the reverb (the room comes back at the level it is sent), for the Reverb knob and the kind of room. */
+export const verbSendOf = (s: Pick<HarpSound, "space" | "verb">) => Math.pow(s.space, 1.3) * 1.5 * VERB_SEND[s.verb];
+/** The reverb's gap before it starts (seconds). */
+export const VERB_PRE = 0.018;
 /** Read a value off a curve given as points. */
 const table = (xs: number[], ys: number[], x: number) => {
   let i = 0;
@@ -260,7 +264,7 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const halo = gain();
   const verbSend = gain(0);
   const pre = c.createDelay(0.2);
-  pre.delayTime.value = 0.018;
+  pre.delayTime.value = VERB_PRE;
   const verbHp = filter("highpass", 120);
   const verb = c.createConvolver();
   verb.normalize = false; // the room is already scaled to return exactly the energy it is sent
@@ -341,7 +345,7 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
         to(right.delayTime, sec, 0.05);
       }
       if (s.space !== was.space || s.verb !== was.verb) {
-        to(verbSend.gain, Math.pow(s.space, 1.3) * 1.5 * VERB_SEND[s.verb]);
+        to(verbSend.gain, verbSendOf(s));
         to(mix.gain, db(-7 * Math.pow(s.space, 1.6)));
       }
       if (s.size !== was.size || s.verb !== was.verb) {
