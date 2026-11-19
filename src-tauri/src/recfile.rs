@@ -172,28 +172,35 @@ pub fn is_recording(p: &Path) -> bool {
 
 /// Just one part of a recording, as a small WAV of its own: `frames` frames from `start`
 /// (cut short at the end of the file). A take is read this way, so an hour-long recording is
-/// never loaded, sent to the page and decoded whole to play one pass of it.
-pub fn read_range(path: &Path, start: u64, frames: u64) -> Result<Vec<u8>, String> {
+/// never loaded, sent to the page and decoded whole to play one pass of it. A part that begins
+/// before the file (a negative `start`) begins with silence for the frames before it, so what
+/// follows keeps its place in time.
+pub fn read_range(path: &Path, start: i64, frames: u64) -> Result<Vec<u8>, String> {
     let r = hound::WavReader::open(path).map_err(|e| e.to_string())?;
     range_of(r, start, frames)
 }
 
-pub fn range_of<R: Read + Seek>(mut r: hound::WavReader<R>, start: u64, frames: u64) -> Result<Vec<u8>, String> {
+pub fn range_of<R: Read + Seek>(mut r: hound::WavReader<R>, start: i64, frames: u64) -> Result<Vec<u8>, String> {
     let spec = r.spec();
     let total = r.duration() as u64;
-    let start = start.min(total);
-    let frames = frames.min(total - start);
-    if frames == 0 {
+    // the frames before the file, as silence; then the file from its first frame
+    let before = start.min(0).unsigned_abs().min(frames);
+    let from = (start.max(0) as u64).min(total);
+    let inside = (frames - before).min(total - from);
+    if inside == 0 {
         return Err("That part of the recording is not there".into());
     }
-    r.seek(start as u32).map_err(|e| e.to_string())?;
+    r.seek(from as u32).map_err(|e| e.to_string())?;
     let ch = spec.channels.max(1) as u64;
     let out_spec = hound::WavSpec { channels: spec.channels, sample_rate: spec.sample_rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-    let mut out = Cursor::new(Vec::with_capacity(64 + (frames * ch * 4) as usize));
+    let mut out = Cursor::new(Vec::with_capacity(64 + ((before + inside) * ch * 4) as usize));
     {
         let mut w = hound::WavWriter::new(&mut out, out_spec).map_err(|e| e.to_string())?;
+        for _ in 0..before * ch {
+            w.write_sample(0.0f32).map_err(|e| e.to_string())?;
+        }
         let mut n = 0u64;
-        for s in r.samples::<f32>().take((frames * ch) as usize) {
+        for s in r.samples::<f32>().take((inside * ch) as usize) {
             match s {
                 Ok(v) => w.write_sample(v).map_err(|e| e.to_string())?,
                 Err(_) => break,
@@ -326,6 +333,24 @@ mod tests {
         assert_eq!(tail.len(), 2_000);
         let r = hound::WavReader::new(Cursor::new(bytes)).unwrap();
         assert!(range_of(r, 60_000, 10).is_err());
+    }
+
+    #[test]
+    fn a_take_that_begins_before_the_file_begins_with_silence_and_keeps_its_time() {
+        // stereo again, counting up: 1 000 frames before the file, then its first 2 000
+        let data: Vec<f32> = (0..20_000).map(|i| i as f32 + 1.0).collect();
+        let bytes = wav(hound::WavSpec { channels: 2, ..mono() }, &data);
+        let r = hound::WavReader::new(Cursor::new(bytes.clone())).unwrap();
+        let (s, got) = read_all(range_of(r, -1_000, 3_000).unwrap());
+        assert_eq!(s.channels, 2);
+        assert_eq!(got.len(), 6_000, "as long as asked for");
+        assert!(got[..2_000].iter().all(|v| *v == 0.0), "silence where the file had not begun");
+        assert_eq!(got[2_000], 1.0, "then the file from its very first frame (left)");
+        assert_eq!(got[2_001], 2.0, "and its right");
+        assert_eq!(*got.last().unwrap(), 4_000.0);
+        // a part wholly before the file is not there
+        let r = hound::WavReader::new(Cursor::new(bytes)).unwrap();
+        assert!(range_of(r, -5_000, 5_000).is_err());
     }
 
     #[test]

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { ProgChord, Progression, SavedProgression } from "../ui/state";
-import { autoName, describeIdea, exportIdeas, fingerprint, importIdeas, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "./library";
-import { addNewSection, ensureSong, repeatSection, sections, selectBlock } from "./structure";
+import { autoName, describeIdea, exportIdeas, fingerprint, importIdeas, isBlank, mergeIdeas, reviveIdea, sameMusic, snapshot, toPush } from "./library";
+import { addNewSection, ensureSong, moveBlockTo, renameSection, repeatSection, sections, selectBlock } from "./structure";
+import { addTrack, normalize } from "./tracks";
 
 const chord = (root: string): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats: 4 });
 const prog = (roots: string[] = []): Progression => ({ chords: roots.map(chord), bpm: 90, pattern: "ring", loop: true });
@@ -24,6 +25,20 @@ describe("what counts as a change", () => {
     expect(fp(selectBlock(song, first))).toBe(fp(song));
     // edits in the tray count even before they are written back into the song
     expect(fp({ ...song, chords: [chord("A")] })).not.toBe(fp(song));
+  });
+  it("an undo is offered only while the music is as the change left it", () => {
+    let song = addNewSection(ensureSong(prog(["C", "G"])));
+    song = { ...song, chords: [chord("F")] };
+    const [a, b] = sections(song).map((s) => s.blockId);
+    // going to another section and back, or a page bringing an added track forward, changes nothing
+    expect(sameMusic(song, selectBlock(selectBlock(song, a), b))).toBe(true);
+    const withTrack = addTrack(song, "chords", "c2").p;
+    expect(sameMusic(normalize(withTrack), withTrack)).toBe(true);
+    // a move, a name, a tempo, a chord do
+    expect(sameMusic(song, moveBlockTo(song, b, 0))).toBe(false);
+    expect(sameMusic(song, renameSection(song, a, "Intro"))).toBe(false);
+    expect(sameMusic(song, { ...song, bpm: 91 })).toBe(false);
+    expect(sameMusic(song, { ...song, chords: [chord("A")] })).toBe(false);
   });
   it("knows a blank page", () => {
     expect(isBlank(prog())).toBe(true);

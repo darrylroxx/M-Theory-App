@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, cutTakes, groupsOf, passAt, passToMark, reviveTakes, shownTakes, takeBars, toggled, type Recorded, type Take } from "./takes";
+import { activeTake, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, shownTakes, soundTag, takeBars, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -26,6 +26,15 @@ describe("takes", () => {
   it("stopping during the count-in gives no takes; a nudge moves them", () => {
     expect(cutTakes(rec(50000), { group: "g", at, id })).toEqual([]);
     expect(cutTakes(rec(300 + 96000 + 192000), { group: "g", at, nudge: 48, id })[0].start).toBe(96348);
+  });
+
+  it("a nudge earlier than the round trip, with no count-in: the first take starts before the file, and no pass moves", () => {
+    // 300 frames of round trip, nudged 500 earlier: the first pass begins 200 frames before the file
+    const r = { ...rec(192000 * 3 + 1000), count_in: 0 };
+    const takes = cutTakes(r, { group: "g", at, nudge: -500, id });
+    expect(takes[0]).toMatchObject({ n: 1, start: -200, frames: 192000 });
+    // every later pass exactly where it was sung (not pulled 200 frames late with the first)
+    expect(takes.slice(1, 3).map((t) => t.start)).toEqual([-200 + 192000, -200 + 192000 * 2]);
   });
 
   it("the take that plays: the one chosen, or the last full one", () => {
@@ -121,6 +130,21 @@ describe("a flow session: pass after pass until stopped", () => {
     // a short recording shows whole
     const few = cutTakes(long(3), { group: "f", at, id });
     expect(shownTakes(few, "f")).toEqual({ shown: few, more: 0 });
+  });
+
+  it("each take keeps a short name of the vocal sound it was made with, not the whole sound", () => {
+    const fx = { on: true, verb: 0.25, echo_type: "tape", level: 0 };
+    const tag = soundTag(fx);
+    expect(tag.length).toBeLessThan(16);
+    expect(soundTag({ ...fx })).toBe(tag);
+    expect(soundTag({ ...fx, verb: 0.26 })).not.toBe(tag);
+    const t = { sound: tag } as Take;
+    expect(sameSound(t, fx)).toBe(true);
+    expect(sameSound(t, { ...fx, level: 1 })).toBe(false);
+    // takes saved before held the whole sound: still known
+    expect(sameSound({ sound: JSON.stringify(fx) } as Take, fx)).toBe(true);
+    // a take made with no vocal sound (it plays dry) never matches
+    expect(sameSound({ sound: "" } as Take, fx)).toBe(false);
   });
 
   it("a take is as many bars long as its sound at the tempo", () => {

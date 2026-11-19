@@ -112,6 +112,90 @@ where numbers or methods were taken they are used under their licences, with tha
   the canvas still differs from what is wanted, and stop where it is already painted (the
   coverage budget, `coverage.ts`).
 
+The synth (`src/synth/`) is written for this project. It is modelled on the Yamaha reface CS,
+and these informed it; where numbers or methods were taken they are used under their licences,
+with thanks to their authors:
+
+- The reface CS's controls, their ranges and what Texture and Mod do for each oscillator, as
+  transcribed from Yamaha's data list in **reface-cs-live** by harpomaxx (MIT), **cs-control** by
+  cfenell (GPL-3.0) and the **pencilresearch/midi** tables (facts only) (`params.ts`).
+- Band-limited oscillators after the PolyBLEP idea of Välimäki and Huovilainen ("Antialiasing
+  oscillators in subtractive synthesis", 2007) and **PolyBLEP** by Tale, ported by Martin Finke
+  (zlib); here with a four-point kernel from the cubic B-spline (`kernel.ts`).
+- The supersaw: Adam Szabo, "How to Emulate the Super Saw" (KTH, 2010): the detune curve, the
+  seven saws' offsets and the mix curves, as published in a SuperCollider transcription (numbers
+  only) and in the supersaw of the **Deluge firmware** by Synthstrom Audible (GPL-3.0-or-later).
+- **VCV Rack**'s Fundamental VCO by Andrew Belt (GPL-3.0-or-later): the 9th-order polynomial sine.
+- Vadim Zavalishin, *The Art of VA Filter Design*: the zero-delay-feedback (topology-preserving)
+  ladder; **Vital** by Matt Tytel (GPL-3.0): where the ladder's input saturation sits, and running
+  the filter at twice the sample rate; **HIIR** by Laurent de Soras (WTFPL): the half-band
+  filters (the same coefficients as the vocal chain's `os.rs`).
+- **OB-Xf** by the Surge Synth Team, the successor of OB-Xd (GPL-3.0-or-later): the
+  analogue envelope that aims past the top, glide as an RC circuit on pitch, last-note priority
+  and stealing the oldest voice; **Surge XT** and its **sst-basic-blocks** (GPL-3.0-or-later):
+  the slow random drift of pitch.
+- **Dexed** and its engine **MSFA** (GPL-3.0 / Apache-2.0): FM as phase modulation (method only).
+- Parker, Zavalishin and Le Bivic, "Reducing the aliasing of nonlinear waveshaping using
+  continuous-time convolution" (DAFx 2016), as used in **chowdsp_utils** by Jatin Chowdhury
+  (GPL-3.0): the first-order anti-aliased distortion.
+- **Odin 2** by TheWaveWarden (GPL-3.0) and the **Faust** libraries (STK and LGPL with
+  exception): the ranges of the chorus, flanger, phaser and delay (numbers as reference), and
+  Odin 2's crawl arpeggio.
+- Jot and Chaigne, and Stautner and Puckette: the feedback-delay-network reverb.
+- **Drone Machine π** by Kalitragus (GPL-3.0): the idea of a drone as a few slightly detuned layers
+  that slowly wander (`play.ts`).
+- The preset recipes are this project's own, informed by decoded factory sounds of **Surge XT**
+  (GPL-3.0) and **Helm** by Matt Tytel (presets CC BY 4.0); no preset was copied value for value.
+- The idea of one knob moving many (the macros) after the "SuperKnob" of the refaceCS web editor
+  by sterudo (idea only; no code) and the macro sources of Surge XT and Vital.
+- ITU-R BS.1770: the loudness measure the presets were levelled with (`measure.ts`).
+
+The piano and the electric piano (`src/keys/`, `public/keys/`, `scripts/piano-pack.py`,
+`scripts/epiano-pack.py`):
+
+- **Salamander Grand Piano V3** by Alexander Holm, mapped to SFZ by kinwie
+  (<https://github.com/sfzinstruments/SalamanderGrandPiano>), licensed under **CC BY 3.0**
+  (<https://creativecommons.org/licenses/by/3.0/>). The piano's recordings in
+  `public/keys/piano/` are derived from it: 30 keys at 5 of its 16 velocity layers and its
+  string-resonance release samples, trimmed, faded, level-matched and encoded as MP3. This
+  instrument is derived from the SFZ instrument in that repository. Its mapping also gave the
+  numbers for the damper sounds (their level against the note, how much quieter they get the
+  longer a note was held) and which keys have no dampers. The full licence and the list of
+  changes are in `public/keys/piano/LICENSE.md`.
+- **mda ePiano** by Paul Kellett (MIT, or GPL-2.0-or-later): the electric piano's sample table
+  (`public/keys/epiano/tines.bin`, unchanged) and its whole design, ported to Web Audio nodes:
+  key groups and their loops, the loop crossfade, the velocity curve, decay and release, the
+  stereo spread, the treble control and the tremolo / autopan (`tines.ts`, `epiano.ts`).
+  Copyright (c) 2008 Paul Kellett; the MIT notice is in `public/keys/epiano/LICENSE.md`.
+- **smplr** by danigb (MIT): the shape of the sampler (one source and gain per note, notes cut
+  with a short fade when voices run out, releases faded from wherever the note has got to, only
+  the recordings a song needs loaded before a bounce). No code was copied.
+- Loudness is measured with the K-weighting and gating of **ITU-R BS.1770**.
+
+The harmony engine and piano voicings (`src/theory/harmonize.ts`, `src/keys/`) and the keyboard
+diagram (`src/ui/components/KeyboardDiagram.tsx`) are written for this project. Rules, numbers
+and small routines were taken from these, used under their licences, with thanks:
+
+- **Contrapunk** by Contrapunk Audio (MIT, Copyright (c) 2026 Contrapunk Audio): the ladder an
+  outside note falls down when it is harmonised (the parallel modes searched in order of
+  distance, then consonant intervals in its order), its voice registers, and the scoring ideas
+  of its contrary-motion and counterpoint modes (`harmonize.ts`, `voicing.ts`).
+- **music21** (cuthbertLab, BSD-3-Clause): the parallel fifths and octaves test (compound and
+  contrary forms included) and the motion types (`harmonize.ts`, `voicing.ts`).
+- **jazzband** (felixroos, ISC): voice-leading distance as the sum of semitones moved, the
+  required and optional notes of a chord (the 3rd and 7th needed, the root and 5th not) and the
+  available-tension rule behind the avoid notes (`harmonize.ts`, `voicing.ts`).
+- **tonal.js** (tonaljs, MIT): the voicing shapes and the default comping range (`voicing.ts`).
+- **harmony-ts** (Apache-2.0): the melodic intervals a line must not take, the augmented second
+  among them (`harmonize.ts`).
+- **Impro-Visor** (GPL-2.0-or-later): the left- and right-hand ranges, the hand span and the
+  weight of a held note against a moving one (`voicing.ts`).
+- **react-piano** (kevinsqi, MIT, Copyright (c) 2018): the keyboard's geometry: where each
+  black key sits, its width and its height (`keyfaces.ts`).
+- **Open Music Theory** (v1, CC BY-SA 4.0): the species-counterpoint rules, applied chords and
+  modal mixture, re-implemented as tests and costs. None of its text is used.
+- The low-interval limits follow common arranging tables, read as strictly as they disagree.
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 

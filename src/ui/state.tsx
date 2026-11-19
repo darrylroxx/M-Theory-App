@@ -20,6 +20,7 @@ import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
@@ -155,6 +156,8 @@ export interface AppState {
   clip?: Clips;
   /** The recording setup on this computer: which interface, the switches on it, how you listen */
   studio?: Studio;
+  /** How many bars the editing pages show at once, and whether they follow the music (kept apart from the song, so it never makes an idea look changed) */
+  view?: ViewPrefs;
 }
 
 /** The recording setup on this computer. */
@@ -268,6 +271,7 @@ function load(): AppState {
       tombs: parsed.tombs ?? {},
       clip: reviveClips(parsed.clip),
       studio: parsed.studio && typeof parsed.studio === "object" ? { host: typeof parsed.studio.host === "string" ? parsed.studio.host : undefined, device: typeof parsed.studio.device === "string" ? parsed.studio.device : undefined, checks: parsed.studio.checks ?? {}, monitor: parsed.studio.monitor === "effects" ? "effects" : "hardware", countIn: parsed.studio.countIn === 0 || parsed.studio.countIn === 2 ? parsed.studio.countIn : 1, clickOn: !!parsed.studio.clickOn, backing: typeof parsed.studio.backing === "number" ? parsed.studio.backing : 1, click: typeof parsed.studio.click === "number" ? parsed.studio.click : 0.5, nudge: typeof parsed.studio.nudge === "number" ? parsed.studio.nudge : 0, buffer: typeof parsed.studio.buffer === "number" && parsed.studio.buffer >= 16 && parsed.studio.buffer <= 4096 ? parsed.studio.buffer : undefined } : undefined,
+      view: reviveView(parsed.view),
       progression: reviveProgression(parsed.progression),
     };
   } catch {
@@ -317,6 +321,8 @@ export interface ToastAction {
   run: () => void;
   /** milliseconds (20 seconds if not given) */
   ms?: number;
+  /** offered only while this holds (an undo, while nothing else has changed); the message goes when it stops */
+  when?: (s: AppState) => boolean;
 }
 
 const AppCtx = createContext<Ctx | null>(null);
@@ -525,10 +531,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [state.saved, state.tombs, cloud]);
 
   const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow };
+  const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>
       {children}
-      {toastMsg && (
+      {toastMsg && toastLive && (
         <div className={`toast${toastMsg.action ? " act" : ""}`} role="status">
           <span>{toastMsg.msg}</span>
           {toastMsg.action && <button aria-label={toastMsg.action.aria} title={toastMsg.action.aria} onClick={() => { toastMsg.action!.run(); setToast(null); }}>{toastMsg.action.label}</button>}
