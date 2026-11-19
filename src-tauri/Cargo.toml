@@ -4,7 +4,8 @@ version = "0.1.0"
 description = "M-Theory: write songs, record vocals"
 license = "GPL-3.0-or-later"
 edition = "2021"
-rust-version = "1.90"
+# ort (stems) needs 1.92; the builds use the latest stable Rust
+rust-version = "1.92"
 
 [lib]
 name = "m_theory_lib"
@@ -23,12 +24,32 @@ cpal = "0.18"
 rtrb = "0.3"
 hound = "3.5"
 
+# Stems: splitting a song into vocals, drums, bass and the rest on the user's own computer.
+# - ONNX Runtime runs the separating network. It is never linked into the app: `load-dynamic`
+#   opens the runtime's library only when a song is split, from a copy the user downloads once
+#   (see stems.rs). Nothing is downloaded while the app is built, and the app starts and runs
+#   the same without it. `api-24` is the newest runtime interface the code asks for (ONNX
+#   Runtime 1.24, the version that is downloaded).
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic", "api-24"] }
+# reading the song files the app accepts (WAV, MP3, FLAC, OGG, M4A), in pure Rust
+symphonia = { version = "0.5.5", default-features = false, features = ["wav", "pcm", "adpcm", "mp3", "flac", "ogg", "vorbis", "isomp4", "aac", "alac"] }
+# checking downloads, and naming the stems kept for each song
+sha2 = "0.10"
+# the downloads: the HTTP client, TLS and unzip the updater already builds in, with its
+# features (and its deflate for unzipping), so next to nothing new is compiled for them
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "system-proxy", "stream"] }
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+zip = { version = "9", default-features = false, features = ["deflate-flate2"] }
+
 # On Windows the app talks to audio interfaces through their ASIO drivers (Steinberg ASIO SDK, GPLv3 option).
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = { version = "0.18", features = ["asio"] }
+# stems on the graphics card through DirectML (still loaded at run time, see above)
+ort = { version = "=2.0.0-rc.15", default-features = false, features = ["load-dynamic", "api-24", "directml"] }
 # the audio thread joins the "Pro Audio" scheduler class; no power throttling or sleep while recording;
-# how much room the disk has left for a long recording
-windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_System_Power", "Win32_Foundation", "Win32_Storage_FileSystem"] }
+# how much room the disk has left for a long recording; for stems, whether the Visual C++ runtime
+# ONNX Runtime needs is there and new enough (a file's version, and which copy is already loaded)
+windows-sys = { version = "0.61", features = ["Win32_System_Threading", "Win32_System_Power", "Win32_Foundation", "Win32_Storage_FileSystem", "Win32_System_LibraryLoader"] }
 
 # how much room the disk has left (elsewhere than Windows: for development and the tests)
 [target.'cfg(unix)'.dependencies]

@@ -170,6 +170,57 @@ and small routines were taken from these, used under their licences, with thanks
   modal mixture, re-implemented as tests and costs. None of its text is used.
 - The low-interval limits follow common arranging tables, read as strictly as they disagree.
 
+Neural stems (`src-tauri/src/stems.rs` and `src-tauri/src/stems/`, `src/listen/neuralstems.ts`)
+are written for this project. The network and the runtime that runs it are **not part of the
+app or its installer, and M-Theory does not redistribute them**: the desktop app downloads them
+only when its user asks, from their publishers' own addresses (written in the app, over HTTPS),
+checks each against its SHA-256 and keeps them in its local data folder. With thanks to their
+authors:
+
+- **Demucs** (Hybrid Transformer Demucs, v4) by Meta Platforms, Inc. (code under the MIT
+  licence, "Copyright (c) Meta Platforms, Inc."): the network that splits a song into stems, and
+  the way a song is cut into 7.8-second stretches, a quarter overlapping and cross-faded. Its
+  trained weights carry no licence text of their own. They were trained on the MUSDB18-HQ set,
+  whose tracks are licensed for non-commercial research (some under CC BY-NC-SA), and on further
+  songs of its authors'; whether such terms reach a network trained on them is not settled.
+  That is one more reason the weights are fetched by the user's own app for the user's own use,
+  never shipped with M-Theory.
+- **demucs-onnx** by StemSplit (MIT): the ONNX export of that network the app downloads, from
+  its Hugging Face repositories `StemSplitio/htdemucs-onnx` (four stems,
+  `htdemucs_fp16weights.onnx`) and `StemSplitio/htdemucs-6s-onnx` (six stems,
+  `htdemucs_6s_fp16weights.onnx`), whose exports its README describes as MIT-licensed. Its
+  interface is followed here: input `mix` (one 7.8-second stereo stretch at 44.1 kHz), output
+  `stems` in Demucs's order (drums, bass, other, vocals, then guitar and piano). The file is
+  checked against the SHA-256 Hugging Face states for it over its own secure connection (no
+  other server's word is taken), and that value, the address and the repository's revision are
+  kept beside it (`<model>.onnx.json`).
+- **ONNX Runtime** by Microsoft (MIT licence, "Copyright (c) Microsoft Corporation"): runs the
+  network. Downloaded on request from Microsoft's own package on the Python Package Index
+  (`onnxruntime-directml` 1.24.4 on Windows, whose SHA-256 is pinned in the app); its licence and
+  third-party notices are unpacked beside it (`LICENSE.txt`, `ThirdPartyNotices.txt`).
+- **DirectML** by Microsoft (`DirectML.dll`, in the same package): runs the network on the
+  graphics card. It is not open source: it is Microsoft's library under Microsoft's own licence
+  terms for DirectML (published with its `Microsoft.AI.DirectML` package). M-Theory does not
+  distribute it; the app fetches it, unchanged, from Microsoft's own package when its user asks.
+  Anyone who wants to ship it with a program must follow those terms.
+- Microsoft's **Visual C++ Redistributable** (x64), which ONNX Runtime needs on Windows, is not
+  downloaded or shipped either: the app only checks that the computer has a recent enough one
+  and says so if it does not.
+- **ort** by pyke.io (MIT OR Apache-2.0): the Rust binding through which the app opens ONNX
+  Runtime. It is built into the app; ONNX Runtime itself is never linked in, only opened at run time.
+- **Symphonia** (MPL-2.0): reading MP3, FLAC, OGG Vorbis, M4A (AAC, ALAC) and WAV files. It is
+  used unmodified, as a library; its source is at https://github.com/pdeljanov/Symphonia.
+- **zip** (MIT) and **sha2** (MIT OR Apache-2.0): unpacking the runtime's package and checking
+  downloads.
+- **stem-splitter-core** by Gentrit Jashari (MIT OR Apache-2.0) was studied for how a Rust
+  program can fetch, check and run this model; none of its code is used.
+- Julius O. Smith III's description of band-limited interpolation ("Digital Audio Resampling"),
+  with a Kaiser window: how a song's sample rate is changed to the network's and back. No code
+  was taken.
+
+The stems are made from the user's own file, on the user's own computer, for the user's own
+study and painting. Rights in the original recording are not changed by splitting it.
+
 Product and company names above are those of their owners and are used only to say where a
 design comes from. M-Theory is not affiliated with or endorsed by any of them.
 

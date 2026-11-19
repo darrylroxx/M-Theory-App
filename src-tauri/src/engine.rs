@@ -532,6 +532,12 @@ static REC: Mutex<Option<Recording>> = Mutex::new(None);
 /// recording handed back is the one it started before it keeps it.
 static LAST: Mutex<Option<Recorded>> = Mutex::new(None);
 
+/// Is a take being recorded right now (from the count-in until Stop)? Heavy work elsewhere in
+/// the app (splitting a song into stems) waits while it is, so nothing can disturb a take.
+pub fn recording() -> bool {
+    REC.lock().map(|g| g.is_some()).unwrap_or(false)
+}
+
 fn stash(r: Recorded) {
     if let Ok(mut g) = LAST.lock() {
         *g = Some(r);
