@@ -75,6 +75,10 @@ export class FileLayers {
   get stemsSpan() {
     return this.store.betterSpan;
   }
+  /** How far into the song the model's stems have been heard (seconds): whoever reads them reads only a little beyond. */
+  stemsHeard() {
+    return this.store.betterSpan?.to ?? 0;
+  }
 
   /**
    * A trained model's stems take over from `from` seconds of the song (0: all of it): `names` are

@@ -24,6 +24,12 @@ export interface StemSink {
   pushRaw(at: number, raw: Partial<Record<StemName, ArrayBuffer>>, channels?: number): void;
   endStems(): void;
   stopStems(): void;
+  /**
+   * How far (seconds) the hearing has got through the stems handed to it. Stems are not read
+   * more than `AHEAD` seconds beyond it: whatever is handed over is held until it is heard, and a
+   * split kept from before could otherwise hand over a whole long song at once.
+   */
+  stemsHeard?(): number;
 }
 
 /** What the link asks of the native side (the real one by default; a stand-in in tests). */
@@ -74,6 +80,37 @@ export interface LinkView {
 
 /** Frames read from a stem at a time: about three seconds, one megabyte a stem (never the whole song at once). */
 export const CHUNK = 1 << 17;
+/**
+ * Seconds of stems read ahead of what the hearing has got through. The hearing takes them in a
+ * few times faster than they play, so it is never kept waiting; and what it holds stays small
+ * (half a minute of six mono stems is about 30 MB, where a whole ten-minute song would be more
+ * than half a gigabyte).
+ */
+export const AHEAD = 30;
+/** The longest a new split or download waits for one this page cancelled to end on the native side (ms). */
+const WIND_DOWN = 20_000;
+
+/**
+ * Jobs this page cancelled that may still be ending on the native side, by the side they run
+ * on. A split cancelled there stops only at its next stretch: until then the song is still
+ * "being split", and a download still "under way", so a new one asked for at once (the page
+ * left and come back to, the same song opened again) would be refused.
+ */
+const ending = new WeakMap<NeuralApi, Promise<void>>();
+function windDown(api: NeuralApi, done: Promise<unknown>) {
+  const one = new Promise<void>((res) => {
+    const t = setTimeout(res, WIND_DOWN);
+    done.then(
+      () => (clearTimeout(t), res()),
+      () => (clearTimeout(t), res()),
+    );
+  });
+  const before = ending.get(api);
+  const all = before ? Promise.all([before, one]).then(() => undefined) : one;
+  ending.set(api, all);
+  // (once everything has ended, nothing is waited for)
+  void all.then(() => ending.get(api) === all && ending.delete(api));
+}
 
 /**
  * Which model to split with: the first one listed (the default) if it is ready, else another that
@@ -119,6 +156,8 @@ export class StemLink {
   view: LinkView = { phase: "checking", reason: null, bytes: 0, fetched: 0, ready: 0, read: 0, seconds: null, stems: [], cached: false };
   private readonly api: NeuralApi;
   private readonly chunk: number;
+  private readonly ahead: number;
+  private readonly poll: number;
   private readonly onChange: (v: LinkView) => void;
   private stopped = false;
   private status: NeuralStatus | null = null;
@@ -135,10 +174,14 @@ export class StemLink {
   private reading: SplitJob | null = null;
   private handed = false;
   private ended = false;
+  /** a split that went on after the link was stopped has been cancelled again */
+  private recancelled = false;
 
-  constructor(private readonly file: SongFile, private readonly sink: StemSink, opts: { api?: NeuralApi; chunk?: number; onChange?: (v: LinkView) => void } = {}) {
+  constructor(private readonly file: SongFile, private readonly sink: StemSink, opts: { api?: NeuralApi; chunk?: number; ahead?: number; poll?: number; onChange?: (v: LinkView) => void } = {}) {
     this.api = opts.api ?? REAL;
     this.chunk = Math.max(1024, Math.round(opts.chunk ?? CHUNK));
+    this.ahead = opts.ahead ?? AHEAD;
+    this.poll = opts.poll ?? 250;
     this.onChange = opts.onChange ?? (() => undefined);
   }
 
@@ -172,6 +215,9 @@ export class StemLink {
     const m = status.models.find((x) => x.id === this.model);
     const got = new Fetched({ runtime: status.runtime.present ? 0 : status.runtime.bytes, model: m && (!m.present || m.error) ? m.bytes : 0 });
     this.set({ phase: "fetching", fetched: 0, reason: null });
+    // (a download stopped a moment ago may still be ending: two at once would be refused)
+    await ending.get(this.api);
+    if (this.stopped) return;
     const prep = (this.prep = this.api.prepare({ model: this.model, onProgress: (p) => this.set({ fetched: got.take(p) }) }));
     try {
       const after = await prep.done;
@@ -191,7 +237,9 @@ export class StemLink {
 
   /** Stop a download under way (the painter changed their mind). */
   cancelFetch() {
-    void this.prep?.cancel().catch(() => false);
+    if (!this.prep) return;
+    windDown(this.api, this.prep.done);
+    void this.prep.cancel().catch(() => false);
   }
 
   /** Try the split again after it failed. */
@@ -209,15 +257,18 @@ export class StemLink {
 
   private async split(): Promise<void> {
     this.set({ phase: "starting", reason: null, ready: 0, read: 0 });
+    // (a split of this song stopped a moment ago may still be ending: until it has, this one would be refused)
+    await ending.get(this.api);
+    if (this.stopped) return;
     let job: SplitJob;
     try {
-      job = await this.api.split(this.file, { model: this.model, onEvent: (e, s) => this.event(e, s) });
+      job = await this.api.split(this.file, { model: this.model, onEvent: (e, s) => this.event(e, s, job) });
     } catch (e) {
       return this.set({ phase: "failed", reason: message(e) });
     }
     this.job = job;
     // (stopped while the song was being handed over: the split is not wanted)
-    if (this.stopped) return void job.cancel().catch(() => false);
+    if (this.stopped) return this.cancel(job);
     job.done.then(
       (r) => {
         if (this.stopped || this.job !== job) return;
@@ -237,8 +288,17 @@ export class StemLink {
     );
   }
 
-  private event(e: SplitEvent, s: SplitState) {
-    if (this.stopped) return;
+  private event(e: SplitEvent, s: SplitState, job: SplitJob | undefined) {
+    if (this.stopped) {
+      // a split that still speaks after it was stopped did not hear its cancel (one sent before the native side had
+      // taken the split on is lost): it is cancelled again, rather than left splitting a song no one will see
+      if (job && !this.recancelled) {
+        // (once is enough: a split that speaks has been taken on, so it hears this one)
+        this.recancelled = true;
+        void job.cancel().catch(() => false);
+      }
+      return;
+    }
     if (e.kind === "started") {
       this.begin(e.stems, e.rate, e.seconds, e.cached);
     } else if (e.kind === "progress") {
@@ -259,7 +319,8 @@ export class StemLink {
     this.rate = rate;
     if (!this.files.length || !(rate > 0)) {
       this.set({ phase: "failed", reason: "The split made no stems the canvas knows." });
-      return void this.job?.cancel().catch(() => false);
+      if (this.job) this.cancel(this.job);
+      return;
     }
     this.sink.useStems(this.files.map((f) => f.name), rate, 0);
     this.handed = true;
@@ -285,6 +346,12 @@ export class StemLink {
         const n = Math.min(this.chunk, upTo - this.readAt);
         if (n <= 0) break;
         const at = this.readAt;
+        // far enough ahead of the hearing: wait for it to catch up (what is handed over is held until it is heard)
+        const heard = this.sink.stemsHeard?.();
+        if (heard !== undefined && at / this.rate > heard + this.ahead) {
+          await new Promise((r) => setTimeout(r, this.poll));
+          continue;
+        }
         const bufs = await Promise.all(this.files.map((f) => this.api.read(f.path, at, n)));
         if (gone()) return;
         // (a file read short gives only the frames every stem has; the rest is read next time)
@@ -307,7 +374,7 @@ export class StemLink {
       this.sink.stopStems();
       this.ended = true;
       this.set({ phase: "failed", reason: message(e) });
-      void job.cancel().catch(() => false);
+      this.cancel(job);
     } finally {
       if (this.reading === job) this.reading = null;
     }
@@ -317,10 +384,18 @@ export class StemLink {
   stop() {
     if (this.stopped) return;
     this.stopped = true;
-    void this.prep?.cancel().catch(() => false);
-    const running = this.job && this.frames === null;
-    if (running) void this.job!.cancel().catch(() => false);
+    if (this.prep) {
+      windDown(this.api, this.prep.done);
+      void this.prep.cancel().catch(() => false);
+    }
+    if (this.job && this.frames === null) this.cancel(this.job);
     if (this.handed && !this.ended) this.sink.stopStems();
+  }
+
+  /** Cancel a split, and let a new one wait for it to end. */
+  private cancel(job: SplitJob) {
+    windDown(this.api, job.done);
+    void job.cancel().catch(() => false);
   }
 
   get isStopped() {

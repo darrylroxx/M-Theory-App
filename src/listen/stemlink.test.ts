@@ -20,7 +20,7 @@ vi.mock("@tauri-apps/api/core", () => ({
   },
 }));
 
-const { StemLink, CHUNK, Fetched, pickModel } = await import("./stemlink");
+const { StemLink, CHUNK, AHEAD, Fetched, pickModel } = await import("./stemlink");
 
 const FOUR = ["drums", "bass", "other", "vocals"];
 const stemFiles = (names: string[]) => names.map((name) => ({ name, path: `C:/cache/song-key/${name}.wav` }));
@@ -488,5 +488,149 @@ describe("the Canvas's link to the neural split", () => {
     expect(s.pushed[0].names).toEqual(["drums", "bass", "other", "vocals", "guitar", "piano"]);
     expect(link.view.stems).toContain("guitar");
     expect(n.reads.some((r) => r.path.includes("kazoo"))).toBe(false);
+  });
+
+  it("a long song kept from before is not handed over all at once: the stems are read only a little ahead of what the hearing has got through", async () => {
+    // ten minutes, every stem made already
+    const rate = 44_100;
+    const frames = 600 * rate;
+    const n = native({ frames, rate });
+    let heard = 0;
+    let most = 0;
+    const s = sink();
+    const watched = {
+      ...s,
+      pushRaw(at: number, raw: Partial<Record<StemName, ArrayBuffer>>) {
+        s.pushRaw(at, raw);
+        // (how far beyond the hearing the stems handed over reach)
+        most = Math.max(most, (at + (Object.values(raw)[0] as ArrayBuffer).byteLength / 8) / rate - heard);
+      },
+      stemsHeard: () => heard,
+    };
+    const link = new StemLink(song(), watched, { poll: 1 });
+    await link.start();
+    await settle();
+    n.started(true);
+    n.finish();
+    await settle();
+    const handed = () => s.pushed.reduce((k, p) => k + p.frames, 0);
+    // the hearing has heard none of it yet: half a minute and a chunk are read, not ten minutes
+    expect(handed() / rate).toBeLessThanOrEqual(AHEAD + CHUNK / rate);
+    expect(handed() / rate).toBeGreaterThanOrEqual(AHEAD);
+    expect(link.view.phase).toBe("splitting");
+    // as the hearing goes on, so does the reading, never far ahead of it, to the end
+    for (heard = 20; heard <= 600 && link.view.phase !== "done"; heard += 20) {
+      for (let i = 0; i < 5; i++) await settle();
+      expect(handed() / rate).toBeGreaterThanOrEqual(Math.min(600, heard + AHEAD));
+    }
+    for (let i = 0; i < 5; i++) await settle();
+    expect(handed()).toBe(frames);
+    expect(most).toBeLessThanOrEqual(AHEAD + CHUNK / rate + 1e-9);
+    expect(s.log.at(-1)).toBe("end");
+    expect(link.view.phase).toBe("done");
+    // every read in modest chunks, and each frame read once
+    expect(n.reads.every((r) => r.frames <= CHUNK)).toBe(true);
+    expect(n.reads.length).toBe(4 * Math.ceil(frames / CHUNK));
+  });
+
+  it("stopped while waiting for the hearing to catch up: nothing more is read", async () => {
+    const rate = 44_100;
+    const n = native({ frames: 120 * rate, rate });
+    const s = sink();
+    const link = new StemLink(song(), { ...s, stemsHeard: () => 0 }, { poll: 1 });
+    await link.start();
+    await settle();
+    n.started(true);
+    n.finish();
+    await settle();
+    const reads = n.reads.length;
+    link.stop();
+    for (let i = 0; i < 5; i++) await settle();
+    expect(n.reads.length).toBe(reads);
+    expect(s.log.at(-1)).toBe("stop");
+  });
+
+  it("a cancel the native side did not hear (sent before it took the split on) is sent again as soon as the split speaks", async () => {
+    const n = native();
+    const ask = n.ask;
+    let lost = true;
+    answer = (cmd, args) => {
+      if (cmd === "stems_cancel" && lost) {
+        // (the first cancel arrives before the split is registered: nothing to cancel yet)
+        lost = false;
+        calls.push({ cmd: "lost", args });
+        return Promise.resolve(false);
+      }
+      return ask(cmd, args);
+    };
+    const s = sink();
+    const link = new StemLink(song(), s);
+    await link.start();
+    await settle();
+    link.stop();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_cancel")).toHaveLength(1);
+    expect(n.splitting).toBe(true);
+    // the split goes on regardless, and says so: it is cancelled again, and nothing it says is acted on
+    n.started();
+    n.progress(50_000);
+    await settle();
+    expect(n.splitting).toBe(false);
+    expect(s.log).toEqual([]);
+    expect(n.reads).toHaveLength(0);
+    // (and only once: whatever it says after that is not answered)
+    n.progress(60_000);
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_cancel")).toHaveLength(2);
+  });
+
+  it("the same song opened again (or the page come back to) while its last split is still ending: the new split waits for it, rather than being refused", async () => {
+    const n = native();
+    const ask = n.ask;
+    // a native side that hears a cancel but ends the split only at its next stretch
+    answer = (cmd, args) => (cmd === "stems_cancel" ? Promise.resolve(true) : ask(cmd, args));
+    const first = new StemLink(song(), sink());
+    await first.start();
+    await settle();
+    n.started();
+    await settle();
+    first.stop();
+    const s = sink();
+    const again = new StemLink(song(), s);
+    await again.start();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_split")).toHaveLength(1);
+    expect(again.view.phase).toBe("starting");
+    // the old split ends: the new one goes ahead
+    n.fail("cancelled");
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_split")).toHaveLength(2);
+    n.started(true);
+    n.progress(1000);
+    await settle();
+    expect(s.pushed).toHaveLength(1);
+    expect(again.view.phase).toBe("splitting");
+  });
+
+  it("a download stopped and asked for again at once waits for the first to end: never two at once", async () => {
+    const n = native({ status: status({}, false) });
+    const ask = n.ask;
+    answer = (cmd, args) => (cmd === "stems_cancel" ? Promise.resolve(true) : ask(cmd, args));
+    const link = new StemLink(song(), sink());
+    await link.start();
+    void link.fetch();
+    await settle();
+    link.stop();
+    const next = new StemLink(song(), sink());
+    await next.start();
+    void next.fetch();
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_prepare")).toHaveLength(1);
+    // the first download ends (stopped): the second begins
+    answer = ask;
+    await ask("stems_cancel", { id: "prepare-x" });
+    await settle();
+    expect(calls.filter((c) => c.cmd === "stems_prepare")).toHaveLength(2);
+    expect(next.view.phase).toBe("fetching");
   });
 });

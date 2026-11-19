@@ -1148,3 +1148,5 @@ span.cv-better { cursor: default; }
 .cv-line-at { top: 0; width: 100%; transform-origin: left; transform: scaleX(0); background: color-mix(in srgb, var(--text) 55%, transparent); }
 .cv-line-better { bottom: 0; width: 0; background: var(--accent); }
 .cv.full .cv-line { bottom: env(safe-area-inset-bottom, 0px); }
+/* the song's row stops short of the tools on the right, however long the song's name (on a phone, 60% would reach under them) */
+.cv-song { max-width: min(60%, calc(100% - 148px)); }
