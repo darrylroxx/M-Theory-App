@@ -1,12 +1,13 @@
 /**
  * The arp's ready styles: what each one bundles, that Speed and Range keep the style, that the
  * arp of an old song (settings no style has) is shown as Custom and plays exactly as it was
- * saved, and that choosing a sound keeps the arp running.
+ * saved, that choosing a sound keeps the arp running, and that in 6/8, 9/8 and 12/8 the styles
+ * play on the meter's eighths and sixteenths.
  */
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
-import { ARP_STYLES, RANGES, SPEEDS, joinRate, speedOf, splitRate, styleOf, withRange, withSpeed, withStyle } from "./arpstyles";
+import { ARP_STYLES, RANGES, SPEEDS, fitMeter, joinRate, speedName, speedOf, splitRate, styleOf, stylesFor, withRange, withSpeed, withStyle } from "./arpstyles";
 import { DEFAULT_PARAMS, DEFAULT_PLAY, type PlaySettings, RATES, reviveSynth } from "./params";
 import { type PlayNote, playNotes, stepSec, withSteps } from "./play";
 import { PRESETS, pickPreset, presetById, presetsIn } from "./presets";
@@ -147,5 +148,91 @@ describe("choosing a sound", () => {
     expect(pickPreset(held, harp).play.mode).toBe("strum");
     expect(pickPreset({ ...held, play: { ...held.play, mode: "pulse" } }, pluck).play).toEqual(pluck.params.play);
     for (const x of PRESETS) expect(pickPreset(held, x)).toEqual({ ...x.params, volume: held.volume });
+  });
+});
+
+describe("in 6/8, 9/8 and 12/8", () => {
+  // the app's beat there is a dotted quarter, three eighths: at 120 a beat is 0.5 s, an eighth 1/6 s
+  const spb = 0.5;
+  const sig = (beats: number) => ({ bpm: 120, origin: 0, seed: 5, bar: beats });
+  const held = (beats: number): PlayNote[] => [...chord([60, 64, 67], 0, 2 * beats * spb), ...chord([57, 60, 64, 69], 2 * beats * spb, 2 * beats * spb)];
+  const onGrid = (t: number, step: number) => Math.abs(t / step - Math.round(t / step)) < 1e-6;
+  it("every style offered plays real eighths and sixteenths, as many to a bar as the meter has", () => {
+    for (const beats of [2, 3, 4])
+      for (const s of stylesFor(true))
+        for (const [speed, per] of [["1/8", 3], ["1/16", 6]] as const) {
+          const p = withSpeed(withStyle(arpPlay, s, true), speed, true);
+          const notes = playNotes(held(beats), p, sig(beats));
+          const step = spb / per;
+          const what = `${beats * 3}/8 ${s.id} ${speed}`;
+          expect(notes.every((n) => onGrid(n.start, step)), what).toBe(true);
+          // a step for every eighth (sixteenth) of the bar, but for the rests of a rhythm
+          const bar1 = new Set(notes.filter((n) => n.start < beats * spb - 1e-6).map((n) => n.start.toFixed(4))).size;
+          const rests = (p.rhythm.match(/\./g) ?? []).length / Math.max(1, p.rhythm.length);
+          expect(bar1, what).toBe(Math.round(beats * per * (1 - rests)));
+        }
+  });
+  it("the arp at its start (Up, fast) is in sixteenths of the meter, and a beat a step when slow", () => {
+    const fast = withStyle(arpPlay, ARP_STYLES[0], true);
+    expect(fast.rate).toBe("1/16T");
+    const starts = playNotes(held(2), fast, sig(2)).map((n) => n.start);
+    expect(starts[1] - starts[0]).toBeCloseTo(spb / 6, 9);
+    expect(withSpeed(fast, "1/8", true).rate).toBe("1/8T");
+    expect(withSpeed(fast, "1/4", true).rate).toBe("1/4");
+    expect(speedName("1/4", true)).toBe("1/4.");
+    expect(speedName("1/4")).toBe("1/4");
+  });
+  it("leans on the beats, swings nothing, and offers no Triplets (everything is in threes there)", () => {
+    expect(stylesFor(true).map((s) => s.id)).toEqual(["up", "down", "updown", "skip", "bounce", "shuffle", "random"]);
+    expect(stylesFor(false)).toEqual(ARP_STYLES);
+    for (const s of stylesFor(true)) {
+      const p = withSpeed(withStyle(arpPlay, s, true), "1/8", true);
+      expect(p.swing, s.id).toBe(0);
+      expect(p.gate, s.id).toBeLessThanOrEqual(0.5);
+      const notes = playNotes(held(2), p, sig(2));
+      const loud = Math.max(...notes.map((n) => n.velocity));
+      // the hardest strikes all fall on a beat
+      for (const n of notes) if (n.velocity > loud - 1e-9) expect(onGrid(n.start, spb), `${s.id} ${n.start}`).toBe(true);
+    }
+  });
+  it("each style is known again in the meter at every speed and range", () => {
+    for (const s of stylesFor(true))
+      for (const sp of SPEEDS)
+        for (const r of RANGES) {
+          const p = withRange(withSpeed(withStyle(arpPlay, s, true), sp.value, true), r);
+          expect(styleOf(p, true)?.id, `${s.id} ${sp.value} ${r}`).toBe(s.id);
+          expect(speedOf(p, true)).toBe(sp.value);
+        }
+  });
+  it("steps off the meter's grid (a straight eighth there is a dotted one) show as Custom with no speed, and play as they are", () => {
+    for (const rate of ["1/16", "1/8", "1/8D", "1/4T"] as const) {
+      const p = { ...arpPlay, rate };
+      expect(styleOf(p, true), rate).toBeNull();
+      expect(speedOf(p, true), rate).toBeNull();
+      const row = stylesRow(renderToStaticMarkup(createElement(ArpControls, { play: p, compound: true, onChange: () => {} })));
+      expect(row).toContain("Custom");
+      expect(row).not.toContain("Triplets");
+    }
+    const html = renderToStaticMarkup(createElement(ArpControls, { play: withStyle(arpPlay, ARP_STYLES[0], true), compound: true, onChange: () => {} }));
+    expect(html).toContain("1/4.");
+    expect(stylesRow(html).match(/aria-checked="true"[^>]*>([^<]+)</)?.[1]).toBe("Up");
+  });
+  it("turning the arp (or a pulse) on, or picking a sound that plays one, puts its steps on the meter's grid", () => {
+    // as it starts: Up, fast, now real sixteenths
+    expect(fitMeter(arpPlay, true)).toEqual(withStyle(arpPlay, ARP_STYLES[0], true));
+    expect(fitMeter({ ...DEFAULT_PLAY, mode: "pulse", rate: "1/8" }, true).rate).toBe("1/8T");
+    // a style keeps its style, its rhythm, swing and notes' length fitted to the meter (its range kept)
+    const bounce = { ...withStyle(arpPlay, ARP_STYLES[4]), gate: 0.8, octaves: 3 as const };
+    const fitted = fitMeter(bounce, true);
+    expect(styleOf(fitted, true)?.id).toBe("bounce");
+    expect([fitted.gate, fitted.octaves, fitted.rate]).toEqual([0.5, 3, "1/16T"]);
+    expect(fitMeter({ ...bounce, gate: 0.3 }, true).gate).toBe(0.3);
+    expect(styleOf(fitMeter(withStyle(arpPlay, ARP_STYLES[5]), true), true)?.id).toBe("shuffle");
+    expect(styleOf(fitMeter(presetById("gallop-arp")!.params.play, true), true)?.id).toBe("bounce");
+    // already on the grid, held, strummed ..., or in 4/4: as it was
+    const on = withStyle(arpPlay, ARP_STYLES[1], true);
+    expect(fitMeter(on, true)).toBe(on);
+    for (const mode of ["sustain", "strum", "drone", "glide"] as const) expect(fitMeter({ ...DEFAULT_PLAY, mode }, true).rate).toBe("1/16");
+    expect(fitMeter(arpPlay, false)).toBe(arpPlay);
   });
 });

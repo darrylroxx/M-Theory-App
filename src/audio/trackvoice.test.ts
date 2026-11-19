@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
 import type { FakeParam } from "../keys/fakeaudio";
-import { TrackVoice } from "./trackvoice";
+import { ARP_SPACE, ARP_TRACK_ECHO, TrackVoice, rackForPlay } from "./trackvoice";
 import { playChord, playTuneNote, playTuneSpan, synthWay, tuneSection, type SynthCache } from "./trackplay";
 import { SOUND_DEFAULT } from "./rack";
 import { GUITAR, type Tone } from "./tone";
@@ -163,6 +163,47 @@ describe("a track's voice", () => {
     c.currentTime = 4;
     v.note(48, 4.08, 0.8, 1);
     expect(out.at(4.08)).toBeGreaterThan(0.95);
+  });
+});
+
+describe("the track's own reverb and echo behind a synth's arp or pulse", () => {
+  const big = { ...SOUND_DEFAULT, space: 0.6, echo: 0.7 };
+  const play = (mode: "arp" | "pulse" | "sustain" | "strum" | "drone" | "glide") => ({ ...pad.synth!.play, mode });
+  it("are kept small, as the synth's own are (a soft step after a loud one is not lost in the hall)", () => {
+    for (const mode of ["arp", "pulse"] as const) {
+      expect(rackForPlay(SOUND_DEFAULT, play(mode))).toMatchObject({ space: ARP_SPACE, echo: 0 });
+      expect(rackForPlay(big, play(mode))).toEqual({ ...big, space: ARP_SPACE, echo: ARP_TRACK_ECHO });
+    }
+    // the default room (0.3) is more than that: it is the room that blurred the steps
+    expect(SOUND_DEFAULT.space).toBeGreaterThan(ARP_SPACE);
+    const small = { ...SOUND_DEFAULT, space: 0.05, echo: 0.1 };
+    expect(rackForPlay(small, play("arp"))).toBe(small);
+  });
+  it("are as set for any other way of playing, and for the strings and the pianos", () => {
+    for (const mode of ["sustain", "strum", "drone", "glide"] as const) expect(rackForPlay(big, play(mode))).toBe(big);
+    expect(rackForPlay(big, null)).toBe(big);
+  });
+  it("follow the synth as it is set to play an arp and back, and a section's own sound too", () => {
+    const c = new FakeAudio();
+    const { v } = voice(c);
+    const set = vi.spyOn(v.rack, "set");
+    v.setSound(big, 100);
+    expect(set.mock.lastCall?.[0]).toBe(big);
+    v.setTone(pad);
+    expect(set.mock.calls.length).toBe(1);
+    v.setTone({ ...pad, synth: { ...pad.synth!, play: play("arp") } });
+    expect(set.mock.lastCall?.[0]).toMatchObject({ space: ARP_SPACE, echo: ARP_TRACK_ECHO });
+    expect(set.mock.lastCall?.[1]).toBe(100);
+    // a section with a sound of its own, booked for its start, still behind the arp
+    v.setSound({ ...big, space: 0.9 }, 100, 3);
+    expect(set.mock.lastCall?.[0]).toMatchObject({ space: ARP_SPACE });
+    expect(set.mock.lastCall?.[2]).toBe(3);
+    // back to Hold, or to the strings: the room as it was set
+    v.setTone({ ...pad, synth: { ...pad.synth!, play: play("sustain") } });
+    expect(set.mock.lastCall?.[0]).toEqual({ ...big, space: 0.9 });
+    v.setTone({ ...pad, synth: { ...pad.synth!, play: play("pulse") } });
+    v.setTone(GUITAR);
+    expect(set.mock.lastCall?.[0]).toEqual({ ...big, space: 0.9 });
   });
 });
 

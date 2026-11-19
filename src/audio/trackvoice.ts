@@ -24,7 +24,7 @@ import { Sampler } from "../keys/sampler";
 import type { EPiano } from "../keys/epiano";
 import { SynthInstrument } from "../synth/instrument";
 import { STOP_FADE } from "../synth/kernel";
-import { attackSec, cutoffHz, reviveSynth, timeSec, type SynthParams } from "../synth/params";
+import { attackSec, cutoffHz, reviveSynth, timeSec, type PlaySettings, type SynthParams } from "../synth/params";
 import { soundFor } from "../synth/render";
 
 /** How long an instrument takes to fade out when it is swapped, or its track is removed. */
@@ -47,6 +47,21 @@ export const LEVEL_DB: Record<"grand" | "electric" | "synth", Record<VoiceKind, 
 const db = (v: number) => Math.pow(10, v / 20);
 
 export type VoiceKind = "chord" | "melody";
+
+/**
+ * How much of the track's own reverb (its Reverb knob, in the rack after the instrument) and echo
+ * a synth's arp or pulse gets at most. The synth's own room is already kept small for them
+ * (play.ts ARP_REVERB), but the track's hall comes on top: at the Reverb every track starts with
+ * (0.3), a loud step filled it and the soft step after it rose only 2–4 dB out of it (measured in
+ * the app's WAV export: Soft Horns' Bounce, a fifth of its steps; Synth Brass and Choir Pad too).
+ */
+export const ARP_SPACE = 0.15;
+export const ARP_TRACK_ECHO = 0.3;
+/** The track's effects as they are heard behind its instrument: as set, except behind a synth's arp or pulse (see ARP_SPACE). */
+export function rackForPlay(s: HarpSound, play: PlaySettings | null): HarpSound {
+  if (!play || (play.mode !== "arp" && play.mode !== "pulse") || (s.space <= ARP_SPACE && s.echo <= ARP_TRACK_ECHO)) return s;
+  return { ...s, space: Math.min(s.space, ARP_SPACE), echo: Math.min(s.echo, ARP_TRACK_ECHO) };
+}
 type Keys = Sampler | EPiano;
 
 /**
@@ -153,6 +168,8 @@ export class TrackVoice {
   private shape: KeysShape | null = null;
   /** ■ faded the track out (its room and echoes with it): the next note brings it back */
   private hushed = false;
+  /** the tempo the rack was last set for (its echo keeps time with it) */
+  private bpm = 90;
 
   constructor(
     readonly c: BaseAudioContext,
@@ -193,7 +210,8 @@ export class TrackVoice {
     if (key === this.soundKey) return false;
     this.soundKey = key;
     this.sound = s;
-    this.rack.set(s, bpm, at);
+    this.bpm = bpm;
+    this.rack.set(rackForPlay(s, this.steps), bpm, at);
     this.harp.setSound(s, strings);
     return true;
   }
@@ -220,13 +238,23 @@ export class TrackVoice {
     if (k === this.toneKey) return;
     this.toneKey = k;
     const prev = this.tone;
+    const stepped = this.steps;
     this.tone = tone;
     this.shape = null;
+    // a synth's arp or pulse turned on or off: the track's room and echo follow (see ARP_SPACE)
+    if (!!this.steps !== !!stepped) this.rack.set(rackForPlay(this.sound, this.steps), this.bpm);
     const ik = instKey(tone);
     if (ik !== this.key) this.swap(ik);
     else if (tone.inst === "synth" && this.inst instanceof SynthInstrument && JSON.stringify(prev.synth) !== JSON.stringify(tone.synth)) this.inst.set(this.synth);
     if (this.shelf) this.shelf.gain.setTargetAtTime(brightDb(tone), this.c.currentTime, 0.02);
     if (!tone.pedal && prev.pedal && isKeys(this.inst)) this.inst.pedal(false);
+  }
+
+  /** How the synth plays, when it plays an arp or a pulse (null: any other way, or not the synth). */
+  private get steps(): PlaySettings | null {
+    if (this.tone.inst !== "synth") return null;
+    const play = this.synth.play;
+    return play.mode === "arp" || play.mode === "pulse" ? play : null;
   }
 
   /** The synth's sound for this track (its own, or the one a new synth track starts with). */

@@ -381,8 +381,8 @@ export function GuitarView() {
       );
     } else void warmTrack(id, kind, next);
   }, [set]);
-  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, toneSetter, hearSoon]);
-  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, toneSetter, hearTune]);
+  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, compound: meter.triplet, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, meter.triplet, toneSetter, hearSoon]);
+  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, compound: meter.triplet, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, meter.triplet, toneSetter, hearTune]);
   /** the keys a chord in the sheet plays: the tray's own, or a fresh voicing for a chord not in the tray */
   const sheetKeys = useCallback((ref: ChordRef, slotId?: string) => {
     const i = slotId ? prog.chords.findIndex((c) => c.id === slotId) : -1;

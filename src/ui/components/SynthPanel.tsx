@@ -26,7 +26,7 @@ import {
   sameSynth,
   valueText,
 } from "../../synth/params";
-import { ARP_STYLES, RANGES, SPEEDS, speedOf, styleOf, withRange, withSpeed, withStyle } from "../../synth/arpstyles";
+import { RANGES, SPEEDS, fitMeter, speedName, speedOf, styleOf, stylesFor, withRange, withSpeed, withStyle } from "../../synth/arpstyles";
 import { CATEGORIES, type PresetCategory, type SynthPreset, pickPreset, presetById, presetsIn } from "../../synth/presets";
 import { Seg } from "./common";
 
@@ -37,9 +37,11 @@ export interface SynthPanelProps {
   onAudition?: () => void;
   /** small: the presets, the macros and the way of playing; the panel opens on request */
   compact?: boolean;
+  /** the song is in 6/8, 9/8 or 12/8: an arp's or a pulse's steps are fitted to it */
+  compound?: boolean;
 }
 
-export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanelProps) {
+export function SynthPanel({ params, onChange, onAudition, compact, compound = false }: SynthPanelProps) {
   const preset = presetById(params.preset);
   const [cat, setCat] = useState<PresetCategory>(preset?.category ?? "pad");
   // a sound handed in from outside (another track's, say) brings its own kind with it, so ‹ › and
@@ -61,7 +63,8 @@ export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanel
 
   const choose = (x: SynthPreset) => {
     setCat(x.category);
-    onChange(pickPreset(params, x));
+    const next = pickPreset(params, x);
+    onChange({ ...next, play: fitMeter(next.play, compound) });
     onAudition?.();
   };
   const step = (dir: -1 | 1) => choose(pool[(Math.max(at, dir > 0 ? -1 : 0) + dir + pool.length) % pool.length]);
@@ -115,7 +118,7 @@ export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanel
         {MACROS.map((m) => <MacroKnob key={m.id} info={m} value={params.macros[m.id]} onChange={(v) => onChange(setMacro(params, m.id, v))} />)}
       </div>
 
-      <PlayPicker play={params.play} onChange={(p) => onChange({ ...params, play: p })} />
+      <PlayPicker play={params.play} compound={compound} onChange={(p) => onChange({ ...params, play: p })} />
 
       {compact && (
         <div className="dm-tabs">
@@ -264,15 +267,15 @@ const DIR_LABELS: { value: StrumDir; label: string }[] = [
 ];
 
 /** How the written chords and notes are played, with the few settings each way needs. */
-function PlayPicker({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
+function PlayPicker({ play, compound, onChange }: { play: PlaySettings; compound: boolean; onChange: (play: PlaySettings) => void }) {
   const m = play.mode;
   const set = (patch: Partial<PlaySettings>) => onChange({ ...play, ...patch });
   return (
     <div className="syn-play" role="group" aria-label="How it plays">
-      <Seg value={m} label="Way of playing" onChange={(v: PlayMode) => set({ mode: v })} options={PLAY_LABELS} />
+      <Seg value={m} label="Way of playing" onChange={(v: PlayMode) => onChange(fitMeter({ ...play, mode: v }, compound))} options={PLAY_LABELS} />
       {m === "pulse" && (
         <>
-          <SpeedPicker play={play} onChange={onChange} />
+          <SpeedPicker play={play} compound={compound} onChange={onChange} />
           <MiniSlider label="Gate" title="How long each step is held" value={play.gate} min={0.1} onChange={(v) => set({ gate: v })} />
         </>
       )}
@@ -283,7 +286,7 @@ function PlayPicker({ play, onChange }: { play: PlaySettings; onChange: (play: P
         </>
       )}
       <MiniSlider label="Loose" title="Humanise: looser timing and touch" value={play.humanise} onChange={(v) => set({ humanise: v })} />
-      {m === "arp" && <ArpControls play={play} onChange={onChange} />}
+      {m === "arp" && <ArpControls play={play} compound={compound} onChange={onChange} />}
     </div>
   );
 }
@@ -291,20 +294,21 @@ function PlayPicker({ play, onChange }: { play: PlaySettings; onChange: (play: P
 /**
  * The arpeggiator: a ready style (each one a whole set of the arp's settings), how fast and over
  * how many octaves. Settings that match no style (an older song's, or a sound's own) show as
- * Custom and play as they are until a style is picked.
+ * Custom and play as they are until a style is picked. In 6/8, 9/8 and 12/8 every style is fitted
+ * to the meter (see arpstyles.ts).
  */
-export function ArpControls({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
-  const style = styleOf(play);
+export function ArpControls({ play, compound = false, onChange }: { play: PlaySettings; compound?: boolean; onChange: (play: PlaySettings) => void }) {
+  const style = styleOf(play, compound);
   return (
     <div className="syn-arp" role="group" aria-label="Arpeggiator">
       <div className="seg syn-styles" role="radiogroup" aria-label="Arp style">
-        {ARP_STYLES.map((s) => (
-          <button key={s.id} role="radio" aria-checked={style?.id === s.id} className={style?.id === s.id ? "on" : ""} title={s.hint} onClick={() => onChange(withStyle(play, s))}>{s.name}</button>
+        {stylesFor(compound).map((s) => (
+          <button key={s.id} role="radio" aria-checked={style?.id === s.id} className={style?.id === s.id ? "on" : ""} title={s.hint} onClick={() => onChange(withStyle(play, s, compound))}>{s.name}</button>
         ))}
         {!style && <span className="syn-custom" title="Settings of its own: pick a style to change them">Custom</span>}
       </div>
       <div className="syn-row">
-        <SpeedPicker play={play} onChange={onChange} />
+        <SpeedPicker play={play} compound={compound} onChange={onChange} />
         <span className="syn-ctl" title="Range: how many octaves the arp climbs">
           <i>Range</i>
           <Seg value={play.octaves} label="Range" onChange={(v: number) => onChange(withRange(play, v))} options={RANGES.map((o) => ({ value: o as number, label: String(o) }))} />
@@ -314,12 +318,12 @@ export function ArpControls({ play, onChange }: { play: PlaySettings; onChange: 
   );
 }
 
-/** Speed: a step of a quarter, an eighth or a sixteenth (in threes or dotted if it was). */
-function SpeedPicker({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
+/** Speed: a step of a quarter, an eighth or a sixteenth (in threes or dotted if it was; in 6/8, 9/8 and 12/8 a beat, an eighth or a sixteenth). */
+function SpeedPicker({ play, compound, onChange }: { play: PlaySettings; compound: boolean; onChange: (play: PlaySettings) => void }) {
   return (
     <span className="syn-ctl" title="Speed: how long each step is">
       <i>Speed</i>
-      <Seg value={speedOf(play) ?? ""} label="Speed" onChange={(v: string) => onChange(withSpeed(play, v))} options={SPEEDS.map((s) => ({ value: s.value as string, label: <span title={s.name}>{s.value}</span> }))} />
+      <Seg value={speedOf(play, compound) ?? ""} label="Speed" onChange={(v: string) => onChange(withSpeed(play, v, compound))} options={SPEEDS.map((s) => ({ value: s.value as string, label: <span title={s.name}>{speedName(s.value, compound)}</span> }))} />
     </span>
   );
 }

@@ -32,6 +32,8 @@ export interface ToneProps {
   kind: "chords" | "melody";
   /** its piano or synth is still loading */
   loading?: boolean;
+  /** the section is in 6/8, 9/8 or 12/8 (a synth's arp is fitted to it) */
+  compound?: boolean;
 }
 
 /** Guitar, Piano or Synth for one track. */
@@ -137,7 +139,7 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
       </div>
       {extra?.drawers}
       {inst === "synth" && instProps && (
-        <SynthPanel compact params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} />
+        <SynthPanel compact compound={instProps.compound} params={synthOf(instProps.tone, instProps.kind)} onChange={(p: SynthParams) => instProps.setTone({ synth: p })} onAudition={onHear} />
       )}
       {strings && drawer === "harp" && (
         <div className="dm-drawer" role="radiogroup" aria-label="Instrument">
