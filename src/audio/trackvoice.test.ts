@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
+import type { FakeParam } from "../keys/fakeaudio";
 import { TrackVoice } from "./trackvoice";
 import { playChord, playTuneNote, playTuneSpan, synthWay, tuneSection, type SynthCache } from "./trackplay";
 import { SOUND_DEFAULT } from "./rack";
@@ -145,6 +146,23 @@ describe("a track's voice", () => {
     expect(v.instrument).toBeNull();
     playChord(v, { midi: [40, 47, 52, 56, 59, 64], beats: 4 }, 0, 0.5, "ring", 0, null, new Map(), () => ({ key: "g", t0: 0, chords: [] }));
     expect(c.started.length).toBeGreaterThanOrEqual(6);
+  });
+  it("■ stops the synth's notes and fades the track out, its room too; the next note brings it back in full", () => {
+    const c = new FakeAudio();
+    const { v } = voice(c);
+    v.setTone({ inst: "synth", synth: presetById("saw-drone")!.params });
+    playChord(v, { midi: C, beats: 16 }, 0.1, 0.5, "ring", 0, null, new Map(), () => ({ key: "d", t0: 0.1, chords: [{ midi: C, at: 0, beats: 16 }] }));
+    c.currentTime = 2;
+    v.stopAll();
+    expect(synthEvents(v).some((e) => e.type === "stop" && e.t === 2)).toBe(true);
+    const out = v.out.gain as unknown as FakeParam;
+    // silent (below −60 dB) within half a second of ■, though the drone lets go over six seconds
+    expect(out.at(2.5)).toBeLessThan(0.001);
+    expect(out.at(10)).toBeLessThan(0.001);
+    // ▶ again: back to full before the first note
+    c.currentTime = 4;
+    v.note(48, 4.08, 0.8, 1);
+    expect(out.at(4.08)).toBeGreaterThan(0.95);
   });
 });
 

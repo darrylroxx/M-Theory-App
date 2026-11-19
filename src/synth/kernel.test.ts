@@ -3,7 +3,7 @@ import { SynthKernel, type SynthEvent, detuneCurve, feed, sin2pi } from "./kerne
 import { allFinite, cents, foldDb, harmonics, loudness, maxStep, partialHz, powerSpectrum, rms } from "./measure";
 import { DEFAULT_PARAMS, type OscType, type SynthParams, attackOf, ratioOf, timeOf } from "./params";
 import { presetById } from "./presets";
-import { referenceNotes, renderNotes } from "./render";
+import { referenceNotes, renderNotes, soundFor } from "./render";
 
 const SR = 48000;
 const hz = (m: number) => 440 * Math.pow(2, (m - 69) / 12);
@@ -306,6 +306,123 @@ describe("voices", () => {
     for (let i = 0; i < SR; i += 128) k.render(L, R, 128, i);
     expect(rms(L, 0.1 * SR, 0.15 * SR)).toBeGreaterThan(0.05);
     expect(rms(L, 0.4 * SR, SR)).toBe(0);
+  });
+});
+
+describe("■ (a stop)", () => {
+  /** A drone as a track plays it: a chord held for a long time, on a sound with a long release, echoes and reverb. */
+  const droneSound = () => soundFor({ ...presetById("saw-drone")!.params, fx: "delay", fxDepth: 0.6, reverb: 0.8 });
+  const drone = (k: SynthKernel, from = 0, id = 1) => {
+    for (const [i, m] of [48, 55, 60, 64].entries()) {
+      k.noteOn(from * SR, m, 0.8, id + i, 100 + i);
+      k.noteOff((from + 60) * SR, id + i);
+    }
+  };
+  const run = (k: SynthKernel, seconds: number, at?: (t: number) => void) => {
+    const L = new Float32Array(Math.round(seconds * SR));
+    const R = new Float32Array(L.length);
+    for (let i = 0; i < L.length; i += 128) {
+      at?.(i / SR);
+      k.render(L, R, Math.min(128, L.length - i), i);
+    }
+    return { L, R };
+  };
+
+  it("fades even a long drone, its echoes and its reverb to silence within a third of a second", () => {
+    const k = new SynthKernel(SR, { seed: 3 });
+    k.setParams(droneSound());
+    k.snapSmoothing();
+    drone(k);
+    feed(k, { type: "stop", t: 6 });
+    const { L, R } = run(k, 9);
+    expect(rms(L, 5 * SR, 6 * SR)).toBeGreaterThan(0.02);
+    expect(rms(L, 6.32 * SR, 9 * SR)).toBe(0);
+    expect(rms(R, 6.32 * SR, 9 * SR)).toBe(0);
+    expect(k.activeVoices()).toBe(0);
+    // a fade, not a cut: no step bigger than the music's own
+    expect(maxStep(L, 6 * SR - 4800, 6.35 * SR)).toBeLessThan(1.5 * maxStep(L, 5 * SR, 6 * SR - 4800) + 1e-3);
+  });
+
+  it("a note let go while the music plays still rings out with the sound's own release", () => {
+    const k = new SynthKernel(SR, { seed: 3 });
+    k.setParams(droneSound());
+    k.snapSmoothing();
+    k.noteOn(0, 48, 0.8, 1);
+    k.noteOff(5 * SR, 1);
+    const { L } = run(k, 8);
+    // the drone's release is six seconds: two seconds after the note-off it is still clearly there
+    expect(rms(L, 6.5 * SR, 7 * SR)).toBeGreaterThan(0.05 * rms(L, 4 * SR, 5 * SR));
+  });
+
+  it("stops what the mono and legato voices hold, and notes booked to start later", () => {
+    for (const voice of ["mono", "legato"] as const) {
+      const k = new SynthKernel(SR, { seed: 3 });
+      k.setParams({ ...droneSound(), voice });
+      k.snapSmoothing();
+      k.noteOn(0, 48, 0.8, 1);
+      k.noteOn(0.5 * SR, 55, 0.8, 2);
+      k.noteOn(3 * SR, 60, 0.8, 3);
+      feed(k, { type: "stop", t: 2 });
+      const { L } = run(k, 5);
+      expect(rms(L, 1.5 * SR, 2 * SR)).toBeGreaterThan(0.01);
+      expect(rms(L, 2.32 * SR, 5 * SR)).toBe(0);
+    }
+  });
+
+  it("leaves the synth ready: the next ▶ is heard in full, straight after ■ or later", () => {
+    const fresh = () => {
+      const k = new SynthKernel(SR, { seed: 3 });
+      k.setParams(droneSound());
+      k.snapSmoothing();
+      return k;
+    };
+    const level = (start: number, stopAt?: number) => {
+      const k = fresh();
+      if (stopAt !== undefined) {
+        drone(k, 0, 100);
+        feed(k, { type: "stop", t: stopAt });
+      }
+      drone(k, start);
+      const { L } = run(k, start + 7);
+      return rms(L, (start + 6) * SR, (start + 7) * SR);
+    };
+    const ref = level(1);
+    // played again 80 ms after ■ (the fade is still going): the old notes go, the new ones come in at full level
+    expect(level(1.08, 1)).toBeGreaterThan(0.7 * ref);
+    expect(level(1.08, 1)).toBeLessThan(1.3 * ref);
+    // and well after it
+    expect(level(3, 1)).toBeGreaterThan(0.7 * ref);
+    expect(level(3, 1)).toBeLessThan(1.3 * ref);
+  });
+
+  it("▶ from silence (which stops first) does not soften the first note's attack", () => {
+    // a pluck's attack is all in its first few milliseconds
+    const first = (stop: boolean) => {
+      const k = new SynthKernel(SR, { seed: 3 });
+      k.setParams(soundFor(presetById("saw-pluck")!.params));
+      k.snapSmoothing();
+      if (stop) feed(k, { type: "stop", t: 1 });
+      feed(k, { type: "on", t: 1.08, midi: 60, vel: 0.8, id: 1 });
+      feed(k, { type: "off", t: 1.5, id: 1 });
+      const { L } = run(k, 1.2);
+      return rms(L, 1.08 * SR, 1.09 * SR);
+    };
+    expect(first(true)).toBeCloseTo(first(false), 6);
+  });
+
+  it("a stop with nothing playing, or two in a row, does no harm", () => {
+    const k = new SynthKernel(SR, { seed: 3 });
+    k.setParams(droneSound());
+    k.snapSmoothing();
+    feed(k, { type: "stop", t: 0.1 });
+    feed(k, { type: "stop", t: 0.2 });
+    drone(k, 1);
+    feed(k, { type: "stop", t: 4 });
+    feed(k, { type: "stop", t: 4.1 });
+    const { L } = run(k, 6);
+    expect(allFinite(L)).toBe(true);
+    expect(rms(L, 3 * SR, 4 * SR)).toBeGreaterThan(0.02);
+    expect(rms(L, 4.32 * SR, 6 * SR)).toBe(0);
   });
 });
 

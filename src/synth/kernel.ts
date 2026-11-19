@@ -62,6 +62,14 @@ const PANS = [-1, 1, -0.5, 0.5, -0.75, 0.25, 0.75, -0.25];
  * whole new chord can take over a whole old one at once and every stolen note still fades.
  */
 const SPARE_PER_VOICE = 1;
+/**
+ * How long a stop takes to fade the synth out (seconds), whatever the sound's own release: a drone
+ * or a pad may let go over five or ten seconds, which is right for a note let go while the music
+ * plays but not for ■. Its echoes and reverb fade with it, and are cleared once it is silent.
+ */
+export const STOP_FADE = 0.3;
+/** A note played while a stop is still fading comes in at full level this fast (seconds), without a click. */
+const UNHUSH = 0.03;
 
 // ── Small exact helpers ──────────────────────────────────────────────────────────────────────
 
@@ -534,6 +542,9 @@ class Widener {
   constructor(sr: number) {
     this.b = new Float32Array(Math.ceil(0.03 * sr) + 4);
   }
+  reset() {
+    this.b.fill(0);
+  }
   process(L: Float64Array, R: Float64Array, len: number, amount: number, sr: number) {
     const b = this.b;
     const size = b.length;
@@ -657,6 +668,8 @@ const EV_OFF = 2;
 const EV_ALL_OFF = 3;
 const EV_PARAMS = 4;
 const EV_SYNC = 5;
+/** every note lets go, and the synth (its echoes and reverb too) fades to silence over STOP_FADE */
+const EV_STOP = 6;
 
 const FX_INDEX: Record<FxType, number> = { off: -1, dist: 0, chorus: 1, phaser: 2, delay: 3 };
 /** How hard the filter's input is pushed with Drive at zero: a touch of warmth, no audible distortion. */
@@ -755,8 +768,15 @@ export class SynthKernel {
 
   private glideC = 0;
   private fadeN = 0;
+  // a stop fading out: 0 not at all, 1 fading to silence, 2 coming back up (a note was played during the fade)
+  private hushMode = 0;
+  /** how far the fade has gone (0 … 1), and the level it gives */
+  private hushX = 0;
+  private hushG = 1;
   private idle = false;
   private silent = 0;
+  /** the loudest sample of the stretch rendered last: was anything heard when a stop comes? */
+  private lastPeak = 0;
   private SM: number;
 
   // worked out once per control block and shared by every voice
@@ -961,9 +981,11 @@ export class SynthKernel {
   }
   /**
    * Let every note go at `frame`. With `cancel` (the default), notes already queued to start at or
-   * after that frame are dropped too (a stop button); notes queued after this call are not touched.
+   * after that frame are dropped too; notes queued after this call are not touched. With `fade`
+   * (a stop button), everything still sounding fades out over STOP_FADE instead of over the
+   * sound's own release, echoes and reverb included.
    */
-  allOff(frame: number, cancel = true) {
+  allOff(frame: number, cancel = true, fade = false) {
     const f = Math.round(frame);
     if (cancel) {
       let w = this.evHead;
@@ -981,7 +1003,7 @@ export class SynthKernel {
       }
       this.evTail = w;
     }
-    this.push(f, EV_ALL_OFF);
+    this.push(f, fade ? EV_STOP : EV_ALL_OFF);
   }
   /**
    * The song starts (again) at `frame`: everything that moves on its own (the LFO, the drift, the
@@ -1007,6 +1029,8 @@ export class SynthKernel {
     for (const v of this.voices) if (v.active) v.kill = true;
     this.stackN = 0;
     this.mono = null;
+    this.hushMode = 0;
+    this.hushG = 1;
   }
   /** How many voices are sounding. */
   activeVoices() {
@@ -1017,9 +1041,22 @@ export class SynthKernel {
 
   private apply(i: number) {
     const t = this.evType[i];
-    if (t === EV_ON) this.on(this.evA[i], this.evB[i], this.evC[i], this.evD[i]);
-    else if (t === EV_OFF) this.off(this.evC[i]);
+    if (t === EV_ON) {
+      if (this.hushMode === 1) this.unhush();
+      this.on(this.evA[i], this.evB[i], this.evC[i], this.evD[i]);
+    } else if (t === EV_OFF) this.off(this.evC[i]);
     else if (t === EV_ALL_OFF) this.releaseAll();
+    else if (t === EV_STOP) {
+      // (▶ stops everything first: from silence there is nothing to fade, and a fade would soften the first note)
+      const heard = this.activeVoices() > 0 || this.lastPeak >= 1e-7;
+      this.releaseAll();
+      this.mono = null;
+      if (heard && this.hushMode !== 1) {
+        this.hushMode = 1;
+        // (from wherever a fade back up had got to, so the level never jumps)
+        this.hushX = 1 - Math.sqrt(this.hushG);
+      }
+    }
     else if (t === EV_PARAMS) {
       const p = this.bank[this.evA[i]];
       if (p) this.setParams(p);
@@ -1076,6 +1113,37 @@ export class SynthKernel {
   private releaseAll() {
     for (const v of this.voices) if (v.active && v.held) this.release(v);
     this.stackN = 0;
+  }
+
+  /**
+   * A note is played while a stop is still fading out (▶ straight after ■, or the loop restarted):
+   * what was stopped goes at once (the quick fade of a stolen note) and the level comes back up,
+   * so the new note is heard in full.
+   */
+  private unhush() {
+    for (const v of this.voices) if (v.active) v.kill = true;
+    this.mono = null;
+    this.hushMode = 2;
+  }
+
+  /** A stop has faded to silence: nothing of what was playing is left, not a voice, not an echo. */
+  private hushed() {
+    for (const v of this.voices) {
+      v.active = false;
+      v.held = false;
+      v.kill = false;
+    }
+    this.mono = null;
+    this.stackN = 0;
+    this.dist.reset();
+    this.chorus.reset();
+    this.phaser.reset();
+    this.delay.reset();
+    this.widener.reset();
+    this.reverb.reset();
+    this.hushMode = 0;
+    this.hushX = 0;
+    this.hushG = 1;
   }
 
   /** A free voice; when all are busy the oldest released (else the oldest held) note fades out quickly to make room. */
@@ -1268,10 +1336,15 @@ export class SynthKernel {
       } else {
         if (this.ctlPos === 0) this.controlTick();
         const peak = this.renderSpan(L, R, offset + i, len);
+        this.lastPeak = peak;
         // silent for half a second with no note sounding: rest
         if (peak < 1e-7 && this.activeVoices() === 0) {
           this.silent += len;
-          if (this.silent >= this.sr / 2) this.idle = true;
+          if (this.silent >= this.sr / 2) {
+            this.idle = true;
+            // (resting halfway through a stop's fade back up would leave the next note quieter)
+            if (this.hushMode) this.hushed();
+          }
         } else this.silent = 0;
       }
       i += len;
@@ -1597,10 +1670,20 @@ export class SynthKernel {
     let g = this.gain;
     const gi = this.gainInc;
     let peak = 0;
+    // a stop fading out: (1 − x)² over STOP_FADE, a smooth fade that is near silence well before its end
+    const hm = this.hushMode;
+    let hx = this.hushX;
+    let hg = this.hushG;
+    const hxStep = 1 / (STOP_FADE * this.sr);
+    const hgStep = 1 / (UNHUSH * this.sr);
     for (let i = 0; i < len; i++) {
       g += gi;
-      let l = mixL[i] * g;
-      let r = mixR[i] * g;
+      if (hm === 1) {
+        hx = hx + hxStep > 1 ? 1 : hx + hxStep;
+        hg = (1 - hx) * (1 - hx);
+      } else if (hm === 2) hg = hg + hgStep > 1 ? 1 : hg + hgStep;
+      let l = mixL[i] * g * hg;
+      let r = mixR[i] * g * hg;
       // soft ceiling: untouched below 0.7, bending toward (never past) 1
       const al = l < 0 ? -l : l;
       if (al > 0.7) l = (l < 0 ? -1 : 1) * (0.7 + 0.3 * tanhA((al - 0.7) / 0.3));
@@ -1612,6 +1695,10 @@ export class SynthKernel {
       R[at + i] = r;
     }
     this.gain = g;
+    this.hushX = hx;
+    this.hushG = hg;
+    if (hm === 1 && hx >= 1) this.hushed();
+    else if (hm === 2 && hg >= 1) this.hushMode = 0;
     return peak;
   }
 
@@ -2186,7 +2273,10 @@ export type SynthEvent =
   /** a note starts; `id` names it for its "off"; `slot` ≥ 0 takes over from the note before on that slot */
   | { type: "on"; t: number; midi: number; vel: number; id: number; slot?: number }
   | { type: "off"; t: number; id: number }
-  /** every note lets go at `t`, and notes already sent that would start at or after `t` are dropped */
+  /**
+   * every note lets go at `t` and fades out within STOP_FADE (echoes and reverb too), and notes
+   * already sent that would start at or after `t` are dropped
+   */
   | { type: "stop"; t: number }
   /** a new sound (the engine's own terms: macros already applied); at `t`, or at once without it */
   | { type: "params"; t?: number; params: SynthParams }
@@ -2206,7 +2296,7 @@ export function feed(k: SynthKernel, e: SynthEvent) {
       k.noteOff(e.t * sr, e.id);
       break;
     case "stop":
-      k.allOff(e.t * sr, true);
+      k.allOff(e.t * sr, true, true);
       break;
     case "params":
       if (e.t === undefined) k.setParams(e.params);
