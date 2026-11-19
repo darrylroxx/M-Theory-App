@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { DEFAULT_PARAMS, DEFAULT_PLAY, type PlaySettings } from "./params";
-import { DRONE_SUSTAIN, type PlayNote, arp, arpOrder, chordsOf, drone, glide, humanise, playNotes, pulse, rateBeats, strum, sustain, voiceForPlay } from "./play";
+import { DRONE_SUSTAIN, type PlayNote, arp, arpOrder, chordsOf, drone, glide, humanise, playNotes, pulse, rateBeats, rootOf, strum, sustain, voiceForPlay } from "./play";
 
 const chord = (midis: number[], start: number, length: number, velocity = 0.8): PlayNote[] => midis.map((midi) => ({ midi, start, length, velocity }));
 // C major for two beats, then A minor for two beats, at 120 bpm (a beat is half a second)
@@ -104,6 +104,19 @@ describe("ways of playing", () => {
     expect(moving[0].velocity).toBeLessThan(held[0].velocity);
     // the key's home note, not the first chord's, when it is given
     expect(drone(song, { bpm: 120, tonic: 9 })[0].midi % 12).toBe(9);
+  });
+
+  it("Drone finds each chord's root when the keys play it as an inversion", () => {
+    // C as E G C, then F as A C F, then G as D G B: the lowest notes are E, A and D
+    const inv: PlayNote[] = [...chord([64, 67, 72], 0, 1), ...chord([57, 60, 65], 1, 1), ...chord([62, 67, 71], 2, 1)];
+    expect(chordsOf(inv).map(rootOf)).toEqual([0, 5, 7]);
+    const out = drone(inv, { bpm: 120 });
+    expect(out.filter((n) => n.slot === 100 || n.slot === 101).map((n) => n.midi % 12)).toEqual([0, 7]);
+    expect(out.filter((n) => n.slot === 103).map((n) => n.midi % 12)).toEqual([0, 5, 7]);
+    // G C D is Gsus4 or Csus2: the lowest note settles it; a lone note is its own root
+    expect(rootOf(chord([67, 72, 74], 0, 1))).toBe(7);
+    expect(rootOf(chord([60, 62, 67], 0, 1))).toBe(0);
+    expect(rootOf(chord([64], 0, 1))).toBe(4);
   });
 
   it("Glide plays one line, each note held into the next so a legato voice slides", () => {

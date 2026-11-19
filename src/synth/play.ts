@@ -35,7 +35,7 @@ export interface PlayContext {
   origin?: number;
   /** seed for Random arpeggios and Humanise */
   seed?: number;
-  /** the key's home note as a pitch class (0 = C) for the drone; default: the first chord's bass */
+  /** the key's home note as a pitch class (0 = C) for the drone; default: the first chord's root */
   tonic?: number;
 }
 
@@ -218,6 +218,21 @@ export function pulse(notes: PlayNote[], o: { rate: Rate; gate: number }, ctx: P
 const near = (pc: number, low: number) => low + ((((pc - low) % 12) + 12) % 12);
 
 /**
+ * The root of a chord as written, by ear: the note with a fifth and a third (or a fourth or
+ * second, for a sus chord) above it in the chord. A keyboard voicing is often an inversion
+ * (C as E G C), so the lowest note is not always the root; with no such note it is.
+ */
+export function rootOf(chord: PlayNote[]): number {
+  const pcs = [...new Set(chord.map((n) => ((n.midi % 12) + 12) % 12))];
+  const has = (r: number, iv: number) => pcs.includes((r + iv) % 12);
+  const score = (r: number) => (has(r, 7) ? 2 : 0) + (has(r, 3) || has(r, 4) ? 1 : has(r, 5) || has(r, 2) ? 0.5 : 0);
+  const low = ((chord[0].midi % 12) + 12) % 12;
+  let best = low;
+  for (const r of pcs) if (score(r) > score(best)) best = r;
+  return best;
+}
+
+/**
  * Drone: the home note, its fifth and its octave held under the whole passage, low down; above
  * them one quieter voice moves to each chord's root as the chords change (slowly, if the sound
  * has a slow attack), so the drone keeps evolving.
@@ -226,7 +241,7 @@ export function drone(notes: PlayNote[], ctx: PlayContext): SynthNote[] {
   const chords = chordsOf(notes);
   if (chords.length === 0) return [];
   const first = chords[0][0];
-  const tonic = ctx.tonic ?? ((first.midi % 12) + 12) % 12;
+  const tonic = ctx.tonic ?? rootOf(chords[0]);
   const root = near(tonic, 36);
   const start = first.start;
   let end = start;
@@ -243,7 +258,7 @@ export function drone(notes: PlayNote[], ctx: PlayContext): SynthNote[] {
   let lastPc = -1;
   chords.forEach((c, ci) => {
     const [s, e] = spanOf(chords, ci);
-    const pc = ((c[0].midi % 12) + 12) % 12;
+    const pc = rootOf(c);
     const prev = out[out.length - 1];
     if (pc === lastPc && prev.slot === 103) {
       prev.length = e - prev.start + overlap;

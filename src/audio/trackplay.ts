@@ -30,16 +30,22 @@ export interface SecChord {
  */
 export type SynthCache = Map<string, SynthNote[]>;
 const EARLY = 0.05;
+
+/** The song's home note (a pitch class, 0 = C): what a synth's drone holds, live and in a WAV alike. */
+let home: number | undefined;
+export function setHome(pc: number | undefined) {
+  home = pc;
+}
 export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[], velocity = 0.78): SynthNote[] {
   const list = chords();
   const play = v.synth.play;
   // a chord changed (or the way of playing) while the section plays is heard from the next chord on, as on the other instruments
-  const key = `${section}|${JSON.stringify(list)}|${JSON.stringify(play)}`;
+  const key = `${section}|${home}|${JSON.stringify(list)}|${JSON.stringify(play)}`;
   let notes = cache.get(key);
   if (!notes) {
     const written: PlayNote[] = [];
     for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity });
-    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11 });
+    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home });
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);
   }

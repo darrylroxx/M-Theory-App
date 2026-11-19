@@ -8,6 +8,7 @@ import { VOICINGS, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, t
 import { pianoVoicing } from "../../keys/voicing";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
+import { setHome } from "../../audio/trackplay";
 import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type ArrangeOptions } from "../../guitar/arrange";
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
@@ -349,6 +350,8 @@ export function GuitarView() {
   const tuneTone = toneOf(prog, tuneId);
   // (a harmony being auditioned has its instrument too, and is kept while it is heard)
   useEffect(() => setTones(heard.tones), [heard.tones]);
+  // a synth drone holds the song's home note
+  useEffect(() => setHome(pc(state.key.tonic)), [state.key.tonic]);
   // a track that is removed lets go of its instrument and its drum desk (they fade out)
   const trackIds = (heard.tracks ?? []).map((t) => t.id).join("|");
   useEffect(() => keepTracks(trackIds ? trackIds.split("|") : []), [trackIds]);
