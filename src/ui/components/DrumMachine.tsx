@@ -123,6 +123,8 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const fx = fxOf(beat);
   const editing = !!edit;
   const list = group === "mine" ? mine : BEAT_LIBRARY.filter((p) => p.group === group);
+  /** the drums track on the page: every one has a desk of its own, so its knobs and hits go there */
+  const track = state.progression.focus?.drums ?? "drums";
 
   // the moving playhead, on the bar that is sounding, without redrawing the grid on every frame.
   // With Follow on, a page is turned when the music runs off the end of the bars on screen
@@ -185,31 +187,34 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   useEffect(() => {
     if (current) setGroup(current.group);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
-  // another idea or another section: the edit so far is kept, and the grid starts at bar 1
+  // another idea, section or drums track: the edit so far is let go (its Undo and Cancel belong to
+  // the beat it started on, never to another track's), and the grid starts at bar 1
   const section = state.progression.song?.current;
   useEffect(() => {
     setEdit(null);
     setBar(0);
     setStart(0);
-  }, [state.ideaId, section, fresh]);
+  }, [state.ideaId, section, fresh, track]);
+  // a drum soloed in one track's kit is not carried into the next track's
+  useEffect(() => setSolo(null), [track]);
   useEffect(() => {
-    setDrumSolo(solo);
-    return () => setDrumSolo(null);
-  }, [solo]);
+    setDrumSolo(solo, track);
+    return () => setDrumSolo(null, track);
+  }, [solo, track]);
 
   const hit = (id: DrumId, b: Beat = beat, velocity = 0.8) => {
-    syncDrums(b, bpm);
-    playDrum(b, id, undefined, velocity);
+    syncDrums(b, bpm, track);
+    playDrum(b, id, undefined, velocity, 0, track);
   };
   /** Hear a drum while a knob is moving, without machine-gunning it. */
   const audition = (id: DrumId, b: Beat) => {
-    syncDrums(b, bpm);
+    syncDrums(b, bpm, track);
     if (playing) return;
     const h = heard.current;
     window.clearTimeout(h.timer);
     const go = () => {
       h.at = performance.now();
-      playDrum(b, id);
+      playDrum(b, id, undefined, 0.8, 0, track);
     };
     const wait = 130 - (performance.now() - h.at);
     if (wait <= 0) go();
@@ -340,7 +345,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const pickKit = (k: (typeof kits)[number]) => {
     const next = k.preset ? applyUserKit(beat, k.preset) : applyKit(beat, k.id as KitId);
     setBeat((b) => (k.preset ? applyUserKit(b, k.preset) : applyKit(b, k.id as KitId)));
-    syncDrums(next, bpm);
+    syncDrums(next, bpm, track);
     if (!playing) hit("kick", next);
   };
   const saveKit = () => {
@@ -362,7 +367,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
 
   // ── Sound and effects ──
   const setFx = (patch: Partial<BeatFx> & { swing?: number }) => {
-    syncDrums({ ...beat, ...patch }, bpm);
+    syncDrums({ ...beat, ...patch }, bpm, track);
     setBeat((b) => ({ ...b, ...patch }));
   };
   const p = soundOf(beat, sel);
@@ -601,7 +606,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
           <div className="knobs">
             <Knob label="Tone" min={-1} max={1} value={fx.tone} def={0} fmt={toneText} onChange={(v) => setFx({ tone: v })} />
             <Knob label="Glue" title="Squashes the kit together" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
-            <Knob label="Pump" title="The harp ducks under every kick, then swells back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
+            <Knob label="Pump" title="The other tracks duck under every kick, then swell back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
           </div>
         </div>
       )}

@@ -12,6 +12,7 @@ import { barOf, fitBeats, useApp, type ProgChord } from "../state";
 import { lengthText } from "./BarRuler";
 import { ChordDiagram } from "./ChordDiagram";
 import { ChordNotes, ChordTheory } from "./ChordInfo";
+import { KeyboardDiagram } from "./KeyboardDiagram";
 
 type TabId = "common" | "small" | "inversions" | "all";
 const TABS: TabId[] = ["common", "small", "inversions", "all"];
@@ -33,7 +34,12 @@ export function ShapesIcon() {
  * It opens on the shapes everybody knows; the other tabs branch out to small shapes,
  * inversions and everything else. Tap a shape to hear and use it, or drag it into the tray.
  */
-export function ShapeFinder({ slotShape, onPinSlot }: { slotShape: (slotId: string) => Voicing | undefined; onPinSlot: (slotId: string, voicingId: string) => void }) {
+export function ShapeFinder({ slotShape, onPinSlot, keys }: {
+  slotShape: (slotId: string) => Voicing | undefined;
+  onPinSlot: (slotId: string, voicingId: string) => void;
+  /** a chords track on the keys: the sheet shows the keys it plays (a chord in the tray: the same keys the tray plays) in place of guitar shapes */
+  keys?: (ref: ChordRef, slotId?: string) => number[];
+}) {
   const { sheet, openSheet, state, set, tuning, shapeOf, setShape, addChord, toast } = useApp();
   const { capo, labels, leftHanded } = state.settings;
   const [tab, setTab] = useState<TabId>("common");
@@ -67,6 +73,7 @@ export function ShapeFinder({ slotShape, onPinSlot }: { slotShape: (slotId: stri
   }, [sheet, openSheet]);
 
   if (!sheet || !ref || !book) return null;
+  const keyNotes = keys?.(ref, sheet.slotId);
   const type = getChordType(ref.typeId);
   const setChords = (fn: (c: ProgChord[]) => ProgChord[]) => set((s) => ({ ...s, progression: { ...s.progression, chords: fn(s.progression.chords) } }));
   const patch = (p: Partial<ProgChord>) => setChords((cs) => cs.map((c) => (c.id === sheet.slotId ? { ...c, ...p } : c)));
@@ -149,19 +156,27 @@ export function ShapeFinder({ slotShape, onPinSlot }: { slotShape: (slotId: stri
         </select>
       </div>
 
-      <div className="seg finder-tabs" role="tablist" aria-label="Kinds of shape">
-        {shown.map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{TAB_LABEL[t]}</button>)}
-      </div>
+      {keyNotes ? (
+        <button className="finder-keys" aria-label={`Play ${chordSymbol(ref)}`} title="Play" onClick={() => strum(keyNotes)}>
+          <KeyboardDiagram notes={keyNotes} chord={ref} keyOf={state.key} labels={labels === "fingers" ? "intervals" : labels} width={Math.min(560, typeof window !== "undefined" ? window.innerWidth - 48 : 360)} />
+        </button>
+      ) : (
+        <>
+          <div className="seg finder-tabs" role="tablist" aria-label="Kinds of shape">
+            {shown.map((t) => <button key={t} role="tab" aria-selected={tab === t} className={tab === t ? "on" : ""} onClick={() => setTab(t)}>{TAB_LABEL[t]}</button>)}
+          </div>
 
-      <div className="shape-grid" role="tabpanel" aria-label={TAB_LABEL[tab]}>
-        {groups.map((g) => (
-          <Group key={g.title} title={g.title}>
-            {g.shapes.map((v) => (
-              <ShapeCard key={v.id} chord={ref} v={v} caption={caption(v)} picked={v.id === picked?.id} labels={labels} leftHanded={leftHanded} capo={capo} onPick={() => pick(v)} />
+          <div className="shape-grid" role="tabpanel" aria-label={TAB_LABEL[tab]}>
+            {groups.map((g) => (
+              <Group key={g.title} title={g.title}>
+                {g.shapes.map((v) => (
+                  <ShapeCard key={v.id} chord={ref} v={v} caption={caption(v)} picked={v.id === picked?.id} labels={labels} leftHanded={leftHanded} capo={capo} onPick={() => pick(v)} />
+                ))}
+              </Group>
             ))}
-          </Group>
-        ))}
-      </div>
+          </div>
+        </>
+      )}
     </section>
   );
 }

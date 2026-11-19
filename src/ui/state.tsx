@@ -24,6 +24,8 @@ import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
+import { onKeys, reviveTones, toneOf, voicingOf, type Tones } from "../audio/tone";
+import { pianoVoicing } from "../keys/voicing";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
 
@@ -96,6 +98,8 @@ export interface Progression {
   focus?: Focus;
   /** The song's time signature, set on the Frame page: how long every bar is, on every page, in every section that has no signature of its own */
   meter?: TimeSig;
+  /** What plays each chords and melody track (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
+  tones?: Tones;
 }
 
 export interface ArrangeSettings {
@@ -235,6 +239,7 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
     meter: reviveSig(raw?.meter),
+    tones: reviveTones(raw?.tones, toneIds(tracks)),
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
   // Songs where a section other than the first one led (moved before that changed) are led by the first.
@@ -242,6 +247,9 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
   // Songs from before the time signature could be chosen get the one their first section played in.
   return conform(settle(leadFirst(commit(p))));
 }
+
+/** The tracks that can have an instrument of their own: every chords and melody track. */
+export const toneIds = (tracks: Track[] | undefined): string[] => ["chords", "melody", ...(tracks ?? []).filter((t) => t.kind === "chords" || t.kind === "melody").map((t) => t.id)];
 
 /** After any change, the whole song is in the bars of its time signature (see song/unity). */
 function unify(s: AppState): AppState {
@@ -397,12 +405,18 @@ export function AppProvider({ children }: { children: ReactNode }) {
     (ref: ChordRef, voicingId: string) => setState((s) => ({ ...s, shapes: { ...s.shapes, [shapeKey(ref, s.settings.tuningId, s.settings.capo)]: voicingId } })),
     [],
   );
+  // a chords track on the keys is heard as the keyboard plays it, in its own voicing
+  const keysTone = useMemo(() => {
+    const t = toneOf(state.progression, state.progression.focus?.chords ?? "chords");
+    return onKeys(t) ? t : null;
+  }, [state.progression]);
   const audition = useCallback(
     (ref: ChordRef) => {
+      if (keysTone) return strum(pianoVoicing(ref, { style: voicingOf(keysTone) }));
       const v = shapeOf(ref);
       if (v) strum(v.midi);
     },
-    [shapeOf],
+    [shapeOf, keysTone],
   );
 
   const addChord = useCallback(

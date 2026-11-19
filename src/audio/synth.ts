@@ -1,201 +1,58 @@
 /**
- * The harp, live: plays notes rendered by harp.ts through the effects in rack.ts,
- * and steps through a progression in time (with the drums).
+ * The song, live: every chords and melody track plays through a voice of its own (its instrument,
+ * its effects, its fader; see trackvoice.ts), every drums track through a drum desk of its own
+ * (drumbus.ts), and the player steps through a progression in time. `renderSong` plays the same
+ * song into an offline context, for a WAV and for the recording engine's backing.
  */
 import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted, withContext } from "./context";
-import { onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
-import { DRUM_IDS, drumRng } from "./drums";
-import { STRING_KEYS, renderHarp, stringKey, voiceShift, type HarpString } from "./harp";
+import { FIRST_DRUMS, keepDrums, onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
+import { DRUM_IDS } from "./drums";
 import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
-import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
-import { dropPulses, listening, pulse } from "./pulse";
-import { describe, type Sound } from "./describe";
+import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { dropPulses } from "./pulse";
 import { tapStem } from "./stems";
-import { fader, levelOf } from "./mix";
+import { fader } from "./mix";
 export type { PlayItem } from "./patterns";
-import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
+import { SOUND_DEFAULT, type HarpSound } from "./rack";
+import type { HarpString } from "./harp";
+import { TrackVoice, type VoiceKind } from "./trackvoice";
+import { GUITAR, type Tone, type Tones } from "./tone";
+import { playNotes, type PlayNote } from "../synth/play";
+import { TUNE_LIFT, TUNE_SLOT, playChord, playTuneNote, type SecChord, type SynthCache } from "./trackplay";
 
-/** How many rendered notes are kept (each is up to a megabyte). */
-const MAX_NOTES = 96;
 
-interface Ringing {
-  srcs: AudioBufferSourceNode[];
-  gain: GainNode;
-}
+// ── the live voices ──────────────────────────────────────────
 
-/** A set of strings on one audio context (the live one, or an offline one for measuring and bouncing). */
-/** A note, measured (once for each recording). */
-const measured = new WeakMap<AudioBuffer, Sound>();
-function soundOf(buf: AudioBuffer): Sound {
-  let s = measured.get(buf);
-  if (!s) {
-    s = describe(buf.getChannelData(0), buf.sampleRate);
-    measured.set(buf, s);
-  }
-  return s;
-}
-
-export class Harp {
-  readonly rack: Rack;
-  sound: HarpSound = SOUND_DEFAULT;
-  /** the strings the notes are rendered with (they can lag behind `sound` while a knob is moving) */
-  strings: HarpString = SOUND_DEFAULT;
-  /** what this harp plays in the song: its notes are reported so the canvas can paint them (not set = not reported) */
-  tag?: "chord" | "melody";
-  /** the track it plays, when it is one added on the Track page (its mute and solo decide whether it is painted) */
-  track?: string;
-  private buffers = new Map<string, AudioBuffer>();
-  private ringing = new Map<number, Ringing>(); // by string
-  private all = new Set<Ringing>();
-
-  constructor(readonly c: BaseAudioContext, out?: AudioNode) {
-    this.rack = createRack(c, out);
-    this.rack.set(this.sound, 90);
-  }
-
-  /** Change the sound. The effects follow at once; `strings: false` leaves the notes themselves as they were. */
-  setSound(s: HarpSound, bpm: number, strings = true) {
-    this.sound = s;
-    if (strings) this.strings = s;
-    this.rack.set(s, bpm);
-  }
-
-  /** Is this note ready to play without a pause? */
-  has(midi: number, strings: HarpString = this.strings): boolean {
-    return this.buffers.has(stringKey(midi, strings));
-  }
-
-  /** The note, on this harp's own strings or (another song section's) given ones. */
-  buffer(midi: number, strings: HarpString = this.strings): AudioBuffer {
-    const key = stringKey(midi, strings);
-    let buf = this.buffers.get(key);
-    if (!buf) {
-      const data = renderHarp(this.c.sampleRate, midi, strings, drumRng(midi * 131 + 7));
-      buf = this.c.createBuffer(1, data.length, this.c.sampleRate);
-      buf.getChannelData(0).set(data);
-      if (this.buffers.size >= MAX_NOTES) this.buffers.delete(this.buffers.keys().next().value!);
-      this.buffers.set(key, buf);
-    }
-    return buf;
-  }
-
-  private damp(r: Ringing, at: number, tc = 0.025) {
-    try {
-      r.gain.gain.cancelScheduledValues(at);
-      r.gain.gain.setTargetAtTime(0, at, tc);
-      for (const src of r.srcs) src.stop(at + tc * 8);
-    } catch {
-      /* already stopped */
-    }
-  }
-
-  /**
-   * Pluck one string. `slot` = which string: a new note on the same string stops the old one, as on a real instrument.
-   * `lengthSec` = when the hand lifts; how gently the note then fades follows the Ring knob.
-   */
-  play(midi: number, when: number, velocity = 0.8, slot?: number, lengthSec = Infinity, cut = false, lift = 1, as?: HarpSound, until?: number) {
-    const c = this.c;
-    // a note scheduled just before a song section begins is already played the way that section sounds
-    const s = as ?? this.sound;
-    const src = c.createBufferSource();
-    src.buffer = this.buffer(midi, as ?? this.strings);
-    // for the canvas: what sounds, measured from the note itself. `until` = when the next note of this voice comes, if that is sooner than the hand lifts
-    // a harder pluck is a brighter one
-    const cutoff = Math.min(20000, 700 * Math.pow(2, velocity * 5));
-    if (this.tag && listening()) pulse({ kind: this.tag, track: this.track, time: when, midi: midi + voiceShift((as ?? this.strings).voice), velocity, length: Math.min(8, lengthSec, until ?? Infinity), slot: slot ?? -1, gain: s.level * lift, cutoff, octave: 0.7 * Math.max(0, s.octave), sound: soundOf(src.buffer) });
-    const vcf = c.createBiquadFilter();
-    vcf.type = "lowpass";
-    vcf.frequency.value = cutoff;
-    vcf.Q.value = 0.4;
-    const g = c.createGain();
-    g.gain.value = VOICE_GAIN * Math.pow(velocity, 1.3) * lift;
-    const pan = c.createStereoPanner();
-    pan.pan.value = slot !== undefined ? (((slot % 6) - 2.5) / 2.5) * 0.7 * s.wide : 0;
-    src.connect(vcf).connect(g).connect(pan).connect(this.rack.input);
-    const r: Ringing = { srcs: [src], gain: g };
-    src.start(when);
-    if (s.octave > 0) {
-      // the octave string of a twelve-string: the same pluck an octave up, a moment later
-      const oct = c.createBufferSource();
-      oct.buffer = src.buffer;
-      oct.detune.value = 1200;
-      const og = c.createGain();
-      og.gain.value = 0.7 * s.octave;
-      oct.connect(og).connect(vcf);
-      oct.start(when + 0.009);
-      r.srcs.push(oct);
-    }
-    if (s.shimmer > 0 && !cut) {
-      // a halo an octave up that swells in after the pluck and is heard only in the reverb
-      const sh = c.createBufferSource();
-      sh.buffer = src.buffer;
-      sh.detune.value = 1200;
-      const sg = c.createGain();
-      sg.gain.setValueAtTime(0, when);
-      sg.gain.linearRampToValueAtTime(VOICE_GAIN * velocity * s.shimmer * 0.85, when + 0.28);
-      sh.connect(sg).connect(this.rack.halo);
-      sh.start(when);
-      r.srcs.push(sh);
-    }
-    if (slot !== undefined) {
-      const prev = this.ringing.get(slot);
-      if (prev) this.damp(prev, when);
-      this.ringing.set(slot, r);
-    }
-    this.all.add(r);
-    src.onended = () => this.all.delete(r);
-    if (Number.isFinite(lengthSec)) this.damp(r, when + lengthSec, cut ? 0.012 : 0.04 + 0.3 * s.ring * s.ring);
-  }
-
-  stopAll(at = this.c.currentTime) {
-    for (const r of this.all) this.damp(r, at);
-    this.all.clear();
-    this.ringing.clear();
-  }
-}
-
-/** The melody's own strings: a new note stops the one before it, so a tune stays a tune and does not smear. */
-const TUNE_SLOT = 48;
-/** A single melody note against a whole chord: it is played this much louder so the tune sits on top. */
-const TUNE_LIFT = 1.7;
-
-/** How loud one string is before the effects. */
-const VOICE_GAIN = 0.4;
-
-/**
- * Two harps, each with its own instrument and its own effects: one plays the chords, one the melody.
- * Both dip under the kick when the drums' Pump is up.
- */
-interface Live {
-  harp: Harp | null;
-  sound: HarpSound;
-  settle: number;
-}
-const chordsLive: Live = { harp: null, sound: SOUND_DEFAULT, settle: 0 };
-const tuneLive: Live = { harp: null, sound: SOUND_DEFAULT, settle: 0 };
+/** Every chords and melody track's voice on the live context, by track id ("chords" and "melody" are the first tracks). */
+const voices = new Map<string, TrackVoice>();
+/** What each track is set to on the page, so a voice made later starts the same way. */
+const liveSound = new Map<string, HarpSound>();
+let liveTones: Tones = {};
 let tempo = 90;
-const ducks: AudioParam[] = [];
-let ducking = false;
+let pumping = false;
 
-function wake(l: Live): Harp {
+const kindOf = (id: string, kind?: VoiceKind): VoiceKind => kind ?? (id === "melody" ? "melody" : "chord");
+
+/** A track's voice on the live context (made the first time it is needed). */
+function voiceOf(id: string, kind?: VoiceKind): TrackVoice {
   const ctx = audioContext();
-  if (!l.harp) {
-    // each harp goes out through a tap of its own, so the canvas can hear the chords and the melody apart
-    // …through its track's fader (volume, mute and solo for the whole song)
-    const out = ctx.createGain();
-    const f = fader(l === tuneLive ? "melody" : "chords", ctx);
-    out.connect(f);
-    tapStem(l === tuneLive ? "melody" : "chords", f);
-    l.harp = new Harp(ctx, out);
-    l.harp.tag = l === tuneLive ? "melody" : "chord";
-    l.harp.setSound(l.sound, tempo);
-    ducks.push(l.harp.rack.duck.gain);
-    if (!ducking) {
-      ducking = true;
-      // Pump: the harps dip under every kick and swell back, like a sidechained compressor
+  let v = voices.get(id);
+  if (!v || v.c !== ctx) {
+    const f = fader(id, ctx);
+    const first = id === "chords" || id === "melody";
+    // the first tracks go out through a tap of their own, so the canvas hears them apart
+    if (first) tapStem(id as "chords" | "melody", f);
+    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id);
+    v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
+    v.setTone(liveTones[id] ?? GUITAR);
+    voices.set(id, v);
+    if (!pumping) {
+      pumping = true;
+      // Pump: every track dips under each kick and swells back, like a sidechained compressor
       onKickHit((when, depth) => {
-        for (const duck of ducks) {
+        for (const x of voices.values()) {
+          const duck = x.rack.duck.gain;
           duck.cancelScheduledValues(when);
           duck.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
           duck.setTargetAtTime(1, when + 0.03, 0.09);
@@ -203,40 +60,67 @@ function wake(l: Live): Harp {
       });
     }
   }
-  return l.harp;
+  return v;
 }
-const live = () => wake(chordsLive);
-const liveTune = () => wake(tuneLive);
 
 export function getAudio(): AudioContext {
-  return live().c as AudioContext;
+  return voiceOf("chords").c as AudioContext;
 }
 
 /**
- * Change a harp's sound and effects. Safe to call before any sound has been made.
- * The effects follow at once. New strings (instrument, pluck, soft, ring, body) mean new notes have
- * to be made, so those wait until the knob has stopped moving.
+ * Change a track's sound and effects. Safe to call before any sound has been made. The effects
+ * follow at once; new strings wait until the knob has stopped moving.
  */
-function setLive(l: Live, s: HarpSound, bpm: number) {
-  l.sound = s;
+export function setTrackSound(id: string, s: HarpSound, bpm: number) {
+  liveSound.set(id, s);
   tempo = bpm;
-  const h = l.harp;
-  if (!h) return;
-  const same = STRING_KEYS.every((k) => h.strings[k] === s[k]);
-  h.setSound(s, bpm, same);
-  window.clearTimeout(l.settle);
-  if (!same)
-    l.settle = window.setTimeout(() => {
-      h.setSound(l.sound, tempo);
-      prepareNotes(queue);
-    }, 150);
+  voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
 }
-/** The harp that plays the chords. */
-export const setHarpSound = (s: HarpSound, bpm: number) => setLive(chordsLive, s, bpm);
-/** The harp that plays the melody: a separate instrument with separate effects. */
-export const setTuneSound = (s: HarpSound, bpm: number) => setLive(tuneLive, s, bpm);
+/** The first chords track. */
+export const setHarpSound = (s: HarpSound, bpm: number) => setTrackSound("chords", s, bpm);
+/** The first melody track: a separate instrument with separate effects. */
+export const setTuneSound = (s: HarpSound, bpm: number) => setTrackSound("melody", s, bpm);
 
-/** A note to get ready: for the chords or the melody, on that harp's own strings or a given section's. */
+/** What every track plays (its instrument and that instrument's settings). The voices that exist change at once. */
+export function setTones(t: Tones | undefined) {
+  liveTones = t ?? {};
+  for (const [id, v] of voices) v.setTone(liveTones[id] ?? GUITAR);
+}
+
+/**
+ * Get a track ready on the instrument just chosen for it, before the song says so: the voice
+ * takes the tone straight away and starts loading. Resolves when it can sound.
+ */
+export function warmTrack(id: string, kind: "chords" | "melody", tone: Tone): Promise<void> {
+  liveTones = { ...liveTones, [id]: tone };
+  const v = voiceOf(id, kind === "melody" ? "melody" : "chord");
+  v.setTone(tone);
+  return v.load();
+}
+/**
+ * Get every track that plays a piano or the synth ready to sound (a piano loads its recordings,
+ * the synth its processor) before the music starts, so the first chord is heard. Resolves when
+ * they all can, or after `ms` whatever happens (the rest then joins in as it arrives).
+ */
+export function readyTracks(tracks: { id: string; kind: VoiceKind }[], ms = 4000): Promise<void> {
+  const loading = tracks.map((t) => voiceOf(t.id, t.kind)).filter((v) => !v.ready());
+  if (!loading.length) return Promise.resolve();
+  const all = Promise.all(loading.map((v) => v.load().catch(() => {}))).then(() => {});
+  return Promise.race([all, new Promise<void>((r) => setTimeout(r, ms))]);
+}
+
+/** Let go of the voices and drum desks of tracks that are no longer in the song (they fade out). */
+export function keepTracks(ids: string[]) {
+  for (const [id, v] of voices) {
+    if (id === "chords" || id === "melody" || ids.includes(id)) continue;
+    v.dispose();
+    voices.delete(id);
+    liveSound.delete(id);
+  }
+  keepDrums(ids);
+}
+
+/** A note to get ready: for the chords or the melody, on that track's own strings or a given section's. */
 export interface Prep {
   midi: number;
   tune?: boolean;
@@ -251,78 +135,67 @@ export function prepareNotes(list: Prep[]) {
   const step = () => {
     queued = 0;
     const next = queue.find((n) => {
-      const h = n.tune ? tuneLive.harp : chordsLive.harp;
-      return !!h && !h.has(n.midi, n.as);
+      const v = voices.get(n.tune ? "melody" : "chords");
+      return !!v && !v.instrument && !v.harp.has(n.midi, n.as);
     });
     if (!next) return;
-    (next.tune ? tuneLive.harp : chordsLive.harp)!.buffer(next.midi, next.as);
+    voices.get(next.tune ? "melody" : "chords")!.harp.buffer(next.midi, next.as);
     queued = window.setTimeout(step, 0);
   };
   queued = window.setTimeout(step, 0);
 }
 
-/** Play a single note. `slot` = string index. */
-/** While a page edits a track added on the Track page, the notes it plays to be heard go to that track's harp. */
+/** While a page edits a track added on the Track page, the notes it plays to be heard go to that track. */
 const heardOn: { chord: { id: string; sound: HarpSound } | null; melody: { id: string; sound: HarpSound } | null } = { chord: null, melody: null };
 export function hearOn(kind: "chord" | "melody", track: { id: string; sound: HarpSound } | null) {
   heardOn[kind] = track;
+  if (track) {
+    liveSound.set(track.id, track.sound);
+    voices.get(track.id)?.setSound(track.sound, tempo);
+  }
 }
-const chordHarp = () => (heardOn.chord ? trackHarp(heardOn.chord.id, heardOn.chord.sound, "chord") : live());
+const chordVoice = () => (heardOn.chord ? voiceOf(heardOn.chord.id, "chord") : voiceOf("chords"));
+const tuneVoice = () => (heardOn.melody ? voiceOf(heardOn.melody.id, "melody") : voiceOf("melody"));
 
+/** Play a single note (on the melody track's instrument when `slot` is the melody's). */
 export function playNote(midi: number, when?: number, velocity = 0.8, slot?: number, lengthSec = Infinity) {
-  // a melody note is played by the melody's own harp
   const tune = slot === TUNE_SLOT;
-  const h = tune ? (heardOn.melody ? trackHarp(heardOn.melody.id, heardOn.melody.sound, "melody") : liveTune()) : chordHarp();
-  h.play(midi, when ?? h.c.currentTime + 0.01, velocity, slot, lengthSec, false, tune ? TUNE_LIFT : 1);
+  const v = tune ? tuneVoice() : chordVoice();
+  // a keyboard or a synth holds a note as long as the key is down: a tapped note is a short one
+  const len = v.instrument && !Number.isFinite(lengthSec) ? 0.6 : lengthSec;
+  v.note(midi, when ?? v.c.currentTime + 0.01, velocity, len, { slot, lift: tune ? TUNE_LIFT : 1 });
 }
 
-/** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. */
+/** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. On a synth, the synth's own way of playing. */
 export function strum(midi: (number | null)[], opts: { when?: number; dir?: "down" | "up"; spread?: number; velocity?: number; length?: number } = {}) {
-  const h = chordHarp();
+  const v = chordVoice();
   const strings = midi.map((m, s) => ({ m, s })).filter((x): x is { m: number; s: number } => x.m !== null);
+  const t0 = opts.when ?? v.c.currentTime + 0.02;
+  if (v.tone.inst === "synth") {
+    const len = opts.length ?? 2;
+    const notes: PlayNote[] = strings.map((x) => ({ midi: x.m, start: t0, length: len, velocity: opts.velocity ?? 0.78 }));
+    for (const n of playNotes(notes, v.synth.play, { bpm: tempo, origin: t0 })) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot });
+    return;
+  }
   // the first note sounds as soon as the notes are ready
-  for (const x of strings) h.buffer(x.m);
-  const t0 = opts.when ?? h.c.currentTime + 0.02;
+  if (!v.instrument) for (const x of strings) v.harp.buffer(x.m);
   if (opts.dir === "up") strings.reverse();
-  strings.forEach(({ m, s }, i) => h.play(m, t0 + i * (opts.spread ?? 0.028), (opts.velocity ?? 0.78) * (1 + i * 0.02), s, opts.length ?? Infinity));
+  const length = opts.length ?? (v.instrument ? 1.8 : Infinity);
+  v.repedal(t0);
+  strings.forEach(({ m, s }, i) => v.note(m, t0 + i * (opts.spread ?? (v.instrument ? 0.012 : 0.028)), (opts.velocity ?? 0.78) * (1 + i * 0.02), length, { slot: v.instrument ? undefined : s }));
 }
 
 export function stopAll() {
   if (!audioIfStarted()) return;
-  chordsLive.harp?.stopAll();
-  tuneLive.harp?.stopAll();
-  for (const e of extraHarps.values()) e.harp.stopAll();
-}
-
-/** The harps of the tracks added on the Track page: one each, through its own fader. */
-const extraHarps = new Map<string, { harp: Harp; sig: string }>();
-function trackHarp(id: string, sound: HarpSound, kind: "chord" | "melody"): Harp {
-  const ctx = audioContext();
-  let e = extraHarps.get(id);
-  if (!e || e.harp.c !== ctx) {
-    const out = ctx.createGain();
-    out.connect(fader(id, ctx));
-    const harp = new Harp(ctx, out);
-    harp.tag = kind;
-    harp.track = id;
-    ducks.push(harp.rack.duck.gain);
-    e = { harp, sig: "" };
-    extraHarps.set(id, e);
-  }
-  const sig = JSON.stringify(sound);
-  if (sig !== e.sig) {
-    e.harp.setSound(sound, tempo);
-    e.sig = sig;
-  }
-  return e.harp;
+  for (const v of voices.values()) v.stopAll();
 }
 
 /** Play a scale / list of notes one after another. */
 export function playSequence(midis: number[], noteSec = 0.28) {
-  const h = live();
-  for (const m of new Set(midis)) h.buffer(m);
-  const t0 = h.c.currentTime + 0.05;
-  midis.forEach((m, i) => h.play(m, t0 + i * noteSec, 0.75, 0, noteSec * 1.6));
+  const v = voiceOf("chords");
+  if (!v.instrument) for (const m of new Set(midis)) v.harp.buffer(m);
+  const t0 = v.c.currentTime + 0.05;
+  midis.forEach((m, i) => v.note(m, t0 + i * noteSec, 0.75, noteSec * 1.6, { slot: v.instrument ? undefined : 0 }));
 }
 
 /** Every note a run of chords and its melodies will need, each with the sound of its own section. */
@@ -339,45 +212,6 @@ export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null
   return out;
 }
 
-/** Pluck everything one chord's style asks for, starting at time `t`. */
-function playItem(h: Harp, item: PlayItem, t: number, spb: number, pattern: PatternId, at: number, beat: Beat | null) {
-  const notes = styleNotes(item.midi, item.beats, item.style ?? pattern, at, meterOf(item.drums ?? beat, item.meter), item.feel);
-  const when = (e: (typeof notes)[number]) => e.beat * spb + e.delay;
-  const watched = listening();
-  for (const e of notes) {
-    const held = Math.min(e.length, item.beats - e.beat) * spb - e.delay;
-    // for the canvas: a string that is plucked again stops sounding as it was, so a note lasts only until its string's next pluck
-    let until = Infinity;
-    if (watched) {
-      for (const o of notes) {
-        const gap = when(o) - when(e);
-        if (o.slot === e.slot && gap > 0.02 && gap < until) until = gap;
-      }
-    }
-    h.play(e.midi, t + when(e), e.velocity, e.slot, Math.min(held, e.cut ?? Infinity), e.cut !== undefined, 1, item.sound, until);
-  }
-}
-
-/**
- * The chords alone, played once through the effects into a buffer, without a speaker.
- * Used to measure levels; it is also everything an audio export would need.
- */
-export async function renderOffline(items: PlayItem[], bpm: number, pattern: PatternId, s: HarpSound, tail = 2, sr = 44100): Promise<AudioBuffer> {
-  const spb = 60 / bpm;
-  const total = items.reduce((a, x) => a + x.beats, 0) * spb + tail;
-  const c = new OfflineAudioContext(2, Math.ceil(total * sr), sr);
-  const h = new Harp(c);
-  h.setSound(s, bpm);
-  let at = 0;
-  let origin = 0;
-  items.forEach((item, i) => {
-    origin = sectionStart(item, i, at, origin);
-    playItem(h, item, 0.05 + at * spb, spb, pattern, at - origin, null);
-    at += item.beats;
-  });
-  return c.startRendering();
-}
-
 // ── Progression player (look-ahead scheduler) ─────────────────
 
 /** Where a chord starts: the drum grid re-locks to each of these, so tempo changes and loops stay tight. */
@@ -391,6 +225,33 @@ interface Anchor {
   index: number;
   /** where the drum pattern started (the start of the pass, or of the song section) */
   origin: number;
+  /** when the run of items this one belongs to ends (its section, or the loop's end) */
+  end: number;
+}
+
+/** A drums track on its own grid: the first one ("drums") and each one added on the Track page. */
+interface Lane {
+  anchors: Anchor[];
+  cur: Anchor | null;
+  step: number;
+  div: number;
+  /** the beat whose sound its desk was last set to */
+  synced: Beat | null;
+}
+
+/** Where each item's section starts (beats from the start of the list), and how many beats are left to its end. */
+function sectionsOf(items: PlayItem[]): { origin: number[]; rest: number[] } {
+  const origin: number[] = [];
+  let at = 0;
+  let o = 0;
+  items.forEach((item, i) => {
+    o = sectionStart(item, i, at, o);
+    origin.push(o);
+    at += item.beats;
+  });
+  const rest = items.map(() => 0);
+  for (let i = items.length - 1; i >= 0; i--) rest[i] = items[i].beats + (i + 1 < items.length && Math.abs(origin[i + 1] - origin[i]) < 1e-6 ? rest[i + 1] : 0);
+  return { origin, rest };
 }
 
 export class ProgressionPlayer {
@@ -398,6 +259,7 @@ export class ProgressionPlayer {
   private stepTimer: number | null = null;
   private startTime = 0;
   private items: PlayItem[] = [];
+  private secs: { origin: number[]; rest: number[] } = { origin: [], rest: [] };
   private bpm = 90;
   private pattern: PatternId = "ring";
   private loop = true;
@@ -407,12 +269,9 @@ export class ProgressionPlayer {
   private origin = 0;
   private endAt: number | null = null;
   private marks: { time: number; index: number }[] = [];
-  // drums
+  // drums: every drums track on a grid of its own
   private beat: Beat | null = null;
-  private anchors: Anchor[] = [];
-  private cur: Anchor | null = null;
-  private dStep = 0;
-  private dDiv = 4;
+  private lanes = new Map<string, Lane>();
   private drumMarks: { time: number; step: number }[] = [];
   // melody: scheduled a moment ahead, like the drums, so a note tapped in is heard on the next pass of the grid
   private tune: PlayTune | null = null;
@@ -425,8 +284,8 @@ export class ProgressionPlayer {
   private sources = new Set<AudioBufferSourceNode>();
   /** the next item scheduled starts a pass (play pressed, or the loop came round): takes already under way start part-way */
   private fresh = true;
-  /** the drum tracks added on the Track page, each on a grid of its own */
-  private lanes = new Map<string, { anchors: Anchor[]; cur: Anchor | null; step: number; div: number }>();
+  /** the synth tracks' notes, section by section */
+  private synthNotes: SynthCache = new Map();
   onStep: (index: number) => void = () => {};
   /** Called as each drum step sounds (step index inside the bar), or with −1 when playback stops. */
   onDrumStep: (step: number) => void = () => {};
@@ -461,8 +320,16 @@ export class ProgressionPlayer {
     return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb } : null;
   }
 
-  private drumsAt(a: Anchor): Beat | null {
-    return this.items[a.index]?.drums ?? this.beat;
+  /** A drums track's beat under an item: the first track's (the item's own, or the player's), or an added track's. */
+  private beatOf(track: string, a: Anchor): Beat | null {
+    const item = this.items[a.index];
+    if (track === FIRST_DRUMS) return item?.drums ?? this.beat;
+    return item?.extra?.drums.find((d) => d.track === track)?.beat ?? null;
+  }
+
+  private setItems(items: PlayItem[]) {
+    this.items = items;
+    this.secs = sectionsOf(items);
   }
 
   start(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, fromIndex = 0, tune: PlayTune | null = null) {
@@ -472,7 +339,7 @@ export class ProgressionPlayer {
     const list = this.fill(items);
     if (!list.length) return;
     const c = getAudio();
-    this.items = list;
+    this.setItems(list);
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
@@ -480,18 +347,19 @@ export class ProgressionPlayer {
     this.passBeat = list.slice(0, fromIndex).reduce((a, x) => a + x.beats, 0);
     this.origin = 0;
     this.endAt = null;
-    this.dDiv = beat?.div ?? 4;
     setBedPlaying(true, beat);
     if (beat) {
       syncDrums(beat, bpm);
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
     }
+    for (const it of list) for (const d of it.extra?.drums ?? []) prepareBeat(d.beat);
     // the first chords are made ready before the clock starts, the rest while they play
-    const h = live();
+    const v = voiceOf("chords");
     const need = itemNotes(list, pattern, beat);
-    for (const n of need) if (n.item <= fromIndex + 1 && n.item >= fromIndex) h.buffer(n.e.midi, list[n.item].sound);
+    if (!v.instrument) for (const n of need) if (n.item <= fromIndex + 1 && n.item >= fromIndex) v.harp.buffer(n.e.midi, list[n.item].sound);
     prepareNotes(prepFor(list, pattern, beat, tune));
     this.startTime = c.currentTime + 0.08;
+    for (const x of voices.values()) x.sync(this.startTime);
     this.nextTime = this.startTime;
     this.playing = true;
     this.timer = window.setInterval(() => this.schedule(), 25);
@@ -503,11 +371,10 @@ export class ProgressionPlayer {
   update(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, tune: PlayTune | null = null) {
     this.beat = beat;
     this.tune = tune;
-    this.items = this.fill(items);
+    this.setItems(this.fill(items));
     this.bpm = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
-    if (beat) syncDrums(beat, bpm);
     setBedPlaying(this.playing, beat);
     // chords were removed while playing: start over. (Exactly at the end is left alone, so a song that is not looping can finish.)
     if (this.nextIndex > this.items.length) this.nextIndex = 0;
@@ -529,31 +396,50 @@ export class ProgressionPlayer {
         this.passBeat = 0;
         this.fresh = true;
       }
-      const item = this.items[this.nextIndex];
+      const i = this.nextIndex;
+      const item = this.items[i];
       const t = this.nextTime;
-      this.origin = sectionStart(item, this.nextIndex, this.passBeat, this.origin);
-      this.marks.push({ time: t, index: this.nextIndex });
-      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: this.nextIndex, origin: this.origin };
-      this.anchors.push(anchor);
+      this.origin = sectionStart(item, i, this.passBeat, this.origin);
+      this.marks.push({ time: t, index: i });
+      const anchor: Anchor = { time: t, beat: this.passBeat, spb, index: i, origin: this.origin, end: t + (this.secs.rest[i] ?? item.beats) * spb };
       this.tAnchors.push(anchor);
       this.spans.push(anchor);
       if (this.spans.length > 24) this.spans.shift();
-      playItem(live(), item, t, spb, this.pattern, this.passBeat - this.origin, this.beat);
+      const s0 = this.passBeat - this.origin;
+      // where this item's section started, on the clock: the synth plays a whole section its way
+      const t0 = t - s0 * spb;
+      const firstOf = (from: number) => {
+        let a = from;
+        while (a > 0 && Math.abs(this.secs.origin[a - 1] - this.secs.origin[from]) < 1e-6) a--;
+        return a;
+      };
+      const items = this.items;
+      const origins = this.secs.origin;
+      playChord(voiceOf("chords"), item, t, spb, this.pattern, s0, this.beat, this.synthNotes, () => {
+        const chords: SecChord[] = [];
+        let at = s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0);
+        for (let j = firstOf(i); j < items.length && Math.abs(origins[j] - origins[i]) < 1e-6; j++) {
+          chords.push({ midi: items[j].midi, at, beats: items[j].beats });
+          at += items[j].beats;
+        }
+        return { key: `chords@${t0.toFixed(4)}`, t0, chords };
+      });
       // the extra chords tracks: every chord that starts while this item plays
       const ex = item.extra;
       if (ex) {
-        const s0 = this.passBeat - this.origin;
         const s1 = s0 + item.beats;
-        for (const c of ex.chords)
-          if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
-            playItem(trackHarp(c.track, c.sound, "chord"), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums, meter: item.meter }, t + (c.at - s0) * spb, spb, this.pattern, c.at, this.beat);
-        for (const d of ex.drums) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div });
+        for (const ch of ex.chords)
+          if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
+            playChord(voiceOf(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
+              key: `${ch.track}@${t0.toFixed(4)}`,
+              t0,
+              chords: ex.chords.filter((x) => x.track === ch.track),
+            }));
         // recorded takes: from their start, or part-way in when playing starts in the middle of one
         for (const tk of ex.takes ?? []) {
           const starts = tk.at >= s0 - 1e-6 && tk.at < s1 - 1e-6;
           const under = this.fresh && tk.at < s0 - 1e-6 && tk.at + tk.dur / spb > s0;
           if (!starts && !under) continue;
-          const c = getAudio();
           const src = c.createBufferSource();
           src.buffer = tk.buffer;
           src.connect(fader(tk.track, c));
@@ -564,17 +450,19 @@ export class ProgressionPlayer {
         }
       }
       this.fresh = false;
+      // every drums track's grid re-locks to each chord; an added one joins when it first has a beat
+      if (!this.lanes.has(FIRST_DRUMS)) this.lanes.set(FIRST_DRUMS, { anchors: [], cur: null, step: 0, div: this.beat?.div ?? 4, synced: this.beat });
+      for (const d of ex?.drums ?? []) if (!this.lanes.has(d.track)) this.lanes.set(d.track, { anchors: [], cur: null, step: 0, div: d.beat.div, synced: null });
       for (const lane of this.lanes.values()) lane.anchors.push(anchor);
       this.nextTime += item.beats * spb;
       this.passBeat += item.beats;
       this.nextIndex++;
     }
     this.scheduleDrums(horizon);
-    this.scheduleExtraDrums(horizon);
     this.scheduleTune(horizon);
   }
 
-  /** The melody, a twelfth of a beat at a time. */
+  /** The melodies, a twelfth of a beat at a time: the first melody track and every added one, each on its own voice. */
   private scheduleTune(horizon: number) {
     const first = (a: Anchor) => Math.ceil((a.beat - a.origin) * 12 - 1e-6);
     for (let guard = 0; guard < 2000; guard++) {
@@ -583,6 +471,7 @@ export class ProgressionPlayer {
         if (!next) return;
         this.tCur = next;
         this.tTick = first(next);
+        this.repedalTunes(next);
       }
       const cur = this.tCur;
       const base = cur.time + (cur.origin + this.tTick / 12 - cur.beat) * cur.spb;
@@ -590,94 +479,67 @@ export class ProgressionPlayer {
       if (next && base >= next.time - 1e-4) {
         this.tCur = this.tAnchors.shift()!;
         this.tTick = first(this.tCur);
+        this.repedalTunes(this.tCur);
         continue;
       }
       if (this.endAt !== null && base >= this.endAt - 1e-4) return;
       if (!next && base >= this.nextTime - 1e-4) return;
       if (base >= horizon) return;
+      const at = (beat: number) => cur.time + (cur.origin + beat - cur.beat) * cur.spb;
       const t = this.tuneAt(cur);
       if (t && t.m.on !== false && t.m.notes.length) {
         const hits = tuneBetween(t.m, t.bar, this.tTick / 12, (this.tTick + 1) / 12, t.swing);
-        // (for the canvas: a melody note sounds until the next one comes)
-        const gap = hits.length ? nextNote(t.m, t.bar, this.tTick / 12) * cur.spb : 0;
-        hits.forEach((h, i) => liveTune().play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, t.sound, gap));
+        if (hits.length) {
+          const v = voiceOf("melody");
+          if (t.tone) v.setTone(t.tone);
+          if (t.sound) v.setSound(t.sound, this.bpm, at(hits[0].beat));
+          // (for the canvas, and the keys' held notes: a melody note sounds until the next one comes)
+          const gap = nextNote(t.m, t.bar, this.tTick / 12) * cur.spb;
+          hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), t.sound));
+        }
       }
-      // the extra melody tracks, each on its own harp
+      // the extra melody tracks, each on its own voice
       for (const x of this.items[cur.index]?.extra?.tunes ?? []) {
         const xt = x.tune;
         if (xt.m.on === false || !xt.m.notes.length) continue;
         const hits = tuneBetween(xt.m, xt.bar, this.tTick / 12, (this.tTick + 1) / 12, xt.swing);
         if (!hits.length) continue;
         const gap = nextNote(xt.m, xt.bar, this.tTick / 12) * cur.spb;
-        const harp = trackHarp(x.track, xt.sound ?? SOUND_DEFAULT, "melody");
-        hits.forEach((h, i) => harp.play(h.midi, cur.time + (cur.origin + h.beat - cur.beat) * cur.spb, 0.9, TUNE_SLOT + Math.min(i, 3), Infinity, false, TUNE_LIFT, xt.sound, gap));
+        const v = voiceOf(x.track, "melody");
+        if (xt.tone) v.setTone(xt.tone);
+        if (xt.sound) v.setSound(xt.sound, this.bpm, at(hits[0].beat));
+        hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), xt.sound));
       }
       this.tTick++;
     }
   }
 
-  /** Drums run on their own short look-ahead, so edits to the grid are heard on the very next step. */
+  /** A melody on the piano with its pedal on changes pedal with every chord, as the chords' own pianist does. */
+  private repedalTunes(a: Anchor) {
+    voices.get("melody")?.repedal(a.time);
+    for (const x of this.items[a.index]?.extra?.tunes ?? []) voices.get(x.track)?.repedal(a.time);
+  }
+
+  /** Every drums track, each on its own short look-ahead, so edits to a grid are heard on the very next step. */
   private scheduleDrums(horizon: number) {
     // first grid step at or after a chord's start, counted from where the pattern started
     const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
-    for (let guard = 0; guard < 400; guard++) {
-      if (!this.cur) {
-        const first = this.anchors.shift();
-        if (!first) return;
-        this.cur = first;
-        this.dDiv = this.drumsAt(first)?.div ?? 4;
-        this.dStep = firstStep(first, this.dDiv);
-      }
-      const cur = this.cur;
-      const b = this.drumsAt(cur);
-      const div = b?.div ?? 4;
-      if (div !== this.dDiv) {
-        // the rhythm changed to a different grid: carry on from the same place in the bar
-        this.dStep = Math.ceil((this.dStep / this.dDiv) * div - 1e-6);
-        this.dDiv = div;
-      }
-      const swing = b?.swing ?? 0;
-      const base = cur.time + (cur.origin + this.dStep / div - cur.beat) * cur.spb;
-      const next = this.anchors[0];
-      if (next && base >= next.time - 1e-4) {
-        this.cur = this.anchors.shift()!;
-        this.dDiv = this.drumsAt(this.cur)?.div ?? 4;
-        this.dStep = firstStep(this.cur, this.dDiv);
-        continue;
-      }
-      if (this.endAt !== null && base >= this.endAt - 1e-4) return;
-      if (!next && base >= this.nextTime - 1e-4) return; // wait until the next chord is scheduled
-      if (base >= horizon) return;
-      const step = b ? this.dStep % lenOf(b) : 0;
-      const t = cur.time + (cur.origin + Math.floor(this.dStep / div) + stepBeat(this.dStep % div, div, swing) - cur.beat) * cur.spb;
-      if (b?.on) {
-        for (const id of DRUM_IDS) {
-          const lv = levelAt(b.rows, id, step);
-          if (lv) playStep(b, id, lv, t);
-        }
-        this.drumMarks.push({ time: t, step });
-      }
-      this.dStep++;
-    }
-  }
-
-  /** The drum tracks added on the Track page: the same as the first drums, each on its own grid. */
-  private scheduleExtraDrums(horizon: number) {
-    const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
     for (const [track, lane] of this.lanes) {
-      const beatAt = (a: Anchor) => this.items[a.index]?.extra?.drums.find((d) => d.track === track)?.beat ?? null;
+      const main = track === FIRST_DRUMS;
       for (let guard = 0; guard < 400; guard++) {
         if (!lane.cur) {
           const first = lane.anchors.shift();
           if (!first) break;
           lane.cur = first;
-          lane.div = beatAt(first)?.div ?? 4;
+          lane.div = this.beatOf(track, first)?.div ?? lane.div;
           lane.step = firstStep(first, lane.div);
+          this.syncLane(track, lane, first);
         }
         const cur = lane.cur;
-        const b = beatAt(cur);
+        const b = this.beatOf(track, cur);
         const div = b?.div ?? lane.div;
         if (div !== lane.div) {
+          // the rhythm changed to a different grid: carry on from the same place in the bar
           lane.step = Math.ceil((lane.step / lane.div) * div - 1e-6);
           lane.div = div;
         }
@@ -685,25 +547,39 @@ export class ProgressionPlayer {
         const next = lane.anchors[0];
         if (next && base >= next.time - 1e-4) {
           lane.cur = lane.anchors.shift()!;
-          lane.div = beatAt(lane.cur)?.div ?? lane.div;
+          lane.div = this.beatOf(track, lane.cur)?.div ?? lane.div;
           lane.step = firstStep(lane.cur, lane.div);
+          this.syncLane(track, lane, lane.cur);
           continue;
         }
         if (this.endAt !== null && base >= this.endAt - 1e-4) break;
-        if (!next && base >= this.nextTime - 1e-4) break;
+        if (!next && base >= this.nextTime - 1e-4) break; // wait until the next chord is scheduled
         if (base >= horizon) break;
-        const gain = levelOf(track);
-        if (b?.on && gain > 0) {
-          const step = lane.step % lenOf(b);
-          const t = cur.time + (cur.origin + Math.floor(lane.step / div) + stepBeat(lane.step % div, div, b.swing ?? 0) - cur.beat) * cur.spb;
+        const step = b ? lane.step % lenOf(b) : 0;
+        const t = cur.time + (cur.origin + Math.floor(lane.step / div) + stepBeat(lane.step % div, div, b?.swing ?? 0) - cur.beat) * cur.spb;
+        if (b?.on) {
           for (const id of DRUM_IDS) {
             const lv = levelAt(b.rows, id, step);
-            if (lv) playStep(b, id, lv, t, gain, track);
+            if (lv) playStep(b, id, lv, t, track);
           }
+          if (main) this.drumMarks.push({ time: t, step });
         }
         lane.step++;
       }
     }
+  }
+
+  /**
+   * A drums track reaches a chord whose section has a drum sound of its own: its desk takes that
+   * sound when the section starts. (Only when the beat changed, so it is cheap.)
+   */
+  private syncLane(track: string, lane: Lane, a: Anchor) {
+    const b = this.beatOf(track, a);
+    if (!b || b === lane.synced) return;
+    const first = lane.synced === null;
+    lane.synced = b;
+    syncDrums(b, this.bpm, track, a.time);
+    if (first && track !== FIRST_DRUMS) setBedPlaying(true, b, track);
   }
 
   private tick() {
@@ -726,12 +602,11 @@ export class ProgressionPlayer {
     if (this.stepTimer !== null) window.clearInterval(this.stepTimer);
     this.timer = this.stepTimer = null;
     this.marks = [];
-    this.anchors = [];
     this.tAnchors = [];
     this.tCur = null;
     this.spans = [];
-    this.cur = null;
     this.lanes.clear();
+    this.synthNotes.clear();
     this.fresh = true;
     for (const src of this.sources) {
       try {
@@ -745,9 +620,9 @@ export class ProgressionPlayer {
     this.onDrumStep(-1);
     dropPulses();
     setBedPlaying(false, null);
-    for (const duck of ducks) {
-      duck.cancelScheduledValues(0);
-      duck.setValueAtTime(1, getAudio().currentTime);
+    for (const v of voices.values()) {
+      v.rack.duck.gain.cancelScheduledValues(0);
+      v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
     }
     stopAll();
     stopDrums();
@@ -756,11 +631,16 @@ export class ProgressionPlayer {
 
 /**
  * The song, rendered to audio in one go (faster than it plays), for the recording engine to
- * play under the singer on the interface's own clock. Everything that sounds in the song is
- * in it: the chords, the melody, the drums, the added tracks and recorded takes (except those
- * of `skip`, the track being recorded), each through its own fader. Notes still ringing at the
- * end are folded back onto the start, because the engine plays the song round and round
- * (with `fold: false`, for a file, they are kept after the end instead).
+ * play under the singer on the interface's own clock, and for a WAV. Everything that sounds in
+ * the song is in it: every chords, melody and drums track and the recorded takes (except those
+ * of `skip`, the track being recorded), each on its own instrument, through its own effects and
+ * its own fader. Notes still ringing at the end are folded back onto the start, because the
+ * engine plays the song round and round (with `fold: false`, for a file, they are kept after the
+ * end instead).
+ *
+ * The order matters: every voice is made and every note played first (a piano only writes its
+ * notes down), then the pianos load exactly the recordings those notes need at this sample rate
+ * and the synths their processors, and only then does the render start.
  */
 export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: PatternId; beat: Beat | null; rate: number; skip?: string; tail?: number; fold?: boolean }): Promise<Float32Array[]> {
   const spb = 60 / o.bpm;
@@ -768,51 +648,81 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
   const length = Math.max(1, Math.round(beats * spb * o.rate));
   const tail = Math.round((o.tail ?? 3) * o.rate);
   const off = new OfflineAudioContext(2, length + tail, o.rate);
+  const made = new Map<string, TrackVoice>();
   withContext(off, () => {
-    const harp = (id: string, sound: HarpSound) => {
-      const h = new Harp(off, fader(id, off));
-      h.setSound(sound, o.bpm);
-      return h;
+    const voice = (id: string, kind: VoiceKind) => {
+      let v = made.get(id);
+      if (!v) {
+        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id);
+        // each track starts as the page has it; a section with a sound of its own changes it where it starts
+        v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, o.bpm, 0);
+        v.setTone(liveTones[id] ?? GUITAR);
+        made.set(id, v);
+      }
+      return v;
     };
-    const chords = harp("chords", chordsLive.sound);
-    const tune = harp("melody", tuneLive.sound);
-    const extra = new Map<string, Harp>();
-    const extraHarp = (id: string, sound: HarpSound) => {
-      let h = extra.get(id);
-      if (!h) extra.set(id, (h = harp(id, sound)));
-      return h;
+    const cache: SynthCache = new Map();
+    const secs = sectionsOf(items);
+    const synced = new Map<string, Beat>();
+    const syncAt = (track: string, b: Beat | null, at: number) => {
+      if (!b || synced.get(track) === b) return;
+      synced.set(track, b);
+      syncDrums(b, o.bpm, track, at);
     };
-    if (o.beat) syncDrums(o.beat, o.bpm);
     let at = 0;
-    let origin = 0;
     items.forEach((item, i) => {
-      origin = sectionStart(item, i, at, origin);
+      const origin = secs.origin[i];
       const t = at * spb;
       const s0 = at - origin;
       const s1 = s0 + item.beats;
-      playItem(chords, item, t, spb, o.pattern, s0, o.beat);
-      const tn = item.tune ?? null;
-      if (tn && tn.m.on !== false) for (const h of tuneBetween(tn.m, tn.bar, s0, s1, tn.swing)) tune.play(h.midi, t + (h.beat - s0) * spb, 0.9, TUNE_SLOT, Infinity, false, TUNE_LIFT, tn.sound);
-      const ex = item.extra;
-      for (const c of ex?.chords ?? [])
-        if (c.midi.length && c.at >= s0 - 1e-6 && c.at < s1 - 1e-6) playItem(extraHarp(c.track, c.sound), { midi: c.midi, beats: c.beats, style: c.style, feel: c.feel, sound: c.sound, drums: item.drums, meter: item.meter }, t + (c.at - s0) * spb, spb, o.pattern, c.at, o.beat);
-      for (const x of ex?.tunes ?? []) {
-        const xt = x.tune;
-        if (xt.m.on === false) continue;
-        const h = extraHarp(x.track, xt.sound ?? SOUND_DEFAULT);
-        for (const n of tuneBetween(xt.m, xt.bar, s0, s1, xt.swing)) h.play(n.midi, t + (n.beat - s0) * spb, 0.9, TUNE_SLOT, Infinity, false, TUNE_LIFT, xt.sound);
+      const t0 = t - s0 * spb;
+      const end = t + secs.rest[i] * spb;
+      playChord(voice("chords", "chord"), item, t, spb, o.pattern, s0, o.beat, cache, () => {
+        const chords: SecChord[] = [];
+        let a = i;
+        while (a > 0 && Math.abs(secs.origin[a - 1] - origin) < 1e-6) a--;
+        let x = s0 - items.slice(a, i).reduce((n, it) => n + it.beats, 0);
+        for (let j = a; j < items.length && Math.abs(secs.origin[j] - origin) < 1e-6; j++) {
+          chords.push({ midi: items[j].midi, at: x, beats: items[j].beats });
+          x += items[j].beats;
+        }
+        return { key: `chords@${t0.toFixed(4)}`, t0, chords };
+      });
+      const tunes: { id: string; tune: PlayTune | null }[] = [{ id: "melody", tune: item.tune ?? null }, ...(item.extra?.tunes ?? []).map((x) => ({ id: x.track, tune: x.tune }))];
+      for (const { id, tune } of tunes) {
+        if (!tune || tune.m.on === false) continue;
+        const v = voice(id, "melody");
+        if (tune.tone) v.setTone(tune.tone);
+        if (tune.sound) v.setSound(tune.sound, o.bpm, t);
+        v.repedal(t);
+        const hits = tuneBetween(tune.m, tune.bar, s0, s1, tune.swing);
+        hits.forEach((h, k) => {
+          const after = hits.slice(k + 1).find((x) => x.beat > h.beat + 1e-6);
+          const gap = (after ? after.beat - h.beat : nextNote(tune.m, tune.bar, h.beat)) * spb;
+          playTuneNote(v, h.midi, t + (h.beat - s0) * spb, gap, end, 0, tune.sound);
+        });
       }
-      const drums = [{ beat: item.drums ?? o.beat, gain: 1, track: undefined as string | undefined }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, gain: levelOf(d.track), track: d.track }))];
+      const ex = item.extra;
+      for (const ch of ex?.chords ?? [])
+        if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
+          playChord(voice(ch.track, "chord"), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
+            key: `${ch.track}@${t0.toFixed(4)}`,
+            t0,
+            chords: (ex?.chords ?? []).filter((x) => x.track === ch.track),
+          }));
+      // every drums track on its own desk, each section's drum sound from where the section starts
+      const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
       for (const d of drums) {
         const b = d.beat;
-        if (!b?.on || d.gain <= 0) continue;
+        syncAt(d.track, b, t);
+        if (!b?.on) continue;
         const div = b.div;
         for (let k = Math.ceil(s0 * div - 1e-6); k / div < s1 - 1e-9; k++) {
           const time = t + (Math.floor(k / div) + stepBeat(k % div, div, b.swing ?? 0) - s0) * spb;
           const step = k % lenOf(b);
           for (const id of DRUM_IDS) {
             const lv = levelAt(b.rows, id, step);
-            if (lv) playStep(b, id, lv, time, d.gain, d.track);
+            if (lv) playStep(b, id, lv, time, d.track);
           }
         }
       }
@@ -826,7 +736,14 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       at += item.beats;
     });
   });
-  const buf = await off.startRendering();
+  let buf: AudioBuffer;
+  try {
+    await Promise.all([...made.values()].map((v) => v.prepare()));
+    buf = await off.startRendering();
+  } finally {
+    // what the voices hold (a piano's recordings at this sample rate, a synth's processor) is let go
+    for (const v of made.values()) v.dispose();
+  }
   // for a file (not a loop): the song, then what rings on after it
   if (o.fold === false) return [buf.getChannelData(0).slice(), buf.getChannelData(1).slice()];
   const out: Float32Array[] = [];
