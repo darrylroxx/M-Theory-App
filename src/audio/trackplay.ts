@@ -51,16 +51,17 @@ let home: number | undefined;
 export function setHome(pc: number | undefined) {
   home = pc;
 }
-export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[], velocity = 0.78): SynthNote[] {
+export function synthSection(cache: SynthCache, section: string, v: TrackVoice, t0: number, spb: number, chords: () => SecChord[], velocity = 0.78, bar = 0): SynthNote[] {
   const list = chords();
   const play = v.synth.play;
   // a chord changed (or the way of playing) while the section plays is heard from the next chord on, as on the other instruments
-  const key = `${section}|${home}|${JSON.stringify(list)}|${JSON.stringify(play)}`;
+  const key = `${section}|${home}|${bar}|${JSON.stringify(list)}|${JSON.stringify(play)}`;
   let notes = cache.get(key);
   if (!notes) {
     const written: PlayNote[] = [];
     for (const c of list) for (const m of c.midi) if (m !== null) written.push({ midi: m, start: t0 + c.at * spb, length: c.beats * spb, velocity });
-    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home });
+    // (`bar`: an arp's rhythm of steps starts again on a bar line of the section, its swing on every one)
+    notes = playNotes(written, play, { bpm: 60 / spb, origin: t0, seed: 11, tonic: home, bar });
     cache.set(key, notes);
     if (cache.size > 64) cache.delete(cache.keys().next().value!);
   }
@@ -84,7 +85,7 @@ export function playChord(v: TrackVoice, item: PlayItem, t: number, spb: number,
     const from = t - EARLY;
     const next = s.chords.reduce((n, c) => (c.at > at + 1e-6 && c.at < n && c.midi.some((m) => m !== null) ? c.at : n), Infinity);
     const end = Number.isFinite(next) ? t + (next - at) * spb - EARLY : Infinity;
-    playSpan(v, synthSection(cache, s.key, v, s.t0, spb, () => s.chords), from, end);
+    playSpan(v, synthSection(cache, s.key, v, s.t0, spb, () => s.chords, undefined, meterOf(item.drums ?? beat, item.meter).bar), from, end);
     return;
   }
   const keys = !!v.instrument;
@@ -148,7 +149,7 @@ const playedTo = new WeakMap<SynthCache, Map<string, number>>();
  * note held from before it sounds from there.
  */
 export function playTuneSpan(v: TrackVoice, cache: SynthCache, key: string, tune: { m: Melody; bar: number; swing: number }, t0: number, spb: number, len: number, from: number, to: number, start = 0) {
-  const notes = synthSection(cache, key, v, t0, spb, () => clipChords(tuneSection(tune.m, tune.bar, tune.swing, len), start, len), TUNE_VELOCITY);
+  const notes = synthSection(cache, key, v, t0, spb, () => clipChords(tuneSection(tune.m, tune.bar, tune.swing, len), start, len), TUNE_VELOCITY, tune.bar);
   let done = playedTo.get(cache);
   if (!done) playedTo.set(cache, (done = new Map()));
   // each stretch starts where the last one of this section ended (a note on the edge between two is played once,

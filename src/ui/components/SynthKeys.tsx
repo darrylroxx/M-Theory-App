@@ -50,6 +50,9 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
   playRef.current = play;
   const live = useMemo(() => new LiveKeys(out, () => playRef.current), [out]);
   const [lit, setLit] = useState<number[]>([]);
+  // the arp's latch: the keys let go of keep playing (off again when all sound stops or the page is left)
+  const [latch, setLatchState] = useState(false);
+  const rhythmic = play.mode === "arp" || play.mode === "pulse";
   const [wish, setBase] = useState(48);
   const [octaves, setOctaves] = useState(2);
   // (more octaves fitting after a move up, a phone turned on its side, brings the keys down rather than past the top)
@@ -83,16 +86,26 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
     live.releaseAll();
     setLit([]);
   }, [play.mode, live]);
-  useEffect(() => () => live.releaseAll(), [live]);
-  // every sound stopped (the transport), or another page shown: the keys go up, so none stays lit over a silenced note
+  useEffect(() => {
+    // (new keys start unlatched)
+    setLatchState(false);
+    return () => live.unlatch();
+  }, [live]);
+  // every sound stopped (the transport), or another page shown: the keys go up and the latch comes off, so none stays lit over a silenced note
   useEffect(
     () =>
       out.onCut?.(() => {
-        live.releaseAll();
+        live.unlatch();
+        setLatchState(false);
         setLit([]);
       }),
     [out, live],
   );
+  const toggleLatch = () => {
+    live.setLatch(!latch);
+    setLatchState(!latch);
+    show();
+  };
 
   const press = (midi: number, vel = 0.8) => {
     live.press(midi, vel);
@@ -126,8 +139,8 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
     if (was === undefined) return;
     const k = keyAt(e.clientX, e.clientY);
     if (!k || k.midi === was) return;
-    // a drone's keys latch: sliding across them would latch them all
-    if (playRef.current.mode === "drone") return;
+    // a drone's keys latch (and the arp's, with the latch on): sliding across them would latch them all
+    if (playRef.current.mode === "drone" || live.latched) return;
     fingers.current.set(e.pointerId, k.midi);
     lift(was);
     press(k.midi, k.vel);
@@ -160,10 +173,13 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
 
   return (
     <div className={`syn-keys-row${className ? ` ${className}` : ""}`}>
+      {rhythmic && (
+        <button className={`chip syn-latch${latch ? " on" : ""}`} aria-pressed={latch} title="Latch: the arpeggio keeps playing after the keys are let go, until the next chord (■ or tapping again lets go)" onClick={toggleLatch}>Latch</button>
+      )}
       <button className="icon-btn" aria-label="Octave down" disabled={base <= LOW} onClick={() => shift(-1)}>‹</button>
       <div ref={box} className="syn-keys" role="group" aria-label="Keys" tabIndex={0}
         onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}
-        onKeyDown={(e) => computer(e, true)} onKeyUp={(e) => computer(e, false)} onBlur={() => { if (playRef.current.mode !== "drone") { live.releaseAll(); setLit([]); } }}>
+        onKeyDown={(e) => computer(e, true)} onKeyUp={(e) => computer(e, false)} onBlur={() => { if (playRef.current.mode !== "drone" && !live.latched) { live.releaseAll(); setLit([]); } }}>
         {whites.map((m, i) => (
           <span key={m} data-midi={m} className={`syn-key white${on.has(m) ? " on" : ""}`} style={{ left: `${i * wPct}%`, width: `${wPct}%` }}>
             {m % 12 === 0 && <i>{`C${Math.floor(m / 12) - 1}`}</i>}

@@ -14,10 +14,7 @@
  * sound, never after a player, a record or a product.
  */
 import {
-  type ArpPattern,
-  type PlayMode,
-  type Rate,
-  type StrumDir,
+  type PlaySettings,
   type SynthParams,
   DEFAULT_PARAMS,
   DEFAULT_PLAY,
@@ -71,7 +68,7 @@ interface Recipe extends Partial<Omit<SynthParams, "play" | "macros" | "cutoff" 
   glide?: number;
   /** seconds, for the delay effect (sets fxRate) */
   echo?: number;
-  play?: Partial<{ mode: PlayMode; pattern: ArpPattern; rate: Rate; octaves: 1 | 2 | 3; gate: number; spread: number; direction: StrumDir; humanise: number }>;
+  play?: Partial<PlaySettings>;
 }
 
 /** Everything a recipe does not mention: no LFO, no effect, a little room. */
@@ -342,6 +339,31 @@ export const PRESETS: SynthPreset[] = [
     osc: "pulse", texture: FIFTH, mod: 0.4, cutoff: 900, resonance: 0.25, balance: 0.65, attack: 0.001, decay: 0.2, sustain: 0.1, release: 0.12,
     fx: "delay", fxDepth: 0.25, echo: 0.375, reverb: 0.2, trim: 5.3,
     play: { mode: "arp", pattern: "chord", rate: "1/8", octaves: 2, gate: 0.45 },
+  }),
+  preset("gallop-arp", "Gallop Arp", "arp", "Long-short-short steps bouncing over two octaves", {
+    osc: "saw", texture: 0.2, mod: 0.25, cutoff: 700, resonance: 0.35, keyTrack: 0.6, balance: 0.75, attack: 0.001, decay: 0.22, sustain: 0, release: 0.15,
+    fx: "delay", fxDepth: 0.3, echo: 0.3, reverb: 0.2, trim: 2.5,
+    play: { mode: "arp", pattern: "up", rate: "1/16", octaves: 2, octMove: "bounce", gate: 0.55, rhythm: "X.xxX.xx" },
+  }),
+  preset("lazy-arp", "Lazy Arp", "arp", "Swung eighths folding in from the outside notes", {
+    osc: "fm", texture: 0.25, mod: fm(1), cutoff: 3000, resonance: 0, balance: 0.3, attack: 0.002, decay: 0.5, sustain: 0.2, release: 0.3,
+    fx: "chorus", fxDepth: 0.35, fxRate: 0.3, reverb: 0.3, trim: 2.6,
+    play: { mode: "arp", pattern: "converge", rate: "1/8", octaves: 1, gate: 0.7, swing: 0.4 },
+  }),
+  preset("pedal-arp", "Pedal Arp", "arp", "The low note pumping between the others, leaning on the beat", {
+    osc: "pulse", texture: 0, mod: 0.45, cutoff: 1500, resonance: 0.2, balance: 0.5, attack: 0.001, decay: 0.2, sustain: 0.15, release: 0.12,
+    fx: "delay", fxDepth: 0.25, echo: 0.25, reverb: 0.15, trim: 7.1,
+    play: { mode: "arp", pattern: "thumb", rate: "1/16", octaves: 1, gate: 0.5, rhythm: "XxxxXxxx" },
+  }),
+  preset("ratchet-arp", "Ratchet Arp", "arp", "Eighths that stutter into quick repeats, climbing three octaves", {
+    osc: "sync", texture: 0.25, mod: 0.4, cutoff: 2200, resonance: 0.3, balance: 0.6, attack: 0.001, decay: 0.12, sustain: 0, release: 0.08,
+    fx: "delay", fxDepth: 0.2, echo: 0.25, reverb: 0.15, trim: 5.8,
+    play: { mode: "arp", pattern: "up", rate: "1/8", octaves: 3, octMove: "up", gate: 0.6, ratchet: 2, rhythm: "X.x.Xxx." },
+  }),
+  preset("dotted-arp", "Dotted Echo", "arp", "Dotted eighths spreading out from the middle, with echoes between", {
+    osc: "saw", texture: 0, mod: 0.4, cutoff: 1800, resonance: 0.2, balance: 0.5, attack: 0.003, decay: 0.35, sustain: 0.1, release: 0.3,
+    fx: "delay", fxDepth: 0.45, echo: 0.375, reverb: 0.3, trim: 5.9,
+    play: { mode: "arp", pattern: "diverge", rate: "1/8D", octaves: 2, octMove: "up", gate: 0.5 },
   }),
 
   // ── Init: one plain start per oscillator, for building from scratch

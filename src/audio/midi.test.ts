@@ -4,6 +4,9 @@ import { DEFAULT_BEAT } from "./beats";
 import { SOUND_DEFAULT } from "./rack";
 import type { ExtraPlay, PlayItem } from "./patterns";
 import { STYLES, styleNotes } from "./patterns";
+import type { Tone } from "./tone";
+import { presetById } from "../synth/presets";
+import type { PlaySettings } from "../synth/params";
 
 describe("midi export", () => {
   const items = [
@@ -204,5 +207,65 @@ describe("midi export of many added tracks", () => {
     const on = new Map<number, Set<number>>();
     for (const { ch, prog } of set) on.set(ch, (on.get(ch) ?? new Set()).add(prog));
     for (const [ch, progs] of on) expect(progs.size, `channel ${ch + 1}`).toBe(1);
+  });
+});
+
+describe("midi export of a synth that arpeggiates", () => {
+  const base = presetById("arp-pluck")!.params;
+  const synth = (play: Partial<PlaySettings>): Tone => ({ inst: "synth", synth: { ...base, play: { ...base.play, humanise: 0, ...play } } });
+  const sig = { num: 4, den: 4 } as const;
+  /** each note-on in a track: its tick, key and velocity, and how long it is held */
+  const notesOf = (track: { tick: number; data: number[] }[]) =>
+    track.flatMap((e, i) => {
+      if ((e.data[0] & 0xf0) !== 0x90 || e.data[2] === 0) return [];
+      const off = track.slice(i + 1).find((x) => (x.data[0] & 0xf0) === 0x80 && x.data[1] === e.data[1])!;
+      return [{ tick: e.tick, midi: e.data[1], vel: e.data[2], len: off.tick - e.tick }];
+    });
+  const C = [48, 52, 55];
+  const F = [53, 57, 60];
+  it("writes the notes the arpeggio plays, not the held chords", () => {
+    const items: PlayItem[] = [{ midi: C, beats: 4, section: true }, { midi: F, beats: 4 }];
+    const [chords] = readMidi(progressionToMidi(items, 120, "ring", "x", null, null, {}, sig, { chords: synth({ pattern: "up", rate: "1/16", octaves: 2, gate: 0.5 }) }));
+    const n = notesOf(chords);
+    // a sixteenth is 120 ticks: 16 to a chord, one at a time, climbing two octaves
+    expect(n.length).toBe(32);
+    expect(n.slice(0, 7).map((x) => x.midi)).toEqual([48, 52, 55, 60, 64, 67, 48]);
+    expect(n.map((x) => x.tick)).toEqual(Array.from({ length: 32 }, (_, i) => i * 120));
+    expect(n.every((x) => x.len === 60)).toBe(true);
+    expect(n.slice(16).every((x) => F.map((m) => m % 12).includes(x.midi % 12))).toBe(true);
+    // the beat is leaned on, as in the app
+    expect(n[0].vel).toBeGreaterThan(n[1].vel);
+  });
+  it("with a rhythm (starting again at each bar of 3/4), accents, swing and repeats", () => {
+    const meter = { bar: 3, sig: { num: 3, den: 4 as const } };
+    const items: PlayItem[] = [{ midi: C, beats: 6, section: true, meter }];
+    const [chords] = readMidi(progressionToMidi(items, 100, "ring", "x", null, null, {}, { num: 3, den: 4 }, { chords: synth({ pattern: "up", rate: "1/8", rhythm: "X.xx", swing: 0.375, ratchet: 2, gate: 1 }) }));
+    const n = notesOf(chords);
+    // eighths (240 ticks), six to a bar: steps 0, 2, 3, 4 of each (the rhythm runs 0..3 then again from 0 at step 4), each struck twice;
+    // the odd steps (3) are swung a quarter of a step late, so the even ones are held a quarter longer (their repeat comes later)
+    const per = [0, 150, 480, 630, 780, 870, 960, 1110];
+    expect(n.map((x) => x.tick)).toEqual([...per, ...per.map((t) => t + 1440)]);
+    expect(n[0].vel).toBeGreaterThan(n[2].vel);
+    expect(n[0].midi).toBe(n[1].midi);
+  });
+  it("a melody on such a synth, and an added chords track, are written as played too; other ways of playing are not", () => {
+    const tune = { m: { div: 1 as const, bars: 1, notes: [{ at: 0, midi: 72 }, { at: 24, midi: 76 }] }, bar: 4, swing: 0 };
+    const extra: ExtraPlay = { chords: [{ track: "c2", at: 0, beats: 4, midi: C, style: "ring" as const, sound: SOUND_DEFAULT }], tunes: [], drums: [] };
+    const items: PlayItem[] = [{ midi: C, beats: 4, section: true, extra }];
+    const tones = { melody: synth({ pattern: "up", rate: "1/8", octaves: 1 }), c2: synth({ pattern: "down", rate: "1/4", octaves: 1 }), chords: synth({ mode: "sustain" }) };
+    const [chords, melody, c2] = readMidi(progressionToMidi(items, 120, "ring", "x", null, tune, { c2: "Pad" }, sig, tones));
+    // the main chords track holds its chord (Hold)
+    expect(notesOf(chords).map((x) => x.midi).sort()).toEqual(C);
+    // the melody: C for two beats in eighths, then E
+    expect(notesOf(melody).map((x) => x.midi)).toEqual([72, 72, 72, 72, 76, 76, 76, 76]);
+    // the added track: quarters, down the chord
+    expect(notesOf(c2).map((x) => x.midi)).toEqual([55, 52, 48, 55]);
+  });
+  it("a random arpeggio is written as the app plays it (the same every time)", () => {
+    const items: PlayItem[] = [{ midi: C, beats: 4, section: true }];
+    const tones = { chords: synth({ pattern: "random", octaves: 3 }) };
+    const a = progressionToMidi(items, 120, "ring", "x", null, null, {}, sig, tones);
+    expect([...progressionToMidi(items, 120, "ring", "x", null, null, {}, sig, tones)]).toEqual([...a]);
+    expect(new Set(notesOf(readMidi(a)[0]).map((x) => x.midi)).size).toBe(9);
   });
 });

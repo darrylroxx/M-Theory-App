@@ -21,8 +21,15 @@ export type FxType = "off" | "dist" | "chorus" | "phaser" | "delay";
 export type VoiceMode = "poly" | "mono" | "legato";
 
 export type PlayMode = "sustain" | "arp" | "strum" | "pulse" | "drone" | "glide";
-export type ArpPattern = "up" | "down" | "updown" | "random" | "chord" | "crawl";
-export type Rate = "1/4" | "1/8" | "1/8T" | "1/16" | "1/16T" | "1/32";
+export type ArpPattern = "up" | "down" | "updown" | "random" | "chord" | "crawl" | "played" | "converge" | "diverge" | "thumb" | "pinky";
+/**
+ * How an arpeggio over more than one octave travels: "span" runs the pattern across the whole
+ * range at once (how it always worked, so it stays the default); the others play the pattern
+ * within one octave and then move it an octave up, down, or up and back each time round.
+ */
+export type OctMove = "span" | "up" | "down" | "bounce";
+/** A step: a note value, straight, dotted (D, half as long again) or triplet (T, three in the time of two). */
+export type Rate = "1/4" | "1/8" | "1/8T" | "1/16" | "1/16T" | "1/32" | "1/4D" | "1/4T" | "1/8D" | "1/16D" | "1/32D" | "1/32T";
 export type StrumDir = "down" | "up" | "alternate";
 
 /** The six big knobs. Each is −1..1; 0 leaves the sound exactly as it was made. */
@@ -43,9 +50,20 @@ export interface PlaySettings {
   /** the step of an arpeggio or a pulse */
   rate: Rate;
   /** how many octaves an arpeggio climbs */
-  octaves: 1 | 2 | 3;
+  octaves: 1 | 2 | 3 | 4;
+  /** how an arpeggio moves through its octaves */
+  octMove: OctMove;
   /** how much of each step a note is held, 0.1..1 */
   gate: number;
+  /** arp: how far every second step is pushed late, 0..0.75 (half way is a triplet lilt) */
+  swing: number;
+  /**
+   * arp: a rhythm of steps, one character each: "x" plays, "X" plays harder, "." rests. It
+   * starts again on the first bar line after it has played through. "" plays every step (as before rhythms existed).
+   */
+  rhythm: string;
+  /** arp: how many times each step is struck, 1..4 (quick repeats inside the step) */
+  ratchet: 1 | 2 | 3 | 4;
   /** strum: time between strings, 0..1 = 10..80 ms */
   spread: number;
   direction: StrumDir;
@@ -118,8 +136,25 @@ export const LFO_SHAPES: LfoShape[] = ["sine", "triangle", "square", "saw", "ran
 export const FX_TYPES: FxType[] = ["dist", "chorus", "phaser", "delay", "off"];
 export const VOICE_MODES: VoiceMode[] = ["poly", "mono", "legato"];
 export const PLAY_MODES: PlayMode[] = ["sustain", "arp", "strum", "pulse", "drone", "glide"];
-export const ARP_PATTERNS: ArpPattern[] = ["up", "down", "updown", "random", "chord", "crawl"];
-export const RATES: Rate[] = ["1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32"];
+export const ARP_PATTERNS: ArpPattern[] = ["up", "down", "updown", "played", "converge", "diverge", "thumb", "pinky", "crawl", "chord", "random"];
+export const OCT_MOVES: OctMove[] = ["span", "up", "down", "bounce"];
+export const RATES: Rate[] = ["1/4", "1/8", "1/8T", "1/16", "1/16T", "1/32", "1/4D", "1/4T", "1/8D", "1/16D", "1/32D", "1/32T"];
+/** The longest rhythm of steps. */
+export const RHYTHM_MAX = 16;
+/** The most swing (three quarters of the knob's travel is already a hard shuffle). */
+export const SWING_MAX = 0.75;
+
+/** Ready rhythms for the arp's steps, for anyone who would rather pick one than tap one in. */
+export const RHYTHMS: { id: string; name: string; steps: string; hint: string }[] = [
+  { id: "even", name: "Even", steps: "", hint: "Every step, evenly" },
+  { id: "accent", name: "Accent", steps: "XxxxXxxx", hint: "Every step, leaning on each beat" },
+  { id: "offbeat", name: "Offbeat", steps: ".x.x.x.x", hint: "Only the steps between the beats" },
+  { id: "gallop", name: "Gallop", steps: "X.xxX.xx", hint: "Long, short, short" },
+  { id: "332", name: "3-3-2", steps: "X..X..X.", hint: "Syncopated: three, three, two" },
+  { id: "skip", name: "Skip", steps: "X.xX.xX.", hint: "A skipping, off-balance pulse" },
+  { id: "broken", name: "Broken", steps: "X.x..xX.x.X..x.x", hint: "Syncopated, over sixteen steps" },
+  { id: "stutter", name: "Stutter", steps: "XxX.XxX.XxXxX...", hint: "Bursts with gaps, over sixteen steps" },
+];
 export const STRUM_DIRS: StrumDir[] = ["down", "up", "alternate"];
 export const MACRO_KEYS: (keyof Macros)[] = ["bright", "motion", "space", "grit", "width", "shape"];
 
@@ -134,7 +169,10 @@ export const OSC_INFO: Record<OscType, { name: string; texture: string; mod: str
 
 export const DEFAULT_MACROS: Macros = { bright: 0, motion: 0, space: 0, grit: 0, width: 0, shape: 0 };
 
-export const DEFAULT_PLAY: PlaySettings = { mode: "sustain", pattern: "up", rate: "1/16", octaves: 1, gate: 0.6, spread: 0.35, direction: "down", humanise: 0 };
+/** (the arp's newer settings default to how it played before they existed, so an old song sounds the same) */
+export const DEFAULT_PLAY: PlaySettings = {
+  mode: "sustain", pattern: "up", rate: "1/16", octaves: 1, octMove: "span", gate: 0.6, swing: 0, rhythm: "", ratchet: 1, spread: 0.35, direction: "down", humanise: 0,
+};
 
 /** A plain, playable saw sound: the starting point of every preset and every revived sound. */
 export const DEFAULT_PARAMS: SynthParams = {
@@ -367,13 +405,24 @@ export function reviveSynth(raw: unknown): SynthParams {
       mode: pick(pl.mode, PLAY_MODES, dp.mode),
       pattern: pick(pl.pattern, ARP_PATTERNS, dp.pattern),
       rate: pick(pl.rate, RATES, dp.rate),
-      octaves: pick(pl.octaves, [1, 2, 3] as const, dp.octaves),
+      octaves: pick(pl.octaves, [1, 2, 3, 4] as const, dp.octaves),
+      octMove: pick(pl.octMove, OCT_MOVES, dp.octMove),
       gate: num(pl.gate, dp.gate, 0.1, 1),
+      swing: num(pl.swing, dp.swing, 0, SWING_MAX),
+      rhythm: reviveRhythm(pl.rhythm),
+      ratchet: pick(pl.ratchet, [1, 2, 3, 4] as const, dp.ratchet),
       spread: num(pl.spread, dp.spread),
       direction: pick(pl.direction, STRUM_DIRS, dp.direction),
       humanise: num(pl.humanise, dp.humanise),
     },
   };
+}
+
+/** A stored rhythm of steps made safe: only "x", "X" and "." kept, at most RHYTHM_MAX steps; one with no step that plays is no rhythm at all. */
+export function reviveRhythm(v: unknown): string {
+  if (typeof v !== "string") return "";
+  const r = v.replace(/[^xX.]/g, "").slice(0, RHYTHM_MAX);
+  return /[xX]/.test(r) ? r : "";
 }
 
 /** The knobs that are plain 0..1 numbers (what macros and the panel move). */
@@ -391,5 +440,6 @@ export function sameSynth(a: SynthParams, b: SynthParams): boolean {
   const p = a.play;
   const q = b.play;
   return p.mode === q.mode && p.pattern === q.pattern && p.rate === q.rate && p.octaves === q.octaves && p.direction === q.direction
+    && p.octMove === q.octMove && p.rhythm === q.rhythm && p.ratchet === q.ratchet && Math.abs(p.swing - q.swing) < 1e-6
     && Math.abs(p.gate - q.gate) < 1e-6 && Math.abs(p.spread - q.spread) < 1e-6 && Math.abs(p.humanise - q.humanise) < 1e-6;
 }

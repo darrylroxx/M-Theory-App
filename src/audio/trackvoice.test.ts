@@ -281,3 +281,31 @@ describe("MIDI files", () => {
     expect(noteOns).toBe(C.length);
   });
 });
+
+describe("the arpeggiator's rhythm in a song", () => {
+  const rhythm = "X..x..x.x..x..x."; // sixteen steps: more than a bar of 3/4 holds
+  const base = presetById("arp-pluck")!.params;
+  const synthArp = (play: Partial<typeof base.play>): Tone => ({ inst: "synth", synth: { ...base, play: { ...base.play, ...play } } });
+  // (sixteen sixteenths take two bars of 3/4: all sixteen, then eight of them to the end of the second bar)
+  const twoBars = Array.from({ length: 24 }, (_, i) => i).filter((i) => rhythm[i % 16] !== ".");
+  it("a chords track starts the rhythm again on a bar line of its section once it has played through (3/4 here)", () => {
+    const c = new FakeAudio();
+    const { v } = voice(c);
+    v.setTone(synthArp({ mode: "arp", pattern: "up", rate: "1/16", octaves: 1, rhythm, humanise: 0 }));
+    const spb = 0.5;
+    const chords = [{ midi: C, at: 0, beats: 6 }];
+    playChord(v, { midi: C, beats: 6, meter: { bar: 3 } }, 1, spb, "ring", 0, null, new Map(), () => ({ key: "r", t0: 1, chords }));
+    const steps = ons(v).map((n) => Math.round((n.t - 1) / (spb / 4)));
+    expect(steps).toEqual(twoBars);
+  });
+  it("so does a melody track, by its bars", () => {
+    const c = new FakeAudio();
+    const { v } = voice(c, "melody");
+    v.setTone(synthArp({ mode: "arp", pattern: "up", rate: "1/16", octaves: 2, rhythm, humanise: 0 }));
+    const tune = { m: { div: 1 as const, bars: 2, notes: [{ at: 0, midi: 72 }] }, bar: 3, swing: 0 };
+    const cache: SynthCache = new Map();
+    for (let k = 0; k < 72; k++) playTuneSpan(v, cache, "m", tune, 1, 0.5, 6, 1 + (k * 0.5) / 12, 1 + ((k + 1) * 0.5) / 12);
+    const steps = ons(v).map((n) => Math.round((n.t - 1) / 0.125));
+    expect(steps).toEqual(twoBars);
+  });
+});
