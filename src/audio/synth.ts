@@ -18,8 +18,7 @@ import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import type { HarpString } from "./harp";
 import { TrackVoice, type VoiceKind } from "./trackvoice";
 import { GUITAR, type Tone, type Tones } from "./tone";
-import { playNotes, type PlayNote } from "../synth/play";
-import type { LiveOut } from "../synth/live";
+import { playNotes, withSteps, type PlayNote } from "../synth/play";
 import { TUNE_LIFT, TUNE_SLOT, clipChords, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
 
 
@@ -171,55 +170,10 @@ export function playNote(midi: number, when?: number, velocity = 0.8, slot?: num
   const t0 = when ?? v.c.currentTime + 0.01;
   // a synth with a way of its own plays even a tapped note its way (an arp runs, a pulse repeats it), so the way is heard
   if (synthWay(v)) {
-    for (const n of playNotes([{ midi, start: t0, length: len, velocity }], v.synth.play, { bpm: tempo, origin: t0 })) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot });
+    for (const n of withSteps(playNotes([{ midi, start: t0, length: len, velocity }], v.synth.play, { bpm: tempo, origin: t0 }), v.synth.play, tempo)) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot, step: n.step });
     return;
   }
   v.note(midi, t0, velocity, len, { slot, lift: tune ? TUNE_LIFT : 1 });
-}
-
-/**
- * The on-screen keys of a piano or synth track (see synth/live.ts): notes go to the track the page
- * is editing, on its own instrument. Its recordings or its processor start loading at the first touch.
- */
-export function liveKeys(kind: "chord" | "melody"): LiveOut {
-  const v = () => {
-    const x = kind === "melody" ? tuneVoice() : chordVoice();
-    void x.load().catch(() => {});
-    return x;
-  };
-  // each note is let go on the voice that played it, though the page may edit another track by then
-  // (every voice numbers its own notes, so an id alone could reach another track's note)
-  const held = new Map<number, { v: TrackVoice; id: number }>();
-  let ids = 0;
-  return {
-    now: () => v().c.currentTime,
-    bpm: () => tempo,
-    on: (midi, when, velocity) => {
-      const x = v();
-      const id = x.hold(midi, when, velocity);
-      if (!id) return 0;
-      held.set(++ids, { v: x, id });
-      return ids;
-    },
-    off: (id, when) => {
-      const h = held.get(id);
-      if (!h) return;
-      held.delete(id);
-      h.v.letGo(h.id, when);
-    },
-    note: (midi, when, velocity, length) => v().note(midi, when, velocity, length),
-    onCut: (fn) => {
-      cuts.add(fn);
-      return () => void cuts.delete(fn);
-    },
-  };
-}
-
-/** The on-screen keys, told when every sound is stopped (the transport) or the page changes: their keys go up. */
-const cuts = new Set<() => void>();
-/** Let go of every key held or latched on the screen. */
-export function letGoOfKeys() {
-  for (const fn of [...cuts]) fn();
 }
 
 /** Roll a chord (the note on each string, null = not played), the way a harpist spreads one. On a synth, the synth's own way of playing. */
@@ -230,7 +184,7 @@ export function strum(midi: (number | null)[], opts: { when?: number; dir?: "dow
   if (v.tone.inst === "synth") {
     const len = opts.length ?? 2;
     const notes: PlayNote[] = strings.map((x) => ({ midi: x.m, start: t0, length: len, velocity: opts.velocity ?? 0.78 }));
-    for (const n of playNotes(notes, v.synth.play, { bpm: tempo, origin: t0 })) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot });
+    for (const n of withSteps(playNotes(notes, v.synth.play, { bpm: tempo, origin: t0 }), v.synth.play, tempo)) v.note(n.midi, n.start, n.velocity, n.length, { slot: n.slot, step: n.step });
     return;
   }
   // the first note sounds as soon as the notes are ready
@@ -243,8 +197,6 @@ export function strum(midi: (number | null)[], opts: { when?: number; dir?: "dow
 
 export function stopAll() {
   if (!audioIfStarted()) return;
-  // (the keys on the screen let go too, so none stays lit over a note that was silenced)
-  letGoOfKeys();
   for (const v of voices.values()) v.stopAll();
 }
 

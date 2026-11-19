@@ -214,3 +214,33 @@ export function allFinite(x: ArrayLike<number>): boolean {
   for (let i = 0; i < x.length; i++) if (!Number.isFinite(x[i])) return false;
   return true;
 }
+
+/**
+ * How clearly each of a run of notes starts, in dB: the loudest 12 ms (a quarter of a step at
+ * most) within the first 40 ms of the note (half a step at most), against the 12 ms just before
+ * it. Both channels count (a chorus or a widener can cancel in a mono sum where an ear hears it).
+ * A step heard as a note of its own rises 6 dB or more; one lost in the wash of the last rises
+ * barely at all. `hits`: when each note starts (seconds) and how long until the next.
+ */
+export function onsetRises(L: ArrayLike<number>, R: ArrayLike<number>, sr: number, hits: { t: number; step: number }[]): number[] {
+  const p = new Float64Array(L.length);
+  for (let i = 0; i < L.length; i++) p[i] = 0.5 * (L[i] * L[i] + R[i] * R[i]);
+  const level = (a: number, b: number) => {
+    let e = 0;
+    let n = 0;
+    for (let i = Math.max(0, a); i < Math.min(p.length, b); i++) {
+      e += p[i];
+      n++;
+    }
+    return Math.sqrt(e / Math.max(1, n));
+  };
+  const ms = (x: number) => Math.round(x * sr);
+  return hits.map(({ t, step }) => {
+    const w = ms(Math.min(0.012, step / 4));
+    const f = ms(t);
+    const before = level(f - w - ms(0.001), f - ms(0.001));
+    let after = 0;
+    for (let k = 0; k <= ms(Math.min(0.04, step / 2)); k += ms(0.002)) after = Math.max(after, level(f + k, f + k + w));
+    return 20 * Math.log10((after + 1e-9) / (before + 1e-9));
+  });
+}

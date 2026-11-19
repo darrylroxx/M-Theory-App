@@ -6,7 +6,7 @@
 import { SynthKernel } from "./kernel";
 import { applyMacros } from "./macros";
 import { type SynthParams, timeSec } from "./params";
-import { type PlayNote, type SynthNote, playNotes, voiceForPlay } from "./play";
+import { type PlayNote, type SynthNote, playNotes, voiceForPlay, withSteps } from "./play";
 import type { PresetCategory } from "./presets";
 
 export { loudness } from "./measure";
@@ -36,7 +36,7 @@ export function renderNotes(params: SynthParams, notes: SynthNote[], o: RenderOp
   k.snapSmoothing();
   let end = 0;
   notes.forEach((n, i) => {
-    k.noteOn(n.start * sr, n.midi, n.velocity, i + 1, n.slot ?? -1);
+    k.noteOn(n.start * sr, n.midi, n.velocity, i + 1, n.slot ?? -1, n.step ?? 0);
     if (Number.isFinite(n.length)) k.noteOff((n.start + n.length) * sr, i + 1);
     end = Math.max(end, n.start + (Number.isFinite(n.length) ? n.length : 0));
   });
@@ -59,5 +59,5 @@ export function referencePhrase(category: PresetCategory): PlayNote[] {
 
 /** The reference phrase, played the way the sound suggests (at 120 bpm). */
 export function referenceNotes(params: SynthParams, category: PresetCategory): SynthNote[] {
-  return playNotes(referencePhrase(category), params.play, { bpm: 120, seed: 1 });
+  return withSteps(playNotes(referencePhrase(category), params.play, { bpm: 120, seed: 1 }), params.play, 120);
 }

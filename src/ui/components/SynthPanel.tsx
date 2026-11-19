@@ -1,6 +1,6 @@
 /**
  * The synth's panel. On top, ready-made sounds by kind (with ‹ › to step and a die for a surprise
- * in the same kind), six big macro knobs, how the notes are played, and keys to play it. Underneath, the whole
+ * in the same kind), six big macro knobs and how the notes are played. Underneath, the whole
  * panel of the instrument it is modelled on, section by section (Osc, LFO, Filter, EG, Effect,
  * Voice), with sliders that move as the macros turn, so turning a macro shows what it does.
  *
@@ -10,23 +10,15 @@
 import { type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode, useRef, useState } from "react";
 import { MACROS, type MacroInfo, applyMacros, macroOffsets, macroChoices, setChoice, setKnob, setMacro } from "../../synth/macros";
 import {
-  ARP_PATTERNS,
   DEFAULT_PARAMS,
-  type ArpPattern,
   type FxType,
   type LfoDest,
   type LfoShape,
-  OCT_MOVES,
-  type OctMove,
   OSC_INFO,
   OSC_TYPES,
   type OscType,
   type PlayMode,
   type PlaySettings,
-  RATES,
-  RHYTHMS,
-  type Rate,
-  SWING_MAX,
   type StrumDir,
   type SynthParams,
   type UnitKey,
@@ -34,10 +26,9 @@ import {
   sameSynth,
   valueText,
 } from "../../synth/params";
-import { CATEGORIES, type PresetCategory, type SynthPreset, presetById, presetsIn } from "../../synth/presets";
+import { ARP_STYLES, RANGES, SPEEDS, speedOf, styleOf, withRange, withSpeed, withStyle } from "../../synth/arpstyles";
+import { CATEGORIES, type PresetCategory, type SynthPreset, pickPreset, presetById, presetsIn } from "../../synth/presets";
 import { Seg } from "./common";
-import type { LiveOut } from "../../synth/live";
-import { SynthKeys } from "./SynthKeys";
 
 export interface SynthPanelProps {
   params: SynthParams;
@@ -46,11 +37,9 @@ export interface SynthPanelProps {
   onAudition?: () => void;
   /** small: the presets, the macros and the way of playing; the panel opens on request */
   compact?: boolean;
-  /** where notes played on the on-screen keys go (no keys without it) */
-  keys?: LiveOut;
 }
 
-export function SynthPanel({ params, onChange, onAudition, compact, keys }: SynthPanelProps) {
+export function SynthPanel({ params, onChange, onAudition, compact }: SynthPanelProps) {
   const preset = presetById(params.preset);
   const [cat, setCat] = useState<PresetCategory>(preset?.category ?? "pad");
   // a sound handed in from outside (another track's, say) brings its own kind with it, so ‹ › and
@@ -67,12 +56,12 @@ export function SynthPanel({ params, onChange, onAudition, compact, keys }: Synt
   const pushed = macroOffsets(params.macros, params.osc, macroChoices(params).fx);
   const pool = presetsIn(cat);
   const at = pool.findIndex((x) => x.id === params.preset);
-  const edited = preset ? !sameSynth({ ...preset.params, volume: params.volume }, params) : false;
+  // (the way of playing is not the sound: a pad played as an arp is still that pad)
+  const edited = preset ? !sameSynth({ ...preset.params, volume: params.volume, play: params.play }, params) : false;
 
   const choose = (x: SynthPreset) => {
     setCat(x.category);
-    // a ready-made sound replaces everything but how loud this track is
-    onChange({ ...x.params, volume: params.volume });
+    onChange(pickPreset(params, x));
     onAudition?.();
   };
   const step = (dir: -1 | 1) => choose(pool[(Math.max(at, dir > 0 ? -1 : 0) + dir + pool.length) % pool.length]);
@@ -83,7 +72,6 @@ export function SynthPanel({ params, onChange, onAudition, compact, keys }: Synt
   };
   const knob = (k: UnitKey, v: number) => onChange(setKnob(params, k, v));
   const choice = (patch: Partial<Pick<SynthParams, "osc" | "lfoDest" | "lfoShape" | "fx" | "voice">>) => onChange(setChoice(params, patch));
-  const play = (patch: Partial<PlaySettings>) => onChange({ ...params, play: { ...params.play, ...patch } });
   /** a double-click puts a slider back where the ready-made sound had it */
   const home = (k: UnitKey) => (preset ? preset.params[k] : DEFAULT_PARAMS[k]);
   const fader = (k: UnitKey, label: string, title?: string) => (
@@ -127,9 +115,7 @@ export function SynthPanel({ params, onChange, onAudition, compact, keys }: Synt
         {MACROS.map((m) => <MacroKnob key={m.id} info={m} value={params.macros[m.id]} onChange={(v) => onChange(setMacro(params, m.id, v))} />)}
       </div>
 
-      <PlayPicker play={params.play} onChange={play} />
-
-      {keys && <SynthKeys out={keys} play={params.play} />}
+      <PlayPicker play={params.play} onChange={(p) => onChange({ ...params, play: p })} />
 
       {compact && (
         <div className="dm-tabs">
@@ -265,155 +251,76 @@ function MacroKnob({ info, value, onChange }: { info: MacroInfo; value: number; 
 
 const PLAY_LABELS: { value: PlayMode; label: ReactNode }[] = [
   { value: "sustain", label: <span title="Hold: the notes as written">Hold</span> },
-  { value: "arp", label: <span title="Arpeggiator: the chord's notes one after another, with a pattern, octaves, a rhythm and swing">Arp</span> },
+  { value: "arp", label: <span title="Arp: the chord's notes one after another">Arp</span> },
   { value: "strum", label: <span title="Strum: the chord spread out like a hand across strings">Strum</span> },
   { value: "pulse", label: <span title="Pulse: the whole chord struck again on every step">Pulse</span> },
   { value: "drone", label: <span title="Drone: the home note and its fifth held under everything">Drone</span> },
   { value: "glide", label: <span title="Glide: one line, sliding from note to note">Glide</span> },
 ];
-const PATTERN_LABELS: Record<ArpPattern, { label: string; hint: string }> = {
-  up: { label: "↑", hint: "Up" },
-  down: { label: "↓", hint: "Down" },
-  updown: { label: "↕", hint: "Up and down" },
-  played: { label: "♪", hint: "As played: the order the notes are written or pressed" },
-  converge: { label: "><", hint: "Converge: from the outside notes in" },
-  diverge: { label: "<>", hint: "Diverge: from the middle note out" },
-  thumb: { label: "⊥", hint: "Thumb: the lowest note between each of the others" },
-  pinky: { label: "⊤", hint: "Pinky: the highest note between each of the others" },
-  crawl: { label: "⤴", hint: "Crawl: creep up the chord" },
-  chord: { label: "≡", hint: "The whole chord, jumping octaves" },
-  random: { label: "⚄", hint: "Random" },
-};
-const MOVE_LABELS: Record<OctMove, { label: string; hint: string }> = {
-  span: { label: "All", hint: "The pattern runs across every octave at once" },
-  up: { label: "⇈", hint: "The pattern again an octave higher each time round" },
-  down: { label: "⇊", hint: "The pattern from the top octave, an octave lower each time round" },
-  bounce: { label: "⇅", hint: "The pattern climbs the octaves and comes back down" },
-};
 const DIR_LABELS: { value: StrumDir; label: string }[] = [
   { value: "down", label: "↓" },
   { value: "up", label: "↑" },
   { value: "alternate", label: "↕" },
 ];
-/** A step is a note value and how it is felt: straight, dotted or triplet. */
-const NOTE_VALUES = ["1/4", "1/8", "1/16", "1/32"] as const;
-const FEELS: { value: "" | "D" | "T"; label: ReactNode }[] = [
-  { value: "", label: <span title="Straight" aria-label="Straight">–</span> },
-  { value: "D", label: <span title="Dotted: half as long again" aria-label="Dotted: half as long again">•</span> },
-  { value: "T", label: <span title="Triplet: three in the time of two" aria-label="Triplet: three in the time of two">3</span> },
-];
-const splitRate = (r: Rate): { value: (typeof NOTE_VALUES)[number]; feel: "" | "D" | "T" } => {
-  const m = /^(1\/\d+)([DT]?)$/.exec(r);
-  return { value: (m?.[1] ?? "1/16") as (typeof NOTE_VALUES)[number], feel: (m?.[2] ?? "") as "" | "D" | "T" };
-};
-const rateOf = (value: string, feel: string): Rate => {
-  const r = `${value}${feel}` as Rate;
-  return RATES.includes(r) ? r : "1/16";
-};
 
 /** How the written chords and notes are played, with the few settings each way needs. */
-function PlayPicker({ play, onChange }: { play: PlaySettings; onChange: (patch: Partial<PlaySettings>) => void }) {
+function PlayPicker({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
   const m = play.mode;
+  const set = (patch: Partial<PlaySettings>) => onChange({ ...play, ...patch });
   return (
     <div className="syn-play" role="group" aria-label="How it plays">
-      <Seg value={m} label="Way of playing" onChange={(v: PlayMode) => onChange({ mode: v })} options={PLAY_LABELS} />
+      <Seg value={m} label="Way of playing" onChange={(v: PlayMode) => set({ mode: v })} options={PLAY_LABELS} />
       {m === "pulse" && (
         <>
-          <RatePicker rate={play.rate} onChange={(rate) => onChange({ rate })} />
-          <MiniSlider label="Gate" title="How long each step is held" value={play.gate} min={0.1} onChange={(v) => onChange({ gate: v })} />
+          <SpeedPicker play={play} onChange={onChange} />
+          <MiniSlider label="Gate" title="How long each step is held" value={play.gate} min={0.1} onChange={(v) => set({ gate: v })} />
         </>
       )}
       {m === "strum" && (
         <>
-          <Seg value={play.direction} label="Direction" onChange={(v: StrumDir) => onChange({ direction: v })} options={DIR_LABELS} />
-          <MiniSlider label="Spread" value={play.spread} onChange={(v) => onChange({ spread: v })} />
+          <Seg value={play.direction} label="Direction" onChange={(v: StrumDir) => set({ direction: v })} options={DIR_LABELS} />
+          <MiniSlider label="Spread" value={play.spread} onChange={(v) => set({ spread: v })} />
         </>
       )}
-      <MiniSlider label="Loose" title="Humanise: looser timing and touch" value={play.humanise} onChange={(v) => onChange({ humanise: v })} />
+      <MiniSlider label="Loose" title="Humanise: looser timing and touch" value={play.humanise} onChange={(v) => set({ humanise: v })} />
       {m === "arp" && <ArpControls play={play} onChange={onChange} />}
     </div>
   );
 }
 
-/** The arpeggiator: pattern, octaves, step, gate, swing, repeats, and a rhythm of steps. */
-function ArpControls({ play, onChange }: { play: PlaySettings; onChange: (patch: Partial<PlaySettings>) => void }) {
+/**
+ * The arpeggiator: a ready style (each one a whole set of the arp's settings), how fast and over
+ * how many octaves. Settings that match no style (an older song's, or a sound's own) show as
+ * Custom and play as they are until a style is picked.
+ */
+export function ArpControls({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
+  const style = styleOf(play);
   return (
     <div className="syn-arp" role="group" aria-label="Arpeggiator">
-      <Seg value={play.pattern} label="Pattern" onChange={(v: ArpPattern) => onChange({ pattern: v })} options={ARP_PATTERNS.map((p) => ({ value: p, label: <span title={PATTERN_LABELS[p].hint} aria-label={PATTERN_LABELS[p].hint}>{PATTERN_LABELS[p].label}</span> }))} />
-      <div className="syn-row">
-        <span className="syn-ctl" title="Octaves: how far the arpeggio climbs">
-          <i>Oct</i>
-          <Seg value={play.octaves} label="Octaves" onChange={(v: 1 | 2 | 3 | 4) => onChange({ octaves: v })} options={([1, 2, 3, 4] as const).map((o) => ({ value: o, label: String(o) }))} />
-        </span>
-        {play.octaves > 1 && (
-          <Seg value={play.octMove} label="Octave movement" onChange={(v: OctMove) => onChange({ octMove: v })} options={OCT_MOVES.map((o) => ({ value: o, label: <span title={MOVE_LABELS[o].hint} aria-label={MOVE_LABELS[o].hint}>{MOVE_LABELS[o].label}</span> }))} />
-        )}
-      </div>
-      <div className="syn-row">
-        <RatePicker rate={play.rate} onChange={(rate) => onChange({ rate })} />
-        <span className="syn-ctl" title="Repeat: each step struck once, or quickly two to four times">
-          <i>Rpt</i>
-          <Seg value={play.ratchet} label="Repeat" onChange={(v: 1 | 2 | 3 | 4) => onChange({ ratchet: v })} options={([1, 2, 3, 4] as const).map((r) => ({ value: r, label: `×${r}` }))} />
-        </span>
-      </div>
-      <div className="syn-row">
-        <MiniSlider label="Gate" title="How long each step is held" value={play.gate} min={0.1} onChange={(v) => onChange({ gate: v })} />
-        <MiniSlider label="Swing" title="Push every second step late: half way is a triplet lilt" value={play.swing} max={SWING_MAX} onChange={(v) => onChange({ swing: v })} />
-      </div>
-      <RhythmSteps rhythm={play.rhythm} onChange={(rhythm) => onChange({ rhythm })} />
-    </div>
-  );
-}
-
-function RatePicker({ rate, onChange }: { rate: Rate; onChange: (r: Rate) => void }) {
-  const { value, feel } = splitRate(rate);
-  return (
-    <span className="syn-ctl" title="Step: how long each step of the arpeggio or pulse is">
-      <i>Step</i>
-      <Seg value={value} label="Step" onChange={(v: string) => onChange(rateOf(v, feel))} options={NOTE_VALUES.map((r) => ({ value: r, label: r }))} />
-      <Seg value={feel} label="Feel" onChange={(f: string) => onChange(rateOf(value, f))} options={FEELS} />
-    </span>
-  );
-}
-
-/** The next state of a step when tapped: plays, plays harder, rests. */
-const NEXT_STEP: Record<string, string> = { x: "X", X: ".", ".": "x" };
-
-/**
- * The arp's rhythm: a ready one to pick, and its steps to tap (each tap: plays → accented →
- * rest). 8 or 16 steps, starting again on the first bar line after they have all played.
- */
-function RhythmSteps({ rhythm, onChange }: { rhythm: string; onChange: (r: string) => void }) {
-  const steps = rhythm || "x".repeat(8);
-  // (every step playing, 8 or 16 of them, is the even rhythm)
-  const ready = /^x*$/.test(rhythm) ? RHYTHMS[0] : RHYTHMS.find((r) => r.steps === rhythm);
-  const tap = (i: number) => {
-    const next = steps.slice(0, i) + NEXT_STEP[steps[i]] + steps.slice(i + 1);
-    // a rhythm that rests on every step would play nothing at all: the last step left keeps playing
-    const r = /[xX]/.test(next) ? next : steps.slice(0, i) + "x" + steps.slice(i + 1);
-    onChange(/^x+$/.test(r) && r.length === 8 ? "" : r);
-  };
-  const resize = (n: number) => {
-    const r = n > steps.length ? steps.repeat(Math.ceil(n / steps.length)).slice(0, n) : steps.slice(0, n);
-    onChange(/[xX]/.test(r) ? (/^x{8}$/.test(r) ? "" : r) : "x".repeat(n));
-  };
-  return (
-    <div className="syn-rhythm">
-      <span className="syn-ctl" title="Rhythm: which steps play, which lean harder, which rest">
-        <i>Rhythm</i>
-        <select aria-label="Rhythm" value={ready?.id ?? "own"} onChange={(e) => onChange(RHYTHMS.find((r) => r.id === e.target.value)?.steps ?? rhythm)}>
-          {RHYTHMS.map((r) => <option key={r.id} value={r.id} title={r.hint}>{r.name}</option>)}
-          {!ready && <option value="own">Own</option>}
-        </select>
-        <Seg value={steps.length > 8 ? 16 : 8} label="Steps in the rhythm" onChange={(n: number) => resize(n)} options={[8, 16].map((n) => ({ value: n, label: String(n) }))} />
-      </span>
-      <div className={`syn-steps${steps.length > 8 ? " long" : ""}`} role="group" aria-label="Steps">
-        {[...steps].map((c, i) => (
-          <button key={i} className={`syn-step${c === "X" ? " acc" : c === "x" ? " on" : ""}${i % 4 === 0 ? " beat" : ""}`} aria-label={`Step ${i + 1}: ${c === "X" ? "accent" : c === "x" ? "plays" : "rest"}`}
-            title="Tap: plays, then accented, then a rest" onClick={() => tap(i)} />
+      <div className="seg syn-styles" role="radiogroup" aria-label="Arp style">
+        {ARP_STYLES.map((s) => (
+          <button key={s.id} role="radio" aria-checked={style?.id === s.id} className={style?.id === s.id ? "on" : ""} title={s.hint} onClick={() => onChange(withStyle(play, s))}>{s.name}</button>
         ))}
+        {!style && <span className="syn-custom" title="Settings of its own: pick a style to change them">Custom</span>}
+      </div>
+      <div className="syn-row">
+        <SpeedPicker play={play} onChange={onChange} />
+        <span className="syn-ctl" title="Range: how many octaves the arp climbs">
+          <i>Range</i>
+          <Seg value={play.octaves} label="Range" onChange={(v: number) => onChange(withRange(play, v))} options={RANGES.map((o) => ({ value: o as number, label: String(o) }))} />
+        </span>
       </div>
     </div>
+  );
+}
+
+/** Speed: a step of a quarter, an eighth or a sixteenth (in threes or dotted if it was). */
+function SpeedPicker({ play, onChange }: { play: PlaySettings; onChange: (play: PlaySettings) => void }) {
+  return (
+    <span className="syn-ctl" title="Speed: how long each step is">
+      <i>Speed</i>
+      <Seg value={speedOf(play) ?? ""} label="Speed" onChange={(v: string) => onChange(withSpeed(play, v))} options={SPEEDS.map((s) => ({ value: s.value as string, label: <span title={s.name}>{s.value}</span> }))} />
+    </span>
   );
 }
 

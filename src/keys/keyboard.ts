@@ -139,16 +139,6 @@ export abstract class Keyboard<V extends KeyVoice> {
     });
   }
 
-  /**
-   * The key on lane `slot` comes up at `when` (default now): a key held down by hand on the screen
-   * and let go. Its damper falls then, or when the pedal comes up. Nothing on the lane: nothing to do.
-   */
-  lift(slot: number, when = this.ctx.currentTime): void {
-    if (this.disposed) return;
-    const v = this.slots.get(slot);
-    if (v && !v.cut) this.letGo(v, this.at(when));
-  }
-
   /** Is the pedal down at `t`? */
   pedalDown(t = this.ctx.currentTime): boolean {
     return this.pedalLine.isDown(t);

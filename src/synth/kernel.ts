@@ -284,6 +284,8 @@ class Voice {
   cD = 0;
   cR = 0;
   envVer = -1;
+  /** an arp or pulse step: the time to the next one (seconds), which its attack and release are kept within; 0 for any other note */
+  step = 0;
 }
 
 // ── Effects (each owns its buffers; process in place) ────────────────────────────────────────
@@ -698,6 +700,16 @@ const DEDROOP = 0.2;
  */
 const OSC_LEVEL: Record<OscType, number> = { saw: 0.85, pulse: 0.534, sync: 0.954, ring: 1.447, fm: 0.85 };
 
+/**
+ * An arpeggio's (or a pulse's) step, as a share of the time to the next step: the longest its
+ * attack may take, and the longest its release may ring (to 60 dB down). A pad's slow swell
+ * would otherwise never arrive within a sixteenth, and its long release would blur every step
+ * into the next, so an arp on a pad sounded like the pad held. Within these, a step still swells
+ * and dies the sound's own way; held chords and every other way of playing are not touched.
+ */
+export const ARP_ATTACK = 0.1;
+export const ARP_RELEASE = 0.75;
+
 /** Polyphonic synth engine. Feed it notes (in frames on its own clock) and render blocks of stereo audio. */
 export class SynthKernel {
   readonly sr: number;
@@ -720,6 +732,7 @@ export class SynthKernel {
   private evB = new Float64Array(256);
   private evC = new Float64Array(256);
   private evD = new Float64Array(256);
+  private evE = new Float64Array(256);
   private evHead = 0;
   private evTail = 0;
   private bank: SynthParams[] = [];
@@ -928,6 +941,7 @@ export class SynthKernel {
       this.evB.copyWithin(0, h, t);
       this.evC.copyWithin(0, h, t);
       this.evD.copyWithin(0, h, t);
+      this.evE.copyWithin(0, h, t);
       this.evTail = live;
       this.evHead = 0;
       return;
@@ -944,11 +958,12 @@ export class SynthKernel {
     this.evB = grow(this.evB, (k) => new Float64Array(k));
     this.evC = grow(this.evC, (k) => new Float64Array(k));
     this.evD = grow(this.evD, (k) => new Float64Array(k));
+    this.evE = grow(this.evE, (k) => new Float64Array(k));
     this.evTail = live;
     this.evHead = 0;
   }
 
-  private push(frame: number, type: number, a = 0, b = 0, c = 0, d = 0) {
+  private push(frame: number, type: number, a = 0, b = 0, c = 0, d = 0, e = 0) {
     this.ensure(1);
     // insert in time order; equal times keep the order they were given in, except that a new sound
     // or a sync goes ahead of the notes at its own frame (they start with it, whichever was sent first)
@@ -962,6 +977,7 @@ export class SynthKernel {
       this.evB[j] = this.evB[j - 1];
       this.evC[j] = this.evC[j - 1];
       this.evD[j] = this.evD[j - 1];
+      this.evE[j] = this.evE[j - 1];
     }
     this.evFrame[i] = frame;
     this.evType[i] = type;
@@ -969,12 +985,17 @@ export class SynthKernel {
     this.evB[i] = b;
     this.evC[i] = c;
     this.evD[i] = d;
+    this.evE[i] = e;
     this.evTail++;
   }
 
-  /** A note starts at `frame` (on this kernel's clock). `id` names it for its note-off; `slot` ≥ 0 takes over from the last note on that slot. */
-  noteOn(frame: number, midi: number, velocity: number, id: number, slot = -1) {
-    this.push(Math.round(frame), EV_ON, midi, velocity, id, slot);
+  /**
+   * A note starts at `frame` (on this kernel's clock). `id` names it for its note-off; `slot` ≥ 0
+   * takes over from the last note on that slot. `step` > 0: it is one step of an arpeggio or a
+   * pulse, and the next comes `step` seconds later (see `on`).
+   */
+  noteOn(frame: number, midi: number, velocity: number, id: number, slot = -1, step = 0) {
+    this.push(Math.round(frame), EV_ON, midi, velocity, id, slot, step > 0 && Number.isFinite(step) ? step : 0);
   }
   noteOff(frame: number, id: number) {
     this.push(Math.round(frame), EV_OFF, 0, 0, id);
@@ -998,6 +1019,7 @@ export class SynthKernel {
           this.evB[w] = this.evB[r];
           this.evC[w] = this.evC[r];
           this.evD[w] = this.evD[r];
+          this.evE[w] = this.evE[r];
         }
         w++;
       }
@@ -1043,7 +1065,7 @@ export class SynthKernel {
     const t = this.evType[i];
     if (t === EV_ON) {
       if (this.hushMode === 1) this.unhush();
-      this.on(this.evA[i], this.evB[i], this.evC[i], this.evD[i]);
+      this.on(this.evA[i], this.evB[i], this.evC[i], this.evD[i], this.evE[i]);
     } else if (t === EV_OFF) this.off(this.evC[i]);
     else if (t === EV_ALL_OFF) this.releaseAll();
     else if (t === EV_STOP) {
@@ -1091,23 +1113,40 @@ export class SynthKernel {
 
   // ── Notes ──
 
-  private on(midi: number, vel: number, id: number, slot: number) {
+  /**
+   * A note on. A step of an arpeggio or a pulse (`step` > 0) is always a note of its own, even on
+   * a mono or legato sound: struck afresh, with no slide from the step before, and its attack and
+   * release kept short enough for the steps to stay apart (see ARP_ATTACK). A held chord, a strum,
+   * a drone or a gliding line (`step` 0) plays the sound exactly as it is made.
+   */
+  private on(midi: number, vel: number, id: number, slot: number, step = 0) {
     vel = vel < 0 ? 0 : vel > 1 ? 1 : vel;
-    if (this.p.voice !== "poly") return this.monoOn(midi, vel, id);
+    if (this.p.voice !== "poly" && !(step > 0)) return this.monoOn(midi, vel, id);
     if (slot >= 0) for (const v of this.voices) if (v.active && v.held && !v.kill && v.slot === slot) this.release(v);
     // the same key struck again while it rings: strike that voice again, as a piano would
     for (const v of this.voices) {
-      if (v.active && !v.held && !v.kill && v.midi === midi) {
+      if (v.active && !v.held && !v.kill && v.midi === midi && v !== this.mono) {
         this.retrigger(v, midi, vel, id, slot);
+        this.stepOf(v, step);
         return;
       }
     }
-    this.start(this.allocate(), midi, vel, id, slot);
+    const v = this.allocate();
+    this.start(v, midi, vel, id, slot);
+    this.stepOf(v, step);
+  }
+
+  /** How long a note's step is (0: not a step); its envelope speeds are worked out again for it. */
+  private stepOf(v: Voice, step: number) {
+    if (v.step === step) return;
+    v.step = step;
+    v.envVer = -1;
   }
 
   private off(id: number) {
-    if (this.p.voice !== "poly") return this.monoOff(id);
-    for (const v of this.voices) if (v.active && v.held && v.id === id) this.release(v);
+    // (an arp's steps on a mono sound have voices of their own, outside the mono line)
+    for (const v of this.voices) if (v.active && v.held && v.id === id && v !== this.mono && (this.p.voice === "poly" || v.step > 0)) this.release(v);
+    if (this.p.voice !== "poly") this.monoOff(id);
   }
 
   private releaseAll() {
@@ -1218,6 +1257,7 @@ export class SynthKernel {
     v.up.fill(0);
     v.dn.fill(0);
     v.envVer = -1;
+    v.step = 0;
     v.dcx = v.dcy = 0;
     v.s1 = v.s2 = v.s3 = v.s4 = 0;
     v.trem = 1;
@@ -1637,9 +1677,12 @@ export class SynthKernel {
     // envelope speeds for this note, worked out again only when the sound's times change
     if (v.envVer !== this.envVer) {
       const st = v.slopTime;
-      v.cA = coef(this.tA * st, sr);
+      // an arp's step: a slow swell or a long tail is kept within the step, so every step is heard as a note
+      const tA = v.step > 0 ? Math.min(this.tA, (ARP_ATTACK * v.step) / 1.466) : this.tA;
+      const tR = v.step > 0 ? Math.min(this.tR, (ARP_RELEASE * v.step) / 6.9) : this.tR;
+      v.cA = coef(tA * st, sr);
       v.cD = coef(this.tD * st, sr);
-      v.cR = coef(this.tR * st, sr);
+      v.cR = coef(tR * st, sr);
       v.envVer = this.envVer;
     }
 
@@ -2271,7 +2314,7 @@ export const SYNTH_PROCESSOR = "m-theory-synth";
  */
 export type SynthEvent =
   /** a note starts; `id` names it for its "off"; `slot` ≥ 0 takes over from the note before on that slot */
-  | { type: "on"; t: number; midi: number; vel: number; id: number; slot?: number }
+  | { type: "on"; t: number; midi: number; vel: number; id: number; slot?: number; step?: number }
   | { type: "off"; t: number; id: number }
   /**
    * every note lets go at `t` and fades out within STOP_FADE (echoes and reverb too), and notes
@@ -2290,7 +2333,7 @@ export function feed(k: SynthKernel, e: SynthEvent) {
   const sr = k.sr;
   switch (e.type) {
     case "on":
-      k.noteOn(e.t * sr, e.midi, e.vel, e.id, e.slot ?? -1);
+      k.noteOn(e.t * sr, e.midi, e.vel, e.id, e.slot ?? -1, e.step ?? 0);
       break;
     case "off":
       k.noteOff(e.t * sr, e.id);
