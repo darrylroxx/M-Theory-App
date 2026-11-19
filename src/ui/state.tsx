@@ -6,6 +6,8 @@ import { conform, sectionSig } from "../song/unity";
 import { reviveMelody, type Melody } from "../song/melody";
 import { DEFAULT_BARS, fitBars } from "../song/frame";
 import { isSurface, type Surface } from "../canvas/weave";
+import { isLayoutId, type LayoutId } from "../canvas/place";
+import { isLayer, type LayerKind } from "../canvas/layers";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
@@ -43,6 +45,10 @@ export interface CanvasPrefs {
   pass?: number;
   /** the guide over the canvas (frequencies, bars, what the mix covers): shown unless this is false */
   guide?: boolean;
+  /** how the music is laid out on the canvas ("auto", or none: the music chooses) */
+  layout?: LayoutId;
+  /** layers of the music not painted */
+  hide?: LayerKind[];
 }
 export type LabelMode = "intervals" | "notes" | "fingers";
 
@@ -254,7 +260,7 @@ function load(): AppState {
       ...parsed,
       tab,
       pane: PANES.some((x) => x.id === parsed.pane) ? parsed.pane : "rhythm",
-      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 || parsed.canvas.fade === 3 ? parsed.canvas.fade : 1, guide: parsed.canvas.guide === false ? false : undefined, style: parsed.canvas.style === "wash" || parsed.canvas.style === "thick" ? parsed.canvas.style : undefined, drips: parsed.canvas.drips === true ? true : undefined, pass: parsed.canvas.pass === 0 || parsed.canvas.pass === 8 || parsed.canvas.pass === 30 ? parsed.canvas.pass : undefined } : undefined,
+      canvas: parsed.canvas && typeof parsed.canvas.palette === "string" ? { palette: parsed.canvas.palette, surface: isSurface(parsed.canvas.surface) ? parsed.canvas.surface : undefined, fade: parsed.canvas.fade === 0 || parsed.canvas.fade === 2 || parsed.canvas.fade === 3 ? parsed.canvas.fade : 1, guide: parsed.canvas.guide === false ? false : undefined, style: parsed.canvas.style === "wash" || parsed.canvas.style === "thick" ? parsed.canvas.style : undefined, drips: parsed.canvas.drips === true ? true : undefined, pass: parsed.canvas.pass === 0 || parsed.canvas.pass === 8 || parsed.canvas.pass === 30 ? parsed.canvas.pass : undefined, layout: isLayoutId(parsed.canvas.layout) ? parsed.canvas.layout : undefined, hide: Array.isArray(parsed.canvas.hide) && parsed.canvas.hide.some(isLayer) ? [...new Set(parsed.canvas.hide.filter(isLayer))] : undefined } : undefined,
       // v3 shows finger numbers on the dots by default
       settings: { ...DEFAULT_STATE.settings, avoidBarre: parsed.progression?.avoidBarre ?? true, ...parsed.settings, ...(parsed.settings?.v === 3 ? {} : { labels: "fingers" as const, v: 3 }) },
       shapes: parsed.shapes ?? {},
