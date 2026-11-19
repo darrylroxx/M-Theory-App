@@ -249,9 +249,9 @@ export function carryMarks(tracks: Track[] | undefined, from: string, to: string
   return tracks.map((t) => {
     const m = t.harmony?.marks?.[from];
     if (!t.harmony || !m || t.harmony.marks?.[to]) return t;
-    // the page's record moves (it has no page of its own any more); a section's is shared with its copy
+    // a record moving between the page and section A moves (only one of them is there now); a section's is shared with its copy
     const { [from]: _, ...rest } = t.harmony.marks ?? {};
-    return { ...t, harmony: { ...t.harmony, marks: { ...(from === "" ? rest : t.harmony.marks), [to]: m } } };
+    return { ...t, harmony: { ...t.harmony, marks: { ...(from === "" || to === "" ? rest : t.harmony.marks), [to]: m } } };
   });
 }
 

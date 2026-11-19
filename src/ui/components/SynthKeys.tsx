@@ -24,13 +24,37 @@ const HIGH = 96;
 /** a piano's keys: each sounds while it is held */
 const HELD: PlaySettings = { ...DEFAULT_PLAY, mode: "sustain" };
 
+/** The lowest key shown: as asked, but low enough that the top one is no higher than HIGH, however many octaves fit. */
+export const lowest = (base: number, octaves: number) => Math.max(LOW, Math.min(HIGH - 12 * octaves, base));
+
+type Act = { kind: "shift"; dir: -1 | 1 } | { kind: "press" | "lift"; midi: number } | { kind: "eat" } | null;
+/**
+ * What a computer key does on the keys (null: nothing, it is left to the page). A key going up
+ * always lets its note go, even with Ctrl held by then, or the note would be stuck sounding; a
+ * key past the top one shown plays nothing, since nothing would light for it.
+ */
+export function computerKey(e: { key: string; ctrlKey: boolean; metaKey: boolean; altKey: boolean; repeat: boolean }, isDown: boolean, base: number, top: number): Act {
+  const mod = e.ctrlKey || e.metaKey || e.altKey;
+  const k = e.key.toLowerCase();
+  if (k === "z" || k === "x") return mod ? null : isDown ? { kind: "shift", dir: k === "z" ? -1 : 1 } : { kind: "eat" };
+  const i = COMPUTER.indexOf(k);
+  if (i < 0) return null;
+  if (!isDown) return { kind: "lift", midi: base + i };
+  if (mod) return null;
+  if (e.repeat || base + i > top) return { kind: "eat" };
+  return { kind: "press", midi: base + i };
+}
+
 export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?: PlaySettings; className?: string }) {
   const playRef = useRef(play);
   playRef.current = play;
   const live = useMemo(() => new LiveKeys(out, () => playRef.current), [out]);
   const [lit, setLit] = useState<number[]>([]);
-  const [base, setBase] = useState(48);
+  const [wish, setBase] = useState(48);
   const [octaves, setOctaves] = useState(2);
+  // (more octaves fitting after a move up, a phone turned on its side, brings the keys down rather than past the top)
+  const base = lowest(wish, octaves);
+  const top = base + 12 * octaves;
   const box = useRef<HTMLDivElement>(null);
   /** which key each finger (pointer) is on */
   const fingers = useRef(new Map<number, number>());
@@ -117,27 +141,18 @@ export function SynthKeys({ out, play = HELD, className }: { out: LiveOut; play?
   const shift = (dir: -1 | 1) => {
     live.releaseAll();
     setLit([]);
-    setBase((b) => Math.max(LOW, Math.min(HIGH - 12 * octaves, b + 12 * dir)));
+    setBase(lowest(base + 12 * dir, octaves));
   };
   const computer = (e: KeyboardEvent<HTMLDivElement>, isDown: boolean) => {
-    if (e.ctrlKey || e.metaKey || e.altKey) return;
-    const k = e.key.toLowerCase();
-    if (k === "z" || k === "x") {
-      if (isDown) shift(k === "z" ? -1 : 1);
-      e.preventDefault();
-      e.stopPropagation();
-      return;
-    }
-    const i = COMPUTER.indexOf(k);
-    if (i < 0) return;
+    const a = computerKey(e, isDown, base, top);
+    if (!a) return;
     e.preventDefault();
     e.stopPropagation();
-    if (isDown && e.repeat) return;
-    if (isDown) press(base + i);
-    else lift(base + i);
+    if (a.kind === "shift") shift(a.dir);
+    else if (a.kind === "press") press(a.midi);
+    else if (a.kind === "lift") lift(a.midi);
   };
 
-  const top = base + 12 * octaves;
   const whites: number[] = [];
   for (let m = base; m <= top; m++) if (!BLACK.has(m % 12)) whites.push(m);
   const wPct = 100 / whites.length;

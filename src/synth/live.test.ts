@@ -37,6 +37,26 @@ describe("playing the synth by hand", () => {
     expect(r.keys.keys).toEqual([]);
   });
 
+  it("a key up before the audio clock has moved lets its note go no earlier than it starts", () => {
+    const times: { on?: number; off?: number }[] = [];
+    const out: LiveOut = {
+      now: () => 10,
+      bpm: () => 120,
+      on: (_m, when) => times.push({ on: when }) - 1,
+      off: (id, when) => (times[id].off = when),
+      note: () => {},
+    };
+    const play: PlaySettings = { ...DEFAULT_PARAMS.play, mode: "sustain" };
+    const keys = new LiveKeys(out, () => play);
+    // a quick slide across two keys, all in one step of the audio clock
+    keys.press(60);
+    keys.release(60);
+    keys.press(62);
+    keys.releaseAll();
+    expect(times.length).toBe(2);
+    for (const t of times) expect(t.off).toBeGreaterThanOrEqual(t.on!);
+  });
+
   it("latches a drone's keys until they are tapped again", () => {
     const r = rig("drone");
     r.keys.press(48);

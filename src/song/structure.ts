@@ -370,7 +370,11 @@ function removeBlockN(p0: Progression, blockId: string): Progression {
   const at = song.blocks.findIndex((b) => b.id === blockId);
   if (at < 0) return p;
   const blocks = song.blocks.filter((b) => b.id !== blockId);
-  if (!blocks.length) return { ...p, song: null };
+  if (!blocks.length) {
+    // a harmony written in the section the page keeps was written on the page now
+    const tracks = carryMarks(p.tracks, partOf(song, song.current)?.id ?? "", "");
+    return { ...p, ...(tracks ? { tracks } : {}), song: null };
+  }
   // the leader changes first (while the old one is still there to hand over from); then the part no block plays any more goes
   const led = lead(p, { ...song, blocks });
   const next: Song = { ...led, parts: led.parts.filter((x) => blocks.some((b) => b.partId === x.id)) };

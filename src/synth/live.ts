@@ -39,8 +39,8 @@ export const GATHER = 0.035;
 export class LiveKeys {
   /** keys down (or latched), with the velocity each was played at, in the order they went down */
   private down = new Map<number, number>();
-  /** the notes sounding now that wait for their key: midi → id */
-  private held = new Map<number, number>();
+  /** the notes sounding now that wait for their key: midi → its id and when it starts */
+  private held = new Map<number, { id: number; at: number }>();
   /** the arpeggio: when the first key went down, when its first step falls (-1: not yet), the next step to schedule */
   private run: { start: number; t0: number; next: number } | null = null;
 
@@ -75,7 +75,8 @@ export class LiveKeys {
       if (!this.run) this.run = { start: this.out.now(), t0: -1, next: 0 };
       return;
     }
-    this.held.set(midi, this.out.on(midi, this.out.now() + 0.005, vel));
+    const at = this.out.now() + 0.005;
+    this.held.set(midi, { id: this.out.on(midi, at, vel), at });
   }
 
   /** A key comes up (a drone's key stays latched until it is tapped again). */
@@ -86,9 +87,11 @@ export class LiveKeys {
 
   private stop(midi: number) {
     this.down.delete(midi);
-    const id = this.held.get(midi);
-    if (id !== undefined) {
-      this.out.off(id, this.out.now());
+    const h = this.held.get(midi);
+    if (h) {
+      // never before the note starts: the audio clock moves in steps, so a quick tap can come up
+      // before its note's start, and an off booked ahead of its on would leave the note sounding
+      this.out.off(h.id, Math.max(this.out.now(), h.at));
       this.held.delete(midi);
     }
     if (this.down.size === 0) this.run = null;
@@ -97,7 +100,7 @@ export class LiveKeys {
   /** Every key up, latched ones too (the page closes, or the way of playing changes). */
   releaseAll() {
     const now = this.out.now();
-    for (const id of this.held.values()) this.out.off(id, now);
+    for (const h of this.held.values()) this.out.off(h.id, Math.max(now, h.at));
     this.held.clear();
     this.down.clear();
     this.run = null;

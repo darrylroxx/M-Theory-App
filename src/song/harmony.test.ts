@@ -5,7 +5,7 @@ import { keyScale, transposeRef } from "../theory/keys";
 import { pc } from "../theory/notes";
 import { scalePcs } from "../theory/scales";
 import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
-import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, type Song } from "./structure";
+import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { addTrack, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
 import { HARMONY_DB, MELODY_RANGE, addHarmony, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
@@ -362,6 +362,21 @@ describe("a harmony as the song around it grows", () => {
     expect(harmonyState(edited, G, "h").edited).toEqual(["A"]);
   });
 
+  it("given sections that are then all removed, the page is what was written again: a change to its source is not a change by hand", () => {
+    const p = addHarmony(page(), G, { kind: "melody", from: "melody", option: "third-above" }, "h").p;
+    const q = addNewSection(p);
+    const [a, b] = q.song!.blocks.map((x) => x.id);
+    const back = removeBlock(removeBlock(q, b), a);
+    expect(back.song).toBeNull();
+    // a few notes of the tune it follows changed
+    const edit = (x: Progression) => {
+      const s = focusTrack(x, "melody", "melody");
+      return { ...s, melody: { ...s.melody!, notes: s.melody!.notes.map((n, i) => (i < 3 ? { ...n, midi: n.midi + 2 } : n)) } };
+    };
+    expect(harmonyState(edit(p), G, "h").edited).toEqual([]);
+    expect(harmonyState(edit(back), G, "h").edited).toEqual([]);
+  });
+
   it("a section played twice and then given its own copy keeps what was written in both", () => {
     const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "counter" }, "h").p;
     // A plays twice; the second time becomes a section of its own
@@ -473,6 +488,9 @@ describe("a re-harmonisation written again", () => {
     // unmuted by hand on the Track page: the mute is theirs now
     const heard = { ...p, mix: { ...p.mix, chords: { mute: false } } };
     for (const option of ["tritone", "borrowed"]) expect(rewriteHarmony(heard, C, "tt", option).mix?.chords?.mute).toBe(false);
+    // and still theirs once the idea has been saved and opened again
+    const back = reviveIdea(JSON.parse(JSON.stringify({ id: "i", name: "x", key: C, savedAt: 0, progression: heard })))!.progression;
+    expect(rewriteHarmony(back, C, "tt").mix?.chords?.mute).toBe(false);
     // never muted (pasted into a song whose other sections play those chords): writing it across the song mutes them
     expect(rewriteHarmony({ ...p, mix: undefined }, C, "tt").mix?.chords).toEqual({ mute: true, instead: true });
   });

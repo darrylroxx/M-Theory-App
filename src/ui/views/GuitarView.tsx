@@ -314,10 +314,13 @@ export function GuitarView() {
   const editTune = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : null;
   const firstSound = editChords ? (prog.layers?.chords?.sound ?? prog.sound) : prog.sound;
   const firstTune = editTune ? (prog.layers?.melody?.tuneSound ?? prog.tuneSound) : prog.tuneSound;
-  useEffect(() => setHarpSound(reviveSound(firstSound), prog.bpm), [firstSound, prog.bpm]);
+  // (another section shown while one plays: the voices keep the playing section's sound until the music stops)
+  const playingRef = useRef(false);
+  const shownPlays = () => !playingRef.current || playBlock.current === null || playBlock.current === curRef.current;
+  useEffect(() => setHarpSound(reviveSound(firstSound), prog.bpm, shownPlays()), [firstSound, prog.bpm]); // eslint-disable-line react-hooks/exhaustive-deps
   // the melody has a harp of its own, with its own effects
   const tuneSound = useMemo(() => reviveSound(prog.tuneSound), [prog.tuneSound]);
-  useEffect(() => setTuneSound(reviveSound(firstTune), prog.bpm), [firstTune, prog.bpm]);
+  useEffect(() => setTuneSound(reviveSound(firstTune), prog.bpm, shownPlays()), [firstTune, prog.bpm]); // eslint-disable-line react-hooks/exhaustive-deps
   // a track added on the Track page is heard on its own harp while it is being edited
   useEffect(() => hearOn("chord", editChords ? { id: editChords, sound } : null), [editChords, sound]);
   useEffect(() => hearOn("melody", editTune ? { id: editTune, sound: tuneSound } : null), [editTune, tuneSound]);
@@ -326,7 +329,6 @@ export function GuitarView() {
     const t = window.setTimeout(() => prepareNotes([...prepFor(items, prog.pattern, beat, tune), ...prepFor(plan.items, prog.pattern, beat)]), 250);
     return () => window.clearTimeout(t);
   }); // eslint-disable-line react-hooks/exhaustive-deps
-  const playingRef = useRef(false);
   /** Roll the first chord once the knobs have settled, so a change can be heard without pressing play. */
   const hearSoon = useCallback(() => {
     window.clearTimeout(hear.current);

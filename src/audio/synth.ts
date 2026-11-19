@@ -70,17 +70,19 @@ export function getAudio(): AudioContext {
 
 /**
  * Change a track's sound and effects. Safe to call before any sound has been made. The effects
- * follow at once; new strings wait until the knob has stopped moving.
+ * follow at once; new strings wait until the knob has stopped moving. With `now` false (the page
+ * shows a section other than the one playing) it is only noted: the voice keeps the playing
+ * section's sound, and takes this one when the music stops.
  */
-export function setTrackSound(id: string, s: HarpSound, bpm: number) {
+export function setTrackSound(id: string, s: HarpSound, bpm: number, now = true) {
   liveSound.set(id, s);
   tempo = bpm;
-  voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
+  if (now) voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
 }
 /** The first chords track. */
-export const setHarpSound = (s: HarpSound, bpm: number) => setTrackSound("chords", s, bpm);
+export const setHarpSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("chords", s, bpm, now);
 /** The first melody track: a separate instrument with separate effects. */
-export const setTuneSound = (s: HarpSound, bpm: number) => setTrackSound("melody", s, bpm);
+export const setTuneSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("melody", s, bpm, now);
 
 /** What every track plays (its instrument and that instrument's settings). The voices that exist change at once. */
 export function setTones(t: Tones | undefined) {
@@ -830,6 +832,9 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       }
       at += item.beats;
     });
+    // every noise bed stops where the song ends, as live: a looping bed would otherwise hiss on
+    // through a file's tail, or (folded) come round again over the start of the loop
+    setBedPlaying(false, null, undefined, beats * spb);
   });
   let buf: AudioBuffer;
   try {

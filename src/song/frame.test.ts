@@ -189,6 +189,15 @@ describe("every section keeps its own length", () => {
     const idea = reviveIdea({ id: "x", name: "n", key, progression: JSON.parse(JSON.stringify({ ...base(["C"]), bars: 6 })) })!;
     expect(idea.progression.bars).toBe(6);
   });
+
+  it("an idea opened again is the idea that was saved, whatever order its fields were set in", () => {
+    const key = { tonic: "C", scaleId: "ionian" };
+    const print = (p: Progression) => fingerprint(snapshot(key, p, 0, "standard"));
+    // the piano, then Bright, then the electric piano: set in that order, loaded back in another
+    const p: Progression = { ...base(["C"]), bars: 4, tones: { chords: { inst: "piano", bright: 0.7, keys: "electric" } } };
+    const back = reviveIdea({ id: "x", name: "n", key, progression: JSON.parse(JSON.stringify(p)) })!.progression;
+    expect(print(back)).toBe(print(p));
+  });
 });
 
 describe("songs from before sections had lengths sound as they did", () => {

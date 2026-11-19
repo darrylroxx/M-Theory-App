@@ -44,7 +44,9 @@ export function reviveMix(raw: unknown): Mix | undefined {
     const t = r[id];
     if (!t || typeof t !== "object") continue;
     const db = typeof t.db === "number" && Number.isFinite(t.db) ? Math.max(MIN_DB, Math.min(MAX_DB, Math.round(t.db * 10) / 10)) : undefined;
-    const m: TrackMix = { ...(db !== undefined && db !== 0 ? { db } : {}), ...(t.mute ? { mute: true, ...(t.instead ? { instead: true } : {}) } : {}), ...(t.solo ? { solo: true } : {}) };
+    // (an explicit "not muted" is kept: it marks chords unmuted by hand, which a harmony written again leaves heard)
+    const mute = t.mute ? { mute: true, ...(t.instead ? { instead: true } : {}) } : t.mute === false ? { mute: false } : {};
+    const m: TrackMix = { ...(db !== undefined && db !== 0 ? { db } : {}), ...mute, ...(t.solo ? { solo: true } : {}) };
     if (Object.keys(m).length) out[id] = m;
   }
   return Object.keys(out).length ? out : undefined;

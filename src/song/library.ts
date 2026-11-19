@@ -31,15 +31,21 @@ export function snapshot(key: Key, progression: Progression, capo: number, tunin
   return { key, progression: commit(normalize(progression)), capo, tuningId };
 }
 
+/**
+ * JSON with every object's keys in order: an idea opened again is rebuilt field by field, in an
+ * order of its own, and is still the same idea as the one that was saved.
+ */
+const inOrder = (x: unknown) => JSON.stringify(x, (_, v) => (v && typeof v === "object" && !Array.isArray(v) ? Object.fromEntries(Object.entries(v).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) : v));
+
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
   const p = commit(normalize(s.progression));
   // (ideas from before tracks had instruments of their own have no tones, and keep the fingerprint they had)
   const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}), ...(p.tones ? { tones: p.tones } : {}) };
   // with a song, everything on the page is a copy of one section: the song itself is what counts
-  if (p.song) return JSON.stringify({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
+  if (p.song) return inOrder({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
-  return JSON.stringify({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: p.layers } : {}) });
+  return inOrder({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: p.layers } : {}) });
 }
 
 /**

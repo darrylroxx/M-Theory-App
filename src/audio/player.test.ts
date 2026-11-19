@@ -186,6 +186,20 @@ describe("a section's own sound", () => {
     p.stop();
     expect(v.sound).toEqual(verse);
   });
+  it("another section's page shown while one plays leaves the playing chord's sound alone until the music stops", () => {
+    const log = notes();
+    const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
+    const chorus: HarpSound = { ...SOUND_DEFAULT, level: 0.4, echo: 0.5 };
+    S.setHarpSound(verse, 120);
+    const p = new S.ProgressionPlayer();
+    p.start([{ midi: CHORD, beats: 4, section: true, sound: verse }], 120, "ring", false);
+    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
+    // the chorus's page is shown: its sound is noted for the page, not put on the ringing verse chord
+    S.setHarpSound(chorus, 120, false);
+    expect(v.sound).toEqual(verse);
+    p.stop();
+    expect(v.sound).toEqual(chorus);
+  });
 });
 
 describe("the drum desks", () => {
@@ -203,7 +217,10 @@ describe("the drum desks", () => {
   it("a render has the noise bed the drums have live", async () => {
     notes();
     await S.renderSong([{ midi: [], beats: 4, section: true }], { bpm: 120, pattern: "ring", beat: beat({ noise: "vinyl", noiseAmt: 0.6 }), rate: 8000 });
-    expect(starts.filter((s) => s.ctx === renders[0] && s.loop).length).toBe(1);
+    const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
+    expect(beds.length).toBe(1);
+    // and stops where the song ends, as live: not on through a file's tail or round over the loop's start
+    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
   });
   it("in a render, an added drums track's noise bed stops where a section without it starts, and comes back with it", async () => {
     notes();
@@ -220,7 +237,7 @@ describe("the drum desks", () => {
     const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
     expect(beds.map((s) => s.when)).toEqual([0, 4]);
     expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
-    expect(beds[1].src.stopsAt).toBe(Infinity);
+    expect(beds[1].src.stopsAt).toBeCloseTo(6, 6);
   });
   describe("live, the first track's noise bed follows the section that is playing, as a render has it", () => {
     // two one-bar sections at 120 (two seconds each); the page shows the first
