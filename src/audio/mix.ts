@@ -79,25 +79,27 @@ let liveFaders: Record<TrackId, GainNode> = {};
  * The point every sound of the song passes on its way to the speakers (one per audio context).
  * Anything that wants to hear the whole mix as it is (the canvas does) listens here.
  *
- * From here the sum goes through the safety limiter (safety.ts) to the speakers: on a context
+ * From here the sum goes through the safety stage (safety.ts) to the speakers: on a context
  * where it is already loaded (an offline render loads it before anything is made) straight
  * away; on the live context, which loads it as it opens, the master goes straight out until it
  * is ready and then crosses over to it in 20 ms. The two ways out are the same sample for
  * sample until something goes over, and neither delays anything, so the swap is never heard.
  */
 const masters = new WeakMap<BaseAudioContext, GainNode>();
+const outs = new WeakMap<BaseAudioContext, GainNode>();
 export function master(c: BaseAudioContext): GainNode {
   let m = masters.get(c);
   if (!m) {
     m = c.createGain();
     masters.set(c, m);
+    const end = masterOut(c);
     const ready = safetyReady(c) ? tryCreateSafety(c) : null;
-    if (ready) m.connect(ready).connect(c.destination);
+    if (ready) m.connect(ready).connect(end);
     // (a context that cannot run it: straight out, as before)
-    else if (!canRunSafety(c) || safetyReady(c)) m.connect(c.destination);
+    else if (!canRunSafety(c) || safetyReady(c)) m.connect(end);
     else {
       const direct = c.createGain();
-      m.connect(direct).connect(c.destination);
+      m.connect(direct).connect(end);
       const out = m;
       void loadSafety(c).then((ok) => {
         if (ok) crossToSafety(c, out, direct);
@@ -107,6 +109,20 @@ export function master(c: BaseAudioContext): GainNode {
   return m;
 }
 
+/**
+ * The very end of the mix, after the safety stage: what the speakers get. The recording engine
+ * takes it from here when the app's sound goes through it instead (see through.ts).
+ */
+export function masterOut(c: BaseAudioContext): GainNode {
+  let o = outs.get(c);
+  if (!o) {
+    o = c.createGain();
+    o.connect(c.destination);
+    outs.set(c, o);
+  }
+  return o;
+}
+
 /** The master's way out goes over from straight to the speakers to through the limiter, without a sound. */
 function crossToSafety(c: BaseAudioContext, m: GainNode, direct: GainNode) {
   const safety = tryCreateSafety(c);
@@ -114,7 +130,7 @@ function crossToSafety(c: BaseAudioContext, m: GainNode, direct: GainNode) {
   if (!safety) return;
   const wet = c.createGain();
   wet.gain.value = 0;
-  m.connect(safety).connect(wet).connect(c.destination);
+  m.connect(safety).connect(wet).connect(masterOut(c));
   const t = c.currentTime + 0.05;
   direct.gain.setValueAtTime(1, t);
   direct.gain.linearRampToValueAtTime(0, t + 0.02);

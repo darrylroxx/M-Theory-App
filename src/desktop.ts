@@ -82,7 +82,7 @@ export async function meterStop(): Promise<void> {
  * WAV can be, `free` bytes are left on the disk, and `full` says it has stopped taking sound.
  * `render`: how far the vocal sound is in being put on a recording (0..1; 0 when it is not).
  */
-export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number; recorded?: number; room?: number; free?: number | null; full?: boolean; render?: number }
+export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number; recorded?: number; room?: number; free?: number | null; full?: boolean; render?: number; app_gaps?: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
 
 async function core() {
@@ -126,6 +126,18 @@ export async function engineBacking(left: Float32Array, right: Float32Array): Pr
     inter[2 * i + 1] = right[i];
   }
   return (await core()).invoke<number>("engine_backing", new Uint8Array(inter.buffer));
+}
+/**
+ * The app's own sound comes through the engine from now on, at `rate` (the page's), or no longer
+ * (null: what is queued fades out). See audio/through.ts.
+ */
+export async function engineApp(rate: number | null): Promise<void> {
+  const { invoke } = await core();
+  await inTurn(() => invoke("engine_app", { rate }));
+}
+/** A block of the app's own sound for the engine: left and right interleaved, as raw 32-bit floats. Returns the frames it has queued. */
+export async function engineFeed(bytes: Uint8Array): Promise<number> {
+  return (await core()).invoke<number>("engine_feed", bytes);
 }
 /** Start the count-in and the loop. `bars`: the beats in each bar of the loop, so the click accents every bar in its own meter. */
 export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; bars?: number[]; record: boolean; name: string }): Promise<string | null> {

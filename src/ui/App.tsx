@@ -8,6 +8,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, PANES, useApp, type Pane } from "./state";
 import { useLive } from "./live";
 import { GuitarView } from "./views/GuitarView";
+import { bookAhead } from "../audio/synth";
 
 class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -43,7 +44,11 @@ function Shell() {
   // a page that shows more than one bar at a time gets the whole width of the screen
   const { shown } = useBarsView();
   const wide = widePage(page, shown, barsOr(state.progression.bars));
-  const go = (pane: Pane) => set((s) => ({ ...s, pane }));
+  const go = (pane: Pane) => {
+    // the page that opens can hold the page up for a moment: the song is booked a second ahead first, so it plays on
+    if (pane !== page) bookAhead();
+    set((s) => ({ ...s, pane }));
+  };
   // Another page opens at its top, however it was opened: a tab, a section's track on Frame, a track on
   // the Track page, the key. (The pages stay mounted, so the window would keep the last page's scroll.)
   // On a phone the first row of the bar scrolls away; the page tabs stay.
