@@ -80,7 +80,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, recordingTo } = useApp();
   const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
@@ -227,6 +227,8 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     queueMicrotask(() => name && toast(`${name} added`));
   };
   const remove = (t: Track) => {
+    // (a recording going onto it would have nowhere to go)
+    if (t.id === recordingTo) return toast("Stop recording first");
     if (!window.confirm(`Remove ${t.name} and everything on it, in every section?`)) return;
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };

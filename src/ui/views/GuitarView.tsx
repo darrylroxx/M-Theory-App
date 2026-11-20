@@ -13,7 +13,7 @@ import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { barsOr, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
-import { allBars, allLoop, entryOf, loopKeys, loopRuns, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
+import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
 import { linkState, mapAllChords, mapAllMelodies, relink, sections, selectBlock, soloSection, type Section, type SettingGroup } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
@@ -476,7 +476,15 @@ export function GuitarView() {
         return old ? entryOf(old, next, lists.current.get(gen) ?? list, per.map((x) => x.block), per.map((x) => x.bars * x.bar)) : 0;
       });
       lists.current.set(gen, list);
-      for (const g of [...lists.current.keys()]) if (g < gen - 3) lists.current.delete(g);
+      for (const g of [...lists.current.keys()]) if (g < gen - 16) lists.current.delete(g);
+    } else if (!p.queued && !sameShape(lists.current.get(p.gen) ?? list, list)) {
+      // the list playing changed shape (a section removed or made shorter, a chord added before the one
+      // coming): the music goes on at once from the same place in the new list, and what is sounding
+      // keeps the places of the list it came from (so the mark and the drums stay with the section heard)
+      const old = lists.current.get(p.gen)!;
+      const gen = p.relist(list.items, list.loop, (next) => placeAfter(old, next, list));
+      lists.current.set(gen, list);
+      for (const g of [...lists.current.keys()]) if (g < gen - 16) lists.current.delete(g);
     } else lists.current.set(p.queued ? p.gen + 1 : p.gen, list);
     p.update(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, null);
   });
@@ -683,7 +691,9 @@ export function GuitarView() {
     const pos = player.current?.position();
     const block = pos ? mapOf(pos.gen)[pos.index]?.block : undefined;
     const sec = block === undefined ? undefined : planRef.current.per.find((x) => x.block === block);
-    return !pos || !sec ? null : { block: sec.block, bar: Math.max(0, Math.min(sec.bars - 1, Math.floor(pos.beat / sec.bar + 1e-6))) };
+    // (a bar that plays out after its section was made shorter is no longer in the song: no bar is marked for it)
+    if (!pos || !sec || pos.beat > sec.bars * sec.bar + 0.01) return null;
+    return { block: sec.block, bar: Math.max(0, Math.min(sec.bars - 1, Math.floor(pos.beat / sec.bar + 1e-6))) };
   }, []);
   /** Which section is sounding and how far into it, for the Track page's playhead. */
   const getWhere = useCallback((): { block: string; beat: number } | null => {

@@ -321,8 +321,8 @@ export class ProgressionPlayer {
   get queued(): boolean {
     return !!this.pending;
   }
-  /** the list played before the one playing took over (its last chords may still be sounding) */
-  private before: PlayItem[] = [];
+  /** the lists played before the one playing took over, by their `gen` (their last chords may still be sounding) */
+  private past = new Map<number, PlayItem[]>();
   onStep: (index: number, gen: number) => void = () => {};
   /** Called as each drum step sounds (step index inside the bar), or with −1 when playback stops. */
   onDrumStep: (step: number) => void = () => {};
@@ -338,9 +338,28 @@ export class ProgressionPlayer {
     return beats ? [{ midi: [], beats }] : [];
   }
 
-  /** The item a chord's start is in: in the list playing, or (for the last moments of the one before a list took over) in that one. */
+  /** The item a chord's start is in: in the list playing, or (for the last moments of one before a list took over) in that one. */
   private itemOf(a: Anchor): PlayItem | undefined {
-    return (a.gen === this.gen ? this.items : this.before)[a.index];
+    return (a.gen === this.gen ? this.items : this.past.get(a.gen))?.[a.index];
+  }
+
+  /**
+   * Another list takes over: the one playing is kept by its `gen` while anything booked from it may
+   * still sound (an index always means an item of its own list), and lists nothing points into any
+   * more are let go.
+   */
+  private retire() {
+    this.past.set(this.gen, this.items);
+    const live = new Set<number>();
+    const see = (a: Anchor | null) => a && live.add(a.gen);
+    this.spans.forEach(see);
+    this.tAnchors.forEach(see);
+    see(this.tCur);
+    for (const lane of this.lanes.values()) {
+      see(lane.cur);
+      lane.anchors.forEach(see);
+    }
+    for (const g of [...this.past.keys()]) if (!live.has(g)) this.past.delete(g);
   }
 
   private tuneAt(a: Anchor): PlayTune | null {
@@ -437,6 +456,33 @@ export class ProgressionPlayer {
   }
 
   /**
+   * The list playing changed shape (a section removed, made shorter or longer, a chord added or taken
+   * out): it plays from now on, with no wait and no gap, from where `at` says the item the old list
+   * would have played next is in it. What is already booked plays on as the old list has it (its
+   * anchors keep their own `gen`, so a drum pattern or a mark never reads another section's item).
+   * Use `update` for a list of the same shape. Returns the new list's `gen`.
+   */
+  relist(items: PlayItem[], loop: boolean, at: (next: number) => number): number {
+    const list = this.fill(items);
+    if (!this.playing || this.pending || !list.length) {
+      if (this.pending) this.pending.items = list;
+      else this.setItems(list);
+      return this.pending ? this.gen + 1 : this.gen;
+    }
+    const want = at(this.nextIndex);
+    this.retire();
+    this.gen++;
+    this.setItems(list);
+    this.loop = loop || !items.length;
+    const i = Math.max(0, Math.min(list.length, Math.round(want)));
+    this.nextIndex = i;
+    this.passBeat = list.slice(0, i).reduce((a, x) => a + x.beats, 0);
+    // (it goes on where its section is: the drums and the melody count from that section's start)
+    this.origin = this.secs.origin[i] ?? this.passBeat;
+    return this.gen;
+  }
+
+  /**
    * The recorded takes under what is sounding and what is already booked, looked at again with
    * the items as they are now: whatever changed is heard a moment from now, not only from the
    * next item (which, in a section with no chords, is the whole section away).
@@ -486,8 +532,8 @@ export class ProgressionPlayer {
     const at = Math.max(0, Math.min(p.items.length - (p.loop ? 1 : 0), Math.round(want)));
     // (where the music jumps, a take sung over what came before stops there, and where it goes straight on, one
     // under way carries on: the next item scheduled says which takes lie under it, and where)
+    this.retire();
     this.gen++;
-    this.before = this.items;
     this.setItems(p.items);
     this.loop = p.loop;
     this.nextIndex = at;
@@ -706,6 +752,7 @@ export class ProgressionPlayer {
   stop() {
     this.playing = false;
     this.pending = null;
+    this.past.clear();
     if (this.timer !== null) window.clearInterval(this.timer);
     if (this.stepTimer !== null) window.clearInterval(this.stepTimer);
     this.timer = this.stepTimer = null;

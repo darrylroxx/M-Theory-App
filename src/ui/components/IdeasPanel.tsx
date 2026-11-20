@@ -15,7 +15,7 @@ const when = (t: number) => {
 
 /** The library: every idea you have saved. Tap one to open it. */
 export function IdeasPanel({ onClose, justSaved }: { onClose: () => void; justSaved?: boolean }) {
-  const { state, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, toast } = useApp();
+  const { state, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, toast, recordingTo } = useApp();
   /** an action waiting for "save first?" */
   const [pending, setPending] = useState<{ run: () => void; label: string } | null>(null);
   const [confirm, setConfirm] = useState<string | null>(null);
@@ -38,8 +38,8 @@ export function IdeasPanel({ onClose, justSaved }: { onClose: () => void; justSa
     if (justSaved) firstName.current?.select();
   }, [justSaved]);
 
-  /** Leaving the idea on screen: offer to save it first when it has changes. */
-  const leave = (label: string, run: () => void) => (dirty ? setPending({ label, run }) : run());
+  /** Leaving the idea on screen: offer to save it first when it has changes (never while recording: its takes go into this idea). */
+  const leave = (label: string, run: () => void) => (recordingTo ? toast("Stop recording first") : dirty ? setPending({ label, run }) : run());
   const open = (id: string) => leave("open it", () => { openIdea(id); onClose(); });
   const fresh = () => leave("start a new one", () => { newIdea(); onClose(); toast("New idea"); });
   const backup = async () => {

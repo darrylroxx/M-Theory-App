@@ -319,6 +319,12 @@ interface Ctx {
   cloud: CloudStatus;
   /** Connect the library to the Claude account (asks once) */
   syncNow: () => void;
+  /**
+   * The vocal track a recording is going onto, from ● until its takes are on it (null: none). Until
+   * then the idea cannot be left, nor that track removed: its takes would have nowhere to go.
+   */
+  recordingTo: string | null;
+  setRecordingTo: (id: string | null) => void;
 }
 
 /** What a message's button does, and what it says ("↶"), for how long it is offered. */
@@ -457,18 +463,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [state.saved, state.ideaId, state.progression],
   );
+  const [recordingTo, setRecordingTo] = useState<string | null>(null);
+  const recRef = useRef(recordingTo);
+  recRef.current = recordingTo;
   const openIdea = useCallback((id: string) => {
+    if (recRef.current) return toast("Stop recording first");
     setState((s) => {
       const it = reviveIdea(s.saved.find((i) => i.id === id));
       if (!it) return s;
       return { ...s, ideaId: id, key: it.key, progression: { ...DEFAULT_STATE.progression, ...it.progression }, settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
     });
     openSheet(null);
-  }, []);
+  }, [toast]);
   const newIdea = useCallback(() => {
+    if (recRef.current) return toast("Stop recording first");
     setState((s) => ({ ...s, ideaId: null, progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
     openSheet(null);
-  }, []);
+  }, [toast]);
   const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
   const deleteIdea = useCallback(
     (id: string) => setState((s) => ({ ...s, ideaId: s.ideaId === id ? null : s.ideaId, saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
@@ -543,7 +554,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state.saved, state.tombs, cloud]);
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>
