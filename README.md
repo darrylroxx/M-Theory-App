@@ -291,7 +291,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 1350 tests: theory (incl. an audit of every key), voicings, shapes (and a spot's chosen shape under another capo or tuning), song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing (and writing a harmony track across the song, the harmonies offered and their order), each track's instrument and drum desk, one sound per track (and moving older songs over to it), loops of any sections
+npm test          # 1353 tests: theory (incl. an audit of every key), voicings, shapes (and a spot's chosen shape under another capo or tuning), song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing (and writing a harmony track across the song, the harmonies offered and their order), each track's instrument and drum desk, one sound per track (and moving older songs over to it), loops of any sections
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```
