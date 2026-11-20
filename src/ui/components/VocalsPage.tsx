@@ -14,6 +14,7 @@ import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
 import { EqGraph } from "./EqGraph";
 import { EarIcon } from "../icons";
+import { MixMark } from "./MixMark";
 import { BarsControl, useBarsView } from "./BarsControl";
 import { sigName } from "../../song/meter";
 import { sectionSig } from "../../song/unity";
@@ -690,6 +691,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
           {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
           <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
         </span>
+        {track && <MixMark id={track.id} name={track.name} />}
         <span className="spacer" />
         {laneBars.length > 0 && <BarsControl />}
       </div>

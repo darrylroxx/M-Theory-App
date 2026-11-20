@@ -32,11 +32,12 @@ import { DrumMachine, type Link } from "../components/DrumMachine";
 import { HarpPanel, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
+import { MixMark } from "../components/MixMark";
 import { AuditionCtx, HarmonizeButton, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
 import { harmonizeSources, previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
-import { PLAIN_STYLE, addTrack, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
+import { PLAIN_STYLE, addTrack, allTracks, drumsOf, firstLayer, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
 import { layClips, placedClips, playedTakes as takesPlayed, sixteenths } from "../../song/clips";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
@@ -351,8 +352,8 @@ export function GuitarView() {
   const editChords = prog.focus?.chords && prog.focus.chords !== "chords" ? prog.focus.chords : null;
   const editTune = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : null;
   // (while an added track is edited the first track's sound waits aside: its voice keeps it, never the edited track's)
-  const firstSound = editChords ? prog.layers?.chords?.sound : prog.sound;
-  const firstTune = editTune ? prog.layers?.melody?.tuneSound : prog.tuneSound;
+  const firstSound = firstLayer(prog, "chords").sound;
+  const firstTune = firstLayer(prog, "melody").tuneSound;
   // (a track's sound is the same in every section: a change is heard at once, whichever section is playing)
   const playingRef = useRef(false);
   useEffect(() => setHarpSound(reviveSound(firstSound), prog.bpm), [firstSound, prog.bpm]);
@@ -432,8 +433,8 @@ export function GuitarView() {
   const editDrums = prog.focus?.drums && prog.focus.drums !== "drums" ? prog.focus.drums : null;
   // (the same chip from one render to the next, so the drum machine is not drawn again for nothing while the music plays)
   const grooveLink = useMemo((): Link | undefined => (editDrums ? undefined : { source: linked.source, first: linked.first, own: linked.own, onReset: () => set((s) => ({ ...s, progression: relink(s.progression) })) }), [linked.source, linked.first, linked.own, editDrums, set]);
-  /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
-  const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
+  /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects): never the edited one's. */
+  const firstBeat = firstLayer(prog, "drums").beat ?? DEFAULT_BEAT;
   const pane: Pane = state.pane ?? "frame";
   // ── the harmony sheet: a page's Harmonize button, and ⟳ (write it again) on a harmony track ──
   const [hz, setHz] = useState<HzOpen | null>(null);
@@ -1277,6 +1278,7 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
         ))}
         <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={add}>+</button>
       </span>
+      <MixMark id={on} name={list.find((t) => t.id === on)?.name ?? on} />
       <span className="spacer" />
       <BarsControl />
       <button className="icon-btn" title="Copy" aria-label={`Copy the ${what} of ${label}`} onClick={copy}><CopyIcon /></button>
