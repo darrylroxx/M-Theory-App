@@ -18,7 +18,7 @@
  * Alone, one take at a time is heard: hearing another, playing the song, recording, or leaving
  * the page stops it, and a take still loading when that happens is never heard at all.
  */
-import { audioContext } from "./context";
+import { audioContext, soonest } from "./context";
 import { fader } from "./mix";
 import { loadTake, type TakeRef } from "./takebuffers";
 
@@ -213,21 +213,15 @@ export class TakeRuns {
     if (from >= at) return;
     const g = run.gain.gain;
     const v = level(run.env, from);
-    // held where it is at that moment (part-way through its fade in, even), then down to nothing
-    const hold = (g as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam }).cancelAndHoldAtTime;
-    if (typeof hold === "function") hold.call(g, from);
-    else {
-      g.cancelScheduledValues(from);
-      g.setValueAtTime(v, from);
-    }
-    g.linearRampToValueAtTime(0, at);
+    holdThenFade(g, from, v, at);
     run.env = [...run.env.filter(([x]) => x < from), [from, v], [at, 0]];
   }
 
   /** Stop every take now (■, or ▶ again): each fades out over a few milliseconds, so none is cut off with a click. */
   stopAll(): void {
     for (const run of this.live.values()) {
-      const now = run.src.context.currentTime;
+      // (from the soonest moment the audio thread has not worked out yet: see soonest)
+      const now = soonest(run.src.context);
       this.end(run, now + EDGE_FADE, now);
     }
     this.live.clear();
@@ -245,6 +239,19 @@ export class TakeRuns {
  * each at most, for a very short piece). With `pre`, it fades in over that long before `when`
  * instead (crossing over with the same sound fading out there). Returns its course.
  */
+/**
+ * A gain's course cut at `from` (where its own course has it at `v`), then down to nothing at
+ * `at`. Not with cancelAndHoldAtTime: in Chromium, booked ahead of time on a gain that has
+ * finished a ramp, it drops the level to a few percent at once, when it is called (a click, and a
+ * take gone quiet before its time). Cancelling what comes after `from` and ramping to `v` there
+ * keeps the course exactly as it was up to `from`, part-way through a fade in included.
+ */
+function holdThenFade(g: AudioParam, from: number, v: number, at: number) {
+  g.cancelScheduledValues(from);
+  g.linearRampToValueAtTime(v, from);
+  g.linearRampToValueAtTime(0, at);
+}
+
 export function fadeEdges(g: AudioParam, when: number, dur: number, pre = 0): Env {
   const f = Math.min(EDGE_FADE, dur / 2);
   const a = pre > 0 ? when - pre : when;
@@ -258,8 +265,9 @@ export function fadeEdges(g: AudioParam, when: number, dur: number, pre = 0): En
 
 // ── one take alone ──
 let alone: AudioBufferSourceNode | null = null;
-/** its fades */
+/** its fades, and their course */
 let aloneGain: GainNode | null = null;
+let aloneEnv: Env = [];
 /** counts every ask: a take still loading when another is asked for (or when it is stopped) is never heard */
 let asks = 0;
 const listeners = new Set<(on: boolean) => void>();
@@ -273,17 +281,9 @@ export function stopAlone(): void {
   alone = null;
   aloneGain = null;
   if (was) {
-    // faded out over a few milliseconds, as a take stopping in the song is
-    const now = audioContext().currentTime;
-    if (g) {
-      const p = g.gain as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam };
-      if (typeof p.cancelAndHoldAtTime === "function") p.cancelAndHoldAtTime(now);
-      else {
-        p.cancelScheduledValues(now);
-        p.setValueAtTime(p.value, now);
-      }
-      p.linearRampToValueAtTime(0, now + EDGE_FADE);
-    }
+    // faded out over a few milliseconds, as a take stopping in the song is (from the soonest moment it can be: see soonest)
+    const now = soonest(audioContext());
+    if (g) holdThenFade(g.gain, now, level(aloneEnv, now), now + EDGE_FADE);
     try {
       was.stop(g ? now + EDGE_FADE + 0.001 : now);
     } catch {
@@ -313,7 +313,7 @@ export async function hearAlone(t: TakeRef & { rate: number }, track: string, pa
   if (!(dur > 0)) return false;
   const when = c.currentTime + 0.02;
   const gain = c.createGain();
-  fadeEdges(gain.gain, when, dur);
+  const env = fadeEdges(gain.gain, when, dur);
   src.connect(gain);
   gain.connect(fader(track, c));
   src.start(when, from, dur);
@@ -324,6 +324,7 @@ export async function hearAlone(t: TakeRef & { rate: number }, track: string, pa
   };
   alone = src;
   aloneGain = gain;
+  aloneEnv = env;
   tell(true);
   return true;
 }

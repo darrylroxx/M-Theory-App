@@ -18,6 +18,7 @@
  */
 import type { Instrument } from "../audio/instrument";
 import { startRecorded } from "../audio/late";
+import { soonest } from "../audio/context";
 import { Bank, defaultBudget, type BankOptions, type Progress } from "./bank";
 import { damperTau } from "./damper";
 import { KEYS_LEVEL, Keyboard, stopAt, type KeyVoice } from "./keyboard";
@@ -213,8 +214,8 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
 
   protected dropDamper(v: Voice) {
     if (!v.rel) return;
-    const now = this.ctx.currentTime;
-    // (gone in a few milliseconds, not at once: a sound cut at full level clicks)
+    // (gone in a few milliseconds, not at once: a sound cut at full level clicks; from the soonest moment it can be)
+    const now = soonest(this.ctx);
     v.rel.amp.gain.cancelScheduledValues(now);
     v.rel.amp.gain.setTargetAtTime(0, now, 0.005);
     stopAt(v.rel.src, now + 0.05);

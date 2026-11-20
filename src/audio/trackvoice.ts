@@ -13,6 +13,7 @@
  * before its processor is made, so every note is in the render however long loading takes.
  */
 import type { Instrument } from "./instrument";
+import { soonest } from "./context";
 import { SOUND_DEFAULT, createRack, type HarpSound, type Rack } from "./rack";
 import { STRING_KEYS } from "./harp";
 import { Harp } from "./plucked";
@@ -392,7 +393,7 @@ export class TrackVoice {
    * its room and echoes too, so nothing rings on for seconds after ■ (a hall's tail behind a
    * drone otherwise lingers); the next note played on it brings it back.
    */
-  stopAll(at = this.c.currentTime) {
+  stopAll(at = soonest(this.c)) {
     clearTimeout(this.settle);
     this.harp.stopAll(at);
     const inst = this.inst;
