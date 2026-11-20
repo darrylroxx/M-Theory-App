@@ -149,7 +149,7 @@ On the **Chords** page:
 11. **Save** (top bar) puts the idea in your library. **Ideas** lists everything you have saved: tap to open, type to rename, ✕ to delete, "+ New idea" for a blank page. Save lights up whenever there are changes the library does not have. In the claude.ai version the library is also kept in your Claude account, so it follows you between devices; **Backup** and **Restore** move it as a file.
 12. **▶** plays it. The Frame page has the tempo, **Move song** (the melody moves with the key) and **MIDI export** (each chords track exactly as it plays, each melody on its own track, drums on channel 10; every track named and set to an instrument close to its own: grand piano, electric piano, a harp for the strings, the synth by its kind of sound, whose chords are written held, or as the notes its arpeggio plays when it is on **Arp**), copy chords + tab (keys by name for a track on the keys), and saved ideas.
 
-A **Capo** menu sits at the top of the Chords page, next to the key, for a chords track on Guitar; ★ marks the capo that removes the most barre chords (B major: capo 4).
+A **Capo** menu sits at the top of the Chords page, next to the key, for a chords track on Guitar; ★ marks the capo that removes the most barre chords (B major: capo 4). A shape chosen for one spot in the tray belongs to the capo and tuning it was chosen with: with another one on, that chord plays a shape that still makes it (the one it would have had anyway), and the chosen shape comes back with its capo and tuning.
 
 Settings (⚙): avoid barre chords (on by default), 11 tunings, capo, dot labels, left-handed diagrams, light/dark theme.
 
@@ -291,7 +291,7 @@ Then open the printed URL (usually http://localhost:5173). To open it on your ph
 Other commands:
 
 ```bash
-npm test          # 1332 tests: theory (incl. an audit of every key), voicings, shapes, song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing (and writing a harmony track across the song, the harmonies offered and their order), each track's instrument and drum desk, one sound per track (and moving older songs over to it), loops of any sections
+npm test          # 1341 tests: theory (incl. an audit of every key), voicings, shapes (and a spot's chosen shape under another capo or tuning), song structure, copy and paste, melody, library, the mixer, tracks, takes, input levels, harp, styles, effects, saturation, drums, rhythms, MIDI, measuring sounds, the ear, the canvas (its layers, layouts, coverage budget and vibe), splitting a song into layers and taking over a model's stems, the synth, the piano, harmonizing (and writing a harmony track across the song, the harmonies offered and their order), each track's instrument and drum desk, one sound per track (and moving older songs over to it), loops of any sections
 npm run build     # production build into dist/
 npm run preview   # serve the production build
 ```

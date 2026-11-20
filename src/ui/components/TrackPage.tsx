@@ -90,7 +90,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set, toast, recordingTo } = useApp();
+  const { state, set, toast, recordingTo, opened } = useApp();
   const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
@@ -98,7 +98,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   // a harmony track written again (its ⟳)
   const [again, setAgain] = useState<Track | null>(null);
   // it belongs to this page and this idea
-  useEffect(() => setAgain(null), [state.ideaId, active]);
+  useEffect(() => setAgain(null), [state.ideaId, opened, active]);
   const lineRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // the lanes' width, measured: the bars on screen share it out

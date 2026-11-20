@@ -11,10 +11,9 @@ import { isLayer, type LayerKind } from "../canvas/layers";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
-import { easyVoicing, voicingsFor } from "../guitar/arrange";
+import { chordShape } from "../guitar/arrange";
 import { getTuning, type Tuning } from "../guitar/tunings";
-import { fretsFromId, voicingFromFrets, type Voicing } from "../guitar/voicings";
-import { getChordType } from "../theory/chords";
+import type { Voicing } from "../guitar/voicings";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
@@ -314,6 +313,12 @@ interface Ctx {
   openIdea: (id: string) => void;
   /** Start a blank idea (keeps the key) */
   newIdea: () => void;
+  /**
+   * Goes up each time an idea is opened or a new one started: what belongs to the idea on screen (a
+   * loop, an undo) is let go when it changes. (ideaId cannot tell: it stays null from one idea not yet
+   * saved to a new one, and every idea without sections calls its one section "".)
+   */
+  opened: number;
   renameIdea: (id: string, name: string) => void;
   deleteIdea: (id: string) => void;
   /** Add ideas from a backup file; returns how many were new */
@@ -397,16 +402,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { capo, avoidBarre, tuningId } = state.settings;
   const shapes = state.shapes;
   const shapeOf = useCallback(
-    (ref: ChordRef, slotVoicingId?: string) => {
-      const id = slotVoicingId ?? shapes[shapeKey(ref, tuningId, capo)];
-      if (id) {
-        const found = voicingsFor(ref, tuning, capo).find((v) => v.id === id);
-        if (found) return found;
-        const frets = fretsFromId(id);
-        if (slotVoicingId && frets.length === tuning.notes.length) return voicingFromFrets(frets, pc(ref.root), getChordType(ref.typeId), tuning, capo);
-      }
-      return easyVoicing(ref, tuning, capo, avoidBarre);
-    },
+    // (a slot's shape is kept as frets: with another capo or tuning on, one that no longer makes its chord gives way)
+    (ref: ChordRef, slotVoicingId?: string) => chordShape(ref, tuning, capo, avoidBarre, slotVoicingId, shapes[shapeKey(ref, tuningId, capo)]),
     [shapes, tuning, tuningId, capo, avoidBarre],
   );
   const setShape = useCallback(
@@ -469,8 +466,10 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [recordingTo, setRecordingTo] = useState<string | null>(null);
   const recRef = useRef(recordingTo);
   recRef.current = recordingTo;
+  const [opened, setOpened] = useState(0);
   const openIdea = useCallback((id: string) => {
     if (recRef.current) return toast("Stop recording first");
+    setOpened((n) => n + 1);
     setState((s) => {
       const it = reviveIdea(s.saved.find((i) => i.id === id));
       if (!it) return s;
@@ -480,6 +479,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [toast]);
   const newIdea = useCallback(() => {
     if (recRef.current) return toast("Stop recording first");
+    setOpened((n) => n + 1);
     setState((s) => ({ ...s, ideaId: null, progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
     openSheet(null);
   }, [toast]);
@@ -557,7 +557,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state.saved, state.tombs, cloud]);
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, opened, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>

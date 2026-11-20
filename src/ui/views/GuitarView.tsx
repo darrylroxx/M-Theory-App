@@ -55,10 +55,11 @@ import { copyDrums, copyMelody, copyRhythm, keyShift, pasteDrums, pasteMelody, p
 
 /** Guitar: key → mode → chords → shapes → your progression. */
 export function GuitarView() {
-  const { state, set, shapeOf, sheet, openSheet, tuning, toast } = useApp();
+  const { state, set, shapeOf, sheet, openSheet, tuning, toast, opened } = useApp();
   const prog = state.progression;
   const beat = prog.beat ?? DEFAULT_BEAT;
-  const [nowIdx, setNowIdx] = useState(-1);
+  /** the chord sounding: which section's, and which of its chords (lit only while that section is on screen) */
+  const [now, setNow] = useState<{ block: string; idx: number } | null>(null);
   const [playing, setPlaying] = useState(false);
   /** true while the whole song is playing (the tray follows it section by section) */
   const [drag, setDrag] = useState<(Payload & { index: number | null }) | null>(null);
@@ -96,7 +97,8 @@ export function GuitarView() {
       // a rest has no shape, and the chords either side of it are arranged as neighbours
       const chords = all.filter((c) => !c.rest);
       const own = chords.map((c) => shapeOf(c.ref, c.voicingId));
-      const vs = arr ? arrangeProgression(chords.map((c) => c.ref), { ...arrOpts, pinned: chords.map((c, i) => (c.voicingId ? own[i] : undefined)) }) : own;
+      // (a shape set by hand that no longer makes its chord, after the capo or tuning changed, is free to move like the rest)
+      const vs = arr ? arrangeProgression(chords.map((c) => c.ref), { ...arrOpts, pinned: chords.map((c, i) => (c.voicingId && own[i]?.id === c.voicingId ? own[i] : undefined)) }) : own;
       let k = 0;
       return all.map((c) => (c.rest ? undefined : vs[k++]));
     },
@@ -277,6 +279,13 @@ export function GuitarView() {
 
   // ── looping: nothing loops until some bars are chosen; then those bars go round and round, in the song's order ──
   const [chosen, setChosen] = useState<LoopBars>([]);
+  // a loop belongs to its idea: another one opened (or a new one started) begins with none, even where
+  // its bars are called the same (every idea without sections calls its one section "")
+  const [loopIdea, setLoopIdea] = useState(opened);
+  if (loopIdea !== opened) {
+    setLoopIdea(opened);
+    setChosen([]);
+  }
   const layout = useMemo(() => plan.per.map((x) => ({ block: x.block, bars: x.bars })), [plan.per]);
   /** the loop as it plays: runs of bars next to each other, in order (none: nothing loops) */
   const runs = useMemo(() => loopRuns(layout, chosen), [layout, chosen]);
@@ -325,6 +334,9 @@ export function GuitarView() {
   const curBlock = prog.song?.current ?? "";
   const curRef = useRef(curBlock);
   curRef.current = curBlock;
+  // the chord lit in the tray: worked out against the section on screen as it is now, so it is lit at
+  // once when the page turns to the section playing (Follow turning it as that section starts, or by hand)
+  const nowIdx = now && now.block === curBlock ? now.idx : -1;
   const planRef = useRef(plan);
   planRef.current = plan;
 
@@ -426,7 +438,7 @@ export function GuitarView() {
   // ── the harmony sheet: a page's Harmonize button, and ⟳ (write it again) on a harmony track ──
   const [hz, setHz] = useState<HzOpen | null>(null);
   // it belongs to this page and this idea
-  useEffect(() => setHz(null), [state.ideaId, pane]);
+  useEffect(() => setHz(null), [state.ideaId, opened, pane]);
   const closeHz = useCallback(() => setHz(null), []);
   // there is something to harmonize with: a chords or melody track with music in it somewhere
   const canHarmonize = useMemo(() => harmonizeSources(prog).length > 0, [prog]);
@@ -498,7 +510,7 @@ export function GuitarView() {
     stopAlone();
     playBlock.current = null;
     setPlaying(false);
-    setNowIdx(-1);
+    setNow(null);
   };
   /**
    * Play. With no loop: from the section on screen, on through the song to its end (with Follow
@@ -547,9 +559,9 @@ export function GuitarView() {
         playBlock.current = at.block;
         if (at.block && followRef.current) set((s) => (s.progression.song && s.progression.song.current !== at.block ? { ...s, progression: selectBlock(s.progression, at.block) } : s));
       }
-      setNowIdx(at.block === curRef.current ? at.idx : -1);
+      setNow((n) => (n?.block === at.block && n.idx === at.idx ? n : { block: at.block, idx: at.idx }));
     };
-    p.onEnd = () => { playBlock.current = null; setPlaying(false); setNowIdx(-1); };
+    p.onEnd = () => { playBlock.current = null; setPlaying(false); setNow(null); };
     p.start(list.items, prog.bpm, prog.pattern, list.loop, firstBeat, from);
     lists.current.clear();
     lists.current.set(p.gen, list);
@@ -576,7 +588,9 @@ export function GuitarView() {
   // ── auditioning a harmony track before it is added (HarmonyPicker) ──
   // The section on screen goes round with the candidate in it; switching options swaps it while
   // it plays. When the audition ends the loop is put back, and the music stops if it was started for it.
-  const auditRef = useRef<{ chosen: LoopBars; started: boolean } | null>(null);
+  const auditRef = useRef<{ chosen: LoopBars; started: boolean; idea: number } | null>(null);
+  const openedRef = useRef(opened);
+  openedRef.current = opened;
   const chosenRef = useRef(chosen);
   chosenRef.current = chosen;
   const layoutRef = useRef(layout);
@@ -592,12 +606,13 @@ export function GuitarView() {
       setPreview(null);
       if (was) {
         if (was.started) stopRef.current();
-        setChosen(was.chosen);
+        // (the loop it was on is put back only in the idea it belongs to)
+        if (was.idea === openedRef.current) setChosen(was.chosen);
       }
       return;
     }
     if (recordingRef.current) return;
-    auditRef.current ??= { chosen: chosenRef.current, started: !playingRef.current };
+    auditRef.current ??= { chosen: chosenRef.current, started: !playingRef.current, idea: openedRef.current };
     setPreview(pv);
     // (playing already, on another loop: the section on screen goes round from now, not from where the one playing ends)
     restartRef.current = playingRef.current;
@@ -1198,7 +1213,7 @@ type HzOpen = {
  * there. Rhythm only goes to Rhythm, Melody to Melody, Drums to Drums. Undo takes a paste back.
  */
 function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipKind; label: string; color: number; frame: number; onPasted: () => void; onAgain?: (t: Track) => void }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, opened } = useApp();
   const clip = state.clip?.[kind];
   const block = state.progression.song?.current ?? "";
   const pane = state.pane;
@@ -1209,7 +1224,7 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
   const ek: EditKind = kind === "rhythm" ? "chords" : kind;
   const on = state.progression.focus?.[ek] ?? ek;
   // the undo belongs to the section, the page and the track it was pasted into (another track brought forward holds other music)
-  useEffect(() => setUndo(null), [block, pane, state.ideaId, on]);
+  useEffect(() => setUndo(null), [block, pane, state.ideaId, opened, on]);
   useEffect(() => {
     if (!undo) return;
     const t = window.setTimeout(() => setUndo(null), 20000);

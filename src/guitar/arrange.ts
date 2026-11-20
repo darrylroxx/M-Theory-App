@@ -11,7 +11,7 @@ import { pc } from "../theory/notes";
 import { positionOf } from "./shapeMap";
 import { openChordIds, playable } from "./shapes";
 import type { Tuning } from "./tunings";
-import { Voicing, generateVoicings, voicingCenter } from "./voicings";
+import { Voicing, fretsFromId, generateVoicings, makesChord, voicingCenter, voicingFromFrets } from "./voicings";
 
 export interface ArrangeOptions {
   tuning: Tuning;
@@ -89,6 +89,32 @@ export function easyVoicing(ref: ChordRef, tuning: Tuning, capo: number, avoidBa
   const score = (v: Voicing) => v.rank + 0.2 * Math.max(0, v.minFret - 4);
   const best = (list: Voicing[]) => list.reduce<Voicing | undefined>((b, v) => (!b || score(v) < score(b) ? v : b), undefined);
   return best(all.filter((v) => ok(v, !avoidBarre))) ?? best(all.filter((v) => ok(v, true))) ?? all[0];
+}
+
+/**
+ * A shape chosen by hand for one spot, as it sounds with the tuning and capo on now. It is kept as
+ * frets, so another capo or tuning moves every note it plays: it is used only while it still makes the
+ * chord (back on the capo or tuning it was chosen with, it is there again). undefined: it does not.
+ */
+export function pinnedShape(ref: ChordRef, id: string, tuning: Tuning, capo: number): Voicing | undefined {
+  const found = voicingsFor(ref, tuning, capo).find((v) => v.id === id);
+  if (found) return found;
+  const frets = fretsFromId(id);
+  if (frets.length !== tuning.notes.length || frets.some((f) => f !== null && !(Number.isInteger(f) && f >= 0))) return undefined;
+  const type = getChordType(ref.typeId);
+  const v = voicingFromFrets(frets, pc(ref.root), type, tuning, capo);
+  return makesChord(v, pc(ref.root), type, ref.bass ? pc(ref.bass) : undefined) ? v : undefined;
+}
+
+/**
+ * The shape a chord is played with: the spot's own shape (while it still makes the chord), else the
+ * one chosen for this chord everywhere (with this tuning and capo), else the easiest one.
+ */
+export function chordShape(ref: ChordRef, tuning: Tuning, capo: number, avoidBarre: boolean, pin?: string, chosen?: string): Voicing | undefined {
+  const own = pin ? pinnedShape(ref, pin, tuning, capo) : undefined;
+  if (own) return own;
+  const mine = chosen ? voicingsFor(ref, tuning, capo).find((v) => v.id === chosen) : undefined;
+  return mine ?? easyVoicing(ref, tuning, capo, avoidBarre);
 }
 
 function unaryCost(v: Voicing, o: ArrangeOptions): number {

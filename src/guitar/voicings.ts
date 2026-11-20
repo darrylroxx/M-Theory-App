@@ -353,6 +353,21 @@ export function voicingFromFrets(frets: (number | null)[], rootPc: number, type:
   return { ...base, ...scoreAndTag(base, type, frets.length, true) };
 }
 
+/**
+ * Does a shape make this chord? The test every shape on offer passes (see generateVoicings), leaving
+ * out the reach of the hand: every note it sounds is one of the chord's (a slash chord's own bass only
+ * at the bottom), the bass is the one asked for, and no note the chord needs is missing.
+ */
+export function makesChord(v: Pick<Voicing, "midi">, rootPc: number, type: ChordType, bassPc?: number): boolean {
+  const pcs = v.midi.filter((m): m is number => m !== null).map(mod12);
+  if (pcs.length < (type.intervals.length <= 2 ? 2 : 3)) return false;
+  const toneMap = chordToneMap(rootPc, type);
+  const bass = bassPc !== undefined && mod12(bassPc) !== mod12(rootPc) ? mod12(bassPc) : undefined;
+  if (bass !== undefined ? pcs[0] !== bass : !toneMap.has(pcs[0])) return false;
+  if (pcs.slice(1).some((p) => !toneMap.has(p))) return false;
+  return requiredIntervals(type).every((iv) => pcs.includes(mod12(rootPc + semitonesOf(iv))));
+}
+
 /** Parse a voicing id ("x,3,2,0,1,0") back into frets. */
 export function fretsFromId(id: string): (number | null)[] {
   return id.split(",").map((t) => (t === "x" ? null : Number(t)));
