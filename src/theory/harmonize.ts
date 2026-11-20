@@ -1,13 +1,18 @@
 /**
  * Harmonize: write a new track that fits one that is already there.
  *
- * A new melody track can sing with another melody (a third or a sixth away, the nearest chord
- * note, an octave, an answer in its gaps, a counter-line of its own), or be written from a
- * chords track (a line of chord notes, a slow line of 3rds and 7ths, a drone). A new chords
- * track can sit on another chords track (the same harmony higher, wider, thinner, with colour,
- * with a pedal under it, or each chord swapped for a cousin that shares two notes with it), offer
- * a re-harmonisation that is played instead (borrowed chords, lead-ins, passing diminished
- * chords, tritone swaps), or be chosen to carry a melody (a Viterbi search over the key's chords).
+ * What is offered (HARMONY_MENU, best first, after the research in THEORY): a new melody line
+ * sings with a tune (a high or a low harmony, a third away and bending to each chord; a
+ * counter-melody of its own; long notes, one per chord; an answer in the tune's gaps) or is
+ * written from a chords track (long notes, a counter-melody, a walk through the chord notes). A
+ * new chords track goes with another (the same chords richer, suspended, over a held bass note),
+ * or plays instead of it (some chords from the parallel key, each chord's relative, lead-ins), or
+ * is chosen to carry a tune (Best fit, a Viterbi search over the key's chords). The options are
+ * harmony only: none of them chooses how the new track sounds.
+ *
+ * Older options (pad, higher voicing, shell, smooth inversions, passing diminished, tritone swap,
+ * sixth below, octave, drone) are kept so tracks written with them can still be written again;
+ * they are never offered for a new track.
  *
  * The rules are the ones harmony and counterpoint teaching gives, coded as tests and costs:
  *  - diatonic thirds and sixths move each note so many steps of the scale (so a "third" is three
@@ -31,12 +36,10 @@
  *   harmonize({ kind: "melody", option: "third-above", key,
  *               source: { melody: thatTrack.melody }, under: thatSection.chords,
  *               bar: sigBeats(sig), compound: isCompound(sig), bars: sectionBars })
- *     → { melody, register }        (or { chords, register, voicing } for a chords track)
+ *     → { melody }        (or { chords } for a chords track)
  * A chords track written from a melody takes the section's chords as `under` too: its layers
- * then sit on them (only "Best fit" chooses new chords for the tune).
- * `harmonyChoices` lists the options for the new track with the ones that would write nothing
- * marked, for greying out. Chords come back with fresh ids and no pinned voicing; `register`
- * and `voicing` say where a keyboard should voice them (see keys/voicing.ts `keyStyleOf`).
+ * then sit on them (only "Best fit" chooses new chords for the tune). Chords come back with
+ * fresh ids and no pinned voicing.
  */
 import type { ProgChord } from "../ui/state";
 import { TICKS, melodyBase, type Melody, type MelodyNote } from "../song/melody";
@@ -72,38 +75,70 @@ export interface HarmonyOption {
 }
 
 export const MELODY_HARMONY: HarmonyOption[] = [
-  { id: "third-above", kind: "melody", label: "Third above", hint: "A third over the tune, bending to each chord", from: ["melody"] },
-  { id: "third-below", kind: "melody", label: "Third below", hint: "A third under the tune, bending to each chord", from: ["melody"] },
+  { id: "third-above", kind: "melody", label: "High harmony", hint: "A second voice just above the tune", from: ["melody"] },
+  { id: "third-below", kind: "melody", label: "Low harmony", hint: "A second voice just below the tune", from: ["melody"] },
+  { id: "counter", kind: "melody", label: "Counter-melody", hint: "A line of its own, moving against yours", from: ["melody", "chords"] },
+  { id: "slow-line", kind: "melody", label: "Long notes", hint: "One long note for each chord", from: ["chords", "melody"] },
+  { id: "answer", kind: "melody", label: "Answer", hint: "Answers the tune in its gaps", from: ["melody"] },
+  { id: "chord-tones", kind: "melody", label: "Chord notes", hint: "Walks through the notes of each chord", from: ["melody", "chords"] },
+  // kept for tracks written with them; never offered for a new track
   { id: "sixth-below", kind: "melody", label: "Sixth below", hint: "The third above an octave down: warm and low", from: ["melody"] },
-  { id: "chord-tones", kind: "melody", label: "Chord tones", hint: "The nearest chord note under the tune, or a line of chord notes", from: ["melody", "chords"] },
-  { id: "counter", kind: "melody", label: "Counter-line", hint: "A line of its own, moving against the tune and where it holds", from: ["melody", "chords"] },
-  { id: "answer", kind: "melody", label: "Answer", hint: "Fills the gaps the tune leaves", from: ["melody"] },
   { id: "octave", kind: "melody", label: "Octave", hint: "The tune doubled an octave away", from: ["melody"] },
   { id: "drone", kind: "melody", label: "Drone", hint: "One note under everything: home, or its fifth", from: ["chords", "melody"] },
-  { id: "slow-line", kind: "melody", label: "Slow line", hint: "The 3rd or 7th of each chord, moving as little as it can", from: ["chords", "melody"] },
 ];
 
 export const CHORD_HARMONY: HarmonyOption[] = [
-  { id: "fit", kind: "chords", label: "Best fit", hint: "Chords of the key chosen to carry the tune", from: ["melody"] },
+  { id: "fit", kind: "chords", label: "Best fit", hint: "Chords chosen to carry the tune", from: ["melody"] },
+  { id: "colour", kind: "chords", label: "Richer", hint: "Your chords with 7ths, 9ths and 6ths", from: ["chords", "melody"] },
+  { id: "sus", kind: "chords", label: "Sus", hint: "Your chords suspended: open and airy", from: ["chords", "melody"] },
+  { id: "borrowed", kind: "chords", label: "Darker", hint: "Some chords from the minor key", from: ["chords", "melody"], instead: true },
+  { id: "relative", kind: "chords", label: "Relative", hint: "Each chord swapped for its relative: major for minor", from: ["chords", "melody"], instead: true },
+  { id: "pedal", kind: "chords", label: "Pedal bass", hint: "Your chords over one held bass note", from: ["chords", "melody"] },
+  { id: "lead-in", kind: "chords", label: "Lead-ins", hint: "A 7th chord that pulls into the next one", from: ["chords", "melody"], instead: true },
+  // kept for tracks written with them; never offered for a new track
   { id: "pad", kind: "chords", label: "Pad", hint: "The same chords held high above", from: ["chords", "melody"] },
   { id: "higher", kind: "chords", label: "Higher voicing", hint: "The same chords spread wide and up", from: ["chords", "melody"] },
   { id: "shell", kind: "chords", label: "Shell", hint: "Root, 3rd and 7th only", from: ["chords", "melody"] },
   { id: "smooth", kind: "chords", label: "Smooth inversions", hint: "The same chords with the bass moving by step", from: ["chords", "melody"] },
-  { id: "colour", kind: "chords", label: "Colour", hint: "7ths, 9ths and 6ths that suit each chord's job", from: ["chords", "melody"] },
-  { id: "sus", kind: "chords", label: "Sus", hint: "Suspended forms that sit on the same chords", from: ["chords", "melody"] },
-  { id: "relative", kind: "chords", label: "Relative swap", hint: "Each chord's cousin: two notes in common", from: ["chords", "melody"] },
-  { id: "pedal", kind: "chords", label: "Pedal bass", hint: "The chords over one held bass note", from: ["chords", "melody"] },
-  { id: "borrowed", kind: "chords", label: "Borrowed", hint: "Chords from the parallel key: darker in major, brighter in minor", from: ["chords", "melody"], instead: true },
-  { id: "lead-in", kind: "chords", label: "Lead-in chords", hint: "A dominant 7th pulling into each chord", from: ["chords", "melody"], instead: true },
   { id: "passing", kind: "chords", label: "Passing dim", hint: "A diminished chord sliding up into the next", from: ["chords", "melody"], instead: true },
   { id: "tritone", kind: "chords", label: "Tritone swap", hint: "Each dominant swapped for the one a tritone away", from: ["chords", "melody"], instead: true },
 ];
 
 export const HARMONY_OPTIONS: HarmonyOption[] = [...MELODY_HARMONY, ...CHORD_HARMONY];
 
-/** The options for a new track of a kind, written from a track of a kind (or all of them). */
+/**
+ * What Harmonize offers for a new track, best first, by the new track's kind and the kind of
+ * track it goes with. Every other option is retired: kept only so old tracks can be written again.
+ */
+export const HARMONY_MENU: Record<HarmonyKind, Record<SourceKind, string[]>> = {
+  melody: {
+    melody: ["third-above", "third-below", "counter", "slow-line", "answer"],
+    chords: ["slow-line", "counter", "chord-tones"],
+  },
+  chords: {
+    chords: ["colour", "sus", "borrowed", "relative", "pedal", "lead-in"],
+    melody: ["fit", "colour", "sus", "borrowed", "relative", "pedal", "lead-in"],
+  },
+};
+
+/** The options offered for a new track of a kind written from a track of a kind, best first (no source kind: every option of the kind). */
 export function harmonyOptions(kind: HarmonyKind, from?: SourceKind): HarmonyOption[] {
-  return HARMONY_OPTIONS.filter((o) => o.kind === kind && (!from || o.from.includes(from)));
+  if (!from) return HARMONY_OPTIONS.filter((o) => o.kind === kind);
+  return HARMONY_MENU[kind][from].map((id) => HARMONY_OPTIONS.find((o) => o.kind === kind && o.id === id)!);
+}
+
+/** Is the key's home chord minor (a minor third above the tonic in its scale)? The same test borrowed chords use. */
+export function isMinorKey(key: Key): boolean {
+  const seven = scaleNotes(key.tonic, getScale(parentScale(key)));
+  return seven.map(pc).includes(mod12(pc(key.tonic) + 3));
+}
+/** An option's name in a key: borrowed chords are "Darker" in a major key and "Brighter" in a minor one. */
+export function labelFor(opt: HarmonyOption, key: Key): string {
+  return opt.id === "borrowed" && opt.kind === "chords" && isMinorKey(key) ? "Brighter" : opt.label;
+}
+/** An option's one line in a key. */
+export function hintFor(opt: HarmonyOption, key: Key): string {
+  return opt.id === "borrowed" && opt.kind === "chords" && isMinorKey(key) ? "Some chords from the major key" : opt.hint;
 }
 
 export interface HarmonizeInput {
@@ -127,10 +162,6 @@ export interface HarmonizeInput {
 export interface HarmonizeOutput {
   chords?: ProgChord[];
   melody?: Melody;
-  /** where the new part sits: a pad high above, a bass low under */
-  register?: "low" | "mid" | "high";
-  /** how its chords are best voiced on a keyboard */
-  voicing?: "close" | "open" | "spread" | "shell";
 }
 
 // ── Time ───────────────────────────────────────────────────────
@@ -1557,12 +1588,6 @@ function fitDiv(notes: MelodyNote[], like: Melody["div"] | undefined, compound: 
   return like ?? (compound ? 3 : 4);
 }
 
-function registerOf(notes: MelodyNote[], ctx: Ctx): HarmonizeOutput["register"] {
-  if (!notes.length) return "mid";
-  const mean = notes.reduce((s, n) => s + n.midi, 0) / notes.length;
-  return mean < ctx.base + 3 ? "low" : mean > ctx.base + 15 ? "high" : "mid";
-}
-
 /**
  * Write the new track. The output's chords or melody fill the same section (same bars and beat)
  * as the input; nothing is changed in place. An option that does not exist for the kind, or a
@@ -1576,13 +1601,13 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
   const tune = melodyLine(input.source.melody, ctx.len);
 
   if (opt.kind === "melody") {
-    const pack = (notes: MelodyNote[], register?: HarmonizeOutput["register"]): HarmonizeOutput => {
+    const pack = (notes: MelodyNote[]): HarmonizeOutput => {
       const clean = notes
         .filter((n) => n.at >= 0 && n.at < ctx.len && n.midi >= 24 && n.midi <= 108)
         .map((n) => ({ at: Math.round(n.at), midi: Math.round(n.midi) }))
         .sort((a, b) => a.at - b.at || a.midi - b.midi)
         .filter((n, i, a) => i === 0 || n.at !== a[i - 1].at || n.midi !== a[i - 1].midi);
-      return { melody: { div: fitDiv(clean, input.source.melody?.div, ctx.compound), bars, notes: clean, on: true }, register: register ?? registerOf(clean, ctx) };
+      return { melody: { div: fitDiv(clean, input.source.melody?.div, ctx.compound), bars, notes: clean, on: true } };
     };
     const fromChords = !tune.length && !!input.source.chords?.length;
     if (!tune.length && !fromChords) return pack([]);
@@ -1604,7 +1629,7 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
       case "octave":
         return pack(octaveLine(tune, ctx));
       case "drone":
-        return pack(droneLine(fromChords || input.under?.length ? spans : [], tune, ctx), "low");
+        return pack(droneLine(fromChords || input.under?.length ? spans : [], tune, ctx));
       case "slow-line":
         return pack(slowLine(spans, tune, ctx));
     }
@@ -1623,27 +1648,25 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
   const src = refit ? chordsForMelody(tune, ctx, chordSpans(songs.length ? songs : own, ctx.len)) : base;
   if (!src.length) return { chords: [] };
   const tuneFor = tune;
-  const mid = { register: "mid" as const, voicing: "close" as const };
   const at = (fn: (ref: ChordRef, s: Slot) => ChordRef) => mapChords(src, ctx, (ref, s) => fn(ref, s));
   switch (opt.id) {
     case "fit":
-      return { chords: refit ? src : mapChords(src, ctx, (r) => ({ ...r })), ...mid };
+      return { chords: refit ? src : mapChords(src, ctx, (r) => ({ ...r })) };
     case "pad":
-      return { chords: padChords(src, ctx), register: "high", voicing: "close" };
+      return { chords: padChords(src, ctx) };
     case "higher":
-      return { chords: mapChords(src, ctx, (r) => ({ ...r })), register: "high", voicing: "open" };
     case "shell":
-      return { chords: mapChords(src, ctx, (r) => ({ ...r })), register: "mid", voicing: "shell" };
+      return { chords: mapChords(src, ctx, (r) => ({ ...r })) };
     case "smooth":
-      return { chords: smoothChords(src, ctx), ...mid };
+      return { chords: smoothChords(src, ctx) };
     case "colour":
-      return { chords: at((r, s) => colourOf(r, ctx, tuneFor, s.start, s.end)), ...mid };
+      return { chords: at((r, s) => colourOf(r, ctx, tuneFor, s.start, s.end)) };
     case "sus":
-      return { chords: at((r, s) => susOf(r, ctx, tuneFor, s.start, s.end)), ...mid };
+      return { chords: at((r, s) => susOf(r, ctx, tuneFor, s.start, s.end)) };
     case "relative":
-      return { chords: at((r, s) => relativeOf(r, ctx, tuneFor, s.start, s.end)), ...mid };
+      return { chords: at((r, s) => relativeOf(r, ctx, tuneFor, s.start, s.end)) };
     case "pedal":
-      return { chords: pedalChords(src, ctx), register: "mid", voicing: "spread" };
+      return { chords: pedalChords(src, ctx) };
     case "borrowed": {
       const slots = slotsOf(src);
       const lastLive = slots.map((s, i) => (live(s) ? i : -1)).filter((i) => i >= 0).pop();
@@ -1652,32 +1675,14 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
           const b = borrowedOf(ref, ctx, i === lastLive);
           return b && carries(b, strongIn(tuneFor, s.start, s.end, ctx.bar), ctx) ? b : { ...ref };
         }),
-        ...mid,
       };
     }
     case "lead-in":
-      return { chords: leadInChords(src, ctx, tuneFor), ...mid };
+      return { chords: leadInChords(src, ctx, tuneFor) };
     case "passing":
-      return { chords: passingChords(src, ctx, tuneFor), ...mid };
+      return { chords: passingChords(src, ctx, tuneFor) };
     case "tritone":
-      return { chords: tritoneChords(src, ctx, tuneFor), ...mid };
+      return { chords: tritoneChords(src, ctx, tuneFor) };
   }
   return { chords: [] };
-}
-
-/** The options for a new track, each with whether it has anything to write for this source (for greying out the ones that don't). */
-export function harmonyChoices(input: Omit<HarmonizeInput, "option">): { option: HarmonyOption; useful: boolean }[] {
-  const hasTune = !!input.source.melody?.notes?.length;
-  const hasChords = !!input.source.chords?.some((c) => !c.rest);
-  const from: SourceKind | undefined = hasTune ? "melody" : hasChords ? "chords" : undefined;
-  return harmonyOptions(input.kind, from).map((option) => {
-    if (!from) return { option, useful: false };
-    const out = harmonize({ ...input, option: option.id });
-    if (input.kind === "melody") return { option, useful: !!out.melody?.notes.length };
-    const before = (input.source.chords ?? []).map((c) => `${c.rest ? "-" : `${pc(c.ref.root)}${c.ref.typeId}/${c.ref.bass ? pc(c.ref.bass) : ""}`}:${c.beats}`).join(" ");
-    const after = (out.chords ?? []).map((c) => `${c.rest ? "-" : `${pc(c.ref.root)}${c.ref.typeId}/${c.ref.bass ? pc(c.ref.bass) : ""}`}:${c.beats}`).join(" ");
-    // voicing-only layers (pad, higher, shell) always give something to hear
-    const voicingOnly = ["pad", "higher", "shell", "fit"].includes(option.id);
-    return { option, useful: !!out.chords?.length && (voicingOnly || before !== after || !hasChords) };
-  });
 }

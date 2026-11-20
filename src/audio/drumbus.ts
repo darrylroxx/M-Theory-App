@@ -292,7 +292,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   const fx = fxOf(settings);
   const desk = deskOf(track);
   const was = desk.applied;
-  // (a section's sound booked for later that never came, because playing stopped or jumped, is let go)
+  // (a change booked for later that never came, because playing stopped or jumped, is let go)
   // A new desk (a render makes its own) starts on these settings: its first hit must not glide in from the defaults
   const fresh = was.bpm === undefined;
   const to = (param: AudioParam, value: number, tc = 0.03) => (fresh ? (param.value = value) : param.cancelScheduledValues(t).setTargetAtTime(value, t, tc));

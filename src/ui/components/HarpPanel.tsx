@@ -51,35 +51,16 @@ function InstSwitch({ tone, setTone, loading }: ToneProps) {
   );
 }
 
-/** Whether the section on screen follows the song's settings or has its own, for one group of them. */
-export interface Link {
-  /** the section the others follow (the first one) */
-  source: string;
-  /** this is that section: nothing to show */
-  first: boolean;
-  own: boolean;
-  /** follow the song again */
-  onReset: () => void;
-}
-
-/** "= A" while a section follows the first one; "Own ↺" once it differs (tap to follow again). */
-export function LinkChip({ link, what }: { link?: Link; what: string }) {
-  if (!link || link.first) return null;
-  return link.own
-    ? <button className="link-chip own" title={`This section has its own ${what}. Tap to use section ${link.source}'s again.`} onClick={link.onReset}>Own ↺</button>
-    : <span className="link-chip" title={`Same ${what} as section ${link.source}. Change it here and this section keeps its own.`}>= {link.source}</span>;
-}
-
 /**
- * One harp's sound: which instrument, a ready-made sound, and (when asked for) the knobs for
- * the strings and the effects. Used twice: for the harp that plays the chords and the one that plays the melody.
+ * One track's sound: which instrument, a ready-made sound, and (when asked for) the knobs for
+ * the strings and the effects. Used for every chords and melody track: each has its own, the same
+ * in every section.
  */
-export function SoundControls({ sound, setSound, onHear, link, children, inst: instProps }: {
+export function SoundControls({ sound, setSound, onHear, children, inst: instProps }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   /** play something once, to hear a change (when nothing is playing) */
   onHear: () => void;
-  link?: Link;
   /** more pickers for the same row */
   children?: (drawer: string | null, toggle: (d: string) => void) => { pickers: React.ReactNode; drawers: React.ReactNode };
   /** the track's instrument (the strings when not given) */
@@ -129,13 +110,11 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
           <span className="pick-wrap">
             <Picker label="Sound" name={soundName(sound, mine) ?? "Custom"} open={drawer === "sound"} onOpen={() => toggle("sound")}
               onStep={(dir) => pickSound(sounds[(Math.max(at, 0) + dir + sounds.length) % sounds.length])} />
-            <LinkChip link={link} what="instrument and sound" />
           </span>
         )}
         {inst === "piano" && tone && (
           <Seg value={tone.keys ?? "grand"} options={KEYS_MODELS.map((k) => ({ value: k.id, label: k.name }))} onChange={(v) => instProps!.setTone({ keys: v })} label="Which piano" />
         )}
-        {!strings && <LinkChip link={link} what="effects" />}
       </div>
       {extra?.drawers}
       {inst === "synth" && instProps && (
@@ -249,21 +228,20 @@ export function SoundControls({ sound, setSound, onHear, link, children, inst: i
 }
 
 /**
- * How the chords are played (the style and its feel) and what plays them (the harp and its effects).
- * Small at first: the style, the instrument and the sound. The knobs open when asked for.
+ * How the chords are played (the style and its feel) and what plays them (the harp and its effects):
+ * the chords track's own, the same in every section. Small at first: the style, the instrument and
+ * the sound. The knobs open when asked for.
  */
-export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, styleLink, soundLink, inst }: {
+export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, inst }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   style: PatternId;
   onStyle: (id: PatternId) => void;
-  /** how the style is played in this section */
+  /** how the style is played */
   feel: Feel;
   setFeel: (patch: Partial<Feel>) => void;
   /** play the chord on screen once, to hear a change (when nothing is playing) */
   onHear: () => void;
-  styleLink?: Link;
-  soundLink?: Link;
   /** the track's instrument */
   inst?: ToneProps;
 }) {
@@ -280,12 +258,11 @@ export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHe
 
   return (
     <section className="card harp" aria-label="How the chords are played">
-      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={soundLink} inst={inst}>
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} inst={inst}>
         {(drawer, toggle) => ({
           pickers: styled && (
             <span className="pick-wrap">
               <Picker label="Style" name={st.name} open={drawer === "style"} onOpen={() => { setGroup(st.group); toggle("style"); }} onStep={stepStyle} />
-              <LinkChip link={styleLink} what="playing style" />
             </span>
           ),
           drawers: styled && drawer === "style" && (

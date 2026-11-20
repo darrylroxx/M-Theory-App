@@ -13,15 +13,13 @@
  */
 import type { ProgChord, Progression } from "../ui/state";
 import type { Key } from "../theory/keys";
-import { HARMONY_OPTIONS, harmonize, harmonyOptions, type HarmonizeInput, type HarmonizeOutput, type HarmonyKind, type HarmonyOption, type SourceKind } from "../theory/harmonize";
+import { HARMONY_OPTIONS, harmonize, harmonyOptions, hintFor, labelFor, type HarmonizeInput, type HarmonizeOutput, type HarmonyKind, type HarmonyOption, type SourceKind } from "../theory/harmonize";
 import { TICKS, hasTune, type Melody, type MelodyNote } from "./melody";
 import { barsOr } from "./frame";
 import { isCompound, sigBeats, type TimeSig } from "./meter";
 import { sigOf } from "./unity";
 import { commit, letters, type SongPart } from "./structure";
 import { allTracks, insteadTarget, muteInstead, normalize, refocus, unmuteInstead, type HarmonyMark, type Layer, type Layers, type Track } from "./tracks";
-import { onKeys, synthOf, toneOf, type Tone } from "../audio/tone";
-import { keyStyleOf } from "../keys/voicing";
 import { chordPrint, fnv, outPrint, tunePrint } from "./prints";
 
 /** What a harmony track is written from and how. */
@@ -42,8 +40,6 @@ export interface HarmonyPlan {
 export const MELODY_RANGE = { lo: 36, hi: 96 };
 /** The shortest and longest a chord can be (as on the Chords page: half beats, up to 16 beats). */
 const MIN_BEATS = 0.5;
-/** Where a new melody harmony's fader starts, in dB: a little under the tune it sings with. */
-export const HARMONY_DB = -4;
 const MAX_BEATS = 16;
 
 /** The option behind an id, for a kind of track. */
@@ -52,23 +48,6 @@ export const optionOf = (kind: HarmonyKind, id: string): HarmonyOption | undefin
 /** The tracks a new harmony can be written from: every chords and melody track of the song. */
 export function harmonySources(p: Progression): Track[] {
   return allTracks(normalize(p)).filter((t) => t.kind === "chords" || t.kind === "melody");
-}
-/**
- * What a page's Harmonize button writes from: the track the page is editing (the chords or the
- * melody brought forward), else the first track of that kind, else any track there is (null: none).
- */
-export function harmonizeFrom(p: Progression, page: SourceKind): string | null {
-  const list = harmonySources(p);
-  const on = p.focus?.[page] ?? page;
-  return (list.find((t) => t.id === on) ?? list.find((t) => t.kind === page) ?? list[0])?.id ?? null;
-}
-/**
- * The track a sheet writes from, as the song now stands: the one chosen while it is still a chords
- * or melody track of the song, else `fallback` (the track on the page) if that is, else none.
- */
-export function liveSource(p: Progression, from: string | null, fallback?: string | null): string | null {
-  const ids = new Set(harmonySources(p).map((t) => t.id));
-  return from && ids.has(from) ? from : fallback && ids.has(fallback) ? fallback : null;
 }
 const kindOf = (p: Progression, id: string): SourceKind | undefined => {
   const k = allTracks(p).find((t) => t.id === id)?.kind;
@@ -102,6 +81,18 @@ function sourceIn(s: Spot, from: string, kind: SourceKind): { chords?: ProgChord
 }
 const sounds = (cs: ProgChord[] | undefined) => !!cs?.some((c) => !c.rest && c.beats > 0);
 const plays = (src: { chords?: ProgChord[]; melody?: Melody }, kind: SourceKind) => (kind === "chords" ? sounds(src.chords) : hasTune(src.melody));
+
+/**
+ * What Harmonize can go with: every chords and melody track that has music somewhere in the song
+ * (harmony tracks too), in the song's order, with `first` (the track on screen) first.
+ */
+export function harmonizeSources(p0: Progression, first?: string): Track[] {
+  const p = flat(p0);
+  const all = spots(p);
+  const list = harmonySources(p).filter((t) => all.some((s) => plays(sourceIn(s, t.id, t.kind as SourceKind), t.kind as SourceKind)));
+  const top = list.find((t) => t.id === first);
+  return top ? [top, ...list.filter((t) => t !== top)] : list;
+}
 
 /**
  * The chords track a new chords track would play instead of (undefined: it plays with its
@@ -229,23 +220,18 @@ interface Written {
   /** the new part of each section, by part id (undefined: nothing there) */
   layers: Map<string, Layer | undefined>;
   marks: Record<string, HarmonyMark>;
-  /** how the first section written says it should be played (register and voicing) */
-  hint: HarmonizeOutput;
 }
 /** Write a harmony track into every section. `p` has every track in its place. */
 function writeAll(p: Progression, key: Key, kind: HarmonyKind, from: string, srcKind: SourceKind, option: string, track: string): Written {
   const layers = new Map<string, Layer | undefined>();
   const marks: Record<string, HarmonyMark> = {};
-  let hint: HarmonizeOutput | null = null;
   for (const s of spots(p)) {
     const input = inputIn(p, s, key, kind, from, srcKind, option, track);
-    const out = input ? harmonize(input) : {};
-    const l = input ? layerOf(out, kind, input) : undefined;
+    const l = input ? layerOf(harmonize(input), kind, input) : undefined;
     layers.set(s.part, l);
     marks[s.part] = { src: srcPrint(input), out: outPrint(l) };
-    if (l && !hint) hint = out;
   }
-  return { layers, marks, hint: hint ?? {} };
+  return { layers, marks };
 }
 
 /** The song with one track's part of every section replaced (and the page's, for the section on screen). */
@@ -266,41 +252,11 @@ function put(p: Progression, id: string, by: Map<string, Layer | undefined>): Pr
   return { ...p, song: { ...song, parts }, layers: cur ? cur.layers : p.layers };
 }
 
-/** A name for a harmony track: the option's ("Third above"), with a number when the song has one already. */
+/** A name for a harmony track: the option's ("High harmony"), with a number when the song has one already. */
 function freeName(p: Progression, label: string, self?: string): string {
   const taken = new Set(allTracks(p).filter((t) => t.id !== self).map((t) => t.name));
   if (!taken.has(label)) return label;
   for (let n = 2; ; n++) if (!taken.has(`${label} ${n}`)) return `${label} ${n}`;
-}
-
-/** How a keyboard plays a chords layer, from what harmonize says about it. */
-function keysWay(hint: HarmonizeOutput): Pick<Tone, "voicing" | "register"> {
-  const r = hint.register === "high" || hint.register === "low" ? hint.register : undefined;
-  return { voicing: keyStyleOf(hint.voicing), ...(r ? { register: r } : {}) };
-}
-const withoutRegister = (t: Tone): Tone => {
-  const { register: _, ...rest } = t;
-  return rest;
-};
-
-/**
- * What a new harmony track plays. A melody harmony sings on the same instrument as its tune (two
- * voices of one kind blend). A chords layer that changes how the chords are voiced (higher, a
- * shell, a pedal under them) is only heard as such on the keys, so it goes to the piano (or the
- * source's own keyboard) in that voicing; a pad goes to the synth's warm pad, held high above.
- * A re-harmonisation plays instead of its source, so it takes the source's instrument. Anything
- * else starts on the strings, as every new track does.
- */
-function toneFor(p: Progression, kind: HarmonyKind, from: string, srcKind: SourceKind, opt: HarmonyOption, hint: HarmonizeOutput): Tone | undefined {
-  if (kind === "melody") return srcKind === "melody" && p.tones?.[from] ? { ...p.tones[from] } : undefined;
-  const srcId = srcKind === "chords" ? from : "chords";
-  const src = toneOf(p, srcId);
-  if (opt.instead) return p.tones?.[srcId] ? { ...src } : undefined;
-  const way = keysWay(hint);
-  if (opt.id === "pad") return { inst: "synth", synth: synthOf({ inst: "synth" }, "chords"), ...way };
-  if (onKeys(src)) return { ...withoutRegister(src), ...way };
-  if (way.voicing !== "close" || way.register) return { inst: "piano", ...way };
-  return undefined;
 }
 
 /** The song's mixer with the source of a re-harmonisation muted (it plays instead), or unmuted again (only if it was muted for that). */
@@ -308,9 +264,9 @@ const muteFor = (p: Progression, from: string, mute: boolean): Progression["mix"
 
 /**
  * Add a harmony track: written from `plan.from` with `plan.option` in every section that track
- * plays in, with an instrument that suits the option, brought forward for editing (unless
- * `focus` is false: an audition leaves the page as it is). A re-harmonisation mutes the chords it
- * replaces; a new melody line starts a little quieter than the tune.
+ * plays in, brought forward for editing (unless `focus` is false: an audition leaves the page as
+ * it is). It is a plain new track: no instrument, sound or level is chosen for it. One that plays
+ * instead of chords mutes them (they are heard again when it goes).
  */
 export function addHarmony(p0: Progression, key: Key, plan: HarmonyPlan, id: string, opts: { focus?: boolean } = {}): { p: Progression; track?: Track } {
   const p = flat(p0);
@@ -318,16 +274,12 @@ export function addHarmony(p0: Progression, key: Key, plan: HarmonyPlan, id: str
   const srcKind = kindOf(p, plan.from);
   if (!opt || !srcKind || !opt.from.includes(srcKind) || allTracks(p).some((t) => t.id === id)) return { p: p0 };
   const w = writeAll(p, key, plan.kind, plan.from, srcKind, plan.option, id);
-  const track: Track = { id, kind: plan.kind, name: freeName(p, opt.label), role: "harmony", harmony: { from: plan.from, option: plan.option, marks: w.marks } };
-  const tone = toneFor(p, plan.kind, plan.from, srcKind, opt, w.hint);
+  const track: Track = { id, kind: plan.kind, name: freeName(p, labelFor(opt, key)), role: "harmony", harmony: { from: plan.from, option: plan.option, marks: w.marks } };
   const target = insteadOf(p, plan.kind, plan.option, plan.from, srcKind);
-  // a second voice sits under the lead in the mix (at the same level, a line above the tune is heard as the tune)
-  const mix0 = plan.kind === "melody" ? { ...p.mix, [id]: { db: HARMONY_DB } } : p.mix;
-  const mix = target ? muteFor({ ...p, mix: mix0 }, target, true) : mix0;
+  const mix = target ? muteFor(p, target, true) : p.mix;
   const q: Progression = {
     ...put(p, id, w.layers),
     tracks: [...(p.tracks ?? []), track],
-    ...(tone ? { tones: { ...p.tones, [id]: tone } } : {}),
     ...(mix ? { mix } : {}),
   };
   return { p: refocus(q, opts.focus === false ? p0.focus : { ...p0.focus, [plan.kind]: id }), track };
@@ -336,8 +288,8 @@ export function addHarmony(p0: Progression, key: Key, plan: HarmonyPlan, id: str
 /**
  * Write a harmony track again, in every section: with another option, or with the same one after
  * its source changed. Every section is written over, so the page asks first when some were
- * changed by hand (see `harmonyState`). A keyboard track takes the new option's voicing; a track
- * still called by its option's name takes the new one's.
+ * changed by hand (see `harmonyState`). How it sounds is never changed; a track still called by
+ * its option's name takes the new one's.
  */
 export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: string): Progression {
   const p = flat(p0);
@@ -351,12 +303,9 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   const srcKind = kindOf(p, h.from);
   if (!opt || !srcKind || !opt.from.includes(srcKind)) return p0;
   const w = writeAll(p, key, kind, h.from, srcKind, next, id);
-  const renamed = was && next !== h.option && (t.name === was.label || t.name.startsWith(`${was.label} `)) ? freeName(p, opt.label, id) : t.name;
+  const wasName = was && labelFor(was, key);
+  const renamed = wasName && next !== h.option && (t.name === wasName || t.name.startsWith(`${wasName} `)) ? freeName(p, labelFor(opt, key), id) : t.name;
   const tracks = (p.tracks ?? []).map((x) => (x.id === id ? { ...x, name: renamed, role: "harmony" as const, harmony: { from: h.from, option: next, marks: w.marks } } : x));
-  const tone = p.tones?.[id];
-  // a track whose instrument was never chosen starts on the one that suits the new option, as a new track would
-  const fresh = !tone && next !== h.option ? toneFor(p, kind, h.from, srcKind, opt, w.hint) : undefined;
-  const tones = fresh ? { ...p.tones, [id]: fresh } : kind === "chords" && tone && onKeys(tone) && next !== h.option ? { ...p.tones, [id]: { ...withoutRegister(tone), ...keysWay(w.hint) } } : p.tones;
   // a re-harmonisation plays instead of the chords it replaces; going back to a layer lets them play again
   const before = insteadOf(p, kind, h.option, h.from, srcKind);
   const after = insteadOf(p, kind, next, h.from, srcKind);
@@ -365,7 +314,7 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   // (chords this track already played instead of, unmuted by hand since, stay heard: that is the songwriter's choice)
   const theirs = after === before && p.mix?.[after ?? ""]?.mute === false;
   const mix = after && !theirs ? muteFor(p, after, true) : freed ? muteFor(p, before, false) : p.mix;
-  const q: Progression = { ...put(p, id, w.layers), tracks, ...(tones ? { tones } : {}), ...(mix ? { mix } : {}) };
+  const q: Progression = { ...put(p, id, w.layers), tracks, ...(mix ? { mix } : {}) };
   return refocus(q, p0.focus);
 }
 
@@ -389,34 +338,46 @@ export function previewHarmony(p: Progression, key: Key, plan: HarmonyPlan, id: 
   return addHarmony(p, key, plan, id, { focus: false }).p;
 }
 
+/** One option as the sheet offers it: its name and line in this key, and the track it plays instead of (if any). */
+export interface MenuItem {
+  option: HarmonyOption;
+  label: string;
+  hint: string;
+  /** the chords track it plays instead of (they are muted when it is kept) */
+  instead?: string;
+}
 /**
- * The options for a new track written from `from`, each with whether it writes anything in this
- * song (for greying out the ones that don't). An option is useful when some section gets
- * something to hear from it: notes, or chords that differ from the source's (a voicing-only layer
- * always counts). The section on screen is tried first. `instead`: it plays in place of chords
- * of the song (which are muted when it is added), so it is offered apart.
+ * What the sheet offers for a new track of `kind` written from `from`: the options for that pair,
+ * best first, and only those that give something to hear in this song (notes, or chords that
+ * differ from the ones they are written on; Best fit always does). `keep`: a track's own option,
+ * when it is written again, is always there (first, when it is no longer offered or gives nothing).
+ * The section on screen is tried first.
  */
-export function harmonyMenu(p0: Progression, key: Key, kind: HarmonyKind, from: string, track = "new"): { option: HarmonyOption; useful: boolean; instead: boolean }[] {
+export function harmonyMenu(p0: Progression, key: Key, kind: HarmonyKind, from: string, track = "new", keep?: string): MenuItem[] {
   const p = flat(p0);
   const srcKind = kindOf(p, from);
   if (!srcKind) return [];
   const cur = p.song?.blocks.find((b) => b.id === p.song?.current)?.partId ?? "";
   const all = spots(p).sort((a, b) => (a.part === cur ? -1 : b.part === cur ? 1 : 0));
-  return harmonyOptions(kind, srcKind).map((option) => ({
-    option,
-    instead: !!insteadOf(p, kind, option.id, from, srcKind),
+  const useful = (option: HarmonyOption) =>
     // (each option asks for its own sections: one that replaces the chords is written where they play without the tune too)
-    useful: all.some((s) => {
+    all.some((s) => {
       const input = inputIn(p, s, key, kind, from, srcKind, option.id, track);
       if (!input) return false;
-      const out = harmonize(input);
-      const l = layerOf(out, kind, input);
+      const l = layerOf(harmonize(input), kind, input);
       if (!l) return false;
-      if (kind === "melody" || ["pad", "higher", "shell", "fit"].includes(option.id)) return true;
+      if (kind === "melody" || option.id === "fit") return true;
       const before = srcKind === "chords" ? input.source.chords : input.under;
       return !before?.some((c) => !c.rest) || chordPrint(l.chords) !== chordPrint(fitChords(before, input.bar).map((c) => ({ ...c, voicingId: undefined })));
-    }),
-  }));
+    });
+  const item = (option: HarmonyOption): MenuItem => {
+    const target = insteadOf(p, kind, option.id, from, srcKind);
+    return { option, label: labelFor(option, key), hint: hintFor(option, key), ...(target ? { instead: target } : {}) };
+  };
+  const list = harmonyOptions(kind, srcKind).filter(useful);
+  const own = keep ? optionOf(kind, keep) : undefined;
+  if (own && own.from.includes(srcKind) && !list.includes(own)) list.unshift(own);
+  return list.map(item);
 }
 
 /** Where a harmony track stands: the sections changed by hand since it was written, and whether its source has changed since. */

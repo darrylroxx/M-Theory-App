@@ -124,11 +124,14 @@ describe("backups", () => {
     const back = reviveIdea(JSON.parse(JSON.stringify(stored)))!;
     expect(describeIdea(back)).toBe("A B");
     const s = sections(back.progression);
-    expect(s.map((x) => [x.chords[0].ref.root, x.style, x.color])).toEqual([["F", "pinch", 1], ["C", "strum", 0]]);
+    expect(s.map((x) => [x.chords[0].ref.root, x.color])).toEqual([["F", 1], ["C", 0]]);
     expect(back.progression.song!.parts[0].id).toBe("b");
+    // the chords play the style the leader played, in every section (one style for the track)
+    expect(back.progression.pattern).toBe("pinch");
     // opened again, nothing moves
     const again = reviveIdea(JSON.parse(JSON.stringify(back)))!;
-    expect(sections(again.progression).map((x) => [x.chords[0].ref.root, x.style, x.color, x.label])).toEqual([["F", "pinch", 1, "A"], ["C", "strum", 0, "B"]]);
+    expect(sections(again.progression).map((x) => [x.chords[0].ref.root, x.color, x.label])).toEqual([["F", 1, "A"], ["C", 0, "B"]]);
+    expect(again.progression.pattern).toBe("pinch");
     expect(again.progression.song!.parts.map((x) => x.id)).toEqual(["b", "a"]);
   });
   it("a section's name and signature are part of the idea", () => {
