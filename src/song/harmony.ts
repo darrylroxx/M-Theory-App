@@ -72,6 +72,14 @@ export function partHere(p: Pick<Progression, "song">): string {
   const song = p.song;
   return (song && song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId)?.id) ?? "";
 }
+/**
+ * The chords heard in the section on screen (what the melody is written over), whichever chords
+ * track the Chords page has open: the first chords track's, or a harmony's that plays instead of them here.
+ */
+export function chordsUnder(p: Progression): ProgChord[] {
+  const q = normalize(p);
+  return heardChords(q, { part: partHere(q), chords: q.chords, layers: q.layers, meter: sigOf(q) }, "");
+}
 /** The section on screen, where a harmony is written (a section played twice is the same music). `p` has every track in its place. */
 function spots(p: Progression): Spot[] {
   const sig = sigOf(p);
