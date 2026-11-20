@@ -59,7 +59,7 @@ function inferSig(p: Progression): TimeSig {
     const live = np.beat ?? DEFAULT_BEAT;
     const g = first?.groove ?? live;
     const on = first ? first.groove?.on ?? live.on : live.on;
-    const beats = on ? barBeats(g) : styleBar(first?.style ?? np.pattern);
+    const beats = on ? barBeats(g) : styleBar(np.pattern);
     return sigFor(beats, on && g.div === 3);
   } catch {
     return DEFAULT_SIG;

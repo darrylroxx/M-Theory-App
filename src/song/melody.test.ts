@@ -106,7 +106,7 @@ describe("the melody grid", () => {
 describe("melody and feel travel with the song", () => {
   const tune: Melody = { div: 2, bars: 1, notes: [{ at: 0, midi: 72 }, { at: 24, midi: 76 }] };
 
-  it("each section keeps its own melody and feel; a new section starts with an empty grid", () => {
+  it("each section keeps its own melody (the feel is the chords track's, one for the song); a new section starts with an empty grid", () => {
     let p = ensureSong({ ...base(["C", "G"]), melody: tune, feel: { speed: 2 } }, id);
     p = addNewSection(p, id);
     expect(p.melody).toBeUndefined();
@@ -114,7 +114,7 @@ describe("melody and feel travel with the song", () => {
     p = { ...p, chords: [chord("F")], melody: toggleNote(EMPTY_MELODY, 12, 65), feel: { speed: 0.5, octave: 1 } };
     p = selectBlock(p, sections(p)[0].blockId);
     expect(p.melody).toEqual(tune);
-    expect(reviveFeel(p.feel).speed).toBe(2);
+    expect(reviveFeel(p.feel)).toMatchObject({ speed: 0.5, octave: 1 });
     p = selectBlock(p, sections(p)[1].blockId);
     expect(p.melody!.notes).toEqual([{ at: 12, midi: 65 }]);
     expect(reviveFeel(p.feel)).toMatchObject({ speed: 0.5, octave: 1 });
@@ -125,7 +125,6 @@ describe("melody and feel travel with the song", () => {
     // and it all survives saving and loading
     const back = reviveSong(JSON.parse(JSON.stringify(p.song)))!;
     expect(back.parts.map((x) => x.melody?.notes.length ?? 0)).toEqual([2, 1, 1]);
-    expect(reviveFeel(back.parts[1].feel).speed).toBe(0.5);
   });
 
   it("writing a melody counts as a change to save; an idea can be a melody alone", () => {

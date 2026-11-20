@@ -20,6 +20,7 @@ import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { SOUND_V, migrateSound } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
@@ -73,15 +74,15 @@ export interface Progression {
   arrange?: ArrangeSettings | null;
   /** The drum beat under the chords (undefined = never touched). */
   beat?: Beat;
-  /** How the style is played in the section on screen: speed, swing, touch … */
+  /** How the first chords track's style is played, in every section: speed, swing, touch … */
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
   /** How long the section on screen lasts, in bars. */
   bars?: number;
-  /** The sound and effects of the harp that plays the chords (missing knobs are at their defaults). */
+  /** The sound and effects of the harp that plays the first chords track, the same in every section (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
-  /** The same for the harp that plays the melody: a separate instrument on a separate effects channel. */
+  /** The same for the harp that plays the first melody track: a separate instrument on a separate effects channel. */
   tuneSound?: Partial<HarpSound>;
   /** What ▶ does: go round the section on screen, or play on through every section of the song. */
   play?: "section" | "song";
@@ -99,6 +100,8 @@ export interface Progression {
   meter?: TimeSig;
   /** What plays each chords and melody track (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
   tones?: Tones;
+  /** How it is stored: 2 = every track has one sound for the whole song (older songs are moved over: see song/migrate) */
+  v?: number;
 }
 
 export interface ArrangeSettings {
@@ -209,6 +212,7 @@ export const DEFAULT_STATE: AppState = {
     pattern: "ring",
     loop: true,
     bars: DEFAULT_BARS,
+    v: SOUND_V,
   },
   saved: [],
   shapes: {},
@@ -217,11 +221,9 @@ export const DEFAULT_STATE: AppState = {
   mySounds: [],
 };
 
-/** Does any section of a stored song have a melody? */
-const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
-
-/** The idea on the page, loaded from storage and made whole. */
-function reviveProgression(raw: Partial<Progression> | undefined): Progression {
+/** The idea on the page, loaded from storage and made whole (a song from before one sound per track is moved over first). */
+export function reviveProgression(raw0: Partial<Progression> | undefined): Progression {
+  const raw = migrateSound(raw0);
   const melody = reviveMelody(raw?.melody);
   const tracks = reviveTracks(raw?.tracks);
   const p: Progression = {
@@ -233,12 +235,13 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),
-    // the melody used to share the chords' harp: one written back then keeps the sound it had
-    tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
+    sound: raw?.sound ? reviveSound(raw.sound) : undefined,
+    tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
     meter: reviveSig(raw?.meter),
     tones: reviveTones(raw?.tones, toneIds(tracks)),
+    v: SOUND_V,
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
   // Songs where a section other than the first one led (moved before that changed) are led by the first.

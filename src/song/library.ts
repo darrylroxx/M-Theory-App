@@ -8,7 +8,7 @@ import { conform, sigOf } from "./unity";
 import { reviveMix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Track } from "./tracks";
 import { reviveTones } from "../audio/tone";
-import { reviveBeat } from "../audio/beats";
+import { DEFAULT_BEAT, kitOfBeat, kitSig, reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
 import { reviveMelody } from "./melody";
 import { fitBars } from "./frame";
@@ -18,6 +18,7 @@ import type { Key } from "../theory/keys";
 import { getScale } from "../theory/scales";
 import type { Progression, SavedProgression } from "../ui/state";
 import { commit, leadFirst, loadCurrent, reviveSong, sections, settle } from "./structure";
+import { SOUND_V, migrateSound } from "./migrate";
 
 /** Everything that makes up an idea, ready to store. */
 export interface Snapshot {
@@ -42,8 +43,10 @@ export function fingerprint(s: Snapshot): string {
   const p = commit(normalize(s.progression));
   // (ideas from before tracks had instruments of their own have no tones, and keep the fingerprint they had)
   const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}), ...(p.tones ? { tones: p.tones } : {}) };
-  // with a song, everything on the page is a copy of one section: the song itself is what counts
-  if (p.song) return inOrder({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null });
+  // with a song, the page's notes are a copy of one section: the song itself is what counts, and the
+  // first tracks' sound (the page's, the same in every section)
+  if (p.song)
+    return inOrder({ ...base, parts: p.song.parts, blocks: p.song.blocks, shared: p.song.shared ?? null, pattern: p.pattern, feel: reviveFeel(p.feel), sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), kit: kitSig(kitOfBeat(p.beat ?? DEFAULT_BEAT)) });
   // a sound saved with only some knobs is the same sound as one with the rest at their defaults
   return inOrder({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: p.layers } : {}) });
 }
@@ -77,17 +80,14 @@ export function describeIdea(i: SavedProgression): string {
   return i.progression.chords.map((c) => (c.rest ? "–" : chordSymbol(c.ref))).join(" · ") || (i.progression.beat?.on ? `Beat: ${i.progression.beat.name}` : "Empty");
 }
 
-/** Does any section of a stored song have a melody? */
-const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
-
 /** The tracks that can have an instrument: every chords and melody track. */
 const toneTracks = (tracks: Track[] | undefined) => ["chords", "melody", ...(tracks ?? []).filter((t) => t.kind === "chords" || t.kind === "melody").map((t) => t.id)];
 
-/** Make a stored idea safe to load (older versions, hand-edited backups). */
+/** Make a stored idea safe to load (older versions, hand-edited backups; a song from before one sound per track is moved over first). */
 export function reviveIdea(raw: unknown): SavedProgression | null {
   const i = raw as Partial<SavedProgression> | null;
   if (!i || typeof i.id !== "string" || !i.key || typeof i.key.tonic !== "string" || !i.progression || !Array.isArray(i.progression.chords)) return null;
-  const p = i.progression;
+  const p = migrateSound(i.progression);
   const tracks = reviveTracks(p.tracks);
   const song = reviveSong(p.song, tracks);
   const melody = reviveMelody(p.melody);
@@ -95,14 +95,14 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const progression: Progression = settle(leadFirst(loadCurrent({
     chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
-    // the melody used to share the chords' harp: one written back then keeps the sound it had
-    ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : (melody?.notes.length || anyTune(p.song)) && p.sound ? { tuneSound: reviveSound(p.sound) } : {}),
+    ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : {}),
     ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),
     play: p.play === "song" ? "song" : "section",
     ...(reviveSig(p.meter) ? { meter: reviveSig(p.meter) } : {}),
     ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
     ...(tracks ? { tracks } : {}), ...(reviveLayers(p.layers, tracks) ? { layers: reviveLayers(p.layers, tracks) } : {}),
     ...(reviveTones(p.tones, toneTracks(tracks)) ? { tones: reviveTones(p.tones, toneTracks(tracks)) } : {}),
+    v: SOUND_V,
   })));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression: conform(progression), savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
