@@ -145,8 +145,6 @@ export function controlsFor(kind: HarmonyKind, option: string): { busy: boolean;
   if (kind === "chords") {
     if (["high", "airy", "guide", "top"].includes(option)) return { busy: true, wide: true, colour: true };
     if (option === "fit" || option === "fit2") return { busy: true, wide: false, colour: true };
-    if (option === "borrowed") return { busy: false, wide: false, colour: true };
-    if (option === "lead-in") return { busy: true, wide: false, colour: false };
     return { busy: false, wide: false, colour: false };
   }
   if (["third-above", "third-below", "stack", "counter", "slow-line", "answer", "chord-tones"].includes(option)) return { busy: true, wide: true, colour: true };
