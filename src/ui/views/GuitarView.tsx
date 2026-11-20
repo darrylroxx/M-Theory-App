@@ -14,7 +14,7 @@ import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { barsOr, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
 import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
-import { drumsIn, mapAllChords, mapAllMelodies, sections, selectBlock, soloSection, type Section } from "../../song/structure";
+import { drumsIn, mapAllChords, mapAllMelodies, sections, sectionsWith, selectBlock, soloSection, soundToAll, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
 import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
@@ -51,7 +51,7 @@ import { sameMusic } from "../../song/library";
 import { FrameSections } from "../components/FrameSections";
 import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
-import { chordBeats, fitBeats, newId, useApp, type ArrangeSettings, type Pane, type ProgChord, type Progression } from "../state";
+import { chordBeats, fitBeats, newId, useApp, type AppState, type ArrangeSettings, type Pane, type ProgChord, type Progression } from "../state";
 import { copyDrums, copyMelody, copyRhythm, keyShift, pasteDrums, pasteMelody, pastePart, pasteRhythm, pastFrame, undoFits, unpastePart, type ClipKind, type Clips, type PasteUndo } from "../../song/clip";
 
 /** Guitar: key → mode → chords → shapes → your progression. */
@@ -427,6 +427,26 @@ export function GuitarView() {
   }, [prog.chords, keyVs, chordTone]);
 
   const editDrums = prog.focus?.drums && prog.focus.drums !== "drums" ? prog.focus.drums : null;
+  // ── "All sections": the track on a page sounds in every other section that has it as it does here ──
+  const progRef = useRef(prog);
+  progRef.current = prog;
+  const allFor = useCallback((kind: EditKind) => () => {
+    const before = progRef.current;
+    const id = before.focus?.[kind] ?? kind;
+    const after = soundToAll(before, kind, id);
+    set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
+    const still = (s: AppState) => sameMusic(s.progression, after);
+    const name = allTracks(normalize(before)).find((t) => t.id === id)?.name ?? "";
+    toast(`${name} sounds like this in every section`, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: before } : s)) });
+  }, [set, toast]);
+  // (only when another section has the track; the same button from one render to the next, so the pages are not drawn again for nothing)
+  const others = (kind: EditKind) => sectionsWith(prog, prog.focus?.[kind] ?? kind) > 0;
+  const chordsOthers = others("chords");
+  const tuneOthers = others("melody");
+  const drumsOthers = others("drums");
+  const chordsAll = useMemo(() => (chordsOthers ? allFor("chords") : undefined), [chordsOthers, allFor]);
+  const tuneAll = useMemo(() => (tuneOthers ? allFor("melody") : undefined), [tuneOthers, allFor]);
+  const drumsAll = useMemo(() => (drumsOthers ? allFor("drums") : undefined), [drumsOthers, allFor]);
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
   const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
@@ -850,13 +870,13 @@ export function GuitarView() {
             <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
             <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label={curLabel} onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} />
           </div>
-          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} inst={chordInst} />
+          <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} inst={chordInst} onAll={chordsAll} />
         </div>
         <div className="pane" hidden={pane !== "melody"}>
           <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} onAgain={again} />
           {/* undo belongs to one melody track: switching track (or writing a harmony track again) starts it afresh, so one track's past can never be written over another */}
           <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
-            sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} />
+            sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} onAll={tuneAll} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>
           <VocalsPage active={pane === "vocals"} recordPlan={recordPlan} onRecording={(on) => { setRecording(on); if (on) stopPlay(); }} recording={recording} playing={playing} getWhere={getWhere} onAlone={stopPlay} />
@@ -866,7 +886,7 @@ export function GuitarView() {
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <ClipBar kind="drums" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
-          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
+          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} onAll={drumsAll} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
         </div>
       </div>
       {hz && (pane === "rhythm" || pane === "melody") && (

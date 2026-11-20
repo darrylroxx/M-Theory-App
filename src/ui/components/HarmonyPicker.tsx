@@ -1,17 +1,18 @@
 /**
  * Harmonize: a new chords or melody track written to go with a track of the song.
  *
- * It asks one thing: which track to harmonize with (every chords and melody track that has some
- * music, the one on screen first). Then it offers the harmonies for that track, best first, as
- * music theory ranks them (song/harmony, theory/harmonize), only those that give something in
- * this song. The new track is the page's kind: harmonized on the Chords page it is chords, on the
- * Melody page a melody line. Tapping an option plays the section on screen, round and round,
- * with that option added; tapping another swaps it straight away. ✓ keeps it, in every section.
- * Nothing about how it sounds is chosen: it starts as a plain track, like any new one.
+ * It works in the section on screen. It asks one thing: which track to harmonize with (every
+ * chords and melody track of this section that has some music, the one on screen first). Then it
+ * offers the harmonies for that track, best first, as music theory ranks them (song/harmony,
+ * theory/harmonize), only those that give something here. The new track is the page's kind:
+ * harmonized on the Chords page it is chords, on the Melody page a melody line. Tapping an option
+ * plays the section on screen, round and round, with that option added; tapping another swaps it
+ * straight away. ✓ keeps it, in this section only. Nothing about how it sounds is chosen: it
+ * starts as a plain track, like any new one.
  *
- * The same sheet writes an existing harmony track again (from its ⟳): with another option, or
- * the same one after its source changed. Sections changed by hand since are only written over
- * after a yes.
+ * The same sheet writes an existing harmony track again (from its ⟳), in the section on screen:
+ * with another option, or the same one after its source changed. A section changed by hand since
+ * is only written over after a yes.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { addHarmony, harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
@@ -142,8 +143,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       const r = addHarmony(before, key, { kind: newKind, from, option }, id);
       if (!r.track) return;
       after = r.p;
-      const muted = item.instead && after.mix?.[item.instead]?.mute ? item.instead : undefined;
-      msg = `${r.track.name} added${muted ? `, ${nameOf(muted)} muted` : ""}`;
+      msg = `${r.track.name} added${item.instead ? `, in place of ${nameOf(item.instead)} here` : ""}`;
     }
     hear(null);
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));

@@ -39,7 +39,7 @@ interface Drag {
 /**
  * The sections, in playing order. Each row: a grip to drag it anywhere (or hold it, on a phone),
  * what it is called (tap the one you are on to name it), how long it is and its time signature,
- * copy, paste and remove, and a chip for every track that opens its page there.
+ * copy, paste and remove, and a chip for every track it has that opens its page there.
  */
 export function FrameSections({ secs, lengths, here, beat, onPasted }: {
   secs: Section[];
@@ -413,7 +413,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
                 {secs.length > 0 && <button aria-label={`Remove ${x.label}`} title="Remove" onClick={() => remove(x)}>✕</button>}
               </span>
               <span className="fr-parts">
-                {tracks.map((t) => {
+                {tracks.filter((t) => isFirst(t.id) || t.kind === "vocals" || !!x.layers?.[t.id]).map((t) => {
                   const k = filled(x, t);
                   const what = t.kind === "chords" ? `${k} chord${k === 1 ? "" : "s"}` : t.kind === "vocals" ? `${k} recording${k === 1 ? "" : "s"}` : k ? "written" : "empty";
                   return (

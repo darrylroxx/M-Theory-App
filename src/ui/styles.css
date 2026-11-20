@@ -585,8 +585,8 @@ button.dm-strip-name:hover { color: var(--accent); }
 .finder-keys { display: block; padding: 6px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--card-2); max-width: 100%; overflow: hidden; color: inherit; }
 .finder-keys:hover { border-color: var(--accent); }
 .finder-keys svg { max-width: 100%; height: auto; }
-.link-chip { flex: 0 1 auto; display: inline-block; line-height: 24px; max-width: 12em; overflow: hidden; text-overflow: ellipsis; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--faint); font-size: 0.74rem; font-weight: 800; white-space: nowrap; }
-.link-chip.own { border-style: solid; border-color: var(--accent); color: var(--accent); cursor: pointer; }
+/* "All sections": copy a track's sound to the same track in every other section (at the end of the row) */
+.dm-tabs .all-chip { margin-left: auto; }
 
 .pick-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 @media (max-width: 620px) { .pick-wrap { flex: 1 1 100%; } .pick-wrap .beat-pick { flex: 1; min-width: 0; } .pick-wrap .beat-pick .beat-name { flex: 1; } }
@@ -910,6 +910,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-block.on { background: color-mix(in srgb, var(--kc) 24%, transparent); }
 .tv-block:hover { background: color-mix(in srgb, var(--kc) 30%, transparent); }
 .tv-empty { padding-left: 8px; color: var(--muted); font-size: 0.75rem; }
+/* a section that does not have the track: an empty slot, with a faint + that puts it there */
+.tv-block.tv-slot, .tv-block.tv-slot:hover { background: transparent; }
+.tv-slot-add { margin-left: 4px; min-width: 32px; height: 32px; padding: 0 8px; border: 1px dashed var(--border-2); border-radius: 8px; background: transparent; color: var(--muted); opacity: 0.55; font-size: 1rem; line-height: 1; }
+.tv-slot-add:hover, .tv-slot-add:focus-visible { opacity: 1; color: var(--text); }
 .tv-chords { display: flex; height: 100%; }
 .tv-chord { flex: none; height: 100%; display: flex; align-items: center; padding-left: 5px; font-weight: 800; font-size: 0.78rem; white-space: nowrap; overflow: hidden; border-left: 2px solid color-mix(in srgb, var(--kc) 70%, var(--text)); background: color-mix(in srgb, var(--kc) 18%, transparent); }
 .tv-chord.rest { background: transparent; border-left-style: dashed; }
