@@ -108,6 +108,44 @@ describe("an added chords track in a loop", () => {
   });
 });
 
+describe("the first notes of every track are ready before the clock starts", () => {
+  // a section with a chord on the first chords track, an added chords track's chord on the strings over both
+  // bars, a melody, and an added melody: all of them start on the first beat
+  const tune = { m: { div: 1 as const, bars: 2, notes: [{ at: 0, midi: 72 }, { at: 12, midi: 74 }] }, bar: 4, swing: 0 };
+  const m2 = { m: { div: 1 as const, bars: 2, notes: [{ at: 0, midi: 84 }, { at: 48, midi: 86 }] }, bar: 4, swing: 0 };
+  const extra: ExtraPlay = { chords: [{ track: "c2", at: 0, beats: 8, midi: [57, 60, 64], style: "ring", sound: SOUND_DEFAULT }], tunes: [{ track: "m2", tune: m2 }], drums: [] };
+  const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, tune, extra }, { midi: [55, 59, 62], beats: 4, tune, extra }];
+  it("every note booked as ▶ is pressed was made on its own track's strings before anything was booked", () => {
+    const ev: { what: "buffer" | "note"; key: string }[] = [];
+    vi.spyOn(Harp.prototype, "buffer").mockImplementation(function (this: Harp, midi: number) {
+      ev.push({ what: "buffer", key: `${this.track ?? this.tag}:${midi}` });
+      return null as never;
+    });
+    vi.spyOn(TrackVoice.prototype, "note").mockImplementation(function (this: TrackVoice, midi: number) {
+      ev.push({ what: "note", key: `${this.track ?? this.kind}:${midi}` });
+    });
+    const p = new S.ProgressionPlayer();
+    p.start(items, 120, "ring", true);
+    p.stop();
+    const first = ev.findIndex((e) => e.what === "note");
+    const booked = new Set(ev.filter((e) => e.what === "note").map((e) => e.key));
+    const ready = new Set(ev.slice(0, first).filter((e) => e.what === "buffer").map((e) => e.key));
+    // the added chords track, the melody and the added melody are booked straight away too
+    for (const k of ["chord:48", "c2:57", "c2:60", "c2:64", "melody:72", "m2:84"]) expect(booked.has(k), k).toBe(true);
+    for (const k of booked) expect(ready.has(k), k).toBe(true);
+  });
+  it("what the song needs later is listed to be made in the background: every track, on its own voice, soonest first", () => {
+    const need = S.prepFor(items, "ring", null, null);
+    const keys = new Set(need.map((n) => `${n.use?.track}:${n.midi}`));
+    for (const k of ["chords:48", "chords:55", "c2:57", "c2:60", "c2:64", "melody:72", "melody:74", "m2:84", "m2:86"]) expect(keys.has(k), k).toBe(true);
+    // each on its own slot (an added track's notes never go to the first track's strings)
+    expect(new Set(need.filter((n) => n.use?.track === "c2").map((n) => n.slot)).size).toBe(1);
+    expect(need.find((n) => n.use?.track === "c2")!.slot).not.toBe(need.find((n) => n.use?.track === "chords")!.slot);
+    const at = need.map((n) => n.at!);
+    expect(at).toEqual([...at].sort((a, b) => a - b));
+  });
+});
+
 describe("a recorded take in a loop", () => {
   // the take covers four bars from the start of its section (8 s at 120); the loop is bars 2 and 3
   const buffer = { duration: 8 } as unknown as AudioBuffer;
