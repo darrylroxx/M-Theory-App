@@ -198,14 +198,15 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     const before = seen.current;
     seen.current = { idea: state.ideaId, ids: new Set(tracks.map((t) => t.id)) };
     const added = before && before.idea === state.ideaId ? tracks.filter((t) => !before.ids.has(t.id)).map((t) => t.id) : [];
-    if (!added.length) return;
-    setFresh(added);
-    const head = scrollRef.current?.closest(".tv")?.querySelector<HTMLElement>(`.tv-head[data-track="${CSS.escape(added[added.length - 1])}"]`);
-    const r = head?.getBoundingClientRect();
-    if (head && r && (r.bottom > window.innerHeight || r.top < 0)) head.scrollIntoView({ block: "nearest" });
+    if (added.length) setFresh(added);
   }, [active, tracks]);
   useEffect(() => {
     if (!fresh.length) return;
+    // brought into view after the layout effects: the app opens a page at its top in one of its own, which runs
+    // after this page's (a parent's runs after its children's), and would scroll the track back out of sight
+    const head = scrollRef.current?.closest(".tv")?.querySelector<HTMLElement>(`.tv-head[data-track="${CSS.escape(fresh[fresh.length - 1])}"]`);
+    const r = head?.getBoundingClientRect();
+    if (head && r && (r.bottom > window.innerHeight || r.top < 0)) head.scrollIntoView({ block: "nearest" });
     const t = window.setTimeout(() => setFresh([]), 1600);
     return () => window.clearTimeout(t);
   }, [fresh]);
