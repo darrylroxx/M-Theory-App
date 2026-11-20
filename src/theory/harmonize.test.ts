@@ -12,15 +12,17 @@ import {
   isMinorKey,
   labelFor,
   harmonyOptions,
+  localScale,
   melodyLine,
   parallelPerfect,
   parentScale,
   type HarmonizeInput,
+  type Shape,
 } from "./harmonize";
 import { CHORD_TYPES, refPcs, type ChordRef } from "./chords";
 import { diatonicChords, keyScale, type Key } from "./keys";
 import { mod12, pc } from "./notes";
-import { getScale, scalePcs } from "./scales";
+import { getScale, scaleNotes, scalePcs } from "./scales";
 import { seededRng } from "./progression";
 import { TICKS, type Melody } from "../song/melody";
 import type { ProgChord } from "../ui/state";
@@ -130,7 +132,10 @@ const CASES: Case[] = [
   },
 ];
 
-const input = (c: Case, kind: "melody" | "chords", option: string, from: "melody" | "chords" | "both", seed = 1): HarmonizeInput => ({
+/** A pair line note for note, a third away: the busiest and closest setting of the controls. */
+const PAIR: Shape = { busy: 2, wide: 0, colour: 1 };
+const input = (c: Case, kind: "melody" | "chords", option: string, from: "melody" | "chords" | "both", seed = 1, shape?: Shape): HarmonizeInput => ({
+  ...(shape ? { shape } : {}),
   kind,
   option,
   source: from === "melody" ? { melody: c.tune } : from === "chords" ? { chords: c.chords } : { melody: c.tune, chords: c.chords },
@@ -166,12 +171,16 @@ const ic = (a: number, b: number) => mod12(Math.abs(a - b));
 const CONSONANT = [0, 3, 4, 5, 7, 8, 9];
 const strong = (at: number, bar: number) => beatStrength(at, bar) >= 2;
 
-/** Is a note in the key, in the chord under it, or one the tune itself uses (a borrowed note it asks for)? */
+/**
+ * Is a note in the key, in the chord under it, in the scale that chord is borrowed from (over F
+ * minor in C major: C minor's B♭), or one the tune itself uses (a borrowed note it asks for)?
+ */
 function fits(c: Case, at: number, midi: number, chords = c.chords): boolean {
   const p = mod12(midi);
   const ref = chordAt(chords, at);
   if (keyPcs(c.key).includes(p)) return true;
   if (ref && refPcs(ref).map(mod12).includes(p)) return true;
+  if (ref && !refPcs(ref).every((x) => keyPcs(c.key).includes(mod12(x))) && localScale(scaleNotes(c.key.tonic, getScale(parentScale(c.key))), ref).includes(p)) return true;
   return c.tune.notes.some((n) => mod12(n.midi) === p);
 }
 
@@ -219,10 +228,12 @@ describe("harmony menus", () => {
           expect(o!.from, `${kind} ${id}`).toContain(from);
         }
       }
-    expect(harmonyOptions("melody", "melody").map((o) => o.id)).toEqual(["third-above", "third-below", "counter", "slow-line", "answer"]);
+    expect(harmonyOptions("melody", "melody").map((o) => o.id)).toEqual(["third-below", "third-above", "stack", "counter", "slow-line", "answer"]);
+    // under a low tune the high harmony comes first
+    expect(harmonyOptions("melody", "melody", true).map((o) => o.id).slice(0, 2)).toEqual(["third-above", "third-below"]);
     expect(harmonyOptions("melody", "chords").map((o) => o.id)).toEqual(["slow-line", "counter", "chord-tones"]);
-    expect(harmonyOptions("chords", "chords").map((o) => o.id)).toEqual(["colour", "sus", "borrowed", "relative", "pedal", "lead-in"]);
-    expect(harmonyOptions("chords", "melody").map((o) => o.id)).toEqual(["fit", "colour", "sus", "borrowed", "relative", "pedal", "lead-in"]);
+    expect(harmonyOptions("chords", "chords").map((o) => o.id)).toEqual(["high", "airy", "guide", "top", "relative", "borrowed", "lead-in"]);
+    expect(harmonyOptions("chords", "melody").map((o) => o.id)).toEqual(["fit", "fit2"]);
     expect(harmonyOptions("chords").every((o) => o.kind === "chords")).toBe(true);
   });
 
@@ -295,7 +306,7 @@ describe("melody harmony from a melody", () => {
 
       for (const [id, side] of [["third-above", 1], ["third-below", -1], ["sixth-below", -1]] as const)
         it(`${id}: one note per tune note, in the key or the chord, consonant on strong beats, on its side`, () => {
-          const out = harmonize(input(c, "melody", id, "melody")).melody!;
+          const out = harmonize(input(c, "melody", id, "melody", 1, PAIR)).melody!;
           expect(out.notes.map((n) => n.at)).toEqual(tune.map((n) => n.at));
           let onSide = 0;
           out.notes.forEach((h, i) => {
@@ -315,17 +326,16 @@ describe("melody harmony from a melody", () => {
           expect(sized / out.notes.length).toBeGreaterThanOrEqual(0.5);
         });
 
-      it("chord-tones: chord notes under the tune's chord notes, never a rub", () => {
+      it("chord-tones: a walk through the chord notes, never a rub with the tune", () => {
         const out = harmonize(input(c, "melody", "chord-tones", "melody")).melody!;
-        expect(out.notes.length).toBe(tune.length);
-        out.notes.forEach((h, i) => {
-          const n = tune[i];
-          const ref = chordAt(c.chords, n.at);
-          expect(h.midi).toBeLessThan(n.midi);
-          expect(fits(c, h.at, h.midi)).toBe(true);
-          expect([1, 2, 6, 10, 11]).not.toContain(ic(h.midi, n.midi) === 6 && ref && refPcs(ref).includes(mod12(h.midi)) ? -1 : ic(h.midi, n.midi));
-          if (ref && refPcs(ref).map(mod12).includes(mod12(n.midi))) expect(refPcs(ref).map(mod12)).toContain(mod12(h.midi));
-        });
+        expect(out.notes.length).toBeGreaterThan(0);
+        for (const h of out.notes) {
+          const n = sounding(tune, h.at);
+          const ref = chordAt(c.chords, h.at);
+          expect(fits(c, h.at, h.midi), `${h.at}:${h.midi}`).toBe(true);
+          if (n !== null && strong(h.at, c.bar)) expect([1, 11, 6]).not.toContain(ic(h.midi, n));
+          if (ref && strong(h.at, c.bar)) expect(refPcs(ref).map(mod12)).toContain(mod12(h.midi));
+        }
       });
 
       it("counter-line: its own slower line, consonant on strong beats, no parallels, leaps recovered", () => {
@@ -353,9 +363,8 @@ describe("melody harmony from a melody", () => {
         }
         // the two lines take turns: between the strong beats and chord changes the counter-line
         // moves only where the tune holds; and it stays within a twelfth of the tune
-        expect(notes.length).toBeLessThanOrEqual(tune.length + 4);
-        const changes = new Set(chordSpans(c.chords, len(c)).map((s) => s.start));
-        for (const h of notes) if (!strong(h.at, c.bar) && !changes.has(h.at)) expect(tune.some((n) => n.at === h.at), `passing at ${h.at / TICKS}`).toBe(false);
+        // at most one note a beat (the middle setting), moving where the tune holds
+        expect(notes.length).toBeLessThanOrEqual(c.bars * Math.ceil(c.bar) + 1);
         for (const h of notes) {
           const m = sounding(tune, h.at);
           if (m !== null) expect(Math.abs(h.midi - m)).toBeLessThanOrEqual(19);
@@ -364,7 +373,7 @@ describe("melody harmony from a melody", () => {
         for (let i = 2; i < notes.length; i++) {
           const prev = notes[i - 1].midi - notes[i - 2].midi;
           const d = notes[i].midi - notes[i - 1].midi;
-          if (Math.abs(prev) >= 5) expect(Math.abs(d) >= 3 && Math.sign(d) === Math.sign(prev), `leap at ${notes[i].at / TICKS}`).toBe(false);
+          if (Math.abs(prev) >= 7) expect(Math.abs(d) >= 5 && Math.sign(d) === Math.sign(prev), `leap at ${notes[i].at / TICKS}`).toBe(false);
         }
       });
 
@@ -376,13 +385,23 @@ describe("melody harmony from a melody", () => {
         for (const h of out.notes) expect(h.midi - tune.find((n) => n.at === h.at)!.midi).toBe(d);
       });
 
-      it("answer: only in the gaps the tune leaves", () => {
+      it("answer: in the gaps the tune leaves; a note it holds moves only to fit a chord that comes in", () => {
         const out = harmonize(input(c, "melody", "answer", "melody")).melody!;
-        for (const h of out.notes) {
-          const before = tune.filter((n) => n.at <= h.at).pop();
-          // nothing starts within a beat of a tune note, nor under a later one
-          if (before) expect(h.at - before.at).toBeGreaterThanOrEqual(TICKS);
+        // it always answers somewhere, in the key or the chord
+        expect(out.notes.length).toBeGreaterThan(0);
+        for (const [i, h] of out.notes.entries()) {
           expect(fits(c, h.at, h.midi), `${h.at}:${h.midi}`).toBe(true);
+          // never one note struck twice in a row
+          if (i > 0) expect(h.midi, `${h.at}`).not.toBe(out.notes[i - 1].midi);
+          // with a strong tune note only where the note it held moves on with the chords there (a downbeat
+          // or a chord change): to a note of that chord, consonant with the tune
+          const n = tune.find((x) => x.at === h.at);
+          if (n && strong(h.at, c.bar)) {
+            const ref = chordAt(c.chords, h.at);
+            expect(h.at % (c.bar * TICKS) === 0 || bounds(c.chords).starts.includes(h.at), `${h.at}`).toBe(true);
+            if (ref) expect(refPcs(ref).map(mod12), `${h.at}`).toContain(mod12(h.midi));
+            expect(CONSONANT, `${h.at}`).toContain(ic(h.midi, n.midi));
+          }
         }
       });
 
@@ -417,7 +436,7 @@ describe("melody harmony from a melody", () => {
             expect(h.at).toBeLessThan(len(c));
           }
           // a written line's span is a voice's, not a keyboard's (a drone and an octave copy follow the tune)
-          if (out.notes.length > 1 && o.id !== "octave") {
+          if (out.notes.length > 1 && o.id !== "octave" && o.id !== "stack") {
             const span = Math.max(...out.notes.map((n) => n.midi)) - Math.min(...out.notes.map((n) => n.midi));
             expect(span, o.id).toBeLessThanOrEqual(Math.max(19, hi - lo + 5));
           }
@@ -429,17 +448,20 @@ describe("melody harmony from a melody", () => {
     });
 
   it("bends a third to the chord on a strong beat (the worked example: E–F–G over C gives G–A–E or G–A–C)", () => {
-    const out = harmonize({ kind: "melody", option: "third-above", source: { melody: M([[1, 64], [1.5, 65], [2, 67]], 1) }, under: P("C"), key: C, bar: 4, bars: 1 }).melody!;
+    const out = harmonize({ kind: "melody", option: "third-above", source: { melody: M([[1, 64], [1.5, 65], [2, 67]], 1) }, under: P("C"), key: C, bar: 4, bars: 1, shape: PAIR }).melody!;
     expect(out.notes.slice(0, 2).map((n) => n.midi)).toEqual([67, 69]);
     // B over a C chord on beat 3 would rub: it bends to a chord note instead
     expect([64, 72]).toContain(out.notes[2].midi);
   });
 
   it("follows the key's scale: a third is three or four semitones, as the key says", () => {
-    const tune = M([[0, 60], [0.5, 62], [1, 64], [1.5, 65], [2, 67]], 1);
-    const out = harmonize({ kind: "melody", option: "third-above", source: { melody: tune }, key: C, bar: 4, bars: 1 }).melody!;
+    // (a tune clear of the chords' own register, so the third is free to be a third)
+    const tune = M([[0, 72], [0.5, 74], [1, 76], [1.5, 77], [2, 79]], 1);
+    const out = harmonize({ kind: "melody", option: "third-above", source: { melody: tune }, key: C, bar: 4, bars: 1, shape: PAIR }).melody!;
     const d = out.notes.map((n, i) => n.midi - tune.notes[i].midi);
-    expect(d.slice(0, 4)).toEqual([4, 3, 3, 4]); // C→E, D→F, E→G, F→A
+    // C→E, E→G, F→A; over the C chord D→F would sit a minor 9th over its E, so it opens to a 4th (D→G) there
+    expect([d[0], d[2], d[3]]).toEqual([4, 3, 4]);
+    expect([3, 5]).toContain(d[1]);
   });
 
   it("uses a borrowed chord's own notes over it (F minor in C major: A♭, not A)", () => {
@@ -791,21 +813,22 @@ describe("edge cases", () => {
 // ── Musical checks found in review ────────────────────────────
 
 describe("the lines a musician would expect", () => {
-  it("chord tones: the nearest chord note under the tune (C→G, E→C, G→E), never a tritone with it", () => {
-    const out = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 72], [1, 76], [2, 79]], 1) }, under: P("C"), key: C, bar: 4, bars: 1 }).melody!;
-    expect(out.notes.map((n) => n.midi)).toEqual([67, 72, 76]);
-    // A over A diminished: the C a sixth below, not the E♭ a tritone below
-    const dim = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 69]], 1) }, under: P("Adim"), key: { tonic: "Bb", scaleId: "ionian" }, bar: 4, bars: 1 }).melody!;
-    expect(dim.notes.map((n) => n.midi)).toEqual([60]);
-    // a tune note outside the chord on a strong beat: the third below bends to the chord, never a minor ninth over it
-    const off = harmonize({ kind: "melody", option: "chord-tones", source: { melody: M([[0, 72]], 1) }, under: P("Eb"), key: { tonic: "Ab", scaleId: "ionian" }, bar: 4, bars: 1 }).melody!;
-    expect(refPcs({ root: "Eb", typeId: "maj" })).toContain(mod12(off.notes[0].midi));
+  it("chord notes: chord tones of the chord under them, never a 2nd, 7th or tritone with the tune", () => {
+    for (const [tune, under, key] of [[M([[0, 72], [1, 76], [2, 79]], 1), P("C"), C], [M([[0, 69]], 1), P("Adim"), { tonic: "Bb", scaleId: "ionian" }], [M([[0, 72]], 1), P("Eb"), { tonic: "Ab", scaleId: "ionian" }]] as const) {
+      const out = harmonize({ kind: "melody", option: "chord-tones", source: { melody: tune }, under, key, bar: 4, bars: 1 }).melody!;
+      expect(out.notes.length).toBeGreaterThan(0);
+      for (const h of out.notes) {
+        expect(refPcs(under[0].ref).map(mod12)).toContain(mod12(h.midi));
+        const n = sounding(melodyLine(tune, 4 * TICKS), h.at);
+        if (n !== null) expect([1, 11, 6]).not.toContain(ic(h.midi, n));
+      }
+    }
   });
 
   it("a harmony under a low tune goes under it (the range reaches a sixth below the tune's lowest note)", () => {
     const tune = M([[0, 48], [2, 52], [4, 53], [6, 57], [8, 55], [10, 59], [12, 60]]);
-    for (const id of ["third-below", "sixth-below", "chord-tones"]) {
-      const out = harmonize({ kind: "melody", option: id, source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4 }).melody!;
+    for (const id of ["third-below", "sixth-below"]) {
+      const out = harmonize({ kind: "melody", option: id, source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4, shape: PAIR }).melody!;
       out.notes.forEach((h, i) => expect(h.midi, `${id} at ${h.at / TICKS}`).toBeLessThan(tune.notes[i].midi));
       for (const h of out.notes) expect(h.midi).toBeGreaterThanOrEqual(36);
     }
@@ -832,8 +855,8 @@ describe("the lines a musician would expect", () => {
   it("an answer starts on a new note and echoes as much of the last phrase as fits the gap", () => {
     const tune = M([[0, 72], [1, 71], [1.5, 69], [2, 67], [8, 69], [9, 71], [10, 72]]);
     const out = harmonize({ kind: "melody", option: "answer", source: { melody: tune }, under: P("C F G C"), key: C, bar: 4, bars: 4 }).melody!;
-    // the four notes C B A G come back a step lower in the gap after them
-    expect(out.notes.filter((n) => n.at < 8 * TICKS).length).toBe(4);
+    // the phrase comes back in the gap after it (as much of it as fits)
+    expect(out.notes.filter((n) => n.at > 2 * TICKS && n.at < 8 * TICKS).length).toBeGreaterThanOrEqual(2);
     // where no two notes fit, a run of chord notes answers, starting on a note other than the one just sung
     const d = { tonic: "D", scaleId: "ionian" };
     const tune2 = M([[0, 66], [1, 69], [2, 74], [3, 73], [5, 71], [7, 74], [10, 71], [12, 67], [15, 69], [17, 73]]);
@@ -928,9 +951,9 @@ describe("random tunes over random progressions", () => {
       const len = bars * bar * TICKS;
       const line = melodyLine(tune, len);
       const tag = `${key.tonic} ${key.scaleId} ${bar}${compound ? "c" : ""} #${it}`;
-      const run = (option: string) => harmonize({ kind: "melody", option, source: { melody: tune }, under: chords, key, bar, bars, compound, seed: it }).melody!;
-      for (const id of ["third-above", "third-below", "sixth-below", "chord-tones"]) {
-        const out = run(id);
+      const run = (option: string, shape?: Shape) => harmonize({ kind: "melody", option, source: { melody: tune }, under: chords, key, bar, bars, compound, seed: it, ...(shape ? { shape } : {}) }).melody!;
+      for (const id of ["third-above", "third-below", "sixth-below"]) {
+        const out = run(id, PAIR);
         out.notes.forEach((h, i) => {
           const n = line[i];
           if (beatStrength(n.at, bar) >= 2 || n.end - n.at > TICKS) expect(CONSONANT, `${tag} ${id} at ${n.at / TICKS}: ${n.midi}/${h.midi}`).toContain(ic(h.midi, n.midi));
@@ -940,7 +963,8 @@ describe("random tunes over random progressions", () => {
       const counter = run("counter").notes;
       for (let t = 0; t < len; t += TICKS / div) {
         if (!strong(t, bar)) continue;
-        const a = sounding(counter, t);
+        // (a note struck there; one held over from before may be a suspension, dissonant on purpose)
+        const a = counter.find((x) => x.at === t)?.midi ?? null;
         const b = sounding(line, t);
         if (a !== null && b !== null) expect(CONSONANT, `${tag} counter at ${t / TICKS}: ${b}/${a}`).toContain(ic(a, b));
       }

@@ -28,7 +28,8 @@
 import { DEFAULT_BEAT, grooveOf, reviveBeat, type Beat } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSound, type HarpSound } from "../audio/rack";
-import { transposeRef, type Key } from "../theory/keys";
+import type { Key } from "../theory/keys";
+import { transposeChord } from "./chordnotes";
 import { pc } from "../theory/notes";
 import { TICKS, melodyBase, reviveMelody, transposeMelody, type Melody } from "./melody";
 import type { ArrangeSettings, ProgChord, Progression } from "../ui/state";
@@ -136,7 +137,7 @@ export function pasteRhythm(p: Progression, c: RhythmClip, key: Key, id: () => s
   const n = keyShift(c.key, key);
   // copied in another time signature: chords that lasted whole bars there last whole bars here
   const to = sigBeats(sectionSig(p));
-  const chords = clone(c.chords).map((x) => ({ ...x, beats: fitChordBeats(x.beats, c.bar ?? to, to) })).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
+  const chords = clone(c.chords).map((x) => ({ ...x, beats: fitChordBeats(x.beats, c.bar ?? to, to) })).map((x) => (n ? { ...transposeChord(x, n, key), id: id() } : { ...x, id: id() }));
   if (!c.tone) return { ...p, chords };
   return withToneOn({ ...p, chords, arrange: clone(c.arrange) ?? null, pattern: c.pattern ?? p.pattern, feel: clone(c.feel), sound: clone(c.sound) }, "chords", c.tone);
 }
@@ -232,9 +233,12 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   const to = new Map<string, string>();
   /** the tracks the paste made */
   const made = new Set<string>();
+  // the section's own tracks that are empty there: a copied track lands in one of its kind before a new one is made
+  const there = sectionAt(p, target)?.layers;
+  const emptyThere = (x: Track) => !!there?.[x.id] && !hasMusic(there[x.id]) && !c.tracks.some((ct) => ct.id === x.id || ct.name === x.name);
   for (const t of c.tracks) {
     const free = (x: Track) => x.kind === t.kind && ![...to.values()].includes(x.id);
-    const same = tracks.find((x) => x.id === t.id && free(x)) ?? tracks.find((x) => x.name === t.name && free(x));
+    const same = tracks.find((x) => x.id === t.id && free(x)) ?? tracks.find((x) => x.name === t.name && free(x)) ?? (isFirst(t.id) ? undefined : tracks.find((x) => free(x) && emptyThere(x)));
     if (same) {
       to.set(t.id, same.id);
       continue;
@@ -248,7 +252,7 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
 
   // another key: the chords move by as much as the home note, the melodies by the same amount (so they stay together)
   const n = keyShift(c.key, key);
-  const chordsOf = (cs: ProgChord[]) => clone(cs).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
+  const chordsOf = (cs: ProgChord[]) => clone(cs).map((x) => (n ? { ...transposeChord(x, n, key), id: id() } : { ...x, id: id() }));
   const tunes = [c.melody, ...Object.values(c.layers ?? {}).map((l) => l.melody)].filter((m): m is Melody => !!m);
   const by = n && tunes.length ? melodyShift({ div: 2, bars: 1, notes: tunes.flatMap((m) => m.notes) }, c.key, key) : 0;
   const tuneOf = (m: Melody | undefined) => (m ? (by ? transposeMelody(clone(m), by) : clone(m)) : undefined);

@@ -24,7 +24,8 @@ import { reidea } from "./openidea";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { reviveNotes, withoutNotes } from "../song/chordnotes";
+import { normalize, prune, reviveArrange, reviveFirstHarmony, reviveLayers, reviveTracks, type FirstHarmony, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -65,6 +66,12 @@ export interface ProgChord {
   voicingId?: string;
   /** a silence of this length: nothing is played (its chord is only a placeholder) */
   rest?: boolean;
+  /**
+   * the exact notes this chord plays (MIDI, low to high), written by Harmonize so a chords track
+   * sits above and around another; none: voiced by its instrument as usual. Played only while
+   * every note belongs to the chord (see song/notes' `playedNotes`).
+   */
+  notes?: number[];
 }
 
 export interface Progression {
@@ -94,6 +101,8 @@ export interface Progression {
   mix?: Mix;
   /** The song's tracks beyond the first chords, melody and drums tracks (which every section has): rows of the Track page */
   tracks?: Track[];
+  /** The first chords and melody tracks' harmony records, when Harmonize wrote into them (see song/tracks) */
+  firstHarmony?: FirstHarmony;
   /** The added tracks in the section on screen: what each holds there and how it sounds there (see song/tracks) */
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
@@ -238,7 +247,7 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
-    tracks, layers, focus: undefined, focusIn: undefined,
+    tracks, layers, focus: undefined, focusIn: undefined, firstHarmony: reviveFirstHarmony(raw?.firstHarmony, tracks),
     arrange: reviveArrange(raw?.arrange) ?? null,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
@@ -370,7 +379,10 @@ export const chordBeats = (p: Progression): number => (Number.isInteger(barOf(p)
 export const MIN_BEATS = 0.5;
 export const MAX_BEATS = 16;
 export const fitBeats = (n: number) => Math.min(MAX_BEATS, Math.max(MIN_BEATS, Math.round(n * 2) / 2));
-const reviveChord = (c: ProgChord): ProgChord => (Number.isFinite(c?.beats) && c.beats >= MIN_BEATS && c.beats <= MAX_BEATS ? c : { ...c, beats: 4 });
+const reviveChord = (c0: ProgChord): ProgChord => {
+  const c = c0?.notes !== undefined ? (reviveNotes(c0.notes) ? { ...c0, notes: reviveNotes(c0.notes) } : withoutNotes(c0)) : c0;
+  return Number.isFinite(c?.beats) && c.beats >= MIN_BEATS && c.beats <= MAX_BEATS ? c : { ...c, beats: 4 };
+};
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
 

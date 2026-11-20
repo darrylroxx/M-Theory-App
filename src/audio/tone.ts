@@ -8,6 +8,7 @@
  * B on the piano. A track with nothing there plays Guitar, which is how every song made before
  * instruments sounds.
  */
+import { playedNotes } from "../song/chordnotes";
 import { KEY_STYLES, REGISTERS, arrangeKeys, pianoVoicing, type KeyStyle, type Register } from "../keys/voicing";
 import type { ChordRef } from "../theory/chords";
 import { reviveSynth, type SynthParams } from "../synth/params";
@@ -111,9 +112,11 @@ export function withoutTone<P extends { tones?: Tones }>(p: P, id: string): P {
 }
 
 /** The keys a run of chords is played with on a keyboard track, laid out together so the hands move least. */
-export function keysVoicings(chords: { ref: ChordRef; rest?: boolean }[], t: Tone): number[][] {
+export function keysVoicings(chords: { ref: ChordRef; rest?: boolean; notes?: number[] }[], t: Tone): number[][] {
   const band = t.register ? REGISTERS[t.register] : null;
-  return arrangeKeys(chords.map((c) => (c.rest ? null : c.ref)), { style: voicingOf(t), ...(band ? { low: band.low, high: band.high } : {}) });
+  const out = arrangeKeys(chords.map((c) => (c.rest ? null : c.ref)), { style: voicingOf(t), ...(band ? { low: band.low, high: band.high } : {}) });
+  // a chord Harmonize wrote as exact notes plays exactly those (a piano or a synth plays any set)
+  return out.map((v, i) => playedNotes(chords[i]) ?? v);
 }
 
 /**

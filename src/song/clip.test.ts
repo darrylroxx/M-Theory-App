@@ -4,6 +4,7 @@ import type { ProgChord, Progression } from "../ui/state";
 import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pastePart, pasteRhythm, pastFrame, reviveClips, undoFits, unpastePart } from "./clip";
 import { addNewSection, ensureSong, sections, selectBlock } from "./structure";
 import { TICKS } from "./melody";
+import { playedNotes, transposeChord } from "./chordnotes";
 
 const chord = (root: string, beats = 4): ProgChord => ({ id: root, ref: { root, typeId: "maj" }, beats });
 const base = (roots: string[] = []): Progression => ({ chords: roots.map((r) => chord(r)), bpm: 90, pattern: "ring", loop: true, bars: 4 });
@@ -160,5 +161,25 @@ describe("taking a paste back", () => {
     expect(undoFits(u, "a", "pad1")).toBe(false);
     expect(undoFits(u, "b", "chords")).toBe(false);
     expect(undoFits(null, "a", "chords")).toBe(false);
+  });
+});
+
+describe("chords written as exact notes move with their chords", () => {
+  it("into another key on paste: the name and the notes together, so the notes still belong to the chord", () => {
+    const p0 = ensureSong({ ...base([]), chords: [{ id: "h", ref: { root: "C", typeId: "maj7" }, beats: 4, notes: [71, 76, 79] }] }, id);
+    const p = pasteRhythm(addNewSection(p0, id), copyRhythm(p0, { tonic: "C", scaleId: "ionian" }, "A"), { tonic: "Db", scaleId: "ionian" }, id);
+    expect(p.chords[0].ref.root).toBe("Db");
+    expect(p.chords[0].notes).toEqual([72, 77, 80]);
+    expect(playedNotes(p.chords[0])).toEqual([72, 77, 80]);
+  });
+  it("the nearest way (a song moved down a semitone: the notes go down one, not up eleven), kept in range", () => {
+    const c: ProgChord = { id: "h", ref: { root: "C", typeId: "maj" }, beats: 4, notes: [72, 76, 79], voicingId: "x" };
+    const down = transposeChord(c, 11, { tonic: "B", scaleId: "ionian" });
+    expect(down.ref.root).toBe("B");
+    expect(down.notes).toEqual([71, 75, 78]);
+    expect(down.voicingId).toBeUndefined();
+    expect(transposeChord({ ...c, notes: [91, 95, 96] }, 2, G).notes!.every((m) => m <= 96)).toBe(true);
+    // a chord with no written notes is moved as before
+    expect(transposeChord({ id: "x", ref: { root: "G", typeId: "maj" }, beats: 4 }, 2, A)).toEqual({ id: "x", ref: { root: "A", typeId: "maj", bass: undefined }, beats: 4, voicingId: undefined });
   });
 });

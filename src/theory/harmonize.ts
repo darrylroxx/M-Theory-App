@@ -49,6 +49,8 @@ import { borrowedChords, degreeToken, diatonicChords, friendlySpelling, keyScale
 import { mod12, parseNote, pc } from "./notes";
 import { isDominantType, seededRng } from "./progression";
 import { getScale, isHeptatonic, scaleNotes, scalePcs } from "./scales";
+import { answerLine2, chordWalk, counterLine2, harmonyLine, heardOf, longLine, stackLines } from "./lines";
+import { layerChords } from "./layers";
 
 // ── The options ────────────────────────────────────────────────
 
@@ -75,11 +77,12 @@ export interface HarmonyOption {
 }
 
 export const MELODY_HARMONY: HarmonyOption[] = [
-  { id: "third-above", kind: "melody", label: "High harmony", hint: "A second voice just above the tune", from: ["melody"] },
   { id: "third-below", kind: "melody", label: "Low harmony", hint: "A second voice just below the tune", from: ["melody"] },
-  { id: "counter", kind: "melody", label: "Counter-melody", hint: "A line of its own, moving against yours", from: ["melody", "chords"] },
+  { id: "third-above", kind: "melody", label: "High harmony", hint: "A second voice just above the tune", from: ["melody"] },
+  { id: "stack", kind: "melody", label: "Stacked", hint: "A voice above and one below, in the tune's rhythm", from: ["melody"] },
+  { id: "counter", kind: "melody", label: "Counter-melody", hint: "A line of its own, moving where the tune holds", from: ["melody", "chords"] },
   { id: "slow-line", kind: "melody", label: "Long notes", hint: "One long note for each chord", from: ["chords", "melody"] },
-  { id: "answer", kind: "melody", label: "Answer", hint: "Answers the tune in its gaps", from: ["melody"] },
+  { id: "answer", kind: "melody", label: "Answer", hint: "Answers the tune where it holds or breathes", from: ["melody"] },
   { id: "chord-tones", kind: "melody", label: "Chord notes", hint: "Walks through the notes of each chord", from: ["melody", "chords"] },
   // kept for tracks written with them; never offered for a new track
   { id: "sixth-below", kind: "melody", label: "Sixth below", hint: "The third above an octave down: warm and low", from: ["melody"] },
@@ -88,7 +91,12 @@ export const MELODY_HARMONY: HarmonyOption[] = [
 ];
 
 export const CHORD_HARMONY: HarmonyOption[] = [
+  { id: "high", kind: "chords", label: "High chords", hint: "Your chords again, higher up, in the gaps of the first", from: ["chords"] },
+  { id: "airy", kind: "chords", label: "Airy", hint: "Open 5ths and 9ths high above", from: ["chords"] },
+  { id: "guide", kind: "chords", label: "Guide tones", hint: "The 3rd and 7th of each chord, held high", from: ["chords"] },
+  { id: "top", kind: "chords", label: "Top note", hint: "One high note held over the changes", from: ["chords"] },
   { id: "fit", kind: "chords", label: "Best fit", hint: "Chords chosen to carry the tune", from: ["melody"] },
+  { id: "fit2", kind: "chords", label: "Another fit", hint: "The best other chords for the tune", from: ["melody"] },
   { id: "colour", kind: "chords", label: "Richer", hint: "Your chords with 7ths, 9ths and 6ths", from: ["chords", "melody"] },
   { id: "sus", kind: "chords", label: "Sus", hint: "Your chords suspended: open and airy", from: ["chords", "melody"] },
   { id: "borrowed", kind: "chords", label: "Darker", hint: "Some chords from the minor key", from: ["chords", "melody"], instead: true },
@@ -112,19 +120,42 @@ export const HARMONY_OPTIONS: HarmonyOption[] = [...MELODY_HARMONY, ...CHORD_HAR
  */
 export const HARMONY_MENU: Record<HarmonyKind, Record<SourceKind, string[]>> = {
   melody: {
-    melody: ["third-above", "third-below", "counter", "slow-line", "answer"],
+    melody: ["third-below", "third-above", "stack", "counter", "slow-line", "answer"],
     chords: ["slow-line", "counter", "chord-tones"],
   },
   chords: {
-    chords: ["colour", "sus", "borrowed", "relative", "pedal", "lead-in"],
-    melody: ["fit", "colour", "sus", "borrowed", "relative", "pedal", "lead-in"],
+    chords: ["high", "airy", "guide", "top", "relative", "borrowed", "lead-in"],
+    melody: ["fit", "fit2"],
   },
 };
 
-/** The options offered for a new track of a kind written from a track of a kind, best first (no source kind: every option of the kind). */
-export function harmonyOptions(kind: HarmonyKind, from?: SourceKind): HarmonyOption[] {
+/**
+ * The options offered for a new track of a kind written from a track of a kind, best first (no
+ * source kind: every option of the kind). Under a low tune (its middle note below E4) the high
+ * harmony comes first: a low tune is carried better from above.
+ */
+export function harmonyOptions(kind: HarmonyKind, from?: SourceKind, lowTune = false): HarmonyOption[] {
   if (!from) return HARMONY_OPTIONS.filter((o) => o.kind === kind);
-  return HARMONY_MENU[kind][from].map((id) => HARMONY_OPTIONS.find((o) => o.kind === kind && o.id === id)!);
+  let ids = HARMONY_MENU[kind][from];
+  if (lowTune && kind === "melody" && from === "melody") ids = ["third-above", "third-below", ...ids.filter((x) => x !== "third-above" && x !== "third-below")];
+  return ids.map((id) => HARMONY_OPTIONS.find((o) => o.kind === kind && o.id === id)!);
+}
+/**
+ * Which controls mean something for an option: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful.
+ * `onGuitar`: the new chords track plays the guitar, where a hand can play High chords, Airy and
+ * Guide tones over the first track in one place only (there is no closer or wider to choose there).
+ */
+export function controlsFor(kind: HarmonyKind, option: string, onGuitar = true): { busy: boolean; wide: boolean; colour: boolean } {
+  if (kind === "chords") {
+    if (["high", "guide", "airy"].includes(option)) return { busy: true, wide: !onGuitar, colour: true };
+    if (option === "top") return { busy: true, wide: true, colour: true };
+    if (option === "fit" || option === "fit2") return { busy: true, wide: false, colour: true };
+    return { busy: false, wide: false, colour: false };
+  }
+  // (an answer echoes the tune's own notes: there is no colour of its own to choose)
+  if (option === "answer") return { busy: true, wide: true, colour: false };
+  if (["third-above", "third-below", "stack", "counter", "slow-line", "chord-tones"].includes(option)) return { busy: true, wide: true, colour: true };
+  return { busy: false, wide: false, colour: false };
 }
 
 /** Is the key's home chord minor (a minor third above the tonic in its scale)? The same test borrowed chords use. */
@@ -157,6 +188,29 @@ export interface HarmonizeInput {
   seed?: number;
   /** 6/8, 9/8, 12/8: every beat divides in three (written lines use triplet steps) */
   compound?: boolean;
+  /** everything else heard in the section, as the notes that really sound (chords as voiced, their bass, other tunes) */
+  around?: Sounding[];
+  /** the three controls: simpler or busier, closer or wider, plain or colourful (none: all in the middle) */
+  shape?: Shape;
+  /** can the new chords track's instrument play exactly these notes (chord layers; none: anything goes) */
+  playable?: (notes: number[]) => boolean;
+}
+
+/** One step of a control: 0, 1 (the middle) or 2. */
+export type Level = 0 | 1 | 2;
+/** The three controls on a harmony: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful. */
+export interface Shape {
+  busy: Level;
+  wide: Level;
+  colour: Level;
+}
+export const MIDDLE: Shape = { busy: 1, wide: 1, colour: 1 };
+/** A note that sounds in the section, from another track (in ticks): a chords track's note, its lowest (the bass), or a tune's. */
+export interface Sounding {
+  at: number;
+  end: number;
+  midi: number;
+  part: "chords" | "bass" | "tune";
 }
 
 export interface HarmonizeOutput {
@@ -201,7 +255,7 @@ export interface Span {
   ref: ChordRef | null;
 }
 
-const usable = (ref: ChordRef | undefined): ref is ChordRef => {
+export const usable = (ref: ChordRef | undefined): ref is ChordRef => {
   if (!ref || typeof ref.root !== "string" || !findChordType(ref.typeId)) return false;
   try {
     pc(ref.root);
@@ -226,7 +280,7 @@ export function chordSpans(chords: ProgChord[] | undefined, len: number): Span[]
   return out;
 }
 
-const spanAt = (spans: Span[], t: number) => spans.find((s) => s.start <= t && t < s.end);
+export const spanAt = (spans: Span[], t: number) => spans.find((s) => s.start <= t && t < s.end);
 
 /** One note of a line: when it starts, when the next one does (or the section ends), and its pitch. */
 export interface LineNote {
@@ -288,18 +342,38 @@ export function parentScale(key: Key): string {
   return best;
 }
 
+// the parallel modes a chord from outside the key is borrowed from, likeliest first: a major key
+// borrows from its minor (iv, ♭VI, ♭VII, ♭III), a minor key from its dorian (IV), harmonic minor (V)
+// and major (I) sides
+const BORROW_MAJOR = ["aeolian", "mixolydian", "dorian", "lydian", "harmonicMinor", "melodicMinor", "phrygian"];
+const BORROW_MINOR = ["dorian", "harmonicMinor", "melodicMinor", "ionian", "mixolydian", "lydian", "phrygian"];
+const borrowedScales = new Map<string, number[][]>();
+
 /**
- * The scale under a chord: the key's seven notes with the chord's own notes put in place of their
- * neighbours (over a borrowed F minor in C major the A becomes A♭; over E7 the G becomes G♯).
- * The swap is made letter by letter, so the scale keeps seven steps.
+ * The scale under a chord. A chord from the key: the key's seven notes. A chord borrowed from the
+ * parallel key or mode: that mode, the likeliest that holds it (over a borrowed F minor in C major:
+ * C minor, so its 7th is E♭, never the major key's E; over a borrowed B♭: B♭7, not B♭maj7). Any
+ * other (a secondary dominant): the key's seven notes with the chord's own notes put in place of
+ * their neighbours, letter by letter (over E7 in C the G becomes G♯), so the scale keeps seven steps.
  */
-function localScale(seven: string[], ref: ChordRef | null): number[] {
+export function localScale(seven: string[], ref: ChordRef | null): number[] {
   const out = seven.map(pc);
   if (!ref) return out;
   const type = findChordType(ref.typeId);
   if (!type) return out;
   const notes = [...chordNotes(ref.root, type), ...(ref.bass ? [ref.bass] : [])];
   const chordSet = new Set(notes.map(pc));
+  if ([...chordSet].every((p) => out.includes(p))) return out;
+  const tonic = out[0];
+  const key = seven.join();
+  let modes = borrowedScales.get(key);
+  if (!modes) {
+    const minor = out.includes(mod12(tonic + 3));
+    modes = (minor ? BORROW_MINOR : BORROW_MAJOR).map((id) => scalePcs(tonic, getScale(id)));
+    borrowedScales.set(key, modes);
+  }
+  const mode = modes.find((m) => [...chordSet].every((p) => m.includes(p)));
+  if (mode) return [...mode];
   const replaced = new Set<number>();
   for (const n of notes) {
     const p = pc(n);
@@ -374,7 +448,7 @@ function stepOutside(midi: number, steps: number, key: Key, keyPcs: number[]): n
 // ── Little tests ───────────────────────────────────────────────
 
 /** The chord's notes as pitch classes (with a slash bass). */
-const pcsOf = (ref: ChordRef): number[] => {
+export const pcsOf = (ref: ChordRef): number[] => {
   const t = getChordType(ref.typeId);
   const r = pc(ref.root);
   const out = [...new Set(t.intervals.map((iv) => mod12(r + semitonesOf(iv))))];
@@ -383,7 +457,7 @@ const pcsOf = (ref: ChordRef): number[] => {
 };
 
 /** A note a semitone above a chord tone rubs against it (a minor ninth): the "avoid" rule. */
-const avoids = (p: number, chord: number[]) => !chord.includes(mod12(p)) && chord.some((c) => mod12(p - c) === 1);
+export const avoids = (p: number, chord: number[]) => !chord.includes(mod12(p)) && chord.some((c) => mod12(p - c) === 1);
 
 /** Both voices move and the fifth or octave between them stays a fifth or octave (compound and contrary forms count too). */
 export function parallelPerfect(n1: number, h1: number, n2: number, h2: number): boolean {
@@ -393,14 +467,13 @@ export function parallelPerfect(n1: number, h1: number, n2: number, h2: number):
   return (a === 7 && b === 7) || (a === 0 && b === 0);
 }
 
-const CONSONANT = new Set([0, 3, 4, 5, 7, 8, 9]);
 const IMPERFECT = new Set([3, 4, 8, 9]);
 /** Interval class between two notes: 0–11 semitones, octaves folded. */
 const icOf = (a: number, b: number) => mod12(Math.abs(a - b));
 
 // ── Context ────────────────────────────────────────────────────
 
-interface Ctx {
+export interface Ctx {
   key: Key;
   bar: number;
   len: number;
@@ -431,7 +504,8 @@ function context(input: HarmonizeInput): Ctx {
     keyPcs: scalePcs(pc(input.key.tonic), keyScale(input.key)),
     tonic: pc(input.key.tonic),
     base: melodyBase(input.key),
-    rng: seededRng(seed),
+    // (choices never depend on the seed, so the result never depends on the track it is written into: an audition is what is kept)
+    rng: seededRng(1),
     id: () => "h" + Math.floor(idRng() * 1e6).toString(36) + Math.floor(idRng() * 1e6).toString(36),
     unit: input.compound ? TICKS / 3 : TICKS / 2,
     compound: !!input.compound,
@@ -458,9 +532,10 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
   const pkey: Key = { tonic: ctx.key.tonic, scaleId: parent };
   const PRIOR: Record<number, number> = { 1: -0.4, 2: -0.05, 3: 0.05, 4: -0.25, 5: -0.25, 6: -0.1, 7: 0.6 };
   const out: PoolChord[] = [];
-  for (const c of diatonicChords(pkey, sevenths ? 4 : 3)) {
+  // colourful: the key's 7th chords first, and its triads still there for where a 7th would rub the tune
+  for (const c of [...(sevenths ? diatonicChords(pkey, 4) : []), ...diatonicChords(pkey, 3)]) {
     if (c.type.synthetic) continue;
-    let prior = PRIOR[c.degree ?? 3] ?? 0;
+    let prior = (PRIOR[c.degree ?? 3] ?? 0) + (sevenths && c.type.intervals.length <= 3 ? 0.15 : 0);
     if (c.type.id === "aug" || c.type.id === "maj7#5") prior += 0.8;
     if (c.type.id === "dim" || c.type.id === "m7b5" || c.type.id === "dim7") prior += 0.3;
     out.push({ ref: c.ref, pcs: pcsOf(c.ref), prior });
@@ -471,7 +546,7 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
   const parentPcs = scalePcs(ctx.tonic, getScale(parent));
   if (five) {
     const ref = { root: five.ref.root, typeId: "7" };
-    if (pcsOf(ref).every((p) => parentPcs.includes(p))) out.push({ ref, pcs: pcsOf(ref), prior: five.prior + 0.15 });
+    if (pcsOf(ref).every((p) => parentPcs.includes(p)) && !out.some((c) => sameRef(c.ref, ref))) out.push({ ref, pcs: pcsOf(ref), prior: five.prior + 0.15 });
   }
   // a natural-minor key borrows the major dominant from harmonic minor (it has the leading note);
   // the other minor modes keep their own minor v, which is their sound
@@ -488,9 +563,12 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
       if (holds(ref) && !out.some((c) => sameRef(c.ref, ref))) out.push({ ref, pcs: pcsOf(ref), prior });
     };
     for (const b of borrowedChords(ctx.key)) if (["maj", "min", "dim"].includes(b.type.id)) add(b.ref, 0.35 + 0.15 * (b.outside - 1));
+    // secondary dominants, as 7ths and (for the plain setting, and where the 7th rubs) as triads
     for (const t of diatonicChords(pkey, 3)) {
       if (t.type.id !== "maj" && t.type.id !== "min") continue;
-      add({ root: friendlySpelling(intervalNote(t.ref.root, "5"), ctx.key), typeId: "7" }, 0.45);
+      const root = friendlySpelling(intervalNote(t.ref.root, "5"), ctx.key);
+      add({ root, typeId: "7" }, 0.45);
+      add({ root, typeId: "maj" }, 0.5);
     }
   }
   return out;
@@ -501,8 +579,12 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
  * passes; an avoid note, or a note from outside both the key and the chord, clashes.
  */
 function noteFit(p: number, chord: number[], scale: number[]): number {
+  // the tune a semitone over one of the chord's notes (its root over a maj7: C over Cmaj7's B) rubs as a minor 9th
+  if (underRub(p, chord)) return -1.2;
   if (chord.includes(mod12(p))) return 1;
   if (avoids(p, chord)) return -1.2;
+  // a tritone over the root that the chord does not hold (A over E♭) sounds wrong held
+  if (mod12(p - chord[0]) === 6) return -1;
   return scale.includes(mod12(p)) ? 0.15 : -1;
 }
 
@@ -512,11 +594,13 @@ function noteFit(p: number, chord: number[], scale: number[]): number {
  * notes (weighted by how long and how strong each one is) and moves well (falling fifths, steps,
  * a start and an end at home). `under`, when given, pulls toward chords sharing notes with it.
  */
-function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = []): ProgChord[] {
+function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = [], shape: Shape = MIDDLE, avoid?: (i: number, ref: ChordRef) => number, picked?: ChordRef[]): ProgChord[] {
   if (!line.length) return [];
   const slots: { start: number; end: number; down: boolean }[] = [];
   const barTicks = Math.round(ctx.bar * TICKS);
-  for (let b = 0; b * barTicks < ctx.len; b++) {
+  // simpler: a chord a bar (when the bar is short, one held over two bars wherever the tune lets it)
+  if (shape.busy === 0) for (let s = 0; s < ctx.len; s += barTicks) slots.push({ start: s, end: Math.min(ctx.len, s + barTicks), down: ctx.bar > 2 || (s / barTicks) % 2 === 0 });
+  for (let b = 0; shape.busy !== 0 && b * barTicks < ctx.len; b++) {
     let at = 0;
     for (const g of beatGroups(ctx.bar)) {
       const start = b * barTicks + Math.round(at * TICKS);
@@ -525,33 +609,42 @@ function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = []): ProgCh
       at += g;
     }
     // a bar of two light beats (2/4, 6/8) is one slot: chords change by the bar there
-    if (ctx.bar <= 2 && slots.length >= 2 && !slots[slots.length - 1].down) {
+    if (ctx.bar <= 2 && shape.busy < 2 && slots.length >= 2 && !slots[slots.length - 1].down) {
       const last = slots.pop()!;
       slots[slots.length - 1].end = last.end;
     }
   }
   const scale = ctx.seven.map(pc);
-  const P = pool(ctx, [...new Set(line.map((n) => mod12(n.midi)))].filter((p) => !scale.includes(p)));
+  const P0 = pool(ctx, [...new Set(line.map((n) => mod12(n.midi)))].filter((p) => !scale.includes(p)), shape.colour >= 2);
+  // plainer: triads only (no V7)
+  const P = shape.colour === 0 ? P0.filter((c) => getChordType(c.ref.typeId).intervals.length <= 3) : P0;
   const local = P.map((c) => localScale(ctx.seven, c.ref));
+  // a short note off the strong beats, reached and left by step, is a passing or neighbour note: the
+  // chord need not hold it (E–F–G over C), so it counts for little
+  const passing = line.map((n, i) => {
+    const a = line[i - 1];
+    const b = line[i + 1];
+    return beatStrength(n.at, ctx.bar) < 2 && n.end - n.at <= TICKS && !!a && !!b && Math.abs(n.midi - a.midi) <= 2 && Math.abs(b.midi - n.midi) <= 2 && n.midi !== a.midi && n.midi !== b.midi;
+  });
   const emit = slots.map((s) =>
     P.map((c, ci) => {
       let score = 0;
-      for (const n of line) {
+      for (const [ni, n] of line.entries()) {
         const from = Math.max(n.at, s.start);
         const to = Math.min(n.end, s.end, n.at + 2 * TICKS);
         if (to <= from) continue;
         const inside = n.at >= s.start;
-        const w = ((to - from) / TICKS) * (inside ? (beatStrength(n.at, ctx.bar) >= 2 ? 1.5 : 1) : 0.6);
+        const w = ((to - from) / TICKS) * (inside ? (beatStrength(n.at, ctx.bar) >= 2 ? 1.5 : 1) : 0.6) * (passing[ni] ? 0.35 : 1);
         score += w * noteFit(n.midi, c.pcs, local[ci]);
       }
       const u = spanAt(under, s.start)?.ref;
       if (u) score += 0.6 * (c.pcs.filter((p) => pcsOf(u).includes(p)).length / 3);
-      return -score + c.prior + ctx.rng() * 0.08;
+      return -score + c.prior + ctx.rng() * 0.08 + (avoid ? avoid(slots.indexOf(s), c.ref) : 0);
     }),
   );
   const move = (a: PoolChord, b: PoolChord, slot: { down: boolean }) => {
     if (a === b) return slot.down ? 0.12 : 0;
-    let c = slot.down ? 0 : 0.5;
+    let c = slot.down ? 0 : shape.busy >= 2 ? 0.2 : 0.5;
     const r = mod12(pc(b.ref.root) - pc(a.ref.root));
     if (r === 5) c -= 0.3;
     else if (r === 2) c -= 0.12;
@@ -593,6 +686,7 @@ function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = []): ProgCh
     pick[i] = j;
     if (i > 0) j = back[i - 1][j];
   }
+  if (picked) for (let i = 0; i < n; i++) picked.push(P[pick[i]].ref);
   const out: ProgChord[] = [];
   for (let i = 0; i < n; i++) {
     const beats = (slots[i].end - slots[i].start) / TICKS;
@@ -747,93 +841,6 @@ function octaveLine(line: LineNote[], ctx: Ctx): MelodyNote[] {
   return line.filter((n) => n.midi + d >= lo && n.midi + d <= hi).map((n) => ({ at: n.at, midi: n.midi + d }));
 }
 
-/**
- * Call and response: wherever the tune takes a breath (three beats or more after a note, or two
- * when the gap runs up to a bar line), the last few notes (as many as fit) come back a scale step
- * lower (or higher) after the first beat of the gap, or, when not even two fit, the chord is
- * played as a short run from a chord note near the tune's last one back toward the middle of the
- * tune (so the answer stays in the singer's range). Silent while the tune sings.
- */
-function answerLine(line: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
-  const out: MelodyNote[] = [];
-  const lo = line.length ? Math.min(...line.map((n) => n.midi)) : ctx.base;
-  const hi = line.length ? Math.max(...line.map((n) => n.midi)) : ctx.base + 24;
-  const middle = (lo + hi) / 2;
-  const barTicks = Math.round(ctx.bar * TICKS);
-  const dir = ctx.rng() < 0.7 ? -1 : 1;
-  for (let i = 0; i < line.length; i++) {
-    const n = line[i];
-    const next = i + 1 < line.length ? line[i + 1].at : ctx.len;
-    // a note followed by two beats may just be held; three, or two up to the bar line, is a breath
-    const toBar = next % barTicks === 0 || next === ctx.len;
-    if (next - n.at < (toBar ? 2 : 3) * TICKS) continue;
-    const g0 = Math.ceil((n.at + TICKS) / TICKS) * TICKS;
-    const g1 = next;
-    if (g1 - g0 < TICKS) continue;
-    // the last few notes sung (up to four, within a bar), cut to the longest ending that fits the gap
-    let motif = line.filter((x) => x.at >= g0 - barTicks && x.at <= n.at).slice(-4);
-    while (motif.length > 2 && motif[motif.length - 1].at - motif[0].at + TICKS > g1 - g0) motif = motif.slice(1);
-    const ref = spanAt(spans, g0)?.ref ?? null;
-    const placed: MelodyNote[] = [];
-    const span = motif.length ? motif[motif.length - 1].at - motif[0].at + TICKS : Infinity;
-    if (motif.length >= 2 && span <= g1 - g0) {
-      for (const x of motif) {
-        const at = g0 + (x.at - motif[0].at);
-        const r = spanAt(spans, at)?.ref ?? null;
-        const scale = localScale(ctx.seven, r);
-        let m = stepAlong(x.midi, dir, scale) ?? stepOutside(x.midi, dir, ctx.key, ctx.keyPcs);
-        // a strong note of the echo that rubs against the chord moves to the nearest chord tone,
-        // the way that keeps the motif's shape (still rising where it rose, falling where it fell)
-        const chord = r ? pcsOf(r) : [];
-        if (r && beatStrength(at, ctx.bar) >= 2 && !chord.includes(mod12(m))) {
-          const k = placed.length;
-          const want = k ? Math.sign(x.midi - motif[motif.indexOf(x) - 1].midi) : 0;
-          const near = [1, -1, 2, -2].map((d) => m + d).filter((y) => chord.includes(mod12(y)));
-          const shaped = near.filter((y) => !k || Math.sign(y - placed[k - 1].midi) === want);
-          m = shaped[0] ?? near[0] ?? m;
-        }
-        placed.push({ at, midi: m });
-      }
-    } else if (ref) {
-      const chord = pcsOf(ref);
-      // eighth notes, or triplet eighths in 6/8, 9/8 and 12/8
-      const step = ctx.unit;
-      const count = Math.max(1, Math.min(4, Math.floor((g1 - g0) / step)));
-      const way = n.midi > middle ? -1 : 1;
-      // start on a chord note near the last one sung (not that note again: an answer is a new
-      // voice), then walk the chord toward the middle
-      let m = n.midi;
-      for (let d = 2; d <= 7; d++) {
-        if (chord.includes(mod12(n.midi + way * d))) {
-          m = n.midi + way * d;
-          break;
-        }
-        if (chord.includes(mod12(n.midi - way * d))) {
-          m = n.midi - way * d;
-          break;
-        }
-      }
-      let w = way;
-      for (let j = 0; j < count; j++) {
-        placed.push({ at: g0 + j * step, midi: m });
-        const next = (from: number, dir: number) => {
-          let x = from + dir;
-          while (!chord.includes(mod12(x))) x += dir;
-          return x;
-        };
-        // a run that would leave the tune's range by more than a third turns back
-        let x = next(m, w);
-        if (x < lo - 4 || x > hi + 4) {
-          w = -w;
-          x = next(m, w);
-        }
-        m = x;
-      }
-    }
-    for (const p of placed) if (p.at < g1 && p.at < ctx.len) out.push(p);
-  }
-  return out;
-}
 
 // ── Lines from chords: counter-line, chord tones, slow line, drone ─
 
@@ -1075,109 +1082,7 @@ function counterLine(tune: LineNote[], spans: Span[], ctx: Ctx): MelodyNote[] {
   return out.sort((x, y) => x.at - y.at);
 }
 
-/**
- * A line of chord notes, for a melody track written from chords: a note at every chord change
- * and strong beat, staying on a shared note across a change and walking through the chord while
- * it lasts.
- */
-function chordToneWalk(spans: Span[], ctx: Ctx): MelodyNote[] {
-  const lo = ctx.base + 2;
-  const hi = ctx.base + 16;
-  const out: MelodyNote[] = [];
-  let prev: number | null = null;
-  let dir = ctx.rng() < 0.5 ? 1 : -1;
-  let lastSpan = -1;
-  for (const a of anchorsOf(spans, ctx)) {
-    const tones = tonesIn(a.ref, lo, hi).map((x) => x.m);
-    if (!tones.length) continue;
-    let m: number;
-    if (prev === null) {
-      const third = tonesIn(a.ref, lo, hi).filter((x) => x.role === 3);
-      m = (third.length ? third : tonesIn(a.ref, lo, hi)).reduce((x, y) => (Math.abs(y.m - (ctx.base + 12)) < Math.abs(x.m - (ctx.base + 12)) ? y : x)).m;
-    } else if (a.spanStart !== lastSpan) {
-      m = tones.reduce((x, y) => (Math.abs(y - prev!) < Math.abs(x - prev!) ? y : x));
-    } else {
-      let next = dir > 0 ? tones.find((x) => x > prev!) : [...tones].reverse().find((x) => x < prev!);
-      if (next === undefined) {
-        dir = -dir;
-        next = dir > 0 ? tones.find((x) => x > prev!) : [...tones].reverse().find((x) => x < prev!);
-      }
-      m = next ?? prev;
-    }
-    out.push({ at: a.t, midi: m });
-    prev = m;
-    lastSpan = a.spanStart;
-  }
-  return out;
-}
 
-/**
- * The slow line: one note per chord, the chord's 3rd or 7th (6th, or 4th in a sus chord; a triad
- * may use its 5th or root), the pair chosen across the whole section so the line moves least.
- * Over a tune it keeps below it and off its notes.
- */
-function slowLine(spans: Span[], tune: LineNote[], ctx: Ctx): MelodyNote[] {
-  const chords = spans.filter((s) => s.ref) as (Span & { ref: ChordRef })[];
-  if (!chords.length) return [];
-  const { lo, hi, below } = tune.length ? secondRange(tune, ctx) : { lo: ctx.base + 2, hi: ctx.base + 16, below: true };
-  const centre = (lo + hi) / 2;
-  const cand = chords.map((s) => {
-    const all = tonesIn(s.ref, lo, hi);
-    const guides = all.filter((x) => x.role === 3 || x.role === 7 || (x.role === 6 && !all.some((y) => y.role === 7)) || (x.role === 4 && !all.some((y) => y.role === 3)));
-    const extra = guides.length >= 2 ? [] : all.filter((x) => x.role === 5 || x.role === 1 || x.role === 2);
-    return [...guides.map((x) => ({ ...x, c: 0 })), ...extra.map((x) => ({ ...x, c: x.role === 5 ? 1 : 1.5 }))];
-  });
-  const node = (i: number, x: { m: number; c: number }) => {
-    let s = x.c + Math.abs(x.m - centre) * 0.03 + ctx.rng() * 0.05;
-    const m = tune.length ? soundingAt(tune, chords[i].start) : null;
-    if (m !== null) {
-      if (below ? x.m >= m : x.m <= m) s += 2;
-      if (!CONSONANT.has(icOf(x.m, m)) || x.m === m) s += 3;
-    }
-    return s;
-  };
-  let cost = cand[0].map((x) => node(0, x));
-  const back: number[][] = [];
-  for (let i = 1; i < chords.length; i++) {
-    const next: number[] = [];
-    const from: number[] = [];
-    for (const x of cand[i]) {
-      let best = Infinity;
-      let arg = 0;
-      cand[i - 1].forEach((y, k) => {
-        const c = cost[k] + Math.abs(x.m - y.m) * 0.4;
-        if (c < best - 1e-9) {
-          best = c;
-          arg = k;
-        }
-      });
-      next.push(best + node(i, x));
-      from.push(arg);
-    }
-    cost = next;
-    back.push(from);
-  }
-  let j = 0;
-  cost.forEach((c, k) => c < cost[j] - 1e-9 && (j = k));
-  const pick: number[] = new Array(chords.length);
-  for (let i = chords.length - 1; i >= 0; i--) {
-    pick[i] = cand[i][j].m;
-    if (i > 0) j = back[i - 1][j];
-  }
-  const out: MelodyNote[] = [];
-  const barTicks = Math.round(ctx.bar * TICKS);
-  let lastAt = -Infinity;
-  pick.forEach((m, i) => {
-    // a shared note is held; it is struck again only after a bar, so a plucked string keeps sounding
-    for (let t = chords[i].start; t < chords[i].end; t = (Math.floor(t / barTicks) + 1) * barTicks) {
-      const prev = out[out.length - 1];
-      if (prev && prev.midi === m && t - lastAt < barTicks) continue;
-      out.push({ at: t, midi: m });
-      lastAt = t;
-    }
-  });
-  return out;
-}
 
 /**
  * A drone: home, or its fifth when more of the chords hold the fifth, struck at the start of
@@ -1226,23 +1131,37 @@ function slotsOf(chords: ProgChord[]): Slot[] {
 }
 const live = (s: Slot) => !s.c.rest && usable(s.c.ref);
 
-/** The melody notes that matter under a chord: those starting strong inside it, and the one sounding as it comes in. */
+/**
+ * The melody notes that matter under a chord: every one starting inside it on a beat (2 and 4
+ * too) or lasting an eighth or more, and the one sounding as it comes in. (The first engine only
+ * heard beats 1 and 3 and long notes, and let swaps clash with the rest.)
+ */
 function strongIn(tune: LineNote[], start: number, end: number, bar: number): number[] {
   const out: number[] = [];
   for (const n of tune) {
     if (n.at >= end) break;
-    if (n.at >= start ? strongNote(n, bar) : n.end > start) out.push(n.midi);
+    if (n.at >= start ? beatStrength(n.at, bar) >= 1 || n.end - n.at >= TICKS / 2 || strongNote(n, bar) : n.end > start) out.push(n.midi);
   }
   return out;
 }
 
-/** Does a chord carry these melody notes: each a chord tone, or a tension of its own scale that doesn't rub? */
+/**
+ * Does a chord carry these melody notes: each a chord tone, or a tension of its own scale that
+ * doesn't rub? A chord tone a semitone under a melody note rubs too (the tune on the root of a
+ * maj7 chord: C over Cmaj7 sits a minor 9th over its B), and so does a note a tritone over the root
+ * that the chord does not hold (A over E♭).
+ */
 function carries(ref: ChordRef, notes: number[], ctx: Ctx): boolean {
   if (!notes.length) return true;
   const chord = pcsOf(ref);
   const scale = localScale(ctx.seven, ref);
-  return notes.every((m) => chord.includes(mod12(m)) || (!avoids(m, chord) && scale.includes(mod12(m))));
+  const r = pc(ref.root);
+  // a note a semitone under the chord's major 3rd (a #9) only sits on a dominant
+  const sharp9 = (m: number) => chord.includes(mod12(r + 4)) && mod12(m - r) === 3 && !isDominantType(getChordType(ref.typeId));
+  return notes.every((m) => !underRub(m, chord) && (chord.includes(mod12(m)) || (!avoids(m, chord) && scale.includes(mod12(m)) && !sharp9(m) && mod12(m - r) !== 6)));
 }
+/** A chord tone a semitone under a melody note: the melody rubs it as a minor 9th (the root over a maj7 chord). */
+export const underRub = (m: number, chord: number[]) => chord.includes(mod12(m - 1));
 
 /** Can two chords sound at once: nothing the new one adds sits a semitone above the old one's notes? */
 function blends(next: ChordRef, old: ChordRef): boolean {
@@ -1588,6 +1507,12 @@ function fitDiv(notes: MelodyNote[], like: Melody["div"] | undefined, compound: 
   return like ?? (compound ? 3 : 4);
 }
 
+/** The tune heard around, as a line (the top note at each moment). */
+function aroundTune(around: Sounding[] | undefined, len: number): LineNote[] {
+  const notes = (around ?? []).filter((s) => s.part === "tune").map((s) => ({ at: s.at, midi: s.midi }));
+  return melodyLine({ div: 4, bars: 1, notes }, len);
+}
+
 /**
  * Write the new track. The output's chords or melody fill the same section (same bars and beat)
  * as the input; nothing is changed in place. An option that does not exist for the kind, or a
@@ -1613,25 +1538,31 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
     if (!tune.length && !fromChords) return pack([]);
     if (fromChords && !opt.from.includes("chords")) return pack([]);
     const spans = fromChords ? chordSpans(input.source.chords, ctx.len) : underFor(input, tune, ctx);
+    const shape = input.shape ?? MIDDLE;
+    const heard = heardOf(input.around, spans);
+    // written from chords, the line still hears the tune of the section (it is part of what is around)
+    const lead = fromChords ? aroundTune(input.around, ctx.len) : tune;
     switch (opt.id) {
       case "third-above":
-        return pack(intervalLine(tune, 2, spans, ctx));
+        return pack(harmonyLine(tune, spans, ctx, heard, shape, 1));
       case "third-below":
-        return pack(intervalLine(tune, -2, spans, ctx));
+        return pack(harmonyLine(tune, spans, ctx, heard, shape, -1));
+      case "stack":
+        return pack(stackLines(tune, spans, ctx, heard, shape));
       case "sixth-below":
         return pack(intervalLine(tune, -5, spans, ctx));
       case "chord-tones":
-        return pack(fromChords ? chordToneWalk(spans, ctx) : intervalLine(tune, -2, spans, ctx, true));
+        return pack(chordWalk(lead, spans, ctx, heard, shape));
       case "counter":
-        return pack(counterLine(tune, spans, ctx));
+        return pack(fromChords && !lead.length ? counterLine(tune, spans, ctx) : counterLine2(lead, spans, ctx, heard, shape));
       case "answer":
-        return pack(answerLine(tune, spans, ctx));
+        return pack(answerLine2(tune, spans, ctx, heard, shape));
       case "octave":
         return pack(octaveLine(tune, ctx));
       case "drone":
         return pack(droneLine(fromChords || input.under?.length ? spans : [], tune, ctx));
       case "slow-line":
-        return pack(slowLine(spans, tune, ctx));
+        return pack(longLine(lead, spans, ctx, heard, shape));
     }
     return pack([]);
   }
@@ -1644,14 +1575,41 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
   const own = (input.source.chords ?? []).filter((c) => Number(c?.beats) > 0);
   const songs = (input.under ?? []).filter((c) => Number(c?.beats) > 0);
   const base = own.length ? own : opt.id !== "fit" && songs.some((c) => !c.rest && usable(c.ref)) ? songs : [];
-  const refit = !base.length || (opt.id === "fit" && tune.length > 0);
-  const src = refit ? chordsForMelody(tune, ctx, chordSpans(songs.length ? songs : own, ctx.len)) : base;
+  const fits = opt.id === "fit" || opt.id === "fit2";
+  const refit = !base.length || (fits && tune.length > 0);
+  const shape = input.shape ?? MIDDLE;
+  const underSpans = chordSpans(songs.length ? songs : own, ctx.len);
+  let src = refit ? chordsForMelody(tune, ctx, underSpans, fits ? shape : MIDDLE) : base;
+  if (opt.id === "fit2" && refit && src.length) {
+    // Another fit: the best row that differs from Best fit in at least 3 slots in 10
+    const first: ChordRef[] = [];
+    chordsForMelody(tune, ctx, underSpans, shape, undefined, first);
+    for (const w of [0.4, 0.8, 1.6, 3.2]) {
+      const got: ChordRef[] = [];
+      const alt = chordsForMelody(tune, ctx, underSpans, shape, (i, ref) => (first[i] && sameRef(first[i], ref) ? w : 0), got);
+      const differ = got.filter((r, i) => !first[i] || !sameRef(r, first[i])).length;
+      if (differ >= Math.max(1, Math.ceil(0.3 * first.length))) {
+        src = alt;
+        break;
+      }
+      if (w === 3.2) src = alt;
+    }
+  }
   if (!src.length) return { chords: [] };
   const tuneFor = tune;
   const at = (fn: (ref: ChordRef, s: Slot) => ChordRef) => mapChords(src, ctx, (ref, s) => fn(ref, s));
   switch (opt.id) {
     case "fit":
+    case "fit2":
       return { chords: refit ? src : mapChords(src, ctx, (r) => ({ ...r })) };
+    case "high":
+    case "airy":
+    case "guide":
+    case "top": {
+      const heard = heardOf(input.around, chordSpans(src, ctx.len));
+      const lead = tune.length ? tune : aroundTune(input.around, ctx.len);
+      return { chords: layerChords(opt.id, src, lead, ctx, heard, shape, input.playable) };
+    }
     case "pad":
       return { chords: padChords(src, ctx) };
     case "higher":
@@ -1673,7 +1631,10 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
       return {
         chords: mapChords(src, ctx, (ref, s, i) => {
           const b = borrowedOf(ref, ctx, i === lastLive);
-          return b && carries(b, strongIn(tuneFor, s.start, s.end, ctx.bar), ctx) ? b : { ...ref };
+          // the borrowed chord changes a note of the key: every note the tune sings over it, however
+          // short, must sit with that (an E in the tune under a borrowed C minor clashes with its E♭)
+          const all = tuneFor.filter((n) => n.at < s.end && n.end > s.start).map((n) => n.midi);
+          return b && carries(b, strongIn(tuneFor, s.start, s.end, ctx.bar), ctx) && carries(b, all, ctx) ? b : { ...ref };
         }),
       };
     }

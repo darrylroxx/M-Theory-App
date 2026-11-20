@@ -910,6 +910,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 /* a track just added on another page: lit for a moment when the Track page opens */
 .tv-head.fresh { animation: tv-fresh 1.6s ease-out; }
 .tv-row.fresh { animation: tv-fresh-row 1.6s ease-out; }
+.clip-tracks .flash { animation: tv-fresh-row 1.2s ease-out; }
 @keyframes tv-fresh { 0%, 35% { background-color: color-mix(in srgb, var(--accent) 22%, transparent); } 100% { background-color: transparent; } }
 @keyframes tv-fresh-row { 0%, 35% { outline: 2px solid var(--accent); outline-offset: -2px; } 100% { outline: 2px solid transparent; outline-offset: -2px; } }
 .tv-ruler { height: 34px; }
@@ -1333,6 +1334,20 @@ span.cv-better { cursor: default; }
 /* the options stand apart from the tracks to go with (a track and an option can share a name) */
 .hz-sheet > .hz-opts, .hz-sheet > .hz-none { padding-top: 8px; border-top: 1px solid var(--border-2); }
 .hz-foot { flex-wrap: nowrap; }
+/* the options played instead of the chords stand apart, after a small label */
+.hz-opt-wrap { display: contents; }
+.hz-div { color: var(--muted); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; padding-inline: 4px 0; border-left: 1px solid var(--border-2); margin-left: 2px; }
+/* the three controls on the chosen harmony: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful */
+.hz-ctls { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+.hz-ctl { display: inline-flex; align-items: center; gap: 0; }
+.hz-ctl[aria-disabled="true"] { opacity: 0.38; }
+.hz-ctl .hz-end { background: none; border: 0; color: var(--muted); font-size: 0.78rem; font-weight: 700; padding: 4px 4px; cursor: pointer; }
+.hz-ctl .hz-end:disabled { cursor: default; }
+.hz-ctl .hz-step { background: none; border: 0; width: 26px; height: 30px; display: inline-grid; place-items: center; cursor: pointer; padding: 0; }
+.hz-ctl .hz-step:disabled { cursor: default; }
+.hz-ctl .hz-step i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border-2); background: transparent; }
+.hz-ctl .hz-step.on i { background: var(--accent); border-color: var(--accent); }
+@media (pointer: coarse) { .hz-ctl .hz-step { width: 44px; height: 44px; } .hz-ctl .hz-end { min-height: 44px; } }
 .hz-hint { flex: 1 1 auto; min-width: 0; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hz-foot .icon-btn { width: 34px; height: 34px; }
 .hz-keep { min-width: 52px; justify-content: center; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 850; }
@@ -1356,6 +1371,15 @@ span.cv-better { cursor: default; }
 .hz-opts .chip.now:not(.on) { border-color: var(--accent); }
 /* (not the width the shape finder's .now has on a phone) */
 .hz-opts .chip.now { width: auto; }
+/* while the sheet is open the page can scroll up from under it, so the button that opened it stays in sight */
+body:has(.hz-sheet) { padding-bottom: calc(var(--hz-sheet-h, 0px) + 16px); }
+/* on a phone the controls take less height: a smaller row each, the end words close to the steps */
+@media (pointer: coarse) and (max-width: 520px) {
+  .hz-ctls { gap: 0 10px; }
+  .hz-ctl .hz-step { width: 38px; height: 38px; }
+  .hz-ctl .hz-end { min-height: 38px; font-size: 0.74rem; padding: 2px; }
+  .hz-sheet { gap: 6px; padding: 8px; }
+}
 /* an undo offered while the sheet is open sits just above it, clear of it and of the page tabs */
 body:has(.hz-sheet) .toast.act { bottom: calc(var(--hz-sheet-h, 0px) + 22px + env(safe-area-inset-bottom, 0px)); }
 /* ✕ keeps the top right corner however the chips wrap */

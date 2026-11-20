@@ -6,7 +6,7 @@
 import { reviveSig, sigName } from "./meter";
 import { conform, sigOf } from "./unity";
 import { reviveMix } from "../audio/mix";
-import { PLAIN_KIT, PLAIN_STYLE, normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
+import { PLAIN_KIT, PLAIN_STYLE, normalize, prune, reviveArrange, reviveFirstHarmony, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
 import { reviveTones } from "../audio/tone";
 import { grooveOf, kitOfBeat, kitSig, reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
@@ -108,6 +108,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     play: p.play === "song" ? "song" : "section",
     ...(reviveSig(p.meter) ? { meter: reviveSig(p.meter) } : {}),
     ...(reviveMix(p.mix) ? { mix: reviveMix(p.mix) } : {}),
+    ...(reviveFirstHarmony(p.firstHarmony, tracks) ? { firstHarmony: reviveFirstHarmony(p.firstHarmony, tracks) } : {}),
     ...(tracks ? { tracks } : {}), ...(layers ? { layers } : {}),
     ...(tones ? { tones } : {}),
     v: SOUND_V,

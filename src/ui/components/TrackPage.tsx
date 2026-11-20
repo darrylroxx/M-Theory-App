@@ -9,7 +9,7 @@ import { loopKeys, type LoopBars } from "../../song/loops";
 import { addTrackTo, selectBlock } from "../../song/structure";
 import { clipBars, placedClips } from "../../song/clips";
 import type { Take } from "../../song/takes";
-import { KIND_NAME, addTrack, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
+import { KIND_NAME, addTrack, addTrackHere, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { showSection, shownCount, type BarsShown } from "../../song/window";
@@ -49,10 +49,17 @@ const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
  * runs across the whole song). You stay where you are; it is the one its page shows next time
  * (brought forward there), and a vocal track is the one the Vocals page shows (and records onto).
  */
-export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track } {
-  const r = addTrack(s.progression, kind, id);
-  const studio = kind === "vocals" ? { studio: { ...s.studio, vocal: id } } : {};
-  return { s: { ...s, progression: r.p, ...studio }, track: r.track };
+export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track; existing?: boolean } {
+  if (kind === "vocals") {
+    // a vocal track with nothing recorded on it yet is the one to use: no second empty one
+    const free = (s.progression.tracks ?? []).find((t) => t.kind === "vocals" && !t.takes?.length);
+    if (free) return { s: { ...s, studio: { ...s.studio, vocal: free.id } }, track: free, existing: true };
+    const r = addTrack(s.progression, kind, id);
+    return { s: { ...s, progression: r.p, studio: { ...s.studio, vocal: id } }, track: r.track };
+  }
+  // the same rule as a page's +: a track of the kind empty in this section comes forward; else a row from another section; else a new one
+  const r = addTrackHere(s.progression, kind, id);
+  return { s: { ...s, progression: r.p }, track: r.track, ...(r.existing ? { existing: true } : {}) };
 }
 
 /** Is a track in a section? (The first three are in every one; vocal tracks run across the song.) */
@@ -230,7 +237,14 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** A plain new track of a kind, at once: its row lights up here, and its page opens on it next time. */
   const add = (kind: TrackKind) => {
     const tid = newId();
-    set((s) => trackAdded(s, kind, tid).s);
+    let lit: string | null = null;
+    set((s) => {
+      const r = trackAdded(s, kind, tid);
+      if (r.existing || r.track.id !== tid) lit = r.track.id;
+      return r.s;
+    });
+    // (one that was there already lights up instead: nothing new was made)
+    if (lit) setFresh([lit]);
     setAdding(false);
   };
   /** A track put into a section that does not have it: plain and empty, ready to write in. You stay here. */
@@ -271,7 +285,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
                 {/* ⟳ beside the volume, so the name keeps the room */}
-                {t.harmony && (t.kind === "chords" || t.kind === "melody") && here && isIn(t, here) && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setAgain(t)} />}
+                {t.harmony && (t.kind === "chords" || t.kind === "melody") && here && isIn(t, here) && here.block === current && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setAgain(t)} />}
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>
