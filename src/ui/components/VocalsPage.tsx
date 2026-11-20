@@ -32,6 +32,8 @@ export interface RecordPlan {
   label: string;
   /** every bar that goes round, in order (for the lane of takes) */
   bars?: LaneBar[];
+  /** every bar of the song, in order (a take sung elsewhere that plays in those bars is on the lane too) */
+  song?: LaneBar[];
 }
 
 const CHECKS: { id: keyof NonNullable<Studio["checks"]>; label: string; hint: string }[] = [
@@ -662,6 +664,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const plan = recordPlan();
   // the lane: the bars being recorded over (while recording, exactly those the engine goes round)
   const laneBars = (running ? planRef.current?.bars : undefined) ?? plan?.bars ?? [];
+  const laneSong = (running ? planRef.current?.song : undefined) ?? plan?.song;
   const laneRef = useRef(laneBars);
   laneRef.current = laneBars;
   const playingRef = useRef(playing);
@@ -723,7 +726,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     keys: active,
   } : undefined;
   const lane = laneBars.length > 0 ? (
-    <TakeLane bars={laneBars} rows={laneRows} bpm={bpm} where={where} shown={shown} follow={follow}
+    <TakeLane bars={laneBars} song={laneSong} rows={laneRows} bpm={bpm} where={where} shown={shown} follow={follow}
       live={active && (playing || phase === "recording" || phase === "rehearsing")} edit={laneEdit} />
   ) : null;
   /** the takes the selected clip can play instead (of its recording, or another sung from the same bar) */

@@ -72,8 +72,10 @@ const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el i
  * select it, tap twice to hear it alone; with ✂ on (or S, at the pointer or the playing
  * line), a tap splits it there. Delete deletes the selected clip.
  */
-export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: {
+export function TakeLane({ bars, song, rows, bpm, where, live, shown, follow, edit }: {
   bars: LaneBar[];
+  /** every bar of the song in order, of which `bars` are a run: a take sung outside them that plays in them is drawn there too */
+  song?: LaneBar[];
   /** the recordings to draw (newest first), each with its clips */
   rows: LaneRow[];
   bpm: number;
@@ -179,7 +181,36 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
   };
 
   const index = (block: string, bar: number) => bars.findIndex((b) => b.block === block && b.bar === bar);
-  const placed = rows.map((r) => ({ ...r, clips: r.clips.filter((x) => index(x.take.at.block, x.take.at.bar) >= 0) })).filter((r) => r.clips.length);
+  /** where the lane's first bar is in the song */
+  const k0 = song && bars.length ? song.findIndex((b) => b.block === bars[0].block && b.bar === bars[0].bar) : -1;
+  /** beats from the lane's start to a bar of the song outside the lane (before it: less than 0), or NaN when it is not in the song */
+  const fromSong = (block: string, bar: number): number => {
+    const k = k0 < 0 || !song ? -1 : song.findIndex((b) => b.block === block && b.bar === bar);
+    if (k < 0 || !song) return NaN;
+    let at = 0;
+    for (let j = Math.min(k, k0); j < Math.max(k, k0); j++) at += song[j].beats > 0 ? song[j].beats : 1;
+    return k < k0 ? -at : at;
+  };
+  // ── where things are: the lane draws every bar the same width, whatever its beats ──
+  const spb = 60 / Math.max(1, bpm);
+  /** beats from the lane's start to the bar a take was sung from (in the lane's bars, or elsewhere in the song) */
+  const anchor = (t: Take) => {
+    const i = index(t.at.block, t.at.bar);
+    return i >= 0 ? laneBeats(bars, i) : fromSong(t.at.block, t.at.bar);
+  };
+  /** where a clip is on the lane (in bars, as drawn) */
+  const span = (c: Clip, t: Take) => {
+    const a = anchor(t);
+    const m = c.move ?? 0;
+    return { l: lanePos(bars, a + (c.from + m) / t.rate / spb), r: lanePos(bars, a + (c.to + m) / t.rate / spb) };
+  };
+  // the clips of takes sung in these bars, and those sung elsewhere that play in them (the part
+  // in these bars is what shows, and can be trimmed, split or moved here: they play there as here)
+  const placed = rows.map((r) => ({ ...r, clips: r.clips.filter((x) => {
+    if (index(x.take.at.block, x.take.at.bar) >= 0) return true;
+    const { l, r: end } = span(x.clip, x.take);
+    return Number.isFinite(l) && end > 1e-6 && l < n - 1e-6;
+  }) })).filter((r) => r.clips.length);
   const drawn = placed.slice(0, ROWS);
   const lines = Math.max(1, drawn.length);
 
@@ -193,16 +224,6 @@ export function TakeLane({ bars, rows, bpm, where, live, shown, follow, edit }: 
     return () => { on = false; };
   }, [needKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // ── where things are: the lane draws every bar the same width, whatever its beats ──
-  const spb = 60 / Math.max(1, bpm);
-  /** beats from the lane's start to the bar a take was sung from */
-  const anchor = (t: Take) => laneBeats(bars, index(t.at.block, t.at.bar));
-  /** where a clip is on the lane (in bars, as drawn) */
-  const span = (c: Clip, t: Take) => {
-    const a = anchor(t);
-    const m = c.move ?? 0;
-    return { l: lanePos(bars, a + (c.from + m) / t.rate / spb), r: lanePos(bars, a + (c.to + m) / t.rate / spb) };
-  };
   /** the place on the lane under the pointer (in bars) */
   const posAt = (clientX: number) => {
     const el = innerRef.current;

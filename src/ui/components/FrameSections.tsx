@@ -52,7 +52,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
   /** a paste (or its undo) changed what the pages show */
   onPasted: () => void;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, recordingTo } = useApp();
   const prog = state.progression;
   /** every track in its place (a page may be editing an added one) */
   const np = useMemo(() => normalize(prog), [prog]);
@@ -91,6 +91,8 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     return Number(sec ? sec.groove?.on ?? beat.on : beat.on);
   };
   const remove = (x: Section) => {
+    // (a recording is laid where it was begun: the section it goes over cannot go until its takes are in)
+    if (recordingTo) return toast("Stop recording first");
     if (recordedIn(x.blockId) && !window.confirm(`Vocals were recorded in this ${x.label}. Remove it anyway? (The recordings stay in Music › M-Theory › Recordings.)`)) return;
     change((p) => removeBlock(p, x.blockId));
   };
