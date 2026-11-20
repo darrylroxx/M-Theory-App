@@ -295,12 +295,15 @@ export function stopAlone(): void {
 
 /**
  * Hear one take alone (or a clip's stretch of it, `part`, in frames of the take), through its track's fader: whatever was heard alone
- * before stops first. Resolves false if it could not be read, or if something else was asked
- * for (or it was stopped) while it was loading.
+ * before stops first. `first` is waited for before it is read (the interface handed over: see handoff.ts). Resolves false if it
+ * could not be read, null if something else was asked for (or it was stopped: ▶, the page left) while it waited or loaded.
  */
-export async function hearAlone(t: TakeRef & { rate: number }, track: string, part?: { from: number; to: number }): Promise<boolean | null> {
+export async function hearAlone(t: TakeRef & { rate: number }, track: string, part?: { from: number; to: number }, first?: () => Promise<unknown>): Promise<boolean | null> {
   stopAlone();
+  // (the ask is counted before any wait, so a stop or another take asked for meanwhile wins)
   const mine = asks;
+  if (first) await first();
+  if (mine !== asks) return null;
   const buf = await loadTake(t);
   if (mine !== asks) return null;
   if (!buf) return false;

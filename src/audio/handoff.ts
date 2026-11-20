@@ -32,6 +32,8 @@ export function mayList(o: { active: boolean; recording: boolean; busy: boolean;
 }
 
 let release: (() => Promise<void>) | null = null;
+/** the engine closing (or closed): a sound asked for while it closes waits for it too */
+let closing: Promise<void> = Promise.resolve();
 
 /**
  * The engine is open and would close for the app's sound: `close` closes it (resolving once it is
@@ -48,9 +50,9 @@ export function holdInterface(close: () => Promise<void>): () => void {
 export function freeInterface(): Promise<void> {
   const r = release;
   release = null;
-  if (!r) return Promise.resolve();
   // (a driver that never answers does not keep the song from playing)
-  return Promise.race([r().catch(() => {}), new Promise<void>((done) => setTimeout(done, 1500))]);
+  if (r) closing = Promise.race([r().catch(() => {}), new Promise<void>((done) => setTimeout(done, 1500))]);
+  return closing;
 }
 
 /**

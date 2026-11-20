@@ -598,10 +598,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     // (not over a song the interface is playing)
     if (phaseRef.current !== "idle") return;
     onAlone();
-    // the interface's own engine closes first, so it is not playing through the interface at the same time (see handoff.ts)
-    await freeInterface();
-    // just this take is read from the recording, so it plays from its own start
-    const ok = await hearAlone(tk, track?.id ?? "vocals", part);
+    // just this take is read from the recording, so it plays from its own start; the interface's own engine closes
+    // first, so it is not playing through the interface at the same time (see handoff.ts). (▶, leaving the page or
+    // another take asked for while it closes: this one is not heard)
+    const ok = await hearAlone(tk, track?.id ?? "vocals", part, freeInterface);
     if (ok) setAlone(tk.id);
     else if (ok === false) toast("Could not read the recording");
   };

@@ -57,6 +57,20 @@ describe("handing the interface over to the app's sound", () => {
     expect(next).toBe(true);
   });
 
+  it("a sound asked for while the engine is still closing waits for it too", async () => {
+    const done: (() => void)[] = [];
+    holdInterface(() => new Promise<void>((r) => done.push(r)));
+    let first = false;
+    let second = false;
+    void freeInterface().then(() => (first = true));
+    void freeInterface().then(() => (second = true));
+    await vi.advanceTimersByTimeAsync(0);
+    expect([first, second]).toEqual([false, false]);
+    done[0]();
+    await vi.advanceTimersByTimeAsync(0);
+    expect([first, second]).toEqual([true, true]);
+  });
+
   it("a driver that never answers does not keep the song from playing", async () => {
     holdInterface(() => new Promise<void>(() => {}));
     let went = false;
