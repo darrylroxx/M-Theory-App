@@ -194,6 +194,18 @@ and small routines were taken from these, used under their licences, with thanks
   black key sits, its width and its height (`keyfaces.ts`).
 - **Open Music Theory** (v1, CC BY-SA 4.0): the species-counterpoint rules, applied chords and
   modal mixture, re-implemented as tests and costs. None of its text is used.
+- **dycon**, **hrep**, **har18** and **incon** (pmcharrison, MIT, Copyright (c) 2018 Peter M. C.
+  Harrison): the Sethares and Hutchinson–Knopoff roughness formulas, the harmonic-tone defaults,
+  the harmonicity method and the combined consonance model, ported to TypeScript
+  (`src/theory/consonance.ts`). The MIT licence text is in `THIRD_PARTY_NOTICES.md`.
+- **music21j** (cuthbertLab, BSD-3-Clause, Copyright (c) 2013–2026 Michael Scott Asato Cuthbert):
+  the definitions of hidden and parallel motion and of crossing used in the line search
+  (`src/theory/lines.ts`).
+- **harmony** (ekzhang, BSD-3-Clause, Copyright (c) 2020 Eric Zhang): the voice-leading weights of
+  its voicing search (the top voice's move squared, parallels), used for chord layers
+  (`src/theory/layers.ts`).
+- **rl-musician** (Nikolay Lysenko, MIT, Copyright (c) 2019): the line rules a leap answered by a
+  step back and runs of leaps (`src/theory/lines.ts`).
 - The low-interval limits follow common arranging tables, read as strictly as they disagree.
 
 Neural stems (`src-tauri/src/stems.rs` and `src-tauri/src/stems/`, `src/listen/neuralstems.ts`)

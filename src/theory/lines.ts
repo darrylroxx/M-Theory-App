@@ -4,8 +4,7 @@
  *
  * Every line is chosen for the whole phrase at once (./search), against the notes that really
  * sound: the chords as they are voiced, their bass, the tune and any other line (`around`), with
- * the roughness model of ./consonance. The rules and their weights are the research's (see
- * research_notes/Harmony 2, theory.md rules M1–M14):
+ * the roughness model of ./consonance. The rules and their weights are the research's (its rules M1–M14):
  *  - a note's place: its interval with the tune (3rds and 6ths best, a unison or a semitone worst),
  *    the roughness it adds, whether it is a chord tone, an available tension or an "avoid" note,
  *    and its register (out of the chords' band, never a step from a chords note);

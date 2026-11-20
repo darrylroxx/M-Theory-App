@@ -4,8 +4,7 @@
  * the app plays it, on the guitar (the stock shapes, standard tuning) and on the piano (Spread),
  * and each measure counts the worse of the two.
  *
- * The measures come from the diagnosis of the first engine and the research (see
- * research_notes/Harmony 2): clash time against the chords, rubs, the roughness a note adds
+ * The measures come from the diagnosis of the first engine and the harmony research: clash time against the chords, rubs, the roughness a note adds
  * (Sethares, ./consonance), unisons and crossings with the tune, parallels, melodic tritones; and
  * for a chords track played along with Chords 1: Hutchinson–Knopoff roughness against Chords 1
  * alone, notes a semitone above Chords 1, notes doubled exactly, a second bass under it.
