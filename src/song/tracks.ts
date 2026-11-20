@@ -30,6 +30,7 @@ import { withoutTone } from "../audio/tone";
 import type { Mix } from "../audio/mix";
 import { HARMONY_OPTIONS, MIDDLE, type Shape } from "../theory/harmonize";
 import { outPrint } from "./prints";
+import { reviveNotes, withoutNotes } from "./chordnotes";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
 /** The kinds a page edits by bringing a track forward. */
@@ -458,7 +459,7 @@ function dropFirst(fh: FirstHarmony | undefined, id: string): FirstHarmony | und
 /** Does a chords option play instead of the chords it goes with (a re-harmonisation, or Best fit)? */
 export function replacing(option: string | undefined): boolean {
   const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === option);
-  return !!opt && (!!opt.instead || opt.id === "fit");
+  return !!opt && (!!opt.instead || opt.id === "fit" || opt.id === "fit2");
 }
 /** The chords track a harmony written from `from` would play instead of: those chords, or (from a tune) the song's. */
 const targetOf = (h: HarmonyOf, tracks: Track[], part?: string): string => {
@@ -662,7 +663,7 @@ export function reviveLayers(raw: unknown, tracks: Track[] | undefined): Layers 
 export function reviveLayer(l: Layer, kind: EditKind): Layer {
   if (kind === "chords")
     return tidy({
-      chords: Array.isArray(l.chords) ? l.chords.filter((c) => c && c.ref && typeof c.ref.root === "string" && Number.isFinite(c.beats) && c.beats > 0) : [],
+      chords: Array.isArray(l.chords) ? l.chords.filter((c) => c && c.ref && typeof c.ref.root === "string" && Number.isFinite(c.beats) && c.beats > 0).map((c) => (c.notes === undefined ? c : reviveNotes(c.notes) ? { ...c, notes: reviveNotes(c.notes) } : withoutNotes(c))) : [],
       arrange: reviveArrange(l.arrange),
       pattern: hasStyle(l.pattern) ? l.pattern : undefined,
       feel: l.feel && typeof l.feel === "object" ? reviveFeel(l.feel) : undefined,

@@ -17,7 +17,7 @@ export function fnv(s: string): number {
   return h >>> 0;
 }
 
-export const chordPrint = (cs: ProgChord[] | undefined) => (cs ?? []).map((c) => (c.rest ? `-${c.beats}` : `${pc(c.ref.root)}${c.ref.typeId}/${c.ref.bass ? pc(c.ref.bass) : ""}:${c.beats}${c.voicingId ? `@${c.voicingId}` : ""}`)).join(" ");
+export const chordPrint = (cs: ProgChord[] | undefined) => (cs ?? []).map((c) => (c.rest ? `-${c.beats}` : `${pc(c.ref.root)}${c.ref.typeId}/${c.ref.bass ? pc(c.ref.bass) : ""}:${c.beats}${c.voicingId ? `@${c.voicingId}` : ""}${c.notes?.length ? `#${c.notes.join(".")}` : ""}`)).join(" ");
 export const tunePrint = (m: Melody | undefined) => (m ? `${m.div}${m.on === false ? "x" : ""}:${[...m.notes].sort((a, b) => a.at - b.at || a.midi - b.midi).map((n) => `${n.at}.${n.midi}`).join(" ")}` : "");
 /** What a track holds in a section, as a short fingerprint. */
 export const outPrint = (l: Layer | undefined): string => fnv(`${chordPrint(l?.chords)}|${tunePrint(l?.melody)}`).toString(36);

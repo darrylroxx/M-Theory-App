@@ -22,6 +22,32 @@ import { sigOf } from "./unity";
 import { commit, letters, type SongPart } from "./structure";
 import { allTracks, contentIn, fromIn, harmonyOf, insteadIn, insteadTarget, isFirst, markIn, normalize, optionIn, plainLayer, refocus, shapeIn, unmuteInstead, withHarmony, type HarmonyMark, type HarmonyOf, type Layer, type Layers, type Track, type WriteTarget } from "./tracks";
 import { chordPrint, fnv, outPrint, tunePrint } from "./prints";
+import { melodyLine, type Sounding } from "../theory/harmonize";
+import { keysVoicings, onKeys, toneOf, type Tones } from "../audio/tone";
+import { easyVoicing } from "../guitar/arrange";
+import { fingerNotes } from "../guitar/finger";
+import { getTuning, type Tuning } from "../guitar/tunings";
+import { playedNotes } from "./chordnotes";
+
+/**
+ * What the app plays chords with on the guitar (its tuning and capo): Harmonize hears the chords
+ * as they really sound, and writes chords the guitar can really play. Set by the app; standard
+ * tuning with no capo until then (and in tests).
+ */
+export interface HarmonyEnv {
+  tuning: Tuning;
+  capo: number;
+}
+let env: HarmonyEnv = { tuning: getTuning("standard"), capo: 0 };
+export function setHarmonyEnv(e: HarmonyEnv): void {
+  env = e;
+}
+/** A chords track's notes as its instrument plays them: written notes as they are, else the keys' layout or the guitar's stock shapes. */
+function voiced(chords: ProgChord[], tones: Tones | undefined, id: string): number[][] {
+  const tone = toneOf({ tones }, id);
+  if (onKeys(tone)) return keysVoicings(chords, tone).map((v) => [...v].sort((a, b) => a - b));
+  return chords.map((c) => (c.rest ? [] : playedNotes(c) ?? (easyVoicing(c.ref, env.tuning, env.capo)?.midi.filter((m): m is number => m !== null) ?? []).sort((a, b) => a - b)));
+}
 
 /** What a harmony track is written from and how. */
 export interface HarmonyPlan {
@@ -64,6 +90,7 @@ const kindOf = (p: Progression, id: string): SourceKind | undefined => {
 /** One section as the harmony is written into it (with no song yet, the page is the only one, part ""). */
 interface Spot {
   part: string;
+  tones?: Tones;
   chords: ProgChord[];
   melody?: Melody;
   layers?: Layers;
@@ -87,8 +114,8 @@ export function chordsUnder(p: Progression): ProgChord[] {
 function spots(p: Progression): Spot[] {
   const sig = sigOf(p);
   const cur = p.song?.parts.find((x) => x.id === p.song?.blocks.find((b) => b.id === p.song?.current)?.partId);
-  if (!p.song || !cur) return [{ part: "", chords: p.chords, melody: p.melody, layers: p.layers, bars: p.bars, meter: sig }];
-  return [{ part: cur.id, chords: cur.chords, melody: cur.melody, layers: cur.layers, bars: cur.bars, meter: cur.meter ?? sig }];
+  if (!p.song || !cur) return [{ part: "", tones: p.tones, chords: p.chords, melody: p.melody, layers: p.layers, bars: p.bars, meter: sig }];
+  return [{ part: cur.id, tones: cur.tones, chords: cur.chords, melody: cur.melody, layers: cur.layers, bars: cur.bars, meter: cur.meter ?? sig }];
 }
 /** The song with every track in its place and the page written back into it. */
 const flat = (p: Progression): Progression => commit(normalize(p));
@@ -127,7 +154,41 @@ function insteadOf(p: Progression, kind: HarmonyKind, option: string, from: stri
   // (a first track never plays instead of another, nor of itself)
   if (self && (self === target || isFirst(self))) return undefined;
   if (opt?.instead) return target;
-  return option === "fit" && spots(p).some((s) => sounds(s.chords)) ? target : undefined;
+  return (option === "fit" || option === "fit2") && spots(p).some((s) => sounds(s.chords)) ? target : undefined;
+}
+
+/**
+ * Everything heard in a section around the track being written (`self`), as the notes that
+ * really sound: every chords track that plays there (voiced by its instrument; its lowest note is
+ * the bass), and every tune but the one harmonized. Muted tracks and chords a harmony plays instead
+ * of are not heard.
+ */
+function aroundIn(p: Progression, s: Spot, self: string, from: string, srcKind: SourceKind): Sounding[] {
+  const out: Sounding[] = [];
+  const len = Math.round(barsOr(s.bars) * sigBeats(s.meter) * TICKS);
+  const others = (p.tracks ?? []).filter((t) => t.id !== self);
+  const quiet = insteadIn(s.part, s.layers, others, p.mix);
+  const chords = (id: string, cs: ProgChord[] | undefined) => {
+    if (!sounds(cs) || p.mix?.[id]?.mute || quiet.has(id)) return;
+    const vs = voiced(cs!, s.tones, id);
+    let at = 0;
+    cs!.forEach((c, i) => {
+      const d = Math.round((Number(c.beats) || 0) * TICKS);
+      if (at < len) (vs[i] ?? []).forEach((midi, k) => out.push({ at, end: Math.min(len, at + d), midi, part: k === 0 ? "bass" : "chords" }));
+      at += d;
+    });
+  };
+  const tune = (id: string, m: Melody | undefined) => {
+    if (!hasTune(m) || p.mix?.[id]?.mute || (srcKind === "melody" && id === from)) return;
+    for (const n of melodyLine(m, len)) out.push({ at: n.at, end: n.end, midi: n.midi, part: "tune" });
+  };
+  if (self !== "chords") chords("chords", s.chords);
+  if (self !== "melody") tune("melody", s.melody);
+  for (const t of others) {
+    if (t.kind === "chords") chords(t.id, s.layers?.[t.id]?.chords);
+    else if (t.kind === "melody") tune(t.id, s.layers?.[t.id]?.melody);
+  }
+  return out;
 }
 
 /**
@@ -177,6 +238,9 @@ function inputIn(p: Progression, s: Spot, key: Key, kind: HarmonyKind, from: str
     compound: isCompound(s.meter),
     seed: seedOf(track, s.part),
     ...(shape && !sameShape(shape, MIDDLE) ? { shape } : {}),
+    around: aroundIn(p, s, track, from, srcKind),
+    // a chords track on the guitar is written as notes a hand can play there
+    ...(kind === "chords" && !onKeys(toneOf({ tones: s.tones }, track)) ? { playable: (n: number[]) => !!fingerNotes(n, env.tuning, env.capo) } : {}),
   };
 }
 
@@ -427,6 +491,12 @@ export function harmonyMenu(p0: Progression, key: Key, kind: HarmonyKind, from: 
       const l = layerOf(harmonize(input), kind, input);
       if (!l) return false;
       if (kind === "melody" || option.id === "fit") return true;
+      // Another fit: only when it is another row than Best fit's
+      if (option.id === "fit2") {
+        const best = inputIn(p, s, key, kind, from, srcKind, "fit", track, shape);
+        const fit = best && layerOf(harmonize(best), kind, best);
+        return chordPrint(fit?.chords?.map((c) => ({ ...c, id: "" }))) !== chordPrint(l.chords?.map((c) => ({ ...c, id: "" })));
+      }
       const before = srcKind === "chords" ? input.source.chords : input.under;
       return !before?.some((c) => !c.rest) || chordPrint(l.chords) !== chordPrint(fitChords(before, input.bar).map((c) => ({ ...c, voicingId: undefined })));
     });
@@ -434,8 +504,12 @@ export function harmonyMenu(p0: Progression, key: Key, kind: HarmonyKind, from: 
     const target = insteadOf(p, kind, option.id, from, srcKind, track);
     return { option, label: labelFor(option, key), hint: hintFor(option, key), ...(target ? { instead: target } : {}) };
   };
-  // (a first track never plays instead of another: the options that would are left out there)
-  const list = harmonyOptions(kind, srcKind).filter((o) => !(isFirst(track) && o.instead)).filter(useful);
+  // (a first track never plays instead of another: the options that would are left out there; under a low tune the high harmony comes first)
+  const low = srcKind === "melody" && all.some((s) => {
+    const m = sourceIn(s, from, "melody").melody?.notes.map((n) => n.midi).sort((a, b) => a - b) ?? [];
+    return m.length > 0 && m[Math.floor(m.length / 2)] < 64;
+  });
+  const list = harmonyOptions(kind, srcKind, low).filter((o) => !(isFirst(track) && o.instead)).filter(useful);
   const own = keep ? optionOf(kind, keep) : undefined;
   if (own && own.from.includes(srcKind) && !list.includes(own)) list.unshift(own);
   return list.map(item);

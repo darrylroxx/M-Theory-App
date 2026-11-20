@@ -14,6 +14,7 @@ import type { ProgChord } from "../ui/state";
 import { TICKS, type MelodyNote } from "../song/melody";
 import { getTuning } from "../guitar/tunings";
 import { easyVoicing } from "../guitar/arrange";
+import { fingerNotes } from "../guitar/finger";
 import { keysVoicings } from "../audio/tone";
 import { getChordType } from "./chords";
 import { semitonesOf } from "./intervals";
@@ -75,7 +76,11 @@ export function aroundOf(b: Built, how: Voicer, noTune = false): Sounding[] {
 
 /** Run one option on a fixture, as the app asks for it (source, the chords under it, everything heard around). */
 export function runOn(b: Built, kind: HarmonyKind, from: SourceKind, option: string, how: Voicer, extra: { shape?: Shape; seed?: number } = {}): HarmonizeOutput {
-  const common = { kind, option, key: b.key, bar: b.bar, bars: b.bars, compound: b.compound, seed: extra.seed ?? 1, ...(extra.shape ? { shape: extra.shape } : {}) };
+  const common = {
+    kind, option, key: b.key, bar: b.bar, bars: b.bars, compound: b.compound, seed: extra.seed ?? 1, ...(extra.shape ? { shape: extra.shape } : {}),
+    // a new chords track plays the guitar: what it writes must be playable there, as in the app
+    ...(kind === "chords" ? { playable: (n: number[]) => !!fingerNotes(n, STANDARD, 0) } : {}),
+  };
   if (from === "melody") return harmonize({ ...common, source: { melody: b.melody }, under: b.chords, around: aroundOf(b, how, true) });
   return harmonize({ ...common, source: { chords: b.chords, ...(kind === "chords" ? { melody: b.melody } : {}) }, ...(kind === "melody" ? { under: b.chords } : {}), around: aroundOf(b, how) });
 }
