@@ -1,7 +1,7 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { barsOf, levelAt, type Beat } from "../../audio/beats";
+import { barsOf, heardAt, type Beat } from "../../audio/beats";
 import type { DrumId } from "../../audio/drums";
-import { MAX_DB, MIN_DB, audible, type Mix, type TrackId, type TrackMix } from "../../audio/mix";
+import { MAX_DB, MIN_DB, audible, mixWith, type TrackId, type TrackMix } from "../../audio/mix";
 export type { TrackId };
 import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame } from "../../song/frame";
@@ -9,7 +9,7 @@ import { loopKeys, type LoopBars } from "../../song/loops";
 import { selectBlock } from "../../song/structure";
 import { clipBars, placedClips } from "../../song/clips";
 import type { Take } from "../../song/takes";
-import { KIND_NAME, addTrack, allTracks, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
+import { KIND_NAME, addTrack, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
 import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { showSection, shownCount, type BarsShown } from "../../song/window";
@@ -50,11 +50,11 @@ export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppSt
   return { s: { ...s, progression: r.p, ...studio }, track: r.track };
 }
 
-/** What one track holds in one section. */
+/** What one track holds in one section (an added drums track: its rhythm there on its own kit, as it plays). */
 function content(t: Track, s: TrackSection): TrackSection {
   if (isFirst(t.id)) return s;
   const l = s.layers?.[t.id];
-  return { ...s, chords: l?.chords ?? [], melody: l?.melody, drums: l?.beat ?? { ...s.drums, on: false } };
+  return { ...s, chords: l?.chords ?? [], melody: l?.melody, drums: drumsOf(t, l) ?? { ...s.drums, on: false } };
 }
 /** Drum rows drawn top to bottom: cymbals, then the middle of the kit, then the kick. */
 const LANES: { ids: DrumId[]; y: number }[] = [
@@ -90,7 +90,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set, toast, recordingTo } = useApp();
+  const { state, set, toast, recordingTo, opened } = useApp();
   const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
@@ -98,7 +98,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   // a harmony track written again (its ⟳)
   const [again, setAgain] = useState<Track | null>(null);
   // it belongs to this page and this idea
-  useEffect(() => setAgain(null), [state.ideaId, active]);
+  useEffect(() => setAgain(null), [state.ideaId, opened, active]);
   const lineRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // the lanes' width, measured: the bars on screen share it out
@@ -198,26 +198,20 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     const before = seen.current;
     seen.current = { idea: state.ideaId, ids: new Set(tracks.map((t) => t.id)) };
     const added = before && before.idea === state.ideaId ? tracks.filter((t) => !before.ids.has(t.id)).map((t) => t.id) : [];
-    if (!added.length) return;
-    setFresh(added);
-    const head = scrollRef.current?.closest(".tv")?.querySelector<HTMLElement>(`.tv-head[data-track="${CSS.escape(added[added.length - 1])}"]`);
-    const r = head?.getBoundingClientRect();
-    if (head && r && (r.bottom > window.innerHeight || r.top < 0)) head.scrollIntoView({ block: "nearest" });
+    if (added.length) setFresh(added);
   }, [active, tracks]);
   useEffect(() => {
     if (!fresh.length) return;
+    // brought into view after the layout effects: the app opens a page at its top in one of its own, which runs
+    // after this page's (a parent's runs after its children's), and would scroll the track back out of sight
+    const head = scrollRef.current?.closest(".tv")?.querySelector<HTMLElement>(`.tv-head[data-track="${CSS.escape(fresh[fresh.length - 1])}"]`);
+    const r = head?.getBoundingClientRect();
+    if (head && r && (r.bottom > window.innerHeight || r.top < 0)) head.scrollIntoView({ block: "nearest" });
     const t = window.setTimeout(() => setFresh([]), 1600);
     return () => window.clearTimeout(t);
   }, [fresh]);
 
-  const setTrack = (id: TrackId, patch: Partial<TrackMix>) =>
-    set((s) => {
-      const t: TrackMix = { ...s.progression.mix?.[id], ...patch };
-      // muted or unmuted by hand: no longer a mute a harmony track made (it is the songwriter's own now)
-      if ("mute" in patch) delete t.instead;
-      const next: Mix = { ...s.progression.mix, [id]: t };
-      return { ...s, progression: { ...s.progression, mix: next } };
-    });
+  const setTrack = (id: TrackId, patch: Partial<TrackMix>) => set((s) => ({ ...s, progression: { ...s.progression, mix: mixWith(s.progression.mix, id, patch) } }));
   /** Open a track's page on a section, with that track ready to edit. */
   const open = (block: string, t: Track) =>
     set((s) => {
@@ -359,7 +353,8 @@ function DrumBlock({ s, bw }: { s: TrackSection; bw: number }) {
     const pb = k % per;
     for (let i = 0; i < d.steps; i++)
       for (const lane of LANES) {
-        const lv = Math.max(...lane.ids.map((id) => levelAt(d.rows, id, pb * d.steps + i)));
+        // (a drum muted in the kit is not heard, so it is not drawn)
+        const lv = Math.max(...lane.ids.map((id) => heardAt(d, id, pb * d.steps + i)));
         if (lv) marks.push({ x: k * bw + (i / d.steps) * bw, y: lane.y * 44, o: 0.35 + lv * 0.22 });
       }
   }

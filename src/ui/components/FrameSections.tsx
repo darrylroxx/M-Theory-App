@@ -6,13 +6,14 @@ import { TIME_SIGS, sameSig, sigName, type TimeSig } from "../../song/meter";
 import { MAX_NAME, addNewSection, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, unlinkBlock, type Section } from "../../song/structure";
 import { placedClips } from "../../song/clips";
 import { allTracks, focusTrack, isFirst, normalize, type Track, type TrackKind } from "../../song/tracks";
-import { copySection, keyShift, pasteSection, sectionHasContent } from "../../song/clip";
+import { clipSource, copySection, keyShift, pasteSection, sectionHasContent } from "../../song/clip";
 import { conform, setSectionSig, sigOf } from "../../song/unity";
 import { sameMusic } from "../../song/library";
 import { displayNote } from "../../theory/notes";
 import { CopyIcon, GripIcon, PasteIcon } from "../icons";
 import { letterClass } from "../letters";
 import { newId, useApp, type AppState, type Pane, type Progression } from "../state";
+import { ideaKey } from "../openidea";
 
 type Len = { beats: number; bar: number };
 /** The page that edits each kind of track. */
@@ -128,14 +129,14 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
 
   // ── copy and paste a whole section ──
   const clip = state.clip?.section;
-  const idea = state.ideaId ?? null;
+  const idea = ideaKey(state);
   /** the row it was copied from, or another block of the same section (it has nothing to paste into itself) */
-  const isSource = (x: Section) => !!clip && clip.idea === idea && (clip.block === x.blockId || (!!clip.part && clip.part === x.partId));
+  const isSource = (x: Section) => clipSource(clip, idea, x);
   /** the very block it was copied from */
-  const copied = (x: Section) => !!clip && clip.idea === idea && clip.block === x.blockId;
+  const copied = (x: Section) => clipSource(clip, idea, x, true);
   const copy = (x: Section) => {
     set((s) => {
-      const c = copySection(s.progression, x.blockId, s.key, s.ideaId ?? null);
+      const c = copySection(s.progression, x.blockId, s.key, ideaKey(s));
       return c ? { ...s, clip: { ...s.clip, section: c } } : s;
     });
     toast(`${x.label} copied`);
@@ -151,7 +152,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     setPicking(null);
     const moved = keyShift(clip.key, key) !== 0;
     // the paste can be taken back while the idea is still just as it left it
-    const still = (s: AppState) => (s.ideaId ?? null) === idea && s.key.tonic === key.tonic && s.key.scaleId === key.scaleId && sameMusic(s.progression, after);
+    const still = (s: AppState) => ideaKey(s) === idea && s.key.tonic === key.tonic && s.key.scaleId === key.scaleId && sameMusic(s.progression, after);
     toast(`${clip.from} → ${x.label}${moved ? ` · ${displayNote(key.tonic)}` : ""}`, {
       label: "↶", aria: "Undo the paste", when: still,
       run: () => {

@@ -124,6 +124,16 @@ describe("the artist: how much is playing sets how much is painted", () => {
     expect(turnover()).toBeLessThan(0.01);
   });
 
+  it("a canvas cleared has nothing on it: no marks are counted (Clear has nothing to clear) until it is painted again", () => {
+    const { a, run } = artist();
+    run(3, song(["drums", "chords"], 0.8, 3));
+    expect(a.made).toBeGreaterThan(0);
+    a.clear();
+    expect(a.made).toBe(0);
+    run(5, song(["drums", "chords"], 0.8, 5), 3);
+    expect(a.made).toBeGreaterThan(0);
+  });
+
   it("a song played again from the start begins afresh: nothing it played later counts as playing now", () => {
     const { a, marks, run } = artist();
     run(6, song(["drums", "melody"], 0.8, 6));
