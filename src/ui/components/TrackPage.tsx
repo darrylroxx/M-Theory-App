@@ -265,7 +265,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
             return (
               <div key={t.id} data-track={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}${t.harmony ? " hz" : ""}${fresh.includes(t.id) ? " fresh" : ""}`} role="group" aria-label={`${t.name} track`}>
                 {/* one line: what plays it, its name (a long one is cut short), and ✕ for an added track */}
-                <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
+                <button className="tv-name" title={where && where !== here ? `Open ${t.name} in ${where.label}` : `Open ${t.name} for the section on screen`} onClick={() => open(where?.block ?? current, t)}>
                   {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(where ?? {}, t.id).inst} />}
                   <span className="tv-label">{t.name}</span>
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}

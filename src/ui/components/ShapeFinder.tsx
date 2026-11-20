@@ -51,6 +51,10 @@ export function ShapeFinder({ slotShape, onPinSlot, keys }: {
   const slotIdx = sheet?.slotId ? chords.findIndex((c) => c.id === sheet.slotId) : -1;
   const slot = slotIdx >= 0 ? chords[slotIdx] : undefined;
   const picked = ref ? (slot ? slotShape(slot.id) ?? shapeOf(ref, slot.voicingId) : shapeOf(ref)) : undefined;
+  // a chord's own sheet whose chord is not on the page any more (Follow, or a tap, put another section on screen) closes:
+  // it would otherwise turn into the sheet for the chord everywhere
+  const gone = !!sheet?.slotId && !slot;
+  useEffect(() => { if (gone) openSheet(null); }, [gone, openSheet]);
 
   const book = useMemo(() => {
     if (!ref) return null;
@@ -72,7 +76,7 @@ export function ShapeFinder({ slotShape, onPinSlot, keys }: {
     return () => window.removeEventListener("keydown", onKey);
   }, [sheet, openSheet]);
 
-  if (!sheet || !ref || !book) return null;
+  if (!sheet || !ref || !book || gone) return null;
   const keyNotes = keys?.(ref, sheet.slotId);
   const type = getChordType(ref.typeId);
   const setChords = (fn: (c: ProgChord[]) => ProgChord[]) => set((s) => ({ ...s, progression: { ...s.progression, chords: fn(s.progression.chords) } }));

@@ -18,6 +18,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState } from 
 import { addHarmony, harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, partHere, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
 import { allTracks, normalize, optionIn, type Track } from "../../song/tracks";
+import { undoTo } from "../../song/structure";
 import { newId, useApp, type AppState } from "../state";
 
 /** What is being auditioned: a harmony track as it would be added (or written again), by id. */
@@ -151,7 +152,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
     hear(null);
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
     const still = (s: AppState) => s.key.tonic === key.tonic && s.key.scaleId === key.scaleId && sameMusic(s.progression, after);
-    toast(msg, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: before } : s)) });
+    toast(msg, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: undoTo(s.progression, before) } : s)) });
     onClose();
   };
 

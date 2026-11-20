@@ -3,7 +3,7 @@ import { DEFAULT_BEAT, kitOfBeat, kitSig, type Beat } from "../audio/beats";
 import { reviveSound } from "../audio/rack";
 import { toneOf, withTone } from "../audio/tone";
 import { reviveProgression, type ProgChord, type Progression } from "../ui/state";
-import { addNewSection, addTrackTo, commit, ensureSong, removeBlock, repeatSection, sections, sectionsWith, selectBlock, soundToAll, unlinkBlock } from "./structure";
+import { addNewSection, addTrackTo, commit, ensureSong, removeBlock, repeatSection, sections, sectionsWith, selectBlock, soundToAll, undoTo, unlinkBlock } from "./structure";
 import { addTrack, addTrackHere, allTracks, focusTrack, inSection, insteadIn, normalize, removeHere, removeTrack, tracksHere } from "./tracks";
 import { copyDrums, copyMelody, copyRhythm, copySection, pasteDrums, pasteMelody, pastePart, pasteRhythm, pasteSection, unpastePart } from "./clip";
 import { addHarmony, harmonizeSources, rewriteHarmony } from "./harmony";
@@ -569,5 +569,32 @@ describe("All sections on an added drums track", () => {
     expect([b.mutes, b.echo, b.voices]).toEqual([undefined, undefined, undefined]);
     // its rhythm and on/off stay B's
     expect([b.on, b.rows.kick]).toEqual([true, ROWS.kick]);
+  });
+});
+
+describe("an undo taken after moving to another section", () => {
+  it("puts the music back and leaves the page on the section and track on screen now", () => {
+    // B has a second chords track, being edited there
+    let p = go(song(), 1);
+    const added = addTrackHere(p, "chords", "x");
+    const c2 = added.track.id;
+    p = focusTrack(added.p, "chords", c2);
+    expect(p.focus?.chords).toBe(c2);
+    // in A the first chords get a sound, and it goes to every section
+    p = { ...go(p, 0), sound: { voice: "koto" } };
+    const before = p;
+    const after = soundToAll(p, "chords", "chords");
+    expect(reviveSound(sections(after)[1].sound).voice).toBe("koto");
+    // the page goes to B (on its second chords track), then ↶
+    const now = go(after, 1);
+    expect(now.focus?.chords).toBe(c2);
+    const back = undoTo(now, before);
+    expect(back.song!.current).toBe(blockOf(p, 1));
+    expect(back.focus?.chords).toBe(c2);
+    expect(reviveSound(sections(back)[1].sound).voice).not.toBe("koto");
+    expect(reviveSound(sections(back)[0].sound).voice).toBe("koto");
+    expect(sameMusic(back, before)).toBe(true);
+    // taken where it was made, it is the song as it was
+    expect(fingerprint(snapshot(C, undoTo(after, before), 0, ""))).toBe(fingerprint(snapshot(C, before, 0, "")));
   });
 });

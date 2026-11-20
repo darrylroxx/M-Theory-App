@@ -14,7 +14,7 @@ import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { barsOr, chordAt, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
 import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
-import { drumsIn, mapAllChords, mapAllMelodies, sections, sectionsWith, selectBlock, soloSection, soundToAll, type Section } from "../../song/structure";
+import { drumsIn, mapAllChords, mapAllMelodies, sections, sectionsWith, selectBlock, soloSection, soundToAll, undoTo, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
 import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
@@ -449,7 +449,7 @@ export function GuitarView() {
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
     const still = (s: AppState) => sameMusic(s.progression, after);
     const name = allTracks(normalize(before)).find((t) => t.id === id)?.name ?? "";
-    toast(`${name} sounds like this in every section${isFirst(id) ? "" : " that has it"}`, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: before } : s)) });
+    toast(`${name} sounds like this in every section${isFirst(id) ? "" : " that has it"}`, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: undoTo(s.progression, before) } : s)) });
   }, [set, toast]);
   // (only when another section has the track; the same button from one render to the next, so the pages are not drawn again for nothing)
   const others = (kind: EditKind) => sectionsWith(prog, prog.focus?.[kind] ?? kind) > 0;
@@ -957,7 +957,7 @@ export function GuitarView() {
         <HarmonyPicker key={hz.track?.id ?? `new:${hz.kind}`} kind={hz.kind} track={hz.track} first={prog.focus?.[hz.kind] ?? hz.kind} anchor={hz.anchor} onClose={closeHz} />
       )}
       {pane === "rhythm" && away && !sheet && (
-        <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={prog.chords.length > 0 || beat.on || !!tune}
+        <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={togglePlay} drag={drag} canPlay={plan.any}
           onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
       )}
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}

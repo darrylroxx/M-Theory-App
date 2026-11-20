@@ -3,7 +3,7 @@ import type { Beat } from "../../audio/beats";
 import { MAX_SECTION_BARS, QUICK_BARS, barsText, stepBars } from "../../song/frame";
 import { hasTune } from "../../song/melody";
 import { TIME_SIGS, sameSig, sigName, type TimeSig } from "../../song/meter";
-import { MAX_NAME, addNewSection, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, unlinkBlock, type Section } from "../../song/structure";
+import { MAX_NAME, addNewSection, letters, moveBlock, moveBlockTo, newColor, newLetter, removeBlock, renameSection, repeatSection, selectBlock, setSectionBars, sharedCount, soloSection, undoTo, unlinkBlock, type Section } from "../../song/structure";
 import { placedClips } from "../../song/clips";
 import { allTracks, focusTrack, isFirst, normalize, type Track, type TrackKind } from "../../song/tracks";
 import { clipSource, copySection, keyShift, pasteSection, sectionHasContent } from "../../song/clip";
@@ -158,7 +158,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
     toast(`${clip.from} → ${x.label}${moved ? ` · ${displayNote(key.tonic)}` : ""}`, {
       label: "↶", aria: "Undo the paste", when: still,
       run: () => {
-        set((s) => (still(s) ? { ...s, progression: before } : s));
+        set((s) => (still(s) ? { ...s, progression: undoTo(s.progression, before) } : s));
         onPasted();
       },
     });
@@ -408,7 +408,7 @@ export function FrameSections({ secs, lengths, here, beat, onPasted }: {
                 </span>
                 <button className={`fr-sig${x.meter ? " own" : ""}`} aria-expanded={picking?.id === id && picking.what === "sig"} aria-label={`Time signature of ${x.label}: ${sigName(sig)}${x.meter ? "" : ", the song's"}. Change it`} title={x.meter ? "Its own time signature" : "The song's time signature"}
                   onClick={() => setPicking(picking?.id === id && picking.what === "sig" ? null : { id, what: "sig" })}><b>{sig.num}</b><b>{sig.den}</b></button>
-                {canUndoSig && undoSig?.block === x.blockId && <button className="fr-undo" aria-label={`Undo the time signature change in ${x.label}`} title="Undo" onClick={() => { const back = undoSig.before; setUndoSig(null); change(() => back); }}>↶</button>}
+                {canUndoSig && undoSig?.block === x.blockId && <button className="fr-undo" aria-label={`Undo the time signature change in ${x.label}`} title="Undo" onClick={() => { const back = undoSig.before; setUndoSig(null); change((p) => undoTo(p, back)); }}>↶</button>}
               </span>
               <span className="fr-tools">
                 <button className={copied(x) ? "on" : ""} aria-label={`Copy ${x.label}: everything in it`} title="Copy" onClick={() => copy(x)}><CopyIcon /></button>

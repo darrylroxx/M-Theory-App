@@ -685,6 +685,17 @@ export const loadCurrent = settled(loadCurrentN);
 export const addNewSection = remembered(settled(addNewSectionN));
 export const repeatSection = remembered(settled(repeatSectionN));
 export const selectBlock = remembered(settled(selectBlockN));
+
+/**
+ * An undo: the song as it was before one change, seen from where the page is now. Which section is
+ * on screen, and which track each page edits, are not part of the change, so they stay as they are.
+ */
+export function undoTo(now: Progression, before: Progression): Progression {
+  const at = now.song?.current;
+  const q = normalize(before);
+  const there = at && q.song && q.song.current !== at ? selectBlockN(q, at) : q;
+  return refocus({ ...there, focusIn: now.focusIn }, now.focus);
+}
 export const removeBlock = remembered(settled(removeBlockN));
 export const setSectionBars = settled(setSectionBarsN);
 export const renameSection = settled(renameSectionN);
