@@ -629,33 +629,100 @@ impl Limiter {
     }
 }
 
-/// The engine's last stage before the interface (backing x Song level + click + monitored voice):
-/// the same as the app's own master safety limiter (src/audio/safety.ts). While nothing goes over
-/// −1 dBFS its gain is exactly 1 and the sum passes bit for bit; an over is held down to −1 dBFS
-/// at once (left and right together), the gain holds for 10 ms and comes back over 150 ms. It
-/// looks at nothing ahead, so it delays nothing. (The voice chain's `safety` bends everything over
-/// −3 dBFS, which would colour a backing that is not too loud: it is not used on the sum.)
+/// The engine's last stage before the interface (backing x Song level + click + monitored voice,
+/// and the app's own sound when it comes through the engine): the same as the app's own master
+/// safety stage (src/audio/safetycore.ts), so a normal mix keeps its level. Three parts, each for
+/// its own kind of over:
+/// - a tip over −1 dBFS (a drum hit on a full mix): rounded off smoothly toward −0.2 dBFS, which it
+///   never reaches; its level is left alone;
+/// - a sound held over −1 dBFS (over for 10 ms of the last 50 or so): its level comes down to
+///   −1 dBFS over about 20 ms, and back over about 300 ms once it has passed;
+/// - a peak more than 1 dB over full scale: held down at once, for 10 ms, let back over 150 ms.
+/// While none of that is happening the gain is exactly 1 and everything under −1 dBFS passes bit
+/// for bit. Left and right move together. It looks at nothing ahead, so it delays nothing. (The
+/// voice chain's `safety` bends everything over −3 dBFS, which would colour a backing that is not
+/// too loud: it is not used on the sum.)
 #[derive(Clone, Debug)]
 pub struct OutSafety {
-    /// how far the gain is turned down from 1 (kept as the distance, which a 32-bit float can hold
-    /// all the way back to 0; the gain itself would stop just short of 1)
+    /// how far the fast limiter's gain is turned down from 1 (kept as the distance, which a 32-bit
+    /// float can hold all the way back to 0; the gain itself would stop just short of 1)
     d: f32,
     hold: u32,
     hold_n: u32,
     back: f32,
+    /// how long it has been over the knee lately (frames, leaking away over about 50 ms)
+    over: f32,
+    leak: f32,
+    held_n: f32,
+    /// its loudest peak lately (falling away over about 300 ms)
+    loud: f32,
+    loud_back: f32,
+    /// how far the slow level's gain is turned down from 1 (a distance, as `d`), and how fast it goes down and back up
+    sd: f32,
+    rise: f32,
+    fall: f32,
 }
+/// −1 dBFS: under this a sample leaves exactly as it came, unless the level is being held down.
+pub const OUT_KNEE: f32 = 0.891;
+/// About −0.2 dBFS: what anything over the knee is rounded off toward, and never reaches.
+pub const OUT_CEILING: f32 = 0.98;
+/// +1 dBFS: a peak more than this over is held down at once.
+pub const OUT_LIMIT: f32 = 1.122;
+
+/// Round off a sample over the knee: the same up to it, then bending smoothly toward the ceiling.
+#[inline]
+pub fn round_off(x: f32) -> f32 {
+    let a = x.abs();
+    if a <= OUT_KNEE {
+        return x;
+    }
+    let span = OUT_CEILING - OUT_KNEE;
+    x.signum() * (OUT_KNEE + span * ((a - OUT_KNEE) / span).tanh())
+}
+
 impl OutSafety {
     pub fn new(sr: f32) -> Self {
-        OutSafety { d: 0.0, hold: 0, hold_n: (0.01 * sr).round() as u32, back: (-1.0 / (0.15 * sr)).exp() }
+        OutSafety {
+            d: 0.0,
+            hold: 0,
+            hold_n: (0.01 * sr).round() as u32,
+            back: (-1.0 / (0.15 * sr)).exp(),
+            over: 0.0,
+            leak: (-1.0 / (0.05 * sr)).exp(),
+            held_n: 0.01 * sr,
+            loud: 0.0,
+            loud_back: (-1.0 / (0.3 * sr)).exp(),
+            sd: 0.0,
+            rise: 1.0 - (-1.0 / (0.02 * sr)).exp(),
+            fall: 1.0 - (-1.0 / (0.3 * sr)).exp(),
+        }
     }
-    /// The gain now (1: not limiting).
+    /// The gain now (1: not turning anything down).
+    #[cfg(test)]
     pub fn gain(&self) -> f32 {
-        1.0 - self.d
+        (1.0 - self.sd) * (1.0 - self.d)
     }
     #[inline]
     pub fn run(&mut self, l: f32, r: f32) -> (f32, f32) {
         let (l, r) = (if l.is_finite() { l } else { 0.0 }, if r.is_finite() { r } else { 0.0 });
         let peak = l.abs().max(r.abs());
+        // the slow level: a sound held over the knee (not a drum hit's tip) comes down to it
+        self.over = self.over * self.leak + if peak > OUT_KNEE { 1.0 } else { 0.0 };
+        if self.over < 1e-6 {
+            self.over = 0.0;
+        }
+        self.loud = if peak > self.loud { peak } else { self.loud * self.loud_back };
+        if self.loud < 1e-9 {
+            self.loud = 0.0;
+        }
+        let target = if self.over > self.held_n && self.loud > OUT_KNEE { 1.0 - OUT_KNEE / self.loud } else { 0.0 };
+        self.sd += (target - self.sd) * if target > self.sd { self.rise } else { self.fall };
+        // (snapped back to 1 once within a ten-thousandth of it, an 80 dB step nobody hears)
+        if self.sd < 1e-4 {
+            self.sd = 0.0;
+        }
+        let slow = 1.0 - self.sd;
+        // the fast limiter, for a peak far over
         if self.d > 0.0 {
             if self.hold > 0 {
                 self.hold -= 1;
@@ -666,15 +733,16 @@ impl OutSafety {
                 }
             }
         }
-        if peak * (1.0 - self.d) > CEILING {
-            self.d = 1.0 - CEILING / peak;
+        let p = peak * slow;
+        if p * (1.0 - self.d) > OUT_LIMIT {
+            self.d = 1.0 - OUT_LIMIT / p;
             self.hold = self.hold_n;
         }
-        if self.d == 0.0 {
-            (l, r)
+        let g = slow * (1.0 - self.d);
+        if g == 1.0 {
+            (round_off(l), round_off(r))
         } else {
-            let g = 1.0 - self.d;
-            ((l * g).clamp(-1.0, 1.0), (r * g).clamp(-1.0, 1.0))
+            (round_off(l * g), round_off(r * g))
         }
     }
 }
@@ -999,29 +1067,45 @@ mod tests {
     }
 
     #[test]
-    fn the_output_safety_holds_overs_at_the_ceiling_and_lets_go_without_a_jump() {
+    fn the_output_safety_rounds_tips_holds_held_overs_and_lets_go_without_a_jump() {
         let mut s = OutSafety::new(SR);
         // quiet: untouched, gain exactly 1
         for i in 0..4800 {
             let x = 0.5 * (i as f32 * 0.03).sin();
             assert_eq!(s.run(x, -x), (x, -x));
         }
-        // a loud burst: never over the ceiling, left and right turned down together
+        // a drum hit's tip 1 dB over: rounded off under the ceiling, its level never moved
         let mut most = 0.0f32;
-        for i in 0..4800 {
+        for i in 0..9600 {
+            let x = 1.12 * (-(i as f32) / (0.04 * SR)).exp() * (i as f32 * 2.0 * std::f32::consts::PI * 60.0 / SR + 1.5708).sin();
+            let (l, _) = s.run(x, 0.0);
+            most = most.max(l.abs());
+            if x.abs() <= OUT_KNEE {
+                assert_eq!(l, x, "under the knee: untouched");
+            }
+            assert_eq!(s.gain(), 1.0);
+        }
+        assert!(most < OUT_CEILING && most > OUT_KNEE, "{most}");
+        // a loud held burst: never at the ceiling, left and right turned down together, and after a
+        // moment its level sits at the knee
+        let mut late = 0.0f32;
+        for i in 0..24000 {
             let x = 1.6 * (i as f32 * 0.03).sin();
             let (l, r) = s.run(x, 0.5 * x);
-            most = most.max(l.abs()).max(r.abs());
-            if x.abs() > 1e-3 {
-                assert!((r / l - 0.5).abs() < 1e-4);
+            assert!(l.abs() < OUT_CEILING && r.abs() < OUT_CEILING);
+            if x.abs() > 1e-3 && l.abs() < OUT_KNEE {
+                assert!((r / l - 0.5).abs() < 1e-3, "{l} {r}");
+            }
+            if i > 12000 {
+                late = late.max(l.abs());
             }
         }
-        assert!(most <= CEILING + 1e-6 && most > CEILING - 1e-3, "{most}");
+        assert!(late < OUT_KNEE * 1.01 && late > OUT_KNEE * 0.97, "{late}");
         // quiet again: it comes back smoothly (no step bigger than the signal's own) and is exactly 1 in the end
         let mut last = s.gain();
-        for i in 0..120000 {
+        for i in 0..240000 {
             s.run(0.1 * (i as f32 * 0.03).sin(), 0.0);
-            assert!(s.gain() >= last && s.gain() - last < 0.01);
+            assert!(s.gain() >= last - 1e-6 && s.gain() - last < 0.01);
             last = s.gain();
         }
         assert_eq!(s.gain(), 1.0);

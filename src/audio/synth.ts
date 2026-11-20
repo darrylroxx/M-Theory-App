@@ -7,6 +7,7 @@
 import { barBeats, barsOf, lenOf, levelAt, stepBeat, type Beat } from "./beats";
 import { audioContext, audioIfStarted, withContext } from "./context";
 import { FIRST_DRUMS, keepDrums, onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
+import { NOTE_LATE } from "./late";
 import { DRUM_IDS } from "./drums";
 import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
 import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
@@ -282,6 +283,17 @@ function sectionsOf(items: PlayItem[]): { origin: number[]; rest: number[]; grou
   return { origin, rest, group };
 }
 
+/** Players playing now (for `bookAhead`). */
+const nowPlaying = new Set<ProgressionPlayer>();
+
+/** How far ahead the song is booked around a page switch (seconds; see `ProgressionPlayer.ahead`). */
+export const SWITCH_AHEAD = 1;
+
+/** Whatever is playing books `secs` further ahead, for that long: the page is about to be busy (see `ProgressionPlayer.ahead`). */
+export function bookAhead(secs = SWITCH_AHEAD) {
+  for (const p of nowPlaying) p.ahead(secs);
+}
+
 export class ProgressionPlayer {
   private timer: number | null = null;
   private stepTimer: number | null = null;
@@ -429,6 +441,26 @@ export class ProgressionPlayer {
     this.playing = true;
     this.timer = window.setInterval(() => this.schedule(), 25);
     this.stepTimer = window.setInterval(() => this.tick(), 30);
+    nowPlaying.add(this);
+    this.schedule();
+  }
+
+  /** Booked further ahead than usual until this moment on the audio clock (see `bookAhead`). */
+  private aheadUntil = 0;
+  private aheadBy = 0;
+
+  /**
+   * Book `secs` ahead now, and keep that far ahead for as long: the page is about to do something
+   * heavy (a page switch: the page that opens can hold the page up for a moment, the canvas the
+   * most), and the timer that books the song a quarter of a second ahead would be held up with it.
+   * With this much booked the audio thread plays on regardless. Something changed meanwhile is
+   * heard that much later, which is why it is only for a moment.
+   */
+  ahead(secs: number) {
+    if (!this.playing || !(secs > 0)) return;
+    const now = getAudio().currentTime;
+    this.aheadBy = Math.max(secs, this.aheadUntil > now ? this.aheadBy : 0);
+    this.aheadUntil = now + secs;
     this.schedule();
   }
 
@@ -546,7 +578,7 @@ export class ProgressionPlayer {
 
   private schedule() {
     const c = getAudio();
-    const horizon = c.currentTime + 0.25;
+    const horizon = c.currentTime + 0.25 + (c.currentTime < this.aheadUntil ? this.aheadBy : 0);
     const spb = 60 / this.bpm;
     while (this.playing && this.nextTime < horizon) {
       if (this.pending && this.atBoundary()) this.takeOver();
@@ -679,6 +711,11 @@ export class ProgressionPlayer {
   private scheduleDrums(horizon: number) {
     // first grid step at or after a chord's start, counted from where the pattern started
     const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
+    // hits whose moment has passed (the page was held up): only the latest of each drum on each track is played, part-way
+    // in (see late.ts); the ones before it would sound under it, quieter, and starting them all at once is a burst of work
+    // for the audio thread just when it has the least room
+    const late = new Map<string, { t: number; play: () => void }>();
+    const now = getAudio().currentTime;
     for (const [track, lane] of this.lanes) {
       const main = track === FIRST_DRUMS;
       for (let guard = 0; guard < 400; guard++) {
@@ -717,13 +754,17 @@ export class ProgressionPlayer {
           // is left out if it is over: never piled onto the next. See late.ts)
           for (const id of DRUM_IDS) {
             const lv = levelAt(b.rows, id, step);
-            if (lv) playStep(b, id, lv, t, track);
+            if (!lv) continue;
+            if (t < now - NOTE_LATE) late.set(`${track}\n${id}`, { t, play: () => playStep(b, id, lv, t, track) });
+            else playStep(b, id, lv, t, track);
           }
           if (main) this.drumMarks.push({ time: t, step });
         }
         lane.step++;
       }
     }
+    // (in their order, so a closed hat after an open one still closes it)
+    for (const h of [...late.values()].sort((a, b) => a.t - b.t)) h.play();
   }
 
   /**
@@ -756,6 +797,8 @@ export class ProgressionPlayer {
 
   stop() {
     this.playing = false;
+    nowPlaying.delete(this);
+    this.aheadUntil = 0;
     this.pending = null;
     this.past.clear();
     if (this.timer !== null) window.clearInterval(this.timer);

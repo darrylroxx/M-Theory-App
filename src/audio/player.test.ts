@@ -395,6 +395,9 @@ describe("the page held up while the song plays (see late.ts)", () => {
     // the hits that fell due while the page was held up start now, each as far into itself as it is late
     const partway = after.filter((s) => s.when === 1.6 && s.offset > 0.01);
     expect(partway.length).toBeGreaterThan(0);
+    // only the latest of each drum (the ones before it would sound under it, quieter): not a burst of every hit missed
+    const drums = Object.values(b.rows).filter((r) => /[123]/.test(r ?? "")).length;
+    expect(partway.length).toBeLessThanOrEqual(drums);
     expect(lateCount.drums - was.drums).toBe(partway.length);
     // (the hits whose sound was over by then are left out: counted, not played)
     expect(lateCount.over).toBeGreaterThanOrEqual(was.over);
@@ -415,6 +418,40 @@ describe("the page held up while the song plays (see late.ts)", () => {
     tick(2);
     expect(hits().length).toBeGreaterThan(before + after.length);
     p.stop();
+  });
+  it("around a page switch the song is booked a second ahead, so a page held up for most of a second leaves nothing late", async () => {
+    const { lateCount } = await import("./late");
+    notes();
+    const b: Beat = { ...DEFAULT_BEAT, on: true };
+    const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, drums: b }];
+    const p = new S.ProgressionPlayer();
+    S.getAudio();
+    live.currentTime = 0;
+    p.start(items, 120, "ring", true, b);
+    const tick = (to: number) => {
+      live.currentTime = to;
+      vi.advanceTimersByTime(25);
+    };
+    for (let t = 0.025; t <= 1; t += 0.025) tick(t);
+    const hits = () => starts.filter((s) => s.ctx === live && !s.loop);
+    // usually booked a quarter of a second ahead
+    expect(Math.max(...hits().map((s) => s.when))).toBeLessThan(1 + 0.25 + 1e-6);
+    // a page is about to open: booked a second ahead at once
+    S.bookAhead();
+    expect(Math.max(...hits().map((s) => s.when))).toBeGreaterThan(1 + S.SWITCH_AHEAD);
+    const was = { ...lateCount };
+    // the page is held up for 900 ms: nothing fell due unbooked, so nothing starts late
+    tick(1.9);
+    expect(lateCount.drums).toBe(was.drums);
+    expect(lateCount.over).toBe(was.over);
+    // and once the moment has passed, it books a quarter of a second ahead again
+    for (let t = 1.925; t <= 4; t += 0.025) tick(t);
+    expect(Math.max(...hits().map((s) => s.when))).toBeLessThan(4 + 0.25 + 1e-6);
+    p.stop();
+    // stopped: there is nothing to book ahead
+    const n = hits().length;
+    S.bookAhead();
+    expect(hits().length).toBe(n);
   });
   it("a kick started late pumps nothing (its thump has passed), and a late hat chokes an open one from when it really starts", async () => {
     S.getAudio();

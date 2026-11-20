@@ -8,6 +8,7 @@ import { SettingsPanel } from "./components/SettingsPanel";
 import { AppProvider, PANES, useApp, type Pane } from "./state";
 import { useLive } from "./live";
 import { GuitarView } from "./views/GuitarView";
+import { bookAhead } from "../audio/synth";
 
 class ViewBoundary extends Component<{ children: ReactNode; onReset: () => void }, { error: Error | null }> {
   state = { error: null as Error | null };
@@ -45,6 +46,8 @@ function Shell() {
   const wide = widePage(page, shown, barsOr(state.progression.bars));
   /** Open a page at its top. (On a phone the first row of the bar scrolls away; the page tabs stay.) */
   const go = (pane: Pane) => {
+    // the page that opens can hold the page up for a moment: the song is booked a second ahead first, so it plays on
+    if (pane !== page) bookAhead();
     set((s) => ({ ...s, pane }));
     const bar = document.querySelector<HTMLElement>(".topbar");
     const gone = bar ? Math.max(0, -parseFloat(getComputedStyle(bar).top) || 0) : 0;

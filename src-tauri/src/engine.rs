@@ -28,6 +28,7 @@ use crate::dsp::OutSafety;
 use crate::fx::{Chain, VocalFx};
 use crate::meter::Shared;
 use crate::recfile::{self, Writing, MAX_FRAMES, RENDER};
+use crate::through::{self, AppFeed, AppIn};
 
 /// What the audio thread reports. Only the audio thread writes it, and nobody ever has to lock
 /// anything the audio thread needs, so the screen can never make the sound drop out.
@@ -63,6 +64,8 @@ pub struct Stats {
     pub cap0: AtomicU64,
     /// the file being written
     pub writing: Writing,
+    /// times the app's own sound, coming through the engine, ran dry (the page was held up) (see through.rs)
+    pub app_gaps: AtomicU64,
 }
 
 /// A moment kept as f64 bits, if it is known.
@@ -90,6 +93,8 @@ pub enum Cmd {
     /// `downbeats`: one entry per beat of the loop, true where a bar begins (see `downbeats`)
     Start { bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>> },
     Stop,
+    /// the app's own sound comes through the engine from now on (its end of the queue), or no longer (see through.rs)
+    App(Option<Box<AppIn>>),
 }
 
 /// What a message leaves behind once the audio thread has taken it in. It is handed back to
@@ -98,6 +103,7 @@ pub enum Trash {
     Backing(#[allow(dead_code)] Vec<f32>),
     Settings(#[allow(dead_code)] Box<Settings>),
     Downbeats(#[allow(dead_code)] Vec<bool>),
+    App(#[allow(dead_code)] Box<AppIn>),
 }
 
 /// The most beats a loop's accents are kept for (a loop longer than this clicks on, unaccented
@@ -175,8 +181,10 @@ pub struct Core {
     over: u32,
     levels: Arc<Shared>,
     pub stats: Arc<Stats>,
-    /// the last stage before the interface: nothing the engine plays goes over −1 dBFS (see dsp::OutSafety)
+    /// the last stage before the interface: nothing the engine plays reaches full scale (see dsp::OutSafety)
     safe: OutSafety,
+    /// the app's own sound, while it comes through the engine (see through.rs)
+    app: Option<Box<AppIn>>,
 }
 
 impl Core {
@@ -220,6 +228,7 @@ impl Core {
             levels,
             stats: Arc::new(Stats::default()),
             safe: OutSafety::new(sr),
+            app: None,
         }
     }
     /// A message from the app. What it leaves behind comes back, to be freed off the audio thread.
@@ -240,6 +249,14 @@ impl Core {
             Cmd::Start { bpm, count_in_beats, per_bar, downbeats, rec } => Some(Trash::Downbeats(self.start(bpm, count_in_beats, per_bar, downbeats, rec))),
             Cmd::Stop => {
                 self.stop();
+                None
+            }
+            Cmd::App(Some(a)) => self.app.replace(a).map(Trash::App),
+            Cmd::App(None) => {
+                // faded out, not cut off: it stays (silent) until the next one takes its place
+                if let Some(a) = self.app.as_mut() {
+                    a.stop();
+                }
                 None
             }
         }
@@ -480,8 +497,17 @@ impl Core {
                 self.stats.latency.store(((rtl * 1000.0) as f32).to_bits(), Ordering::Relaxed);
             }
         }
+        if let Some(a) = self.app.as_mut() {
+            a.block(frames, self.sr);
+        }
         for frame in out.chunks_mut(ch) {
             let (mut l, mut r) = (0.0f32, 0.0f32);
+            // the app's own sound, while it comes through here (see through.rs)
+            if let Some(a) = self.app.as_mut() {
+                let (x, y) = a.next();
+                l += x;
+                r += y;
+            }
             if self.running {
                 if self.pos >= self.count_in && len > 0 {
                     let i = ((self.pos - self.count_in) % len) as usize * 2;
@@ -500,7 +526,7 @@ impl Core {
                 r += b;
             }
             // the song (turned up by the Song slider), the click and the voice together could go over
-            // full scale, which the interface would flatten into a crackle: held under −1 dBFS instead
+            // full scale, which the interface would flatten into a crackle: made safe instead (see dsp::OutSafety)
             let (l, r) = self.safe.run(l, r);
             frame[0] = l;
             if ch > 1 {
@@ -537,6 +563,9 @@ impl Core {
         st.limit.store(self.chain.limiting().to_bits(), Ordering::Relaxed);
         st.dropped.store(self.dropped, Ordering::Relaxed);
         st.padded.store(self.padded, Ordering::Relaxed);
+        if let Some(a) = self.app.as_ref() {
+            st.app_gaps.store(a.gaps, Ordering::Relaxed);
+        }
     }
 }
 
@@ -548,6 +577,8 @@ pub struct Link {
     cmds: Mutex<VecDeque<Cmd>>,
     stats: Arc<Stats>,
     base: OnceLock<StreamInstant>,
+    /// the page's end of the queue for the app's own sound, while it comes through (see through.rs)
+    feed: Mutex<Option<AppFeed>>,
 }
 impl Link {
     fn send(&self, c: Cmd) {
@@ -642,6 +673,8 @@ pub struct Status {
     pub full: bool,
     /// how far the version through the vocal chain has got (0..1; 0 when none is being made)
     pub render: f32,
+    /// times the app's own sound, coming through the engine, ran dry since it started coming through
+    pub app_gaps: u64,
 }
 
 /// Seconds on the driver's clock, from a fixed starting point.
@@ -805,7 +838,7 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
             }
             let shared = Arc::new(Shared::new(icfg.channels as usize));
             let c = Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone());
-            let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new() });
+            let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new(), feed: Mutex::new(None) });
             let core = Arc::new(Mutex::new(c));
             let (trash_in, trash_out) = rtrb::RingBuffer::<Trash>::new(64);
             let input = match ic.sample_format() {
@@ -859,6 +892,7 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
                         free: (free > 0).then_some(free),
                         full: st.writing.full.load(Ordering::Relaxed),
                         render: f32::from_bits(RENDER.load(Ordering::Relaxed)),
+                        app_gaps: st.app_gaps.load(Ordering::Relaxed),
                     };
                     // what the audio thread has finished with is freed here
                     while trash_out.pop().is_ok() {}
@@ -923,6 +957,42 @@ pub fn engine_backing(request: Request) -> Result<u64, String> {
     let (l, _) = link()?;
     l.send(Cmd::Backing(samples));
     Ok(frames)
+}
+
+/// The app's own sound comes through the engine from now on, at the page's `rate` (so it never
+/// plays through the computer's sound at the same time as the engine plays through the
+/// interface), or no longer (`None`: what is queued fades out). See through.rs.
+#[tauri::command]
+pub fn engine_app(rate: Option<u32>) -> Result<(), String> {
+    let (l, engine_rate) = link()?;
+    match rate {
+        Some(r) if (8000..=384_000).contains(&r) => {
+            let (feed, app) = through::queue(r, engine_rate as f32);
+            if let Ok(mut f) = l.feed.lock() {
+                *f = Some(feed);
+            }
+            l.send(Cmd::App(Some(Box::new(app))));
+        }
+        Some(r) => return Err(format!("{r} Hz is not a sample rate")),
+        None => {
+            if let Ok(mut f) = l.feed.lock() {
+                *f = None;
+            }
+            l.send(Cmd::App(None));
+        }
+    }
+    Ok(())
+}
+
+/// A block of the app's own sound: raw little-endian 32-bit floats, stereo, at the rate given to
+/// `engine_app`. Returns the frames queued now.
+#[tauri::command]
+pub fn engine_feed(request: Request) -> Result<u32, String> {
+    let InvokeBody::Raw(bytes) = request.body() else { return Err("expected raw audio".into()) };
+    let (l, _) = link()?;
+    let mut g = l.feed.lock().map_err(|_| "engine busy")?;
+    let f = g.as_mut().ok_or("the app's sound is not coming through the engine")?;
+    Ok(f.push_bytes(bytes) as u32)
 }
 
 /// The folder takes are written to: Music\M-Theory\Recordings.
@@ -1101,6 +1171,38 @@ mod tests {
     }
 
     #[test]
+    fn the_apps_own_sound_comes_through_alongside_the_voice_and_fades_out_when_it_stops() {
+        let mut c = core();
+        c.monitor = true;
+        let (mut feed, app) = crate::through::queue(48000, SR);
+        assert!(c.apply(Cmd::App(Some(Box::new(app)))).is_none());
+        // the page sends half a second of a tone, as raw bytes
+        let tone: Vec<u8> = (0..24000).flat_map(|i| { let v = 0.3 * (i as f32 * 0.05).sin(); [v, v] }).flat_map(|v| v.to_le_bytes()).collect();
+        assert_eq!(feed.push_bytes(&tone), 24000);
+        let mut out = vec![0.0f32; 1024];
+        let mut peak = 0.0f32;
+        for _ in 0..30 {
+            let voice: Vec<f32> = vec![0.0; 1024];
+            c.on_input(&voice, 0.0);
+            c.on_output(&mut out, 0.0);
+            peak = out.iter().fold(peak, |m, v| m.max(v.abs()));
+        }
+        assert!(peak > 0.29 && peak < 0.31, "the tone, at its own level: {peak}");
+        // stopped: it fades out (no step bigger than the tone's own), then is silent
+        c.apply(Cmd::App(None));
+        let mut all = vec![];
+        for _ in 0..5 {
+            c.on_output(&mut out, 0.0);
+            all.extend(out.chunks(2).map(|f| f[0]));
+        }
+        assert!(all.windows(2).all(|w| (w[1] - w[0]).abs() < 0.02));
+        assert!(all[all.len() - 1000..].iter().all(|v| *v == 0.0));
+        // a new one takes its place, and the old one comes back to be freed off the audio thread
+        let (_feed2, app2) = crate::through::queue(44100, SR);
+        assert!(matches!(c.apply(Cmd::App(Some(Box::new(app2)))), Some(Trash::App(_))));
+    }
+
+    #[test]
     fn the_count_in_clicks_then_the_song_plays_round_and_round() {
         let mut c = core();
         // a "song" of one bar at 120 bpm: 2 s of a steady level on the left
@@ -1143,8 +1245,8 @@ mod tests {
             c.on_output(&mut out, 0.0);
             heard.extend(out.chunks(2).map(|f| f[0]));
         }
-        // the loudest moment just after a beat: 1.0 where a bar begins (held at −1 dBFS by the output's
-        // safety limiter), 0.7 on the other beats
+        // the loudest moment just after a beat: 1.0 where a bar begins (its tip rounded off by the
+        // output's safety stage), 0.7 on the other beats
         let peak = |at: usize| heard[at..at + 1500].iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let beat = |k: usize| 96000 + k * 24000;
         assert!(peak(0) > 0.85 && peak(24000) < 0.8, "the count-in: four beats, the first accented");
@@ -1177,7 +1279,7 @@ mod tests {
     }
 
     #[test]
-    fn the_engine_never_plays_over_minus_1_dbfs_and_leaves_a_quiet_sum_untouched() {
+    fn the_engine_never_plays_at_full_scale_and_leaves_a_quiet_sum_untouched() {
         // the loudest it can be asked for: a backing at full scale under the Song slider at 1.5,
         // the click at full, and a voice monitored through the chain at its own limit
         let mut c = core();
@@ -1195,8 +1297,8 @@ mod tests {
             c.on_output(&mut out, 0.0);
             peak = out.iter().fold(peak, |m, v| m.max(v.abs()));
         }
-        assert!(peak <= crate::dsp::CEILING + 1e-6, "peak {peak}");
-        assert!(peak > 0.85, "it is held at the ceiling, not squashed far under it: {peak}");
+        assert!(peak < crate::dsp::OUT_CEILING, "peak {peak}");
+        assert!(peak > 0.85, "it is held near the ceiling, not squashed far under it: {peak}");
 
         // a quiet song with the click: the limiter never moves, so it passes bit for bit (OutSafety
         // hands back exactly what it was given while its gain is 1)
@@ -1263,7 +1365,7 @@ mod tests {
 
     #[test]
     fn a_dropout_is_counted_and_the_stream_carries_on_a_reset_reopens() {
-        let link = Link { cmds: Mutex::new(VecDeque::new()), stats: Arc::new(Stats::default()), base: OnceLock::new() };
+        let link = Link { cmds: Mutex::new(VecDeque::new()), stats: Arc::new(Stats::default()), base: OnceLock::new(), feed: Mutex::new(None) };
         report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
         report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
         assert_eq!(link.stats.xruns.load(Ordering::Relaxed), 2);

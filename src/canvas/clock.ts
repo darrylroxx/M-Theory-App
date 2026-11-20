@@ -3,6 +3,7 @@
  * song (in sections and bars, with its own tempo), and a song from a file (just seconds, with a
  * bar as long as its heard tempo says).
  */
+import { extraDelay } from "../audio/outdelay";
 import type { Spot } from "./layout";
 import { pageOf } from "./layout";
 import type { When } from "./place";
@@ -25,17 +26,19 @@ export interface HeardClock {
  */
 export function heardTime(c: HeardClock, perfNow: number = typeof performance !== "undefined" ? performance.now() : 0): number {
   const now = c.currentTime;
+  // (the app's sound going through the recording engine is held back a little more: see through.ts)
+  const extra = extraDelay();
   try {
     const ts = c.getOutputTimestamp?.();
     if (ts && ts.contextTime !== undefined && ts.performanceTime) {
       const t = ts.contextTime + Math.max(0, (perfNow - ts.performanceTime) / 1000);
       // (some browsers answer with a stamp that is stale or not yet started: only a sensible one is believed)
-      if (t <= now + 0.01 && t > now - 0.5) return Math.min(now, t);
+      if (t <= now + 0.01 && t > now - 0.5) return Math.min(now, t) - extra;
     }
   } catch {
     // not given: estimated below
   }
-  return now - (c.outputLatency || 0) - (c.baseLatency || 0);
+  return now - (c.outputLatency || 0) - (c.baseLatency || 0) - extra;
 }
 
 /**

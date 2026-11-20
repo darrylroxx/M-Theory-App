@@ -6,7 +6,8 @@ import { renderSong } from "../../audio/synth";
 import { hearAlone, hearingAlone, onAlone as onAloneChange, stopAlone } from "../../audio/takeplay";
 import { Quiet, engineWanted, freeInterface, holdInterface, mayList } from "../../audio/handoff";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
-import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
+import { audioDevices, engineApp, engineBacking, engineClose, engineFeed, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
+import { comeBack, goThrough, noteGaps, type ThroughEngine } from "../../audio/through";
 import { barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
 import { addRecording, chooseTake, clipsOf, sameSpot, compClip, deleteClip, deleteTake, inUse, moveClip, placedClips, popUndo, removeRecording, splitClip, trimClip, type Clip, type UndoStep } from "../../song/clips";
 import { TakeLane, type LaneBar, type LaneRow } from "./TakeLane";
@@ -63,6 +64,8 @@ const sig = (fx: VocalFx) => JSON.stringify(fx);
 const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
 /** the interfaces found, kept for the session: listing them loads every driver in turn, which can upset one that is playing */
 let listed: AudioHost[] | null = null;
+/** the engine's side of the app's own sound going through it (see audio/through.ts) */
+const THROUGH: ThroughEngine = { start: (rate) => engineApp(rate), feed: engineFeed, stop: () => engineApp(null) };
 /** Until the driver's own figure is in: about how long a sound takes to go in and come back out at a buffer size. */
 const roundTrip = (block: number, rate: number) => Math.round(((2 * block) / rate) * 1000 + 2);
 /** A long session is noted from this many minutes on (small, beside the pass number). */
@@ -267,6 +270,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         warnRef.current.classList.toggle("warn", warns.length > 0);
       }
       if (renderRef.current) renderRef.current.textContent = st.render ? `${Math.round(st.render * 100)}%` : "";
+      // the app's own sound through the engine: if this computer cannot keep it fed, it goes back to the computer's sound
+      noteGaps(st.app_gaps);
       // the file cannot take any more (it is as big as a WAV can be, or the disk is full): stop and keep what there is
       if (st.full && phaseRef.current === "recording" && !fullRef.current) {
         fullRef.current = true;
@@ -276,12 +281,22 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     // closing: a recording still going (the driver was reset mid-session) comes back, and its takes are kept
     return () => {
       live = false;
+      // (the app's own sound goes back to the computer's sound as the engine closes, not after: see through.ts)
+      void comeBack();
       void engineClose()
         .then((r) => r && salvageRef.current(r), () => {})
         .then(() => closers.current.splice(0).forEach((f) => f()));
       setOpened(null);
     };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // hearing yourself through the effects keeps the engine open on every page: the app's own sound then goes
+  // through it too, so the two never play through the interface at once (see through.ts)
+  useEffect(() => {
+    if (!desktop || !opened || !monitor) return;
+    void goThrough(THROUGH);
+    return () => void comeBack();
+  }, [desktop, opened, monitor]);
 
   // open only because this page is on screen: a sound about to start closes it first (see handoff.ts)
   useEffect(() => {
