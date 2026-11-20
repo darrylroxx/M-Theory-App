@@ -143,6 +143,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const [layerLv, setLayerLv] = useState<Partial<Record<LayerKind, number>>>({});
   /** each layer's swatch: a little painting of its paint */
   const [swatches, setSwatches] = useState<Partial<Record<LayerKind, string>>>({});
+  /** the swatches' pictures in use (each let go when the next ones come) */
+  const urls = useRef<string[]>([]);
   const castRef = useRef("");
   const castAt = useRef(0);
   const stage = useRef<HTMLDivElement>(null);
@@ -232,15 +234,44 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     if (castRef.current.startsWith(`${base}|`) && now - castAt.current < 4000) return;
     castRef.current = id;
     castAt.current = now;
-    const made = paintSwatches(pal, look?.turn ?? 0, look?.light ?? 0, tonic, scale);
-    if (!made) return;
-    const out: Partial<Record<LayerKind, string>> = {};
-    for (const l of LAYER_ORDER) out[l] = made[l].toDataURL("image/png");
-    setSwatches(out);
+    // (painted, read back and encoded without making the page wait: the music's timers run on this page too)
+    void paintSwatches(pal, look?.turn ?? 0, look?.light ?? 0, tonic, scale).then(async (made) => {
+      if (!made || castRef.current !== id) return;
+      const blobs = await Promise.all(LAYER_ORDER.map((l) => new Promise<Blob | null>((done) => made[l].toBlob(done, "image/png"))));
+      if (castRef.current !== id) return;
+      const out: Partial<Record<LayerKind, string>> = {};
+      LAYER_ORDER.forEach((l, i) => {
+        const b = blobs[i];
+        if (b) out[l] = URL.createObjectURL(b);
+      });
+      for (const u of urls.current) URL.revokeObjectURL(u);
+      urls.current = Object.values(out) as string[];
+      setSwatches(out);
+    });
   }, [pal, tonic, scale]);
   useEffect(() => {
-    if (active && can) recast();
+    if (!active || !can) return;
+    // the first time, once the page has drawn and has a moment to spare
+    const idle = (window as unknown as { requestIdleCallback?: (f: () => void, o?: { timeout: number }) => number; cancelIdleCallback?: (n: number) => void });
+    let n = 0;
+    const f = requestAnimationFrame(() => {
+      if (idle.requestIdleCallback) n = idle.requestIdleCallback(recast, { timeout: 1000 });
+      else n = window.setTimeout(recast, 50);
+    });
+    return () => {
+      cancelAnimationFrame(f);
+      if (idle.cancelIdleCallback) idle.cancelIdleCallback(n);
+      else window.clearTimeout(n);
+    };
   }, [active, can, recast]);
+  // the swatches' pictures are let go with the page
+  useEffect(
+    () => () => {
+      for (const u of urls.current) URL.revokeObjectURL(u);
+      urls.current = [];
+    },
+    [],
+  );
   useEffect(() => {
     const a = painter.current?.artist;
     if (!a) return;

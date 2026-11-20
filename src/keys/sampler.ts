@@ -17,6 +17,7 @@
  * before it is rendered.
  */
 import type { Instrument } from "../audio/instrument";
+import { startRecorded } from "../audio/late";
 import { Bank, defaultBudget, type BankOptions, type Progress } from "./bank";
 import { damperTau } from "./damper";
 import { KEYS_LEVEL, Keyboard, stopAt, type KeyVoice } from "./keyboard";
@@ -150,7 +151,8 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
     } else src.connect(amp);
     amp.connect(this.output);
     const lead = Math.min(this.bank.lead, buffer.duration / 2);
-    src.start(t, lead);
+    // (booked late, the page having been held up: it starts now, that far into the recording: see late.ts)
+    startRecorded(c, src, Number.isFinite(when) ? Math.min(when, t) : t, lead);
     const damped = key <= m.dampedTop;
     this.add({
       midi,

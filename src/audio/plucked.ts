@@ -3,6 +3,7 @@
  * per note, played into a track's effects rack. A string plucked again stops the note before it,
  * as on a real instrument.
  */
+import { startRecorded } from "./late";
 import { drumRng } from "./drums";
 import { renderHarp, stringKey, voiceShift, type HarpString } from "./harp";
 import { listening, pulse } from "./pulse";
@@ -113,7 +114,8 @@ export class Harp {
     pan.pan.value = slot !== undefined ? (((slot % 6) - 2.5) / 2.5) * 0.7 * s.wide : 0;
     src.connect(vcf).connect(g).connect(pan).connect(this.out.input);
     const r: Ringing = { srcs: [src], gain: g };
-    src.start(when);
+    // (booked late, the page having been held up: it starts now, that far in, rather than piling up on the others: see late.ts)
+    startRecorded(c, src, when);
     if (s.octave > 0) {
       // the octave string of a twelve-string: the same pluck an octave up, a moment later
       const oct = c.createBufferSource();
@@ -122,7 +124,7 @@ export class Harp {
       const og = c.createGain();
       og.gain.value = 0.7 * s.octave;
       oct.connect(og).connect(vcf);
-      oct.start(when + 0.009);
+      startRecorded(c, oct, when + 0.009);
       r.srcs.push(oct);
     }
     if (s.shimmer > 0 && !cut) {
@@ -134,7 +136,7 @@ export class Harp {
       sg.gain.setValueAtTime(0, when);
       sg.gain.linearRampToValueAtTime(VOICE_GAIN * velocity * s.shimmer * 0.85, when + 0.28);
       sh.connect(sg).connect(this.out.halo);
-      sh.start(when);
+      startRecorded(c, sh, when);
       r.srcs.push(sh);
     }
     if (slot !== undefined) {

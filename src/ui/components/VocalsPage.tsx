@@ -3,7 +3,8 @@ import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
 import { renderSong } from "../../audio/synth";
-import { hearAlone, onAlone as onAloneChange, stopAlone } from "../../audio/takeplay";
+import { hearAlone, hearingAlone, onAlone as onAloneChange, stopAlone } from "../../audio/takeplay";
+import { Quiet, engineWanted, freeInterface, holdInterface } from "../../audio/handoff";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
 import { barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
@@ -60,6 +61,8 @@ const KNOBS: { k: keyof VocalFx; g: Group; label: string; min: number; max: numb
 ];
 const sig = (fx: VocalFx) => JSON.stringify(fx);
 const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
+/** the interfaces found, kept for the session: listing them loads every driver in turn, which can upset one that is playing */
+let listed: AudioHost[] | null = null;
 /** Until the driver's own figure is in: about how long a sound takes to go in and come back out at a buffer size. */
 const roundTrip = (block: number, rate: number) => Math.round(((2 * block) / rate) * 1000 + 2);
 /** A long session is noted from this many minutes on (small, beside the pass number). */
@@ -110,7 +113,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   // bars on screen and Follow, shared with every other page
   const { shown, follow } = useBarsView();
 
-  const [hosts, setHosts] = useState<AudioHost[] | null>(null);
+  const [hosts, setHosts] = useState<AudioHost[] | null>(listed);
   const [opened, setOpened] = useState<EngineOpened | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [phase, setPhase] = useState<"idle" | "preparing" | "rehearsing" | "recording" | "saving">("idle");
@@ -162,20 +165,39 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
 
-  // the list of interfaces: once, and again only after a problem (never while the interface is
-  // being opened, which can upset a driver)
+  // the app's own sound (the song, a take heard alone): the engine waits until it has been quiet
+  // for a moment, and the song waits for the engine to close first (see handoff.ts)
+  const [aloneOn, setAloneOn] = useState(hearingAlone);
+  useEffect(() => onAloneChange(setAloneOn), []);
+  const [quiet, setQuiet] = useState(() => !playing && !hearingAlone());
+  const quietRef = useRef<Quiet | null>(null);
+  quietRef.current ??= new Quiet(setQuiet);
+  useEffect(() => quietRef.current!.sound(playing || aloneOn), [playing, aloneOn]);
+  useEffect(() => () => quietRef.current?.dispose(), []);
+  /** waiting for the engine to close (a sound about to start), and to open (a recording about to start) */
+  const closers = useRef<(() => void)[]>([]);
+  const openers = useRef<((o: EngineOpened | null) => void)[]>([]);
+
+  // the list of interfaces: once a session, and again only after a problem (never while the
+  // interface is being opened, nor while the app plays: listing loads every driver in turn)
   useEffect(() => {
-    if (!desktop || !active || (hosts && !error)) return;
-    void audioDevices().then(setHosts);
-  }, [desktop, active, !!error]); // eslint-disable-line react-hooks/exhaustive-deps
+    if (!desktop || !active || !quiet || (hosts && !error)) return;
+    void audioDevices().then((h) => {
+      listed = h;
+      setHosts(h);
+    });
+  }, [desktop, active, quiet, !!error]); // eslint-disable-line react-hooks/exhaustive-deps
   const devices = (hosts ?? []).flatMap((h) => h.devices.filter((d) => (d.input?.channels ?? 0) > 0 && (d.output?.channels ?? 0) > 0).map((d) => ({ host: h.name, name: d.name, channels: d.input!.channels })))
     .sort((a, b) => Number(b.host.toUpperCase() === "ASIO") - Number(a.host.toUpperCase() === "ASIO") || Number(/focusrite|scarlett/i.test(b.name)) - Number(/focusrite|scarlett/i.test(a.name)));
   const chosen = devices.find((d) => d.host === studio.host && d.name === studio.device) ?? devices[0];
 
-  // the interface is open while this page is on screen, while recording, and whenever you hear
-  // yourself through the effects: then it stays open on every page
+  // the interface is open while recording or rehearsing, whenever you hear yourself through the
+  // effects (then it stays open on every page), and while this page is on screen once the app's
+  // own sound has stopped (see handoff.ts)
   const monitor = (studio.monitor ?? "hardware") === "effects";
-  const keepOpen = active || recording || monitor;
+  const keepOpen = engineWanted({ recording, busy: phase !== "idle", monitor, active, quiet });
+  /** closed only because the app is sounding: Record and Rehearse open it again at once */
+  const resting = desktop && !!chosen && !opened && !keepOpen && active && !error;
   /** bumped when the driver resets (its buffer size or rate was changed in the Focusrite Notifier): the interface is opened again */
   const [reopen, setReopen] = useState(0);
   useEffect(() => {
@@ -248,10 +270,28 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         fullRef.current = true;
         void stopRef.current();
       }
-    }).then((o) => { if (live) { rate.current = o.rate; setOpened(o); } }).catch((e) => live && (setOpened(null), setError(String(e))));
+    }).then((o) => { if (live) { rate.current = o.rate; setOpened(o); openers.current.splice(0).forEach((f) => f(o)); } }).catch((e) => { if (live) { setOpened(null); setError(String(e)); openers.current.splice(0).forEach((f) => f(null)); } });
     // closing: a recording still going (the driver was reset mid-session) comes back, and its takes are kept
-    return () => { live = false; void engineClose().then((r) => r && salvageRef.current(r)); setOpened(null); };
+    return () => {
+      live = false;
+      void engineClose()
+        .then((r) => r && salvageRef.current(r), () => {})
+        .then(() => closers.current.splice(0).forEach((f) => f()));
+      setOpened(null);
+    };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // open only because this page is on screen: a sound about to start closes it first (see handoff.ts)
+  useEffect(() => {
+    if (!opened || monitor || recording || phase !== "idle") return;
+    return holdInterface(
+      () =>
+        new Promise<void>((done) => {
+          closers.current.push(done);
+          quietRef.current!.handOff();
+        }),
+    );
+  }, [opened, monitor, recording, phase]);
 
   // the takes are on their track (or there were none): the idea can be left again
   useEffect(() => {
@@ -283,7 +323,18 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
 
   /** Render the loop's song, hand it to the engine, and start (recording or just singing along). */
   const go = async (record: boolean) => {
-    if (!opened) return toast("The interface is not open");
+    let o = opened;
+    if (!o && resting) {
+      // closed while the app played: the song stops (as it does for a recording) and the interface opens at once
+      onRecording(true);
+      o = await new Promise<EngineOpened | null>((done) => {
+        openers.current.push(done);
+        window.setTimeout(() => done(null), 8000);
+      });
+      if (!o) onRecording(false);
+    }
+    if (!o) return toast("The interface is not open");
+    const rateNow = o.rate;
     const plan = recordPlan();
     if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
     const t = record ? ensureTrack() : track;
@@ -303,7 +354,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     onRecording(true);
     setPhase("preparing");
     try {
-      const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: opened.rate, skip: record ? t?.id : undefined });
+      const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: rateNow, skip: record ? t?.id : undefined });
       await engineBacking(l, r);
       // the count-in is in the meter of the loop's first bar; after it, every bar clicks in its own
       const click = clickPlan(plan.bars, plan.beatsPerBar, studio.countIn ?? 1);
@@ -528,6 +579,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     // (not over a song the interface is playing)
     if (phaseRef.current !== "idle") return;
     onAlone();
+    // the interface's own engine closes first, so it is not playing through the interface at the same time (see handoff.ts)
+    await freeInterface();
     // just this take is read from the recording, so it plays from its own start
     const ok = await hearAlone(tk, track?.id ?? "vocals", part);
     if (ok) setAlone(tk.id);
@@ -702,8 +755,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
       {desktop && (
         <>
           <div className="vc-rec">
-            <button className={`rec-btn${phase === "recording" ? " on" : ""}`} aria-label={phase === "recording" ? "Stop recording" : "Record"} title={phase === "recording" ? "Stop" : "Record take after take over the loop, after a count-in"} disabled={!opened || phase === "preparing" || phase === "saving" || phase === "rehearsing"} onClick={() => (phase === "recording" ? void stop() : void go(true))}>{phase === "recording" ? "■" : "●"}</button>
-            <button className="btn sm" disabled={!opened || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
+            <button className={`rec-btn${phase === "recording" ? " on" : ""}`} aria-label={phase === "recording" ? "Stop recording" : "Record"} title={phase === "recording" ? "Stop" : "Record take after take over the loop, after a count-in"} disabled={!(opened || resting) || phase === "preparing" || phase === "saving" || phase === "rehearsing"} onClick={() => (phase === "recording" ? void stop() : void go(true))}>{phase === "recording" ? "■" : "●"}</button>
+            <button className="btn sm" disabled={!(opened || resting) || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
             <span className="vc-state">
               <b ref={countRef} className="vc-count" />
               <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>… <span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>

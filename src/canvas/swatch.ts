@@ -92,9 +92,11 @@ function phrase(layer: LayerKind, hand: LayerHand, step: (t: number) => void) {
 
 /**
  * Paint every layer's swatch, in a palette (and the casting of its colours the music has
- * chosen). Null where the paint cannot run.
+ * chosen). Null where the paint cannot run. The picture is read back from the graphics card
+ * without making the page wait for it (see Sim.readBack): the page's timers, the music's among
+ * them, keep running while the card paints.
  */
-export function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scale = [0, 2, 4, 5, 7, 9, 11]): Record<LayerKind, HTMLCanvasElement> | null {
+export async function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scale = [0, 2, 4, 5, 7, 9, 11]): Promise<Record<LayerKind, HTMLCanvasElement> | null> {
   if (typeof document === "undefined" || !Sim.supported()) return null;
   // (one strip of wet paint is kept for every painting of the swatches: making a graphics context each time is slow,
   // and a page may only have a few)
@@ -107,7 +109,7 @@ export function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scal
       return null;
     }
   }
-  const { strip, sim } = kept;
+  const { sim } = kept;
   const n = LAYER_ORDER.length;
   const W = SWATCH_W;
   const H = SWATCH_H;
@@ -143,12 +145,14 @@ export function paintSwatches(pal: Palette, turn = 0, light = 0, tonic = 0, scal
   // let it run and settle for a moment, as wet paint does
   for (let i = 0; i < 45; i++) sim.step(1 / 30);
   sim.show();
+  const img = await sim.readBack();
+  if (!img) return null;
   const out = {} as Record<LayerKind, HTMLCanvasElement>;
   LAYER_ORDER.forEach((layer, k) => {
     const cv = document.createElement("canvas");
     cv.width = W;
     cv.height = H;
-    cv.getContext("2d")!.drawImage(strip, k * W, 0, W, H, 0, 0, W, H);
+    cv.getContext("2d")!.putImageData(img, -k * W, 0, k * W, 0, W, H);
     out[layer] = cv;
   });
   return out;

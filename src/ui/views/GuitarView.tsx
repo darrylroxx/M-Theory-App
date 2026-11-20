@@ -42,6 +42,7 @@ import { layClips, placedClips, playedTakes as takesPlayed, sixteenths } from ".
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
 import { keepTakes, loadTake, takeBuffer, takeKey } from "../../audio/takebuffers";
 import { stopAlone } from "../../audio/takeplay";
+import { freeInterface } from "../../audio/handoff";
 import { letterClass } from "../letters";
 import { lastOnly, lastOnlyEach } from "../latest";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
@@ -525,7 +526,8 @@ export function GuitarView() {
       });
     waiting.current = true;
     const mine = starts.begin();
-    void readyTracks(keys).then(() => {
+    // (on the Vocals page the interface's own engine closes first, so the driver settles in silence: see handoff.ts)
+    void Promise.all([readyTracks(keys), freeInterface()]).then(() => {
       if (!mine() || recordingRef.current) return;
       waiting.current = false;
       go();

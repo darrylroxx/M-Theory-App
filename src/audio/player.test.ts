@@ -366,3 +366,55 @@ describe("a note played to be heard", () => {
   });
 });
 
+
+describe("the page held up while the song plays (see late.ts)", () => {
+  it("drum hits whose moment has passed are left out, not piled up at once; the rest come on time", async () => {
+    const { lateCount } = await import("./late");
+    notes();
+    const b: Beat = { ...DEFAULT_BEAT, on: true };
+    const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, drums: b }];
+    const p = new S.ProgressionPlayer();
+    S.getAudio();
+    live.currentTime = 0;
+    p.start(items, 120, "ring", true, b);
+    const tick = (to: number) => {
+      live.currentTime = to;
+      vi.advanceTimersByTime(25);
+    };
+    for (let t = 0.025; t <= 1; t += 0.025) tick(t);
+    const hits = () => starts.filter((s) => s.ctx === live && !s.loop);
+    const before = hits().length;
+    const dropped = lateCount.drums;
+    expect(before).toBeGreaterThan(4);
+    // the page is held up for 600 ms: the next timer runs at 1.6 s
+    tick(1.6);
+    const after = hits().slice(before);
+    // nothing was booked more than 30 ms before the clock, so nothing piles up in the same instant
+    expect(after.filter((s) => s.when < 1.6 - 0.03).length).toBe(0);
+    expect(lateCount.drums - dropped).toBeGreaterThan(0);
+    // and it carries on in time
+    tick(2);
+    expect(hits().length).toBeGreaterThan(before + after.length);
+    p.stop();
+  });
+  it("a recorded note booked late starts now, that far into itself (at the speed it plays at), so it ends where it would have", async () => {
+    const { startRecorded } = await import("./late");
+    const c = new FakeAudio();
+    c.currentTime = 2;
+    const got: number[][] = [];
+    const src = { start: (w: number, o: number) => got.push([w, o]), playbackRate: { value: 1 }, detune: { value: 1200 } };
+    expect(startRecorded(asAudio(c), src as never, 1.8, 0.01)).toBeCloseTo(0.2, 9);
+    expect(got[0][0]).toBe(2);
+    // an octave up plays twice as fast: 0.2 s late is 0.4 s into the recording
+    expect(got[0][1]).toBeCloseTo(0.41, 9);
+    // on time, or a moment old (a sound tapped to be heard): as asked
+    expect(startRecorded(asAudio(c), src as never, 2.1, 0)).toBe(0);
+    expect(got[1]).toEqual([2.1, 0]);
+    expect(startRecorded(asAudio(c), src as never, 1.995, 0)).toBe(0);
+    // a render is never late
+    const off = new FakeOffline();
+    off.currentTime = 2;
+    startRecorded(asAudio(off), src as never, 1, 0);
+    expect(got[3]).toEqual([1, 0]);
+  });
+});
