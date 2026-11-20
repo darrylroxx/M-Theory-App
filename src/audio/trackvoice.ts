@@ -180,11 +180,13 @@ export class TrackVoice {
     /** the sound it starts on: a song's track starts on its own, so its first note has nothing to glide from */
     start: HarpSound = SOUND_DEFAULT,
     bpm = 90,
+    /** the track's fader as its reverb hears it (mix.ts sendFader): the rooms are shared, see rooms.ts */
+    sendTo?: AudioNode,
   ) {
     this.offline = "startRendering" in c;
     this.out = c.createGain();
     this.out.connect(dest);
-    this.rack = createRack(c, this.out);
+    this.rack = createRack(c, this.out, sendTo);
     this.rack.set(start, bpm);
     this.harpIn = c.createGain();
     this.harpIn.connect(this.rack.input);
@@ -389,10 +391,18 @@ export class TrackVoice {
     }
     if (this.offline || this.gone) return;
     this.hushed = true;
-    const g = this.out.gain;
-    g.cancelScheduledValues(at);
-    // (to 1% in the fade's time: the room is 40 dB down by then, and silent soon after)
-    g.setTargetAtTime(0, at, STOP_FADE / 4.6);
+    // (to 1% in the fade's time: the room is 40 dB down by then, and silent soon after; what the track
+    // sends to its room fades the same way, and the room itself with it)
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(at);
+      g.setTargetAtTime(0, at, STOP_FADE / 4.6);
+    }
+    this.rack.hush(at, STOP_FADE / 4.6);
+  }
+
+  /** The track's own fade, on its sound and on what it sends to its room. */
+  private fades(): AudioParam[] {
+    return [this.out.gain, this.rack.send.gain];
   }
 
   /** A note is coming at `when` after ■ faded the track out: it comes back just before it (quickly, without a click). */
@@ -400,9 +410,11 @@ export class TrackVoice {
     if (!this.hushed || this.offline) return;
     this.hushed = false;
     const t = Math.max(this.c.currentTime, when - 0.03);
-    const g = this.out.gain;
-    g.cancelScheduledValues(t);
-    g.setTargetAtTime(1, t, 0.006);
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(t);
+      g.setTargetAtTime(1, t, 0.006);
+    }
+    this.rack.wake(t);
   }
 
   /** Offline, before the render: load what the notes need, then play what was written down. */
@@ -428,8 +440,10 @@ export class TrackVoice {
     };
     if (this.offline) return end();
     const now = this.c.currentTime;
-    this.out.gain.cancelScheduledValues(now);
-    this.out.gain.setTargetAtTime(0, now, TAU);
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(0, now, TAU);
+    }
     this.harp.stopAll(now + FADE);
     inst?.stopAll(now + FADE);
     setTimeout(end, FADE * 2000);

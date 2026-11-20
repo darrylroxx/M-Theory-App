@@ -125,10 +125,32 @@ export function fader(id: TrackId, c: BaseAudioContext): GainNode {
   return g;
 }
 
+/**
+ * A track's fader as its reverb hears it: the tracks share their rooms (rooms.ts), so what a track
+ * sends to one goes through a copy of its fader on the way in (its level, mute and solo), where its
+ * own sound goes through the fader itself. Not connected to anything: the track's sends are.
+ */
+const sendDesks = new WeakMap<BaseAudioContext, Record<TrackId, GainNode>>();
+let liveSends: Record<TrackId, GainNode> = {};
+export function sendFader(id: TrackId, c: BaseAudioContext): GainNode {
+  let set = sendDesks.get(c);
+  if (!set) {
+    set = {};
+    sendDesks.set(c, set);
+    if (typeof AudioContext !== "undefined" && c instanceof AudioContext) liveSends = set;
+  }
+  const f = set[id];
+  if (f) return f;
+  const g = c.createGain();
+  g.gain.value = gainOf(current, id);
+  set[id] = g;
+  return g;
+}
+
 /** Set the faders (they glide over a few milliseconds, so nothing clicks). */
 export function setMix(mix: Mix | undefined) {
   current = mix;
-  for (const [id, g] of Object.entries(liveFaders)) g.gain.setTargetAtTime(gainOf(mix, id), g.context.currentTime, 0.015);
+  for (const set of [liveFaders, liveSends]) for (const [id, g] of Object.entries(set)) g.gain.setTargetAtTime(gainOf(mix, id), g.context.currentTime, 0.015);
 }
 
 /** A track's fader setting right now (for sounds that do not pass through a fader of their own). */

@@ -32,33 +32,49 @@ describe("a moment of an offline render", () => {
 });
 
 describe("a section's own room in a WAV", () => {
-  it("a track's room changes when the render reaches the section, not before and not on a timer", async () => {
+  it("a track's send crosses over to the section's room exactly at its moment; the room it leaves is never cut", () => {
     const c = new FakeOffline();
     const rack = createRack(asAudio(c));
     rack.set(SOUND_DEFAULT, 90);
-    const [verb] = convolvers(c);
-    const first = verb.buffer;
+    const [hall] = convolvers(c);
+    const first = hall.buffer;
     expect(first).toBeTruthy();
+    const a = rack.room()!;
     rack.set({ ...SOUND_DEFAULT, verb: "plate", size: 0.9 }, 90, 4);
-    expect(verb.buffer).toBe(first);
-    await c.reach(3.9);
-    expect(verb.buffer).toBe(first);
-    await c.reach(4.1);
-    expect(verb.buffer).not.toBe(first);
+    const b = rack.room()!;
+    expect(b.key).not.toBe(a.key);
+    // the new room is built at once (a render has no time to wait), the old one keeps its impulse and rings out
+    const [, plate] = convolvers(c);
+    expect(plate.buffer).toBeTruthy();
+    expect(hall.buffer).toBe(first);
+    const sendInto = (input: unknown) => c.nodes.find((n) => n.outputs.includes(input as FakeAny)) as FakeAny;
+    expect(sendInto(a.input).gain.at(3.99)).toBeCloseTo(1, 6);
+    expect(sendInto(a.input).gain.at(4.1)).toBeLessThan(1e-4);
+    expect(sendInto(b.input).gain.at(3.99)).toBe(0);
+    expect(sendInto(b.input).gain.at(4.1)).toBeGreaterThan(0.9999);
+    // (nothing waits for the render to pause)
+    expect(c.pauses.length).toBe(0);
   });
-  it("a drums track's room does the same", async () => {
+  it("a drums track's room changes when the render reaches the section, into the desk's other room, crossing over", async () => {
     // the desk's timers run on fake time, so none can fire after the test has put `window` away
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
     const c = new FakeOffline();
     withContext(asAudio(c), () => setDrumFx(fxOf({}), 100, "dz"));
-    const verb = convolvers(c)[0];
-    const first = verb.buffer;
+    const [one, two] = convolvers(c);
+    const first = one.buffer;
+    expect(two.buffer).toBeNull();
     withContext(asAudio(c), () => setDrumFx({ ...fxOf({}), verb: "hall", size: 0.95 }, 100, "dz", 6));
     vi.advanceTimersByTime(5000);
-    expect(verb.buffer).toBe(first);
+    expect(two.buffer).toBeNull();
     await c.reach(6.5);
-    expect(verb.buffer).not.toBe(first);
+    // the ringing room keeps its impulse (setting it would cut it to silence): the other one gets the new one
+    expect(one.buffer).toBe(first);
+    expect(two.buffer).toBeTruthy();
+    const outOf = (v: FakeAny) => v.outputs[0] as FakeAny;
+    expect(outOf(one).gain.at(6.07)).toBe(0);
+    expect(outOf(two).gain.at(6.07)).toBe(1);
+    expect(outOf(one).gain.at(6.03)).toBeGreaterThan(0.3);
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });

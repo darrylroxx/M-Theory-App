@@ -12,7 +12,8 @@ import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
 import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
-import { fader } from "./mix";
+import { fader, sendFader } from "./mix";
+import { roomsOf } from "./rooms";
 import { loadSafety } from "./safety";
 import { TakeRuns, type PlayTake, type TakeSpan } from "./takeplay";
 export type { PlayItem } from "./patterns";
@@ -43,7 +44,7 @@ function voiceOf(id: string, kind?: VoiceKind, sound?: HarpSound): TrackVoice {
   if (!v || v.c !== ctx) {
     const f = fader(id, ctx);
     const first = id === "chords" || id === "melody";
-    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id, liveSound.get(id) ?? sound ?? SOUND_DEFAULT, tempo);
+    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id, liveSound.get(id) ?? sound ?? SOUND_DEFAULT, tempo, sendFader(id, ctx));
     // every track goes out through a tap, so the canvas's guide hears each kind of part apart
     tapStem(v.kind === "melody" ? "melody" : "chords", f, id);
     v.setTone(liveTones[id] ?? GUITAR);
@@ -51,9 +52,10 @@ function voiceOf(id: string, kind?: VoiceKind, sound?: HarpSound): TrackVoice {
     if (!pumping) {
       pumping = true;
       // Pump: every track dips under each kick and swells back, like a sidechained compressor
+      // (the reverb rooms the tracks share dip the same way, as each track's own room did)
       onKickHit((when, depth) => {
-        for (const x of voices.values()) {
-          const duck = x.rack.duck.gain;
+        const c = audioIfStarted();
+        for (const duck of [...[...voices.values()].map((x) => x.rack.duck.gain), ...(c ? roomsOf(c).map((r) => r.duck.gain) : [])]) {
           duck.cancelScheduledValues(when);
           duck.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
           duck.setTargetAtTime(1, when + 0.03, 0.09);
@@ -769,6 +771,10 @@ export class ProgressionPlayer {
     this.onDrumStep(-1);
     dropPulses();
     setBedPlaying(false, null);
+    for (const r of roomsOf(getAudio())) {
+      r.duck.gain.cancelScheduledValues(0);
+      r.duck.gain.setValueAtTime(1, getAudio().currentTime);
+    }
     for (const [id, v] of voices) {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
@@ -809,7 +815,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       if (!v) {
         // each track starts on the sound it plays with (none given: as the page has it), so its first note
         // does not glide in from another
-        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm);
+        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm, sendFader(id, off));
         v.setTone(liveTones[id] ?? GUITAR);
         made.set(id, v);
       }
