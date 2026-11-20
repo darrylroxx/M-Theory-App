@@ -46,6 +46,7 @@ import { stopAlone } from "../../audio/takeplay";
 import { freeInterface } from "../../audio/handoff";
 import { letterClass } from "../letters";
 import { lastOnly, lastOnlyEach } from "../latest";
+import { handsBusy, watchHands } from "../hands";
 import { TIME_SIGS, isCompound, sameSig, sigBeats, sigName, type TimeSig } from "../../song/meter";
 import { conform, sectionSig, setSig, sigOf } from "../../song/unity";
 import { sameMusic } from "../../song/library";
@@ -486,6 +487,23 @@ export function GuitarView() {
   const { shown, follow } = useBarsView();
   const followRef = useRef(follow);
   followRef.current = follow;
+  // with Follow on, the page goes to the section the music has reached: at once, or, while something is being
+  // changed by hand (a knob held, keys on a slider), once that stops; every control writes to the section on
+  // screen, so a change begun in one section never goes on in the next
+  useEffect(watchHands, []);
+  const turnWait = useRef(0);
+  const followTo = (block: string) => {
+    window.clearTimeout(turnWait.current);
+    if (handsBusy()) {
+      turnWait.current = window.setTimeout(() => {
+        const at = playBlock.current;
+        if (at && followRef.current && playingRef.current) followTo(at);
+      }, 200);
+      return;
+    }
+    set((s) => (s.progression.song && s.progression.song.current !== block ? { ...s, progression: selectBlock(s.progression, block) } : s));
+  };
+  useEffect(() => () => window.clearTimeout(turnWait.current), []);
   // Follow switched on while the music is in another section: the page goes to where the music is
   useEffect(() => {
     const at = playBlock.current;
@@ -536,6 +554,7 @@ export function GuitarView() {
     // ■ stops every take, a take heard alone on the Vocals page too
     stopAlone();
     playBlock.current = null;
+    window.clearTimeout(turnWait.current);
     setPlaying(false);
     setNow(null);
   };
@@ -580,7 +599,7 @@ export function GuitarView() {
       // a new section has started: with Follow on the page goes there too; with it off the page stays where it is
       if (at.block !== playBlock.current) {
         playBlock.current = at.block;
-        if (at.block && followRef.current) set((s) => (s.progression.song && s.progression.song.current !== at.block ? { ...s, progression: selectBlock(s.progression, at.block) } : s));
+        if (at.block && followRef.current) followTo(at.block);
       }
       setNow((n) => (n?.block === at.block && n.idx === at.idx ? n : { block: at.block, idx: at.idx }));
     };
@@ -665,7 +684,9 @@ export function GuitarView() {
       const x = plan.per[k];
       for (let i = k === a ? span.from.bar : 0; i <= (k === b ? span.to.bar : x.bars - 1); i++) bars.push({ block: x.block, bar: i, letter: x.label, beats: x.bar, sub: sixteenths(!!x.items[0]?.meter?.triplet) });
     }
-    return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : all.length > 1 ? `to ${plan.per.find((x) => x.block === span.to.block)?.label ?? ""} (all between)` : "and on"}`, bars };
+    // and every bar of the song (a take sung in other bars may play in these: it is on the lane too)
+    const song: RecordPlan["bars"] = plan.per.flatMap((x) => Array.from({ length: x.bars }, (_, i) => ({ block: x.block, bar: i, letter: x.label, beats: x.bar })));
+    return { items: list.items, at: { block: span.from.block, bar: span.from.bar }, beats, beatsPerBar: Math.max(1, Math.round(first?.bar ?? bar)), bpm: prog.bpm, pattern: prog.pattern, beat: firstBeat, label: `${first?.label ?? "A"} ${span.from.block === span.to.block ? `bars ${span.from.bar + 1}–${span.to.bar + 1}` : all.length > 1 ? `to ${plan.per.find((x) => x.block === span.to.block)?.label ?? ""} (all between)` : "and on"}`, bars, song };
   }, [runs, layout, curBlock, sliceLoop, plan.per, bar, prog.bpm, prog.pattern, firstBeat]);
 
   const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);

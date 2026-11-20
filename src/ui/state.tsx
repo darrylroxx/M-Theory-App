@@ -28,6 +28,7 @@ import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
+import { joinOtherTab } from "./othertab";
 import type { Key } from "../theory/keys";
 
 export type Tab = "guitar" | "piano";
@@ -263,9 +264,13 @@ function unify(s: AppState): AppState {
   return p === s.progression ? s : { ...s, progression: p };
 }
 
+/** What was in storage when the app loaded (see AppProvider: another tab may write there too). */
+let loadedRaw: string | null = null;
+
 function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
+    loadedRaw = raw;
     if (!raw) return DEFAULT_STATE;
     const parsed = JSON.parse(raw) as Partial<AppState> & { progression?: { avoidBarre?: boolean } };
     const tab: Tab = (parsed.tab as string) === "piano" ? "piano" : "guitar";
@@ -377,14 +382,49 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [toastMsg, setToast] = useState<{ msg: string; action?: ToastAction } | null>(null);
   const toastTimer = useRef<number | null>(null);
 
+  // The app may be open in other tabs too, all writing to the same place: what was last written
+  // there (by this tab, or by another and taken in), and the state that took in another tab's
+  // library (it is not written back: storage has the other tab's idea on screen, and no more).
+  const seen = useRef<string | null>(loadedRaw);
+  const takenIn = useRef<AppState | null>(null);
   useEffect(() => {
+    if (state === takenIn.current) return;
     try {
+      let s = state;
+      const there = localStorage.getItem(STORAGE_KEY);
+      // another tab wrote since, and this one has not taken it in yet: its library is kept, with this tab's
+      if (there !== null && there !== seen.current) {
+        s = joinOtherTab(state, JSON.parse(there), "both", newId);
+        if (s !== state) setRaw(s);
+      }
       // kept with every track in its place, so what was being edited can never be mistaken for another track
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...state, progression: normalize(state.progression) }));
+      const out = JSON.stringify({ ...s, progression: normalize(s.progression) });
+      localStorage.setItem(STORAGE_KEY, out);
+      seen.current = out;
     } catch {
       /* storage unavailable (private mode) — app still works */
     }
   }, [state]);
+  // an idea saved (or deleted, or a rhythm, kit or sound kept) in another tab is here too, at once
+  useEffect(() => {
+    const on = (e: StorageEvent) => {
+      if (e.key !== STORAGE_KEY || !e.newValue) return;
+      seen.current = e.newValue;
+      let theirs: unknown;
+      try {
+        theirs = JSON.parse(e.newValue);
+      } catch {
+        return;
+      }
+      setRaw((s) => {
+        const next = joinOtherTab(s, theirs as Parameters<typeof joinOtherTab>[1], "theirs", newId);
+        if (next !== s) takenIn.current = next;
+        return next;
+      });
+    };
+    window.addEventListener("storage", on);
+    return () => window.removeEventListener("storage", on);
+  }, []);
 
   useEffect(() => {
     const t = state.settings.theme;
