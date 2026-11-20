@@ -18,8 +18,9 @@
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
-import { atRenderTime, audioContext, audioIfStarted, isRendering } from "./context";
+import { atRenderTime, audioContext, audioIfStarted, isRendering, soonest } from "./context";
 import { gate, type Gate } from "./gate";
+import { lateCount, pastEnd, startRecorded } from "./late";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem, untapStem } from "./stems";
@@ -48,8 +49,9 @@ interface Channel {
 interface Bus {
   dry: GainNode;
   sat: Saturator;
-  /** two rooms: the one heard, and the one a new size or kind is loaded into (see swapRoom) */
+  /** two rooms: the one fed now, and the one a new size or kind is loaded into (see swapRoom); each fed through a gain of its own, and heard through another */
   verbs: [ConvolverNode, ConvolverNode];
+  verbIns: [GainNode, GainNode];
   verbOuts: [GainNode, GainNode];
   verbIn: GainNode;
   verbWet: GainNode;
@@ -119,9 +121,9 @@ interface Desk {
   sizeTimer?: number;
   /** its saturation's change, waiting for the moment its section starts (live) */
   satTimer?: number;
-  /** which of the two rooms is heard, and when the other has faded out (free to load) */
+  /** which of the two rooms is fed, and until when each rings on with what it was fed (it may be loaded again after that) */
   verbOn: 0 | 1;
-  verbFree: number;
+  verbRings: [number, number];
   bedSrc: AudioBufferSourceNode | null;
   /** the playing bed's own level, faded out when it stops */
   bedFade: GainNode | null;
@@ -188,11 +190,11 @@ function getBus(track = FIRST_DRUMS): Bus {
     return v;
   };
   const verbs: [ConvolverNode, ConvolverNode] = [room(), room()];
+  const verbIns: [GainNode, GainNode] = [c.createGain(), c.createGain()];
   const verbOuts: [GainNode, GainNode] = [c.createGain(), c.createGain()];
-  verbOuts[1].gain.value = 0;
-  verbs.forEach((v, i) => v.connect(verbOuts[i]).connect(verbWet));
-  // (only the room heard is fed: the other costs nothing until a new one is loaded into it)
-  verbIn.connect(verbs[0]);
+  verbs.forEach((v, i) => verbIns[i].connect(v).connect(verbOuts[i]).connect(verbWet));
+  // (only the room fed is connected: the other costs nothing until a new one is loaded into it)
+  verbIn.connect(verbIns[0]);
   verbWet.connect(mix);
 
   // echo: a delay feeding back through filters, so each repeat is duller and thinner, like tape
@@ -275,8 +277,8 @@ function getBus(track = FIRST_DRUMS): Bus {
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  const bus: Bus = { dry, sat, verbs, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
-  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbFree: 0 });
+  const bus: Bus = { dry, sat, verbs, verbIns, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
+  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbRings: [0, 0] });
   return bus;
 }
 
@@ -464,8 +466,8 @@ const beds = new Map<NoiseBed, AudioBuffer>();
 /** (`at`: from when, on the audio clock; a render's beds change where their sections start) */
 function stopBed(d: Desk, at = 0) {
   if (d.bedSrc) {
-    // faded out over 20 ms rather than cut off where it is
-    const t = Math.max(at, d.bedSrc.context.currentTime);
+    // faded out over 20 ms rather than cut off where it is (from the soonest moment it can be: see soonest)
+    const t = Math.max(at, soonest(d.bedSrc.context));
     if (d.bedFade) {
       const g = d.bedFade.gain;
       g.cancelScheduledValues(t);
@@ -482,13 +484,15 @@ function stopBed(d: Desk, at = 0) {
   }
   d.bedType = "off";
 }
-/** how long a desk's rooms take to cross over when the size or kind changes (seconds) */
-const ROOM_SWAP = 0.06;
+/** how a desk's feed crosses over to its other room (time constant, seconds), and how long a room still ringing takes to fade out when it must be loaded again */
+const ROOM_TAU = 0.01;
+const ROOM_FADE = 0.06;
 /**
  * A new room for a desk, from now (a section's own room: the render or the timer brings this to
  * its moment). Setting a ringing room's impulse would cut what it is ringing with to silence, a
- * click; instead the new impulse goes into the desk's other room, which is quiet, and the two cross
- * over in 60 ms. (A second change within that time waits until the other room is quiet again.)
+ * click; instead the new impulse goes into the desk's other room, which is quiet, the drums are
+ * sent to it from now on, and the room they leave rings out what it was sent. (Should the other
+ * room still be ringing, from a change a moment ago, it is faded out over 60 ms first.)
  */
 function swapRoom(c: AudioContext, d: Desk, buf: AudioBuffer) {
   const b = d.bus;
@@ -497,39 +501,51 @@ function swapRoom(c: AudioContext, d: Desk, buf: AudioBuffer) {
     b.verbs[i].buffer = buf;
     return;
   }
+  const offline = "startRendering" in c;
+  const later = (t: number, f: () => void) => {
+    if (offline) atRenderTime(c, t, f);
+    else window.setTimeout(f, Math.max(0, t - c.currentTime) * 1000 + 5);
+  };
   const now = c.currentTime;
-  if (now < d.verbFree - 0.001) {
-    const again = () => swapRoom(c, d, buf);
-    if (isRendering() || "startRendering" in c) atRenderTime(c, d.verbFree, again);
-    else window.setTimeout(again, (d.verbFree - now) * 1000 + 5);
+  const j = i ? 0 : 1;
+  const out = b.verbOuts[j].gain;
+  if (now < d.verbRings[j]) {
+    // the other room still rings: faded out first, then loaded
+    if (d.verbRings[j] < Infinity) {
+      out.cancelScheduledValues(now);
+      out.setValueAtTime(out.value, now);
+      out.linearRampToValueAtTime(0, now + ROOM_FADE);
+      d.verbRings[j] = Infinity;
+      later(now + ROOM_FADE, () => {
+        d.verbRings[j] = 0;
+        swapRoom(c, d, buf);
+      });
+    } else later(now + ROOM_FADE, () => swapRoom(c, d, buf));
     return;
   }
-  const j = i ? 0 : 1;
   b.verbs[j].buffer = buf;
-  b.verbIn.connect(b.verbs[j]);
-  const [from, into] = [b.verbOuts[i].gain, b.verbOuts[j].gain];
-  from.cancelScheduledValues(now);
-  from.setValueAtTime(1, now);
-  from.linearRampToValueAtTime(0, now + ROOM_SWAP);
+  out.cancelScheduledValues(now);
+  out.setValueAtTime(1, now);
+  const [from, into] = [b.verbIns[i].gain, b.verbIns[j].gain];
   into.cancelScheduledValues(now);
   into.setValueAtTime(0, now);
-  into.linearRampToValueAtTime(1, now + ROOM_SWAP);
+  into.setTargetAtTime(1, now, ROOM_TAU);
+  b.verbIn.connect(b.verbIns[j]);
+  from.cancelScheduledValues(now);
+  from.setTargetAtTime(0, now, ROOM_TAU);
   d.verbOn = j;
-  d.verbFree = now + ROOM_SWAP;
-  // the room crossed away from stops being fed once it is out of hearing (a render keeps it: every export the same)
-  const old = b.verbs[i];
-  if (!("startRendering" in c))
-    window.setTimeout(
-      () => {
-        if (d.verbOn !== i)
-          try {
-            b.verbIn.disconnect(old);
-          } catch {
-            /* not connected */
-          }
-      },
-      ROOM_SWAP * 1000 + 20,
-    );
+  const rings = now + (b.verbs[i].buffer?.duration ?? 0) + 0.2;
+  d.verbRings[i] = rings;
+  // the room left is let go of once it has rung out (a render keeps it: every export the same)
+  if (!offline)
+    later(rings, () => {
+      if (d.verbOn !== i)
+        try {
+          b.verbIn.disconnect(b.verbIns[i]);
+        } catch {
+          /* not connected */
+        }
+    });
 }
 /** how long a noise bed takes to fade out when it stops (seconds) */
 const BED_FADE = 0.02;
@@ -601,14 +617,24 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const b = getBus(track);
   const desk = deskOf(track);
   const t = when ?? c.currentTime + 0.01;
+  const buffer = takeFor(c, beat, id);
+  const speed = human ? 1 + (Math.random() - 0.5) * 0.014 * human : 1;
+  // booked late (the page was held up) and already over by now: left out (see late.ts)
+  if (pastEnd(c, t, buffer, speed) > 0) {
+    lateCount.over++;
+    // (a hat that came and went still closed the open one: it is let go now, with its fade)
+    if ((id === "hat" || id === "open") && desk.openHat) damp(desk.openHat, soonest(c));
+    if (id === "hat" || id === "open") desk.openHat = null;
+    return;
+  }
   const src = c.createBufferSource();
-  src.buffer = takeFor(c, beat, id);
+  src.buffer = buffer;
   // for the canvas: what this hit is made of, measured from the hit itself
   if (listening() && !isRendering()) pulse({ kind: "drum", track: track === FIRST_DRUMS ? undefined : track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
-  if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
+  if (human) src.playbackRate.value = speed;
   const g = c.createGain();
   g.gain.value = velocity * velocity * 1.1;
-  let tail: AudioNode = src.connect(g);
+  let tail: AudioNode = g;
   if (velocity < 0.7 && id !== "kick") {
     const soft = c.createBiquadFilter();
     soft.type = "lowpass";
@@ -618,18 +644,19 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   }
   tail.connect(b.channels[id].input);
   const r: Ringing = { src, gain: g };
-  src.start(t);
+  // booked late: it starts in a moment, as far into the hit as it is late, faded in (see late.ts); `at` is when it really starts
+  const at = startRecorded(c, src, t, g, 0, "drums");
   // (an offline render plays every hit as written: no choking hats, no pumping harps)
   if (isRendering()) return;
   if (id === "hat" || id === "open") {
-    if (desk.openHat) damp(desk.openHat, t);
+    if (desk.openHat) damp(desk.openHat, at);
     desk.openHat = id === "open" ? r : null;
   }
   live.add(r);
   src.onended = () => live.delete(r);
-  // (a kick that cannot be heard, muted or soloed out, pumps nothing)
+  // (a kick that cannot be heard, muted or soloed out, pumps nothing; nor does one whose thump has passed, started late)
   const pump = [...desk.pumps].reverse().find((x) => x.at <= t + 1e-6)?.pump ?? desk.pump;
-  if (id === "kick" && pump > 0 && onKick && levelOf(track) > 0) onKick(t, pump * velocity);
+  if (id === "kick" && at === t && pump > 0 && onKick && levelOf(track) > 0) onKick(t, pump * velocity);
 }
 
 /** Play one step of a track's grid for a drum, respecting mute, solo and the "human" setting. */

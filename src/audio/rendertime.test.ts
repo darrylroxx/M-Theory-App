@@ -55,7 +55,7 @@ describe("a section's own room in a WAV", () => {
     // (nothing waits for the render to pause)
     expect(c.pauses.length).toBe(0);
   });
-  it("a drums track's room changes when the render reaches the section, into the desk's other room, crossing over", async () => {
+  it("a drums track's room changes when the render reaches the section, into the desk's other room; the one left rings out", async () => {
     // the desk's timers run on fake time, so none can fire after the test has put `window` away
     vi.useFakeTimers();
     vi.stubGlobal("window", globalThis);
@@ -71,10 +71,42 @@ describe("a section's own room in a WAV", () => {
     // the ringing room keeps its impulse (setting it would cut it to silence): the other one gets the new one
     expect(one.buffer).toBe(first);
     expect(two.buffer).toBeTruthy();
+    // the drums are sent to the new room from that moment; the room they leave is still heard, ringing out what it was sent
+    const feedOf = (v: FakeAny) => c.nodes.find((n) => n.outputs.includes(v)) as FakeAny;
     const outOf = (v: FakeAny) => v.outputs[0] as FakeAny;
-    expect(outOf(one).gain.at(6.07)).toBe(0);
-    expect(outOf(two).gain.at(6.07)).toBe(1);
-    expect(outOf(one).gain.at(6.03)).toBeGreaterThan(0.3);
+    expect(feedOf(one).gain.at(5.99)).toBe(1);
+    expect(feedOf(one).gain.at(6.1)).toBeLessThan(1e-4);
+    expect(feedOf(two).gain.at(6)).toBe(0);
+    expect(feedOf(two).gain.at(6.1)).toBeGreaterThan(0.9999);
+    expect(outOf(one).gain.at(9)).toBe(1);
+    expect(outOf(two).gain.at(9)).toBe(1);
+    vi.unstubAllGlobals();
+    vi.useRealTimers();
+  });
+});
+
+describe("a drums track's rooms changed twice in quick succession", () => {
+  it("the room still ringing is faded out before it is loaded again (never cut where it is)", async () => {
+    vi.useFakeTimers();
+    vi.stubGlobal("window", globalThis);
+    const c = new FakeOffline();
+    withContext(asAudio(c), () => setDrumFx(fxOf({}), 100, "dq"));
+    const [one, two] = convolvers(c);
+    const first = one.buffer;
+    withContext(asAudio(c), () => setDrumFx({ ...fxOf({}), verb: "hall", size: 0.95 }, 100, "dq", 6));
+    withContext(asAudio(c), () => setDrumFx({ ...fxOf({}), verb: "room", size: 0.2 }, 100, "dq", 6.5));
+    await c.reach(6.55);
+    const second = two.buffer;
+    // the first room still rings with what it was sent before 6 s: not loaded yet, fading out
+    expect(one.buffer).toBe(first);
+    const outOf = (v: FakeAny) => v.outputs[0] as FakeAny;
+    expect(outOf(one).gain.at(6.52)).toBeGreaterThan(0.2);
+    expect(outOf(one).gain.at(6.565)).toBe(0);
+    await c.reach(7);
+    // then loaded and heard again, and the drums sent to it
+    expect(one.buffer).not.toBe(first);
+    expect(two.buffer).toBe(second);
+    expect(outOf(one).gain.at(7)).toBe(1);
     vi.unstubAllGlobals();
     vi.useRealTimers();
   });
@@ -126,5 +158,23 @@ describe("live changes that must not click", () => {
     expect(out.outputs.length).toBe(0);
     // the rack's oscillators are stopped
     expect(c.nodes.filter((n) => (n as FakeAny).started !== undefined).every((n) => (n as FakeAny).stopped)).toBe(true);
+  });
+});
+
+describe("the soonest a change can be heard", () => {
+  it("is a buffer ahead of the clock on a live context (the audio thread works that far ahead), the clock itself in a render", async () => {
+    const { soonest } = await import("./context");
+    const live = new FakeAudio();
+    live.currentTime = 2;
+    (live as unknown as { baseLatency: number }).baseLatency = 1024 / 48000;
+    expect(soonest(asAudio(live))).toBeCloseTo(2 + 1024 / 48000 + 0.003, 9);
+    const off = new FakeOffline();
+    off.currentTime = 2;
+    (off as unknown as { baseLatency: number }).baseLatency = 0.02;
+    expect(soonest(asAudio(off))).toBe(2);
+    // a context that does not say: its clock
+    const plain = new FakeAudio();
+    plain.currentTime = 3;
+    expect(soonest(asAudio(plain))).toBe(3);
   });
 });

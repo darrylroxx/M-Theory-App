@@ -33,6 +33,20 @@ export function audioContext(): AudioContext {
   return ctx;
 }
 
+/**
+ * The soonest moment a change made now can start to be heard. The audio thread works a whole
+ * buffer ahead of the clock the page reads (about 20 ms with the 'playback' buffer), so a fade
+ * booked from the clock's "now" can already be partly past when it is worked out, and start with
+ * a jump: a click, the very thing it is there to prevent. A fade at ■ starts here instead. (An
+ * offline render's clock is exact.)
+ */
+export function soonest(c: BaseAudioContext): number {
+  const ahead = (c as AudioContext).baseLatency;
+  // (a context that does not say how far ahead it works: its clock, as before)
+  if ("startRendering" in c || typeof ahead !== "number" || !Number.isFinite(ahead) || ahead <= 0) return c.currentTime;
+  return c.currentTime + ahead + 0.003;
+}
+
 /** The context if sound has already started, without starting it. */
 export const audioIfStarted = (): AudioContext | null => ctx;
 

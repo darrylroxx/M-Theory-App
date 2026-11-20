@@ -21,6 +21,16 @@ export function engineWanted(o: { recording: boolean; busy: boolean; monitor: bo
   return o.recording || o.busy || o.monitor || (o.active && o.quiet);
 }
 
+/**
+ * May the interfaces be listed now (on the Vocals page)? Listing loads every driver in turn, which
+ * can upset one that is playing, so it waits for the app to be quiet; but not when the engine is
+ * to be open while the app sounds anyway (hearing yourself through the effects, a recording):
+ * waiting then would only keep you from hearing yourself until the song stops.
+ */
+export function mayList(o: { active: boolean; recording: boolean; busy: boolean; monitor: boolean; quiet: boolean }): boolean {
+  return o.active && (o.quiet || o.monitor || o.recording || o.busy);
+}
+
 let release: (() => Promise<void>) | null = null;
 
 /**

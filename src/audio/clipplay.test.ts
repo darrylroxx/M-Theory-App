@@ -3,7 +3,7 @@
  * where it lies, with a short fade at each edge so a cut never clicks; a clip edited while it
  * plays is started again as it now is, one left alone carries on.
  */
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { FakeAudio } from "./fakectx";
 import { FakeParam } from "../keys/fakeaudio";
 import { EDGE_FADE, TakeRuns, type PlayTake } from "./takeplay";
@@ -71,6 +71,34 @@ describe("■ while a take sounds", () => {
     r2.stopAll();
     expect(heard(late.out, 1.2).at).toEqual([]);
     expect(r2.sounding).toBe(0);
+  });
+  it("cut ahead of time, it keeps its level until then (never cancelAndHoldAtTime, which in Chromium drops a finished ramp to a few percent at once)", () => {
+    const { c, out } = ctx();
+    const runs = new TakeRuns();
+    const hold = vi.fn();
+    const make = c.createGain.bind(c);
+    c.createGain = (() => {
+      const g = make() as unknown as { gain: { cancelAndHoldAtTime?: unknown } };
+      g.gain.cancelAndHoldAtTime = hold;
+      return g;
+    }) as never;
+    runs.item(c as never, [{ track: "v1", buffer, at: 0, offset: 0, dur: 4, id: "t" }], { t: 0, s0: 0, s1: 8, spb: 0.5, now: 0 });
+    c.currentTime = 1;
+    // the music leaves it at 2 s (the next stretch has no take): booked now, a second ahead
+    runs.item(c as never, [], { t: 2, s0: 0, s1: 4, spb: 0.5, now: 1 });
+    expect(hold).not.toHaveBeenCalled();
+    expect(heard(out, 1.5).gain).toBeCloseTo(1, 6);
+    expect(heard(out, 2 - EDGE_FADE / 2).gain).toBeCloseTo(0.5, 6);
+    expect(heard(out, 2).gain).toBe(0);
+    // stopped during its fade in: from where the fade has it, down to nothing
+    const b = ctx();
+    const r2 = new TakeRuns();
+    r2.item(b.c as never, [{ track: "v1", buffer, at: 0, offset: 0, dur: 4, id: "t" }], { t: 0, s0: 0, s1: 8, spb: 0.5, now: 0 });
+    b.c.currentTime = EDGE_FADE / 2;
+    r2.stopAll();
+    expect(heard(b.out, EDGE_FADE / 4).gain).toBeCloseTo(0.25, 6);
+    expect(heard(b.out, EDGE_FADE / 2).gain).toBeCloseTo(0.5, 6);
+    expect(heard(b.out, EDGE_FADE).gain).toBeCloseTo(0.25, 6);
   });
 });
 

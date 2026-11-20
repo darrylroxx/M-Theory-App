@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HANDOFF_WAIT, QUIET_AFTER, Quiet, engineWanted, freeInterface, holdInterface } from "./handoff";
+import { HANDOFF_WAIT, QUIET_AFTER, Quiet, engineWanted, freeInterface, holdInterface, mayList } from "./handoff";
 
 describe("when the recording engine has the interface", () => {
   const base = { recording: false, busy: false, monitor: false, active: false, quiet: true };
@@ -14,6 +14,23 @@ describe("when the recording engine has the interface", () => {
     expect(engineWanted({ ...base, recording: true, quiet: false })).toBe(true);
     expect(engineWanted({ ...base, busy: true, quiet: false })).toBe(true);
     expect(engineWanted({ ...base, monitor: true, quiet: false })).toBe(true);
+  });
+});
+
+describe("when the interfaces are listed (the Vocals page opened while the song plays)", () => {
+  const base = { recording: false, busy: false, monitor: false, active: true, quiet: false };
+  it("waits for the app to be quiet, unless the engine is to be open while it sounds anyway", () => {
+    // hardware monitoring: the engine would not open while the song plays, so nothing is listed until it stops
+    expect(mayList(base)).toBe(false);
+    expect(mayList({ ...base, quiet: true })).toBe(true);
+    // through the effects: listed at once, so you hear yourself at once, not only once the song has stopped
+    expect(mayList({ ...base, monitor: true })).toBe(true);
+    expect(engineWanted({ ...base, monitor: true })).toBe(true);
+    // recording or rehearsing (the song is the engine's then)
+    expect(mayList({ ...base, recording: true })).toBe(true);
+    expect(mayList({ ...base, busy: true })).toBe(true);
+    // never from another page
+    expect(mayList({ ...base, active: false, monitor: true, quiet: true })).toBe(false);
   });
 });
 

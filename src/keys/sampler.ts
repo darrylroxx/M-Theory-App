@@ -17,7 +17,8 @@
  * before it is rendered.
  */
 import type { Instrument } from "../audio/instrument";
-import { startRecorded } from "../audio/late";
+import { isLate, startRecorded } from "../audio/late";
+import { soonest } from "../audio/context";
 import { Bank, defaultBudget, type BankOptions, type Progress } from "./bank";
 import { damperTau } from "./damper";
 import { KEYS_LEVEL, Keyboard, stopAt, type KeyVoice } from "./keyboard";
@@ -141,18 +142,20 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
     const level = dbToGain(p.db + this.trim);
     amp.gain.value = 0;
     amp.gain.setValueAtTime(level, t);
+    let into: AudioNode = amp;
     if (p.cutoff) {
       // played softer than the take was recorded: darkened toward the softer take (see pack.ts)
       const tone = c.createBiquadFilter();
       tone.type = "lowpass";
       tone.Q.value = BUTTERWORTH_Q;
       tone.frequency.value = Math.min(p.cutoff, c.sampleRate * 0.45);
-      src.connect(tone).connect(amp);
-    } else src.connect(amp);
+      tone.connect(amp);
+      into = tone;
+    }
     amp.connect(this.output);
     const lead = Math.min(this.bank.lead, buffer.duration / 2);
-    // (booked late, the page having been held up: it starts now, that far into the recording: see late.ts)
-    startRecorded(c, src, Number.isFinite(when) ? Math.min(when, t) : t, lead);
+    // (booked late, the page having been held up: it starts in a moment, that far into the recording, faded in: see late.ts)
+    startRecorded(c, src, isLate(c, when) ? when : t, into, lead);
     const damped = key <= m.dampedTop;
     this.add({
       midi,
@@ -213,8 +216,8 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
 
   protected dropDamper(v: Voice) {
     if (!v.rel) return;
-    const now = this.ctx.currentTime;
-    // (gone in a few milliseconds, not at once: a sound cut at full level clicks)
+    // (gone in a few milliseconds, not at once: a sound cut at full level clicks; from the soonest moment it can be)
+    const now = soonest(this.ctx);
     v.rel.amp.gain.cancelScheduledValues(now);
     v.rel.amp.gain.setTargetAtTime(0, now, 0.005);
     stopAt(v.rel.src, now + 0.05);

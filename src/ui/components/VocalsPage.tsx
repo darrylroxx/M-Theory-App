@@ -4,7 +4,7 @@ import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
 import { renderSong } from "../../audio/synth";
 import { hearAlone, hearingAlone, onAlone as onAloneChange, stopAlone } from "../../audio/takeplay";
-import { Quiet, engineWanted, freeInterface, holdInterface } from "../../audio/handoff";
+import { Quiet, engineWanted, freeInterface, holdInterface, mayList } from "../../audio/handoff";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
 import { barsInto, clickPlan, cutTakes, groupsOf, nudgeFrames, passAt, passToMark, renudgeTracks, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
@@ -193,15 +193,18 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const closers = useRef<(() => void)[]>([]);
   const openers = useRef<((o: EngineOpened | null) => void)[]>([]);
 
+  const monitor = (studio.monitor ?? "hardware") === "effects";
   // the list of interfaces: once a session, and again only after a problem (never while the
-  // interface is being opened, nor while the app plays: listing loads every driver in turn)
+  // interface is being opened, nor while the app plays unless you hear yourself through the
+  // effects: listing loads every driver in turn; see handoff.ts mayList)
+  const listNow = mayList({ active, recording, busy: phase !== "idle", monitor, quiet });
   useEffect(() => {
-    if (!desktop || !active || !quiet || (hosts && !error)) return;
+    if (!desktop || !listNow || (hosts && !error)) return;
     void audioDevices().then((h) => {
       listed = h;
       setHosts(h);
     });
-  }, [desktop, active, quiet, !!error]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [desktop, listNow, !!error]); // eslint-disable-line react-hooks/exhaustive-deps
   const devices = (hosts ?? []).flatMap((h) => h.devices.filter((d) => (d.input?.channels ?? 0) > 0 && (d.output?.channels ?? 0) > 0).map((d) => ({ host: h.name, name: d.name, channels: d.input!.channels })))
     .sort((a, b) => Number(b.host.toUpperCase() === "ASIO") - Number(a.host.toUpperCase() === "ASIO") || Number(/focusrite|scarlett/i.test(b.name)) - Number(/focusrite|scarlett/i.test(a.name)));
   const chosen = devices.find((d) => d.host === studio.host && d.name === studio.device) ?? devices[0];
@@ -209,7 +212,6 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   // the interface is open while recording or rehearsing, whenever you hear yourself through the
   // effects (then it stays open on every page), and while this page is on screen once the app's
   // own sound has stopped (see handoff.ts)
-  const monitor = (studio.monitor ?? "hardware") === "effects";
   const keepOpen = engineWanted({ recording, busy: phase !== "idle", monitor, active, quiet });
   /** closed only because the app is sounding: Record and Rehearse open it again at once */
   const resting = desktop && !!chosen && !opened && !keepOpen && active && !error;

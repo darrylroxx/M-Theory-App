@@ -91,9 +91,10 @@ export function master(c: BaseAudioContext): GainNode {
   if (!m) {
     m = c.createGain();
     masters.set(c, m);
-    if (safetyReady(c)) m.connect(createSafety(c)).connect(c.destination);
+    const ready = safetyReady(c) ? tryCreateSafety(c) : null;
+    if (ready) m.connect(ready).connect(c.destination);
     // (a context that cannot run it: straight out, as before)
-    else if (!canRunSafety(c)) m.connect(c.destination);
+    else if (!canRunSafety(c) || safetyReady(c)) m.connect(c.destination);
     else {
       const direct = c.createGain();
       m.connect(direct).connect(c.destination);
@@ -108,7 +109,9 @@ export function master(c: BaseAudioContext): GainNode {
 
 /** The master's way out goes over from straight to the speakers to through the limiter, without a sound. */
 function crossToSafety(c: BaseAudioContext, m: GainNode, direct: GainNode) {
-  const safety = createSafety(c);
+  const safety = tryCreateSafety(c);
+  // (it could not be made after all: the master stays straight out, as before)
+  if (!safety) return;
   const wet = c.createGain();
   wet.gain.value = 0;
   m.connect(safety).connect(wet).connect(c.destination);
@@ -122,6 +125,15 @@ function crossToSafety(c: BaseAudioContext, m: GainNode, direct: GainNode) {
     m.disconnect(direct);
     direct.disconnect();
   }, 200);
+}
+
+/** The limiter, or null if the browser will not make it (the master then goes straight out: never no sound at all). */
+function tryCreateSafety(c: BaseAudioContext): AudioWorkletNode | null {
+  try {
+    return createSafety(c);
+  } catch {
+    return null;
+  }
 }
 
 /** The fader for a track: its instrument connects into it, and it goes on to the speakers. */

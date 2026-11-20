@@ -21,6 +21,8 @@ vi.mock("./context", () => ({
       return s;
     },
   }),
+  // (this pretend context does not say how far ahead it works: a fade starts on its clock)
+  soonest: (c: { currentTime: number }) => c.currentTime,
 }));
 const { EDGE_FADE, hearAlone, hearingAlone, stopAlone } = await import("./takeplay");
 const take = (start: number) => ({ wet: "a.wav", start, frames: 48000, rate: 48000 });
