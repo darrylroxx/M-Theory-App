@@ -427,7 +427,9 @@ export function GuitarView() {
         },
         () => mine() && setLoading((x) => (x === id ? null : x)),
       );
-    } else void warmSlot({ track: id, kind: kind === "melody" ? "melody" : "chord", tone: next, sound: soundsRef.current[kind] });
+    }
+    // (any other change, a synth control or sound, is taken by the voice the page is heard on, in place, once the
+    // song has it: see keepSlots and hearOn. Made here, before the song has it, it would be a new voice every step)
   }, [set]);
   const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, compound: meter.triplet, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, meter.triplet, toneSetter, hearSoon]);
   const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, compound: meter.triplet, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, meter.triplet, toneSetter, hearTune]);

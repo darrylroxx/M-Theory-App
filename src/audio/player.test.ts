@@ -304,6 +304,37 @@ describe("each section plays a track its own way", () => {
     expect(v.tone.inst).toBe("piano");
     S.hearOn("chord", null);
   });
+  it("a keys or synth control dragged step by step, as the page does it (the song first, then what is heard), keeps one voice: none piles up", () => {
+    notes();
+    S.getAudio();
+    const sound: HarpSound = { ...SOUND_DEFAULT, level: 0.33 };
+    let tone: Tone = { inst: "piano", bright: 0.5 };
+    const use = () => ({ track: "chords", kind: "chord" as const, tone, sound });
+    S.keepSlots([use()], []);
+    S.hearOn("chord", use());
+    const before = S.voiceCount();
+    const log = notes();
+    S.strum([48, 52, 55]);
+    const v = log[0].v;
+    for (let i = 1; i <= 20; i++) {
+      tone = { inst: "piano", bright: 0.5 + i / 50 };
+      // the order the page's effects run in: the song's slots, then the track heard on the page
+      S.keepSlots([use()], []);
+      S.hearOn("chord", use());
+    }
+    expect(S.voiceCount()).toBe(before);
+    log.length = 0;
+    S.strum([48, 52, 55]);
+    expect(log[0].v).toBe(v);
+    expect(v.tone.bright).toBeCloseTo(0.9);
+    // a section that still plays the old setting keeps its own voice: only then is there a second one
+    const old = use();
+    tone = { inst: "piano", bright: 0.2 };
+    S.keepSlots([old, use()], []);
+    S.hearOn("chord", use());
+    expect(S.voiceCount()).toBe(before + 1);
+    S.hearOn("chord", null);
+  });
   it("an added track's first chord is on the track's own sound from its start, in a render and on every ▶", async () => {
     const log = notes();
     const quiet: HarpSound = { ...SOUND_DEFAULT, level: 0.3, drive: 0.5 };

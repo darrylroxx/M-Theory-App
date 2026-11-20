@@ -114,6 +114,8 @@ function voiceFor(u: SlotUse, prefer?: string): TrackVoice {
 }
 /** Every live voice there is. */
 const allVoices = () => [...voices.values()].map((x) => x.v);
+/** How many voices there are on the live context (for the tests). */
+export const voiceCount = () => voices.size;
 
 /** Every slot a list of items plays (each track as each section has it), once each. */
 export function slotsOf(items: PlayItem[]): SlotUse[] {
@@ -187,10 +189,16 @@ export function keepSlots(uses: SlotUse[], trackIds: string[]) {
     x.v.dispose();
     if (![...voices.values()].some((y) => y.track === x.track)) untapStem(x.track);
   }
-  // (only on a context already running: nothing is made just to be ready)
+  // (only on a context already running: nothing is made just to be ready). A slot new to the song that
+  // takes the place of the one the page is heard on (a knob just turned, a synth sound just stepped) takes
+  // that voice over, retuned in place, when nothing else uses it any more: dragging a control while the
+  // song plays never piles up voices (each with its own effects and synth), which would load the audio thread
   if (audioIfStarted())
     for (const u of uses)
-      if (!voices.has(slotOf(u)) && u.tone && u.tone.inst !== "guitar") void voiceFor(u).load().catch(() => {});
+      if (!voices.has(slotOf(u)) && u.tone && u.tone.inst !== "guitar") {
+        const h = heardOn[u.kind];
+        void voiceFor(u, h && h.track === u.track ? slotOf(h) : undefined).load().catch(() => {});
+      }
   keepDrums(trackIds);
 }
 
