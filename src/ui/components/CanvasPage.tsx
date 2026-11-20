@@ -122,7 +122,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   onPlay: () => void;
   canPlay: boolean;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, opened } = useApp();
   const prefs = state.canvas ?? { palette: DEFAULT_PALETTE };
   const pal = getPalette(prefs.palette);
   const surface: Surface = prefs.surface ?? pal.surface;
@@ -250,6 +250,17 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     a.hidden = hidden;
     a.hiddenSources = new Set(hideSrc);
   }, [style, drips, layoutPref, hidden, hideSrc]);
+  // another idea opened (or a new one started): another piece of music, on a bare canvas, with none
+  // of the last one's mood or vibe (a song from a file is not the idea's: its painting stays)
+  const ideaAt = useRef(opened);
+  useEffect(() => {
+    if (ideaAt.current === opened) return;
+    ideaAt.current = opened;
+    if (live.current.song) return;
+    painter.current?.fresh();
+    painter.current?.clear();
+    setPainted(false);
+  }, [opened]);
   // new colours: a new canvas
   const first = useRef(true);
   useEffect(() => {

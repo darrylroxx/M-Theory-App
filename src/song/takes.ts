@@ -31,6 +31,8 @@ export interface Take {
   sig?: string;
   /** marked ★ while it was sung (or afterwards): a keeper */
   keep?: boolean;
+  /** the timing nudge in `start` (frames): a change of the nudge moves the take by the difference (see `renudge`) */
+  nudge?: number;
 }
 
 /** What the engine reports when a recording stops. */
@@ -64,9 +66,42 @@ export function cutTakes(r: Recorded, o: { group: string; at: { block: string; b
   for (let k = 0, start = first; start < r.frames; k++, start += loop) {
     const frames = Math.min(loop, r.frames - start);
     if (frames < r.rate * 0.05) break;
-    out.push({ id: o.id(), n: k + 1, group: o.group, dry: r.dry, wet: r.wet, rate: r.rate, start, frames, at: o.at, ...(frames < loop / 2 ? { short: true } : {}), ...(kept.has(k + 1) ? { keep: true } : {}) });
+    out.push({ id: o.id(), n: k + 1, group: o.group, dry: r.dry, wet: r.wet, rate: r.rate, start, frames, at: o.at, nudge: o.nudge ?? 0, ...(frames < loop / 2 ? { short: true } : {}), ...(kept.has(k + 1) ? { keep: true } : {}) });
   }
   return out;
+}
+
+/** The timing nudge, set in milliseconds, in frames of a take. */
+export const nudgeFrames = (ms: number, rate: number): number => Math.round(((Number.isFinite(ms) ? ms : 0) / 1000) * rate);
+
+/**
+ * The takes as they lie with the timing nudge changed from `was` to `now` (milliseconds): each
+ * moves from the nudge it was cut with to the new one, so a take heard early or late is put
+ * right by the nudge, not only the next recording. A take from before the nudge was kept on it
+ * was cut with the nudge as it was. The same list when nothing moves.
+ */
+export function renudge(takes: Take[], was: number, now: number): Take[] {
+  let moved = false;
+  const out = takes.map((t) => {
+    const from = Number.isFinite(t.nudge) ? t.nudge! : nudgeFrames(was, t.rate);
+    const to = nudgeFrames(now, t.rate);
+    if (from === to) return t;
+    moved = true;
+    return { ...t, start: t.start - from + to, nudge: to };
+  });
+  return moved ? out : takes;
+}
+
+/** Every track's takes with the timing nudge changed (see `renudge`); the same list when nothing moves. */
+export function renudgeTracks<T extends { takes?: Take[] }>(tracks: T[] | undefined, was: number, now: number): T[] | undefined {
+  let moved = false;
+  const out = tracks?.map((t) => {
+    const takes = t.takes && renudge(t.takes, was, now);
+    if (takes === t.takes) return t;
+    moved = true;
+    return { ...t, takes };
+  });
+  return moved ? out : tracks;
 }
 
 /** The take that plays from a recording: the one chosen, else the last one marked ★, else the last full one. */
@@ -153,6 +188,6 @@ export function reviveTakes(raw: unknown): Take[] | undefined {
   const ok = (t: Partial<Take>): t is Take =>
     !!t && typeof t.id === "string" && typeof t.group === "string" && typeof t.dry === "string" && typeof t.wet === "string" && Number.isFinite(t.rate) && Number.isFinite(t.start) && Number.isFinite(t.frames) && !!t.at && typeof t.at.block === "string" && Number.isFinite(t.at.bar);
   // a ★ is kept only as a plain yes (anything else stored there is let go)
-  const out = (raw as Partial<Take>[]).filter(ok).map(({ keep, ...t }) => ({ ...t, n: Number(t.n) || 1, ...(keep === true ? { keep: true } : {}) }));
+  const out = (raw as Partial<Take>[]).filter(ok).map(({ keep, nudge, ...t }) => ({ ...t, n: Number(t.n) || 1, ...(keep === true ? { keep: true } : {}), ...(Number.isFinite(nudge) ? { nudge } : {}) }));
   return out.length ? out : undefined;
 }
