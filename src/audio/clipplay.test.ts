@@ -53,6 +53,27 @@ const oneSound = (out: ReturnType<typeof ctx>["out"], a: number, b: number, plac
   }
 };
 
+describe("■ while a take sounds", () => {
+  it("fades it out over a few milliseconds instead of cutting it off at full level", () => {
+    const { c, out } = ctx();
+    const runs = new TakeRuns();
+    runs.item(c as never, [{ track: "v1", buffer, at: 0, offset: 0, dur: 4, id: "t" }], { t: 0, s0: 0, s1: 8, spb: 0.5, now: 0 });
+    c.currentTime = 1.3;
+    runs.stopAll();
+    expect(heard(out, 1.3).gain).toBeCloseTo(1, 6);
+    expect(heard(out, 1.3 + EDGE_FADE / 2).gain).toBeCloseTo(0.5, 6);
+    expect(heard(out, 1.3 + EDGE_FADE).gain).toBe(0);
+    expect(heard(out, 1.31).at).toEqual([]);
+    // and one booked for later never sounds
+    const late = ctx();
+    const r2 = new TakeRuns();
+    r2.item(late.c as never, [{ track: "v1", buffer, at: 2, offset: 0, dur: 1, id: "u" }], { t: 0, s0: 0, s1: 8, spb: 0.5, now: 0 });
+    r2.stopAll();
+    expect(heard(late.out, 1.2).at).toEqual([]);
+    expect(r2.sounding).toBe(0);
+  });
+});
+
 describe("edited clips as they play", () => {
   it("each from exactly its stretch, exactly where it lies (to the sample)", () => {
     const { c, out } = ctx();

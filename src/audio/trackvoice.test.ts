@@ -28,6 +28,61 @@ const pad: Tone = { inst: "synth", synth: presetById("warm-pad")!.params };
 const C = [48, 52, 55, 60];
 
 describe("a track's voice", () => {
+  it("rests a while after ■ (let go of its fader and its room: nothing of it is worked out), and the next note brings it back first", () => {
+    const c = new FakeAudio();
+    const { v, dest } = voice(c);
+    const out = v.out as unknown as FakeAny;
+    const send = v.rack.send as unknown as FakeAny;
+    v.note(60, 0.1, 0.8, 1, { slot: 0 });
+    c.currentTime = 1;
+    v.stopAll();
+    vi.advanceTimersByTime(1000);
+    // still fading: connected
+    expect(out.outputs).toContain(dest);
+    vi.advanceTimersByTime(1100);
+    expect(out.outputs.length).toBe(0);
+    expect(send.outputs.length).toBe(0);
+    // a note: connected again before it sounds
+    c.currentTime = 5;
+    v.note(62, 5.2, 0.8, 1, { slot: 0 });
+    expect(out.outputs).toContain(dest);
+    expect(send.outputs.length).toBe(1);
+    expect(c.reaches(c.started[c.started.length - 1], dest)).toBe(true);
+    // played on, it is not let go while its note sounds; a while after that is over, it rests until the next
+    vi.advanceTimersByTime(3000);
+    expect(out.outputs).toContain(dest);
+    c.currentTime = 8.3;
+    vi.advanceTimersByTime(4000);
+    expect(out.outputs.length).toBe(0);
+  });
+  it("rests while the song plays once its notes are over (another section plays the track another way), and comes back for its next note", () => {
+    const c = new FakeAudio();
+    const { v, dest } = voice(c);
+    const out = v.out as unknown as FakeAny;
+    // a note every beat for a while: it keeps playing
+    for (let i = 0; i < 8; i++) {
+      c.currentTime = i * 0.5;
+      v.note(60, i * 0.5 + 0.1, 0.8, 0.4, { slot: 0 });
+      vi.advanceTimersByTime(500);
+      expect(out.outputs).toContain(dest);
+    }
+    // then nothing: once the last has rung out (and a moment more), it rests
+    c.currentTime = 7;
+    vi.advanceTimersByTime(4000);
+    expect(out.outputs.length).toBe(0);
+    // and its next note brings it back before it sounds
+    v.note(62, 7.3, 0.8, 1, { slot: 0 });
+    expect(out.outputs).toContain(dest);
+  });
+  it("a voice made ahead of its first note starts resting", () => {
+    const c = new FakeAudio();
+    const { v, dest } = voice(c);
+    const out = v.out as unknown as FakeAny;
+    v.rest();
+    expect(out.outputs.length).toBe(0);
+    v.note(60, 0.2, 0.8, 1, { slot: 0 });
+    expect(out.outputs).toContain(dest);
+  });
   it("plays into its own rack and out through its own fader", () => {
     const c = new FakeAudio();
     const a = voice(c);

@@ -12,6 +12,7 @@
  * table is one 845 KB file (public/keys/epiano/), decoded by hand: no codec touches the loops.
  */
 import type { Instrument } from "../audio/instrument";
+import { startRecorded } from "../audio/late";
 import { keepLater } from "./bank";
 import { KEYS_LEVEL, Keyboard, type KeyVoice } from "./keyboard";
 import {
@@ -237,7 +238,8 @@ export class EPiano extends Keyboard<Voice> implements Instrument {
     }
     src.connect(amp);
     out.connect(this.bus);
-    src.start(t);
+    // (booked late, the page having been held up: it starts now, that far in: see late.ts)
+    startRecorded(c, src, Number.isFinite(when) ? Math.min(when, t) : t);
     this.add({
       midi,
       key,

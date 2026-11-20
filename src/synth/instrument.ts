@@ -16,7 +16,7 @@ import { SYNTH_PROCESSOR, type SynthEvent } from "./kernel";
 import { DEFAULT_PARAMS, type SynthParams, reviveSynth } from "./params";
 import { type PlayContext, type PlayNote, type SynthNote, playNotes, withSteps } from "./play";
 import { soundFor, tail } from "./render";
-import type { SynthMessage, SynthProcessorOptions } from "./synth.worklet";
+import type { SynthMessage, SynthProcessorOptions, SynthReport } from "./synth.worklet";
 import workletUrl from "./synth.worklet.ts?worker&url";
 
 const loaded = new WeakMap<BaseAudioContext, Promise<void>>();
@@ -54,6 +54,10 @@ export class SynthInstrument implements Instrument {
   private nextId = 1;
   private disposed = false;
   private p: SynthParams;
+  /** messages posted to the processor (see SynthReport) */
+  private posted = 0;
+  /** live, quiet: the processor's output let go, so the effects behind it rest (the next note connects it again) */
+  private resting = false;
 
   constructor(readonly ctx: BaseAudioContext, params: SynthParams = DEFAULT_PARAMS, private opts: SynthOptions = {}) {
     this.output = ctx.createGain();
@@ -174,10 +178,19 @@ export class SynthInstrument implements Instrument {
       for (const e of events) if (e.type === "off" && e.t < now) gone.add(e.id);
       if (gone.size) events = events.filter((e) => !((e.type === "on" || e.type === "off") && gone.has(e.id)));
     }
-    const processorOptions: SynthProcessorOptions = { params: soundFor(this.p), events, voices: this.opts.voices ?? 8, seed: this.opts.seed ?? 1 };
+    const live = !isOffline(this.ctx);
+    const processorOptions: SynthProcessorOptions = { params: soundFor(this.p), events, voices: this.opts.voices ?? 8, seed: this.opts.seed ?? 1, report: live };
     const node = new AudioWorkletNode(this.ctx, SYNTH_PROCESSOR, { numberOfInputs: 0, numberOfOutputs: 1, outputChannelCount: [2], processorOptions });
     node.connect(this.output);
     this.node = node;
+    // live: gone quiet with nothing sent since, its output is let go, so the track's effects rest
+    // (an offline render keeps everything connected, so every render is the same)
+    if (live)
+      node.port.onmessage = (m: MessageEvent<SynthReport>) => {
+        if (!m.data?.idle || m.data.got !== this.posted || this.resting || this.node !== node) return;
+        node.disconnect();
+        this.resting = true;
+      };
   }
 
   private send(e: SynthEvent) {
@@ -188,6 +201,12 @@ export class SynthInstrument implements Instrument {
       this.pending.push(e);
       return;
     }
+    // a note for a processor at rest: its output is connected again first (it is sent at least a moment
+    // ahead of when it sounds, and the processor already keeps to the audio clock, so it is not late)
+    if (this.resting && e.type === "on") {
+      this.node.connect(this.output);
+      this.resting = false;
+    }
     this.queue.push(e);
     if (!this.flushing) {
       this.flushing = true;
@@ -195,7 +214,10 @@ export class SynthInstrument implements Instrument {
         this.flushing = false;
         const q = this.queue;
         this.queue = [];
-        if (this.node && q.length) this.node.port.postMessage(q satisfies SynthMessage);
+        if (this.node && q.length) {
+          this.node.port.postMessage(q satisfies SynthMessage);
+          this.posted++;
+        }
       });
     }
   }

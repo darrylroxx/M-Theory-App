@@ -52,11 +52,12 @@ function InstSwitch({ tone, setTone, loading }: ToneProps) {
 }
 
 /**
- * One track's sound: which instrument, a ready-made sound, and (when asked for) the knobs for
- * the strings and the effects. Used for every chords and melody track: each has its own, the same
- * in every section.
+ * One track's sound in the section on screen: which instrument, a ready-made sound, and (when
+ * asked for) the knobs for the strings and the effects. Used for every chords and melody track:
+ * each has its own in every section. "All sections" copies it to the same track in every other
+ * section that has it.
  */
-export function SoundControls({ sound, setSound, onHear, children, inst: instProps }: {
+export function SoundControls({ sound, setSound, onHear, children, inst: instProps, onAll }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   /** play something once, to hear a change (when nothing is playing) */
@@ -65,6 +66,8 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
   children?: (drawer: string | null, toggle: (d: string) => void) => { pickers: React.ReactNode; drawers: React.ReactNode };
   /** the track's instrument (the strings when not given) */
   inst?: ToneProps;
+  /** copy this sound to the same track in every other section (only when another section has it) */
+  onAll?: () => void;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.mySounds;
@@ -161,6 +164,7 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
       <div className="dm-tabs">
         {inst !== "synth" && <button className={`chip${panel === "strings" ? " on" : ""}`} aria-expanded={panel === "strings"} onClick={() => setPanel(panel === "strings" ? null : "strings")}>{strings ? "Strings" : "Keys"}</button>}
         <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
+        {onAll && <button className="chip all-chip" title="This track sounds like this in every section that has it" onClick={onAll}>All sections</button>}
       </div>
 
       {panel === "strings" && inst === "piano" && tone && (
@@ -229,10 +233,10 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
 
 /**
  * How the chords are played (the style and its feel) and what plays them (the harp and its effects):
- * the chords track's own, the same in every section. Small at first: the style, the instrument and
+ * the chords track's own in the section on screen. Small at first: the style, the instrument and
  * the sound. The knobs open when asked for.
  */
-export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, inst }: {
+export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHear, inst, onAll }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   style: PatternId;
@@ -244,6 +248,8 @@ export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHe
   onHear: () => void;
   /** the track's instrument */
   inst?: ToneProps;
+  /** copy how it is played and how it sounds to the same track in every other section */
+  onAll?: () => void;
 }) {
   const st = getStyle(style);
   // on the synth its own way of playing takes the place of the playing style
@@ -258,7 +264,7 @@ export function HarpPanel({ sound, setSound, style, onStyle, feel, setFeel, onHe
 
   return (
     <section className="card harp" aria-label="How the chords are played">
-      <SoundControls sound={sound} setSound={setSound} onHear={onHear} inst={inst}>
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} inst={inst} onAll={onAll}>
         {(drawer, toggle) => ({
           pickers: styled && (
             <span className="pick-wrap">

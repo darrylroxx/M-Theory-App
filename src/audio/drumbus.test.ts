@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { withContext } from "./context";
-import { FakeAudio, asAudio, type FakeAny } from "./fakectx";
+import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
 import { FakeParam } from "../keys/fakeaudio";
 import { fader } from "./mix";
 import { playStep, setBedPlaying, setDrumFx, setDrumSolo, syncDrums } from "./drumbus";
@@ -85,6 +85,19 @@ describe("a section's drum sound booked for later", () => {
     });
     const now = booked(c).filter((x) => x.p.events.some((e) => e.t > 0.06));
     expect(now).toEqual([]);
+  });
+});
+
+describe("a section's own kit, from where the section starts", () => {
+  it("in a render: B's grit comes in where B starts, not when it is booked", async () => {
+    const c = new FakeOffline();
+    const curves = () => JSON.stringify(c.nodes.filter((n) => (n as FakeAny).curve).map((n) => Array.from((n as FakeAny).curve as Float32Array).slice(0, 8)));
+    withContext(asAudio(c), () => setDrumFx(fxOf({ grit: 0 }), 100, "dg"));
+    const before = curves();
+    withContext(asAudio(c), () => setDrumFx(fxOf({ grit: 0.9 }), 100, "dg", 6));
+    expect(curves()).toBe(before);
+    await c.reach(6.5);
+    expect(curves()).not.toBe(before);
   });
 });
 

@@ -6,7 +6,7 @@ export type { TrackId };
 import { TICKS, hasTune, type Melody } from "../../song/melody";
 import { inFrame } from "../../song/frame";
 import { loopKeys, type LoopBars } from "../../song/loops";
-import { selectBlock } from "../../song/structure";
+import { addTrackTo, selectBlock } from "../../song/structure";
 import { clipBars, placedClips } from "../../song/clips";
 import type { Take } from "../../song/takes";
 import { KIND_NAME, addTrack, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, type Layers, type Track, type TrackKind } from "../../song/tracks";
@@ -17,7 +17,7 @@ import { letterClass } from "../letters";
 import { newId, useApp, type AppState, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
 import { InstIcon } from "./HarpPanel";
-import { toneOf } from "../../audio/tone";
+import { toneOf, type Tones } from "../../audio/tone";
 import { HarmonyAgain, HarmonyPicker } from "./HarmonyPicker";
 
 /** One section as the Track page draws it. */
@@ -32,8 +32,12 @@ export interface TrackSection {
   chords: ProgChord[];
   melody?: Melody;
   drums: Beat;
-  /** what the added tracks hold in it */
+  /** the added tracks in it: what each holds there */
   layers?: Layers;
+  /** what plays its chords and melody tracks */
+  tones?: Tones;
+  /** the chords tracks not heard here because a harmony plays instead of them: by track id, the name of the one that does */
+  instead?: Record<string, string>;
 }
 
 /** The page that edits each kind of track. */
@@ -41,8 +45,9 @@ const PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drum
 const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
 
 /**
- * A plain track of `kind` added as `id`. You stay where you are; it is the one its page shows
- * next time (brought forward there), and a vocal track is the one the Vocals page shows (and records onto).
+ * A plain track of `kind` added as `id`: a new row, in the section on screen only (a vocal track
+ * runs across the whole song). You stay where you are; it is the one its page shows next time
+ * (brought forward there), and a vocal track is the one the Vocals page shows (and records onto).
  */
 export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track } {
   const r = addTrack(s.progression, kind, id);
@@ -50,11 +55,13 @@ export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppSt
   return { s: { ...s, progression: r.p, ...studio }, track: r.track };
 }
 
+/** Is a track in a section? (The first three are in every one; vocal tracks run across the song.) */
+const isIn = (t: Track, s: TrackSection) => isFirst(t.id) || t.kind === "vocals" || !!s.layers?.[t.id];
 /** What one track holds in one section (an added drums track: its rhythm there on its own kit, as it plays). */
 function content(t: Track, s: TrackSection): TrackSection {
   if (isFirst(t.id)) return s;
   const l = s.layers?.[t.id];
-  return { ...s, chords: l?.chords ?? [], melody: l?.melody, drums: drumsOf(t, l) ?? { ...s.drums, on: false } };
+  return { ...s, chords: l?.chords ?? [], melody: l?.melody, drums: drumsOf(l) ?? { ...s.drums, on: false } };
 }
 /** Drum rows drawn top to bottom: cymbals, then the middle of the kit, then the kick. */
 const LANES: { ids: DrumId[]; y: number }[] = [
@@ -68,9 +75,10 @@ const MIN_BAR = 12;
 const GUESS_BAR = 56;
 
 /**
- * The whole song on one page, left to right in bars: one row per instrument, one block per
- * section. What is written on the section pages shows here; a tap on a block opens that
- * section's page. Each track's head sets its volume, mute and solo for the whole song.
+ * The whole song on one page, left to right in bars: one row per track, a block in each section
+ * that has it (where one does not, a faint + puts it there). What is written on the section pages
+ * shows here; a tap on a block opens that section's page. Each track's head sets its volume, mute
+ * and solo for the whole song.
  * As many bars as are chosen fill the width (All: the whole song); the rest scrolls sideways.
  */
 export const TrackPage = memo(function TrackPage({ sections, current, loop, layout, playing, getWhere, shown, follow, active }: {
@@ -225,6 +233,8 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     set((s) => trackAdded(s, kind, tid).s);
     setAdding(false);
   };
+  /** A track put into a section that does not have it: plain and empty, ready to write in. You stay here. */
+  const addTo = (block: string, t: Track) => set((s) => ({ ...s, progression: addTrackTo(s.progression, block, t.id) }));
   const remove = (t: Track) => {
     // (a recording going onto it would have nowhere to go)
     if (t.id === recordingTo) return toast("Stop recording first");
@@ -249,16 +259,19 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
             const m = mix?.[t.id];
             const on = audible(mix, t.id);
             const db = m?.db ?? 0;
+            // what plays it in the section on screen (or, where it is not, in the first section that has it)
+            const here = sections.find((x) => x.block === current) ?? sections[0];
+            const where = here && isIn(t, here) ? here : sections.find((x) => isIn(t, x));
             return (
               <div key={t.id} data-track={t.id} className={`tv-head k-${t.kind}${on ? "" : " quiet"}${t.harmony ? " hz" : ""}${fresh.includes(t.id) ? " fresh" : ""}`} role="group" aria-label={`${t.name} track`}>
                 {/* one line: what plays it, its name (a long one is cut short), and ✕ for an added track */}
                 <button className="tv-name" title={`Open ${t.name} for the section on screen`} onClick={() => open(current, t)}>
-                  {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(state.progression, t.id).inst} />}
+                  {(t.kind === "chords" || t.kind === "melody") && <InstIcon inst={toneOf(where ?? {}, t.id).inst} />}
                   <span className="tv-label">{t.name}</span>
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
                 {/* ⟳ beside the volume, so the name keeps the room */}
-                {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setAgain(t)} />}
+                {t.harmony && (t.kind === "chords" || t.kind === "melody") && here && isIn(t, here) && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setAgain(t)} />}
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>
@@ -295,10 +308,18 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
               return (
               <div key={t.id} className={`tv-row k-${t.kind}${audible(mix, t.id) ? "" : " quiet"}${fresh.includes(t.id) ? " fresh" : ""}`}>
                 {sections.map((s0) => {
+                  if (!isIn(t, s0))
+                    return (
+                      <span key={s0.block || "a"} className={`tv-block tv-slot ${letterClass(s0.color)}`} style={{ width: s0.bars * bw }}>
+                        <button className="tv-slot-add" aria-label={`Add ${t.name} to ${s0.label}`} title={`Add ${t.name} to ${s0.label}`} onClick={() => addTo(s0.block, t)}>+</button>
+                      </span>
+                    );
                   const s = content(t, s0);
+                  // (a harmony plays instead of it here: it is drawn as not heard)
+                  const by = s0.instead?.[t.id];
                   return (
-                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
-                      aria-label={`${t.name} of section ${s.label}: open`} onClick={() => open(s.block, t)}>
+                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}${by !== undefined ? " quiet" : ""}`} style={{ width: s.bars * bw }}
+                      aria-label={`${t.name} of section ${s.label}${by !== undefined ? `, not heard: ${by} plays instead` : ""}: open`} title={by !== undefined ? `Not heard in ${s.label}: ${by} plays instead` : undefined} onClick={() => open(s.block, t)}>
                       {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} laid={laid} />}
                     </button>
                   );

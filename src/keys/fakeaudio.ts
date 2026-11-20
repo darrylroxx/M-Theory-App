@@ -55,8 +55,9 @@ export class FakeNode {
     this.outputs.push(n);
     return n;
   }
-  disconnect() {
-    this.outputs = [];
+  /** Let go of every connection, or only the ones to `to` (a node or a param), as Web Audio does. */
+  disconnect(to?: unknown) {
+    this.outputs = to === undefined ? [] : this.outputs.filter((n) => n !== to);
   }
 }
 

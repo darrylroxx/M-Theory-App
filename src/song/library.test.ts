@@ -107,7 +107,7 @@ describe("backups", () => {
     expect(importIdeas('{"ideas":[{"id":1}]}')).toEqual([]);
     expect(reviveIdea(null)).toBeNull();
   });
-  it("an idea saved by an older version opens with letters in playing order, the first section leading, sounding as it did", () => {
+  it("an idea saved by an older version opens with letters in playing order, each section sounding as it did", () => {
     // stored letters, no colours, and the leader (A, with the song's settings) moved to the back with ↑ ↓
     const stored = {
       ...idea("old", 1),
@@ -125,14 +125,13 @@ describe("backups", () => {
     expect(describeIdea(back)).toBe("A B");
     const s = sections(back.progression);
     expect(s.map((x) => [x.chords[0].ref.root, x.color])).toEqual([["F", 1], ["C", 0]]);
-    expect(back.progression.song!.parts[0].id).toBe("b");
-    // the chords play the style the leader played, in every section (one style for the track)
+    // each section plays the style it played: B its own, A the song's
+    expect(s.map((x) => x.style)).toEqual(["pinch", "strum"]);
     expect(back.progression.pattern).toBe("pinch");
-    // opened again, nothing moves
+    // opened again, nothing moves, and it is the same idea
     const again = reviveIdea(JSON.parse(JSON.stringify(back)))!;
-    expect(sections(again.progression).map((x) => [x.chords[0].ref.root, x.color, x.label])).toEqual([["F", 1, "A"], ["C", 0, "B"]]);
-    expect(again.progression.pattern).toBe("pinch");
-    expect(again.progression.song!.parts.map((x) => x.id)).toEqual(["b", "a"]);
+    expect(sections(again.progression).map((x) => [x.chords[0].ref.root, x.color, x.label, x.style])).toEqual([["F", 1, "A", "pinch"], ["C", 0, "B", "strum"]]);
+    expect(fp(again.progression)).toBe(fp(back.progression));
   });
   it("a section's name and signature are part of the idea", () => {
     const song = ensureSong(prog(["C"]));

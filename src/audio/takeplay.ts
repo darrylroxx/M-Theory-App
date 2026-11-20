@@ -98,8 +98,8 @@ const zeroOf = (t0: number, offset: number) => t0 - offset;
 export class TakeRuns {
   /** every run sounding or booked: one per clip and pass (see `lay`) */
   private runs = new Set<Run>();
-  /** every source not yet ended, so ■ can stop them all at once */
-  private live = new Set<AudioBufferSourceNode>();
+  /** every source not yet ended, with its fades, so ■ can fade them all out at once */
+  private live = new Map<AudioBufferSourceNode, Run>();
 
   /**
    * A stretch of music: it starts at `t`, is beats `s0`..`s1` of its section, at `spb` seconds a
@@ -172,14 +172,14 @@ export class TakeRuns {
       src.connect(gain);
       gain.connect(fader(tk.track, c));
       src.start(when - pre, tk.offset + into - pre, dur + pre);
-      this.live.add(src);
+      const r: Run = { key, src, gain, buffer: tk.buffer, offset: tk.offset, dur: tk.dur, t0, when: when - pre, until: when + dur, env };
+      this.live.set(src, r);
       src.onended = () => {
         this.live.delete(src);
         gain.disconnect();
       };
-      const next: Run = { key, src, gain, buffer: tk.buffer, offset: tk.offset, dur: tk.dur, t0, when: when - pre, until: when + dur, env };
-      this.runs.add(next);
-      here.add(next);
+      this.runs.add(r);
+      here.add(r);
     }
     return here;
   }
@@ -224,14 +224,11 @@ export class TakeRuns {
     run.env = [...run.env.filter(([x]) => x < from), [from, v], [at, 0]];
   }
 
-  /** Stop every take now (■, or ▶ again). */
+  /** Stop every take now (■, or ▶ again): each fades out over a few milliseconds, so none is cut off with a click. */
   stopAll(): void {
-    for (const src of this.live) {
-      try {
-        src.stop();
-      } catch {
-        /* already ended */
-      }
+    for (const run of this.live.values()) {
+      const now = run.src.context.currentTime;
+      this.end(run, now + EDGE_FADE, now);
     }
     this.live.clear();
     this.runs.clear();
@@ -261,6 +258,8 @@ export function fadeEdges(g: AudioParam, when: number, dur: number, pre = 0): En
 
 // ── one take alone ──
 let alone: AudioBufferSourceNode | null = null;
+/** its fades */
+let aloneGain: GainNode | null = null;
 /** counts every ask: a take still loading when another is asked for (or when it is stopped) is never heard */
 let asks = 0;
 const listeners = new Set<(on: boolean) => void>();
@@ -270,10 +269,23 @@ const tell = (on: boolean) => listeners.forEach((f) => f(on));
 export function stopAlone(): void {
   asks++;
   const was = alone;
+  const g = aloneGain;
   alone = null;
+  aloneGain = null;
   if (was) {
+    // faded out over a few milliseconds, as a take stopping in the song is
+    const now = audioContext().currentTime;
+    if (g) {
+      const p = g.gain as AudioParam & { cancelAndHoldAtTime?: (t: number) => AudioParam };
+      if (typeof p.cancelAndHoldAtTime === "function") p.cancelAndHoldAtTime(now);
+      else {
+        p.cancelScheduledValues(now);
+        p.setValueAtTime(p.value, now);
+      }
+      p.linearRampToValueAtTime(0, now + EDGE_FADE);
+    }
     try {
-      was.stop();
+      was.stop(g ? now + EDGE_FADE + 0.001 : now);
     } catch {
       /* already ended */
     }
@@ -311,6 +323,7 @@ export async function hearAlone(t: TakeRef & { rate: number }, track: string, pa
     tell(false);
   };
   alone = src;
+  aloneGain = gain;
   tell(true);
   return true;
 }

@@ -18,13 +18,13 @@ import type { Voicing } from "../guitar/voicings";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
+import { commit, reviveSong, settle, toneIdsIn, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
 import { reidea } from "./openidea";
-import { SOUND_V, migrateSound } from "../song/migrate";
+import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -71,17 +71,17 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
-  /** When set, shapes are arranged together in one area of the neck. null = each chord uses your own shape. */
+  /** The chords track on screen in the section on screen, on the guitar: when set, its shapes are arranged together in one area of the neck. null = each chord uses your own shape. (Every chords track in every section has its own.) */
   arrange?: ArrangeSettings | null;
-  /** The drum beat under the chords (undefined = never touched). */
+  /** The first drums track of the section on screen: its rhythm and on/off, and its kit there (undefined = never touched). */
   beat?: Beat;
-  /** How the first chords track's style is played, in every section: speed, swing, touch … */
+  /** How the first chords track is played in the section on screen (its style is `pattern`): speed, swing, touch … */
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
   /** How long the section on screen lasts, in bars. */
   bars?: number;
-  /** The sound and effects of the harp that plays the first chords track, the same in every section (missing knobs are at their defaults). */
+  /** The sound and effects of the harp that plays the first chords track in the section on screen (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
   /** The same for the harp that plays the first melody track: a separate instrument on a separate effects channel. */
   tuneSound?: Partial<HarpSound>;
@@ -91,17 +91,19 @@ export interface Progression {
   song?: Song | null;
   /** The mixer: each track's volume, mute and solo, for the whole song (set on the Track page) */
   mix?: Mix;
-  /** Tracks added on the Track page (the first chords, melody and drums tracks are always there) */
+  /** The song's tracks beyond the first chords, melody and drums tracks (which every section has): rows of the Track page */
   tracks?: Track[];
-  /** What the extra tracks hold in the section on screen (see song/tracks) */
+  /** The added tracks in the section on screen: what each holds there and how it sounds there (see song/tracks) */
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
   focus?: Focus;
+  /** Which track each page was editing in each section, the last time it was on screen (by part id): going back there brings them forward again */
+  focusIn?: Record<string, Focus>;
   /** The song's time signature, set on the Frame page: how long every bar is, on every page, in every section that has no signature of its own */
   meter?: TimeSig;
-  /** What plays each chords and melody track (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
+  /** What plays each chords and melody track in the section on screen (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
   tones?: Tones;
-  /** How it is stored: 2 = every track has one sound for the whole song (older songs are moved over: see song/migrate) */
+  /** How it is stored: 3 = every section has its own tracks and settings (older songs are moved over: see song/migrate) */
   v?: number;
 }
 
@@ -224,17 +226,19 @@ export const DEFAULT_STATE: AppState = {
   mySounds: [],
 };
 
-/** The idea on the page, loaded from storage and made whole (a song from before one sound per track is moved over first). */
+/** The idea on the page, loaded from storage and made whole (a song saved by an older version is moved over first). */
 export function reviveProgression(raw0: Partial<Progression> | undefined): Progression {
-  const raw = migrateSound(raw0);
+  const raw = migrateSong(raw0);
   const melody = reviveMelody(raw?.melody);
   const tracks = reviveTracks(raw?.tracks);
+  const layers = reviveLayers(raw?.layers, tracks);
   const p: Progression = {
     ...DEFAULT_STATE.progression, ...raw,
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
-    tracks, layers: reviveLayers(raw?.layers, tracks), focus: undefined,
+    tracks, layers, focus: undefined, focusIn: undefined,
+    arrange: reviveArrange(raw?.arrange) ?? null,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),
@@ -243,18 +247,15 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
     meter: reviveSig(raw?.meter),
-    tones: reviveTones(raw?.tones, toneIds(tracks)),
+    tones: reviveTones(raw?.tones, toneIdsIn(layers, tracks)),
     v: SOUND_V,
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
-  // Songs where a section other than the first one led (moved before that changed) are led by the first.
+  // An added track that is in no section is not part of the song.
   // Songs from before sections had lengths get them here.
   // Songs from before the time signature could be chosen get the one their first section played in.
-  return conform(settle(leadFirst(commit(p))));
+  return conform(settle(prune(commit(p))));
 }
-
-/** The tracks that can have an instrument of their own: every chords and melody track. */
-export const toneIds = (tracks: Track[] | undefined): string[] => ["chords", "melody", ...(tracks ?? []).filter((t) => t.kind === "chords" || t.kind === "melody").map((t) => t.id)];
 
 /** After any change, the whole song is in the bars of its time signature (see song/unity). */
 function unify(s: AppState): AppState {

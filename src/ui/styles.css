@@ -585,8 +585,8 @@ button.dm-strip-name:hover { color: var(--accent); }
 .finder-keys { display: block; padding: 6px; border: 1px solid var(--border-2); border-radius: 12px; background: var(--card-2); max-width: 100%; overflow: hidden; color: inherit; }
 .finder-keys:hover { border-color: var(--accent); }
 .finder-keys svg { max-width: 100%; height: auto; }
-.link-chip { flex: 0 1 auto; display: inline-block; line-height: 24px; max-width: 12em; overflow: hidden; text-overflow: ellipsis; height: 26px; padding: 0 9px; border-radius: 999px; border: 1px dashed var(--border-2); background: none; color: var(--faint); font-size: 0.74rem; font-weight: 800; white-space: nowrap; }
-.link-chip.own { border-style: solid; border-color: var(--accent); color: var(--accent); cursor: pointer; }
+/* "All sections": copy a track's sound to the same track in every other section (at the end of the row) */
+.dm-tabs .all-chip { margin-left: auto; }
 
 .pick-wrap { display: inline-flex; align-items: center; gap: 6px; min-width: 0; }
 @media (max-width: 620px) { .pick-wrap { flex: 1 1 100%; } .pick-wrap .beat-pick { flex: 1; min-width: 0; } .pick-wrap .beat-pick .beat-name { flex: 1; } }
@@ -896,6 +896,9 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-ms.solo.on { background: var(--fifth, #e2b33c); color: #14161a; }
 /* the same M or S beside the track a page edits, while the Track page keeps it from being heard */
 .mix-mark { flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 0.78rem; }
+/* the chords on screen are not heard in this section: a harmony plays instead of them */
+.hz-instead { flex: 0 1 auto; min-width: 0; max-width: 15em; height: 30px; padding: 0 10px; border: 1px dashed var(--border-2); border-radius: 8px; background: transparent; color: var(--muted); font-size: 0.78rem; font-weight: 650; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.hz-instead:hover { border-color: var(--accent); color: var(--text); }
 .mix-mark.solo:not(.on) { border-color: var(--fifth, #e2b33c); color: var(--fifth, #e2b33c); }
 @media (pointer: coarse) { .mix-mark { width: 36px; height: 36px; } }
 .tv-vol { width: 100%; height: 16px; margin: 0; }
@@ -903,7 +906,7 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; }
 .tv-lanes { position: relative; }
 .tv-row { display: flex; height: 52px; border-bottom: 1px solid var(--border); }
-.tv-row.quiet .tv-block { opacity: 0.35; }
+.tv-row.quiet .tv-block, .tv-block.quiet { opacity: 0.35; }
 /* a track just added on another page: lit for a moment when the Track page opens */
 .tv-head.fresh { animation: tv-fresh 1.6s ease-out; }
 .tv-row.fresh { animation: tv-fresh-row 1.6s ease-out; }
@@ -921,6 +924,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-block.on { background: color-mix(in srgb, var(--kc) 24%, transparent); }
 .tv-block:hover { background: color-mix(in srgb, var(--kc) 30%, transparent); }
 .tv-empty { padding-left: 8px; color: var(--muted); font-size: 0.75rem; }
+/* a section that does not have the track: an empty slot, with a faint + that puts it there */
+.tv-block.tv-slot, .tv-block.tv-slot:hover { background: transparent; }
+.tv-slot-add { margin-left: 4px; min-width: 32px; height: 32px; padding: 0 8px; border: 1px dashed var(--border-2); border-radius: 8px; background: transparent; color: var(--muted); opacity: 0.55; font-size: 1rem; line-height: 1; }
+.tv-slot-add:hover, .tv-slot-add:focus-visible { opacity: 1; color: var(--text); }
 .tv-chords { display: flex; height: 100%; }
 .tv-chord { flex: none; height: 100%; display: flex; align-items: center; padding-left: 5px; font-weight: 800; font-size: 0.78rem; white-space: nowrap; overflow: hidden; border-left: 2px solid color-mix(in srgb, var(--kc) 70%, var(--text)); background: color-mix(in srgb, var(--kc) 18%, transparent); }
 .tv-chord.rest { background: transparent; border-left-style: dashed; }
@@ -952,6 +959,8 @@ button.dm-strip-name:hover { color: var(--accent); }
 .clip-tracks .clip-add { font-weight: 850; padding-inline: 12px; }
 .clip-x { font-style: normal; font-size: 0.7rem; margin-left: 7px; opacity: 0.6; }
 .clip-x:hover { opacity: 1; }
+/* on a touch screen the ✕ takes a finger-sized tap (the tab keeps its size) */
+@media (pointer: coarse) { .clip-x { display: inline-block; padding: 9px 7px; margin: -9px -7px -9px 0; } }
 .clip-paste { width: auto; padding-inline: 8px; gap: 3px; display: inline-flex; align-items: center; }
 .icon-btn svg { display: block; }
 .clip-tracks button { white-space: nowrap; }
@@ -1167,6 +1176,9 @@ button.dm-strip-name:hover { color: var(--accent); }
   .clip-bar:not(.many):has(.mix-mark) { flex-wrap: wrap; row-gap: 4px; }
   .clip-bar:not(.many):has(.mix-mark) .spacer { flex-basis: 100%; height: 0; }
   .clip-bar:not(.many):has(.mix-mark) .bars-ctl { margin-left: auto; }
+  /* "… plays instead" takes the room the tools leave, cut short if it must be */
+  .clip-bar .hz-instead { flex: 1 1 0; max-width: none; padding: 0 8px; }
+  .clip-bar:has(.hz-instead) .spacer { display: none; }
   .dm-bar > .dm-tabrow { flex-basis: 100%; }
   .bg-steps, .mg-steps { gap: 10px; }
   .bg-bar { gap: 2px; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 2px); }

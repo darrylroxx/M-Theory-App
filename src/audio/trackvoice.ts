@@ -29,6 +29,12 @@ import { soundFor } from "../synth/render";
 
 /** How long an instrument takes to fade out when it is swapped, or its track is removed. */
 export const FADE = 0.06;
+/**
+ * How long after ■ a track rests (seconds): its fade is over long before (its room's tail is in
+ * the shared room, which fades on its own); with its echo on, once the repeats have died away.
+ */
+const REST = 2;
+const REST_ECHO = 12;
 const TAU = FADE / 4;
 
 /**
@@ -168,6 +174,15 @@ export class TrackVoice {
   private shape: KeysShape | null = null;
   /** ■ faded the track out (its room and echoes with it): the next note brings it back */
   private hushed = false;
+  /** a while after ■ it is let go of its fader (and its room), so nothing of it is worked out until its next note */
+  private restTimer: ReturnType<typeof setTimeout> | undefined;
+  private resting = false;
+  /** live: when the last note booked on it is over; a while after, it rests until its next note (see `idle`) */
+  private quietAt = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** notes booked since the idle check was last set */
+  private booked = 0;
+  private dest: AudioNode;
   /** the tempo the rack was last set for (its echo keeps time with it) */
   private bpm = 90;
 
@@ -180,11 +195,14 @@ export class TrackVoice {
     /** the sound it starts on: a song's track starts on its own, so its first note has nothing to glide from */
     start: HarpSound = SOUND_DEFAULT,
     bpm = 90,
+    /** the track's fader as its reverb hears it (mix.ts sendFader): the rooms are shared, see rooms.ts */
+    sendTo?: AudioNode,
   ) {
     this.offline = "startRendering" in c;
     this.out = c.createGain();
+    this.dest = dest;
     this.out.connect(dest);
-    this.rack = createRack(c, this.out);
+    this.rack = createRack(c, this.out, sendTo);
     this.rack.set(start, bpm);
     this.harpIn = c.createGain();
     this.harpIn.connect(this.rack.input);
@@ -331,6 +349,8 @@ export class TrackVoice {
   note(midi: number, when: number, velocity: number, length: number, o: NoteOpts = {}) {
     if (this.gone) return;
     this.wake(when);
+    // (the strings ring for 5 seconds at most; a key or a synth note for as long as it is held, then lets go)
+    this.idle(when + (Number.isFinite(length) ? Math.min(length, 120) : 6) + (this.inst ? 2 : 0));
     const inst = this.inst;
     if (!inst) {
       this.harp.play(midi, when, velocity, o.slot, length, !!o.cut, o.lift ?? 1, o.as, o.until);
@@ -389,20 +409,78 @@ export class TrackVoice {
     }
     if (this.offline || this.gone) return;
     this.hushed = true;
-    const g = this.out.gain;
-    g.cancelScheduledValues(at);
-    // (to 1% in the fade's time: the room is 40 dB down by then, and silent soon after)
-    g.setTargetAtTime(0, at, STOP_FADE / 4.6);
+    // (to 1% in the fade's time: the room is 40 dB down by then, and silent soon after; what the track
+    // sends to its room fades the same way, and the room itself with it)
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(at);
+      g.setTargetAtTime(0, at, STOP_FADE / 4.6);
+    }
+    this.rack.hush(at, STOP_FADE / 4.6);
+    // once it is silent (its own fade over, and any echo it was still repeating died away), it rests:
+    // let go of its fader and its room, it costs the audio thread nothing until the next note wakes it
+    clearTimeout(this.restTimer);
+    const after = Math.max(0, at - this.c.currentTime) + (this.sound.echo > 0 ? REST_ECHO : REST);
+    this.restTimer = setTimeout(() => {
+      if (!this.hushed || this.gone || this.resting) return;
+      this.resting = true;
+      this.out.disconnect();
+      this.rack.unplug();
+    }, after * 1000);
+  }
+
+  /**
+   * Live: a voice whose notes are over rests a while after (its fader and its room let go, as
+   * after ■), so a voice the song is not playing (another section's way of playing the track, a
+   * track with nothing here) costs the audio thread nothing until its next note brings it back.
+   */
+  private idle(end: number) {
+    if (this.offline || this.gone) return;
+    this.quietAt = Math.max(this.quietAt, end);
+    this.booked++;
+    if (this.idleTimer === undefined) this.armIdle();
+  }
+  private armIdle() {
+    this.booked = 0;
+    const wait = Math.max(0, this.quietAt - this.c.currentTime) + (this.sound.echo > 0 ? REST_ECHO : REST);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      if (this.gone) return;
+      // more notes were booked since: it waits for those to be over too
+      if (this.booked > 0) return this.armIdle();
+      this.rest();
+    }, wait * 1000);
+  }
+  /** Rest now (it is silent): let go of its fader and its room; its next note brings it back. */
+  rest() {
+    if (this.offline || this.gone || this.resting) return;
+    clearTimeout(this.restTimer);
+    this.hushed = true;
+    this.resting = true;
+    this.out.disconnect();
+    this.rack.unplug();
+  }
+
+  /** The track's own fade, on its sound and on what it sends to its room. */
+  private fades(): AudioParam[] {
+    return [this.out.gain, this.rack.send.gain];
   }
 
   /** A note is coming at `when` after ■ faded the track out: it comes back just before it (quickly, without a click). */
   private wake(when: number) {
     if (!this.hushed || this.offline) return;
     this.hushed = false;
+    clearTimeout(this.restTimer);
+    if (this.resting) {
+      this.resting = false;
+      this.out.connect(this.dest);
+      this.rack.plug();
+    }
     const t = Math.max(this.c.currentTime, when - 0.03);
-    const g = this.out.gain;
-    g.cancelScheduledValues(t);
-    g.setTargetAtTime(1, t, 0.006);
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(t);
+      g.setTargetAtTime(1, t, 0.006);
+    }
+    this.rack.wake(t);
   }
 
   /** Offline, before the render: load what the notes need, then play what was written down. */
@@ -420,6 +498,8 @@ export class TrackVoice {
     if (this.gone) return;
     this.gone = true;
     clearTimeout(this.settle);
+    clearTimeout(this.restTimer);
+    clearTimeout(this.idleTimer);
     const inst = this.inst;
     const end = () => {
       inst?.dispose();
@@ -428,8 +508,10 @@ export class TrackVoice {
     };
     if (this.offline) return end();
     const now = this.c.currentTime;
-    this.out.gain.cancelScheduledValues(now);
-    this.out.gain.setTargetAtTime(0, now, TAU);
+    for (const g of this.fades()) {
+      g.cancelScheduledValues(now);
+      g.setTargetAtTime(0, now, TAU);
+    }
     this.harp.stopAll(now + FADE);
     inst?.stopAll(now + FADE);
     setTimeout(end, FADE * 2000);

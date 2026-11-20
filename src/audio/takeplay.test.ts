@@ -2,21 +2,27 @@
 import { describe, expect, it, vi } from "vitest";
 
 const pending: ((b: unknown) => void)[] = [];
-const sources: { buffer: unknown; started?: number; stopped: boolean }[] = [];
+const sources: { buffer: unknown; started?: number; stopped: boolean; stopAt?: number }[] = [];
+const gains: { events: [string, number, number][] }[] = [];
 vi.mock("./takebuffers", () => ({ loadTake: () => new Promise((r) => pending.push(r)) }));
 vi.mock("./mix", () => ({ fader: () => ({}) }));
 vi.mock("./context", () => ({
   audioContext: () => ({
     currentTime: 1,
-    createGain: () => ({ gain: { setValueAtTime() {}, linearRampToValueAtTime() {} }, connect() {}, disconnect() {} }),
+    createGain: () => {
+      const events: [string, number, number][] = [];
+      gains.push({ events });
+      const p = { value: 1, setValueAtTime: (v: number, t: number) => events.push(["set", v, t]), linearRampToValueAtTime: (v: number, t: number) => events.push(["ramp", v, t]), cancelScheduledValues: (t: number) => events.push(["cancel", 0, t]) };
+      return { gain: p, connect() {}, disconnect() {} };
+    },
     createBufferSource: () => {
-      const s = { buffer: null as unknown, started: undefined as number | undefined, stopped: false, connect() {}, start(w: number) { s.started = w; }, stop() { s.stopped = true; }, onended: null };
+      const s = { buffer: null as unknown, started: undefined as number | undefined, stopped: false, stopAt: undefined as number | undefined, connect() {}, start(w: number) { s.started = w; }, stop(w?: number) { s.stopped = true; s.stopAt = w; }, onended: null };
       sources.push(s);
       return s;
     },
   }),
 }));
-const { hearAlone, hearingAlone, stopAlone } = await import("./takeplay");
+const { EDGE_FADE, hearAlone, hearingAlone, stopAlone } = await import("./takeplay");
 const take = (start: number) => ({ wet: "a.wav", start, frames: 48000, rate: 48000 });
 
 describe("a take heard alone", () => {
@@ -38,6 +44,10 @@ describe("a take heard alone", () => {
     stopAlone();
     expect(sources[1].stopped).toBe(true);
     expect(hearingAlone()).toBe(false);
+    // not cut off where it is (a click): faded out over a few milliseconds from now (1 s), then stopped
+    const g = gains[gains.length - 1].events;
+    expect(g.slice(-1)[0]).toEqual(["ramp", 0, 1 + EDGE_FADE]);
+    expect(sources[1].stopAt).toBeCloseTo(1 + EDGE_FADE + 0.001, 9);
     const d = hearAlone(take(0), "v1");
     stopAlone();
     pending[3]("D");

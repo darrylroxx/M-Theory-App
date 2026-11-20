@@ -382,7 +382,7 @@ export const barsOf = (b: { bars?: number }) => Math.max(1, Math.min(MAX_BARS, M
 export const lenOf = (b: { steps: number; bars?: number }) => b.steps * barsOf(b);
 export const MAX_BARS = 32;
 
-/** The rhythm on its own: what each song section keeps for itself. The kit, its sounds and effects belong to the track (one for the whole song). */
+/** The rhythm on its own (a section keeps it apart from the kit: see song/structure's Settings). */
 export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
 /** A section's drum rhythm: the pattern, and whether the drums play at all there. */
 export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]> & { on?: boolean };
@@ -395,6 +395,11 @@ export type DrumKit = Omit<Beat, (typeof GROOVE_KEYS)[number] | "on">;
 export function kitOfBeat(b: Beat): DrumKit {
   const { patternId: _p, name: _n, edited: _e, steps: _s, div: _d, bars: _b, swing: _w, rows: _r, on: _o, ...kit } = b;
   return kit;
+}
+/** A beat's rhythm and on/off played on another kit: all of the kit is that one's (nothing of its own kit is kept). */
+export function onKit(b: Beat, kit: DrumKit): Beat {
+  const rhythm = Object.fromEntries(Object.entries(b).filter(([k]) => k === "on" || (GROOVE_KEYS as readonly string[]).includes(k)));
+  return { ...kit, ...rhythm } as Beat;
 }
 /** A drum sound as one string, the same for the same sound (a missing effect setting is its default). */
 export const kitSig = (k: DrumKit): string => {

@@ -131,3 +131,40 @@ describe("the worklet", () => {
     expect(p.process([], [[new Float32Array(128), new Float32Array(128)]])).toBe(false);
   });
 });
+
+describe("the worklet tells the page when it has gone quiet", () => {
+  const on = (t: number, midi: number, id: number): SynthEvent => ({ type: "on", t, midi, vel: 0.8, id });
+  const off = (t: number, id: number): SynthEvent => ({ type: "off", t, id });
+  // a short sound with no echo or reverb of its own, so it is quiet soon after each note
+  const short = soundFor({ ...DEFAULT_PARAMS, reverb: 0, release: 0.05, fx: "off" });
+  it("once, after the last note has rung out, with how many messages it had; not while a note waits; again after the next", () => {
+    const p = new Processor({ processorOptions: { params: short, report: true } });
+    const said: { frame: number; d: unknown }[] = [];
+    (p.port as unknown as { postMessage: (d: unknown) => void }).postMessage = (d) => said.push({ frame: g.currentFrame as number, d });
+    p.port.onmessage!({ data: [on(0.05, 60, 1), off(0.3, 1)] });
+    p.port.onmessage!({ data: [on(1.5, 64, 2), off(1.6, 2)] });
+    run(p, SR * 1.4);
+    // quiet between them, but a note is waiting: nothing said
+    expect(said).toEqual([]);
+    run(p, SR * 4, (f) => (g.currentFrame = SR * 1.4 + f));
+    expect(said.length).toBe(1);
+    expect(said[0].d).toEqual({ idle: true, got: 2 });
+    expect(said[0].frame / SR).toBeGreaterThan(1.6);
+    p.port.onmessage!({ data: [on(6, 67, 3), off(6.1, 3)] });
+    run(p, SR * 3, (f) => (g.currentFrame = SR * 5.4 + f));
+    expect(said.length).toBe(2);
+    expect(said[1].d).toEqual({ idle: true, got: 3 });
+    // a change of sound while it is quiet: said again, with the new count (the page only acts on a quiet that has heard everything)
+    p.port.onmessage!({ data: { type: "params", params: short } });
+    run(p, SR, (f) => (g.currentFrame = SR * 8.4 + f));
+    expect(said.length).toBe(3);
+    expect(said[2].d).toEqual({ idle: true, got: 4 });
+  });
+  it("says nothing unless asked (an offline render)", () => {
+    const p = new Processor({ processorOptions: { params: short, events: [on(0.05, 60, 1), off(0.3, 1)] } });
+    const said: unknown[] = [];
+    (p.port as unknown as { postMessage: (d: unknown) => void }).postMessage = (d) => said.push(d);
+    run(p, SR * 2);
+    expect(said).toEqual([]);
+  });
+});

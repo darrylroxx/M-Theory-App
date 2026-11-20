@@ -3,19 +3,22 @@
  *
  *   strings ─ squeeze ─ saturation ─ tone ─ phaser ─ wobble ─ chorus ─ tremolo ─┬────────────┐
  *                                                                                ├─ echo ─────┤
- *                                 shimmer (octave-up strings) ───────────────────┴─ reverb ───┤
- *                                                                                             ▼
- *                                                           pump (from the kick) ─ volume ─ ceiling ─ out
+ *                                                                                │            ▼
+ *                                                pump (from the kick) ─ volume ─ ceiling ─ out
+ *                                                                                │
+ *                                 shimmer (octave-up strings) ───────────────────┴─ send ─ volume ─ fade ─ fader ─ reverb (shared)
  *
  * Compressing first hands the saturation an even signal; modulation works on the tone that has
- * already been shaped; echo and reverb come last so they repeat the finished sound.
+ * already been shaped; echo and reverb come last so they repeat the finished sound. The reverb
+ * is a room shared with every track that has the same one (rooms.ts): the track's send goes into
+ * it through the same gains its sound went through after the room when each track had its own.
  *
  * Works on any audio context, live or offline, so the same chain can be measured in tests.
  */
 import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
-import { atRenderTime } from "./context";
-import { renderSpace, drumRng } from "./drums";
+import { gate } from "./gate";
 import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
+import { VERB_PRE, enterRoom, leaveRoom, roomKey, type Room } from "./rooms";
 import { SAT_TYPES, createSaturator, type SatType } from "./saturation";
 
 export type DriveType = SatType;
@@ -113,11 +116,25 @@ export interface Rack {
   /** dips under each kick when the drums' Pump is up */
   duck: GainNode;
   /**
+   * What the track sends to its room, on the way out of the rack: its gain is the track's own
+   * fade (at ■, when it is removed), which the track sets as it sets its own output's.
+   */
+  send: GainNode;
+  /** The room it sends to now (shared with every track that has the same one: see rooms.ts). */
+  room(): Room | null;
+  /**
    * Set the sound: now, or from `at` (seconds on the audio clock) when a song section with a sound
-   * of its own starts there. A room is rebuilt at that moment too: live by a timer, in an offline
-   * render by pausing the render there (see atRenderTime), so every export is the same.
+   * of its own starts there. Another room is crossed over to at that moment too (live after the
+   * knob has settled), the old one ringing out what it was sent.
    */
   set(s: HarpSound, bpm: number, at?: number): void;
+  /** ■: the rooms it sends to fade out from `at` with the track (the next note brings them back: `wake`). */
+  hush(at: number, tau: number): void;
+  /** A note is coming: the room it sends to comes back from `at`. */
+  wake(at: number): void;
+  /** Resting after ■ (see TrackVoice): its send lets go of its room, and takes hold again. */
+  unplug(): void;
+  plug(): void;
   /** Stop its oscillators and let go of everything (the track is gone). */
   dispose(): void;
 }
@@ -137,7 +154,7 @@ const VERB_SEND: Record<HarpVerb, number> = { hall: 1, room: 1.13, plate: 1.35, 
 /** How much of the sound goes to the reverb (the room comes back at the level it is sent), for the Reverb knob and the kind of room. */
 export const verbSendOf = (s: Pick<HarpSound, "space" | "verb">) => Math.pow(s.space, 1.3) * 1.5 * VERB_SEND[s.verb];
 /** The reverb's gap before it starts (seconds). */
-export const VERB_PRE = 0.018;
+export { VERB_PRE };
 /** Read a value off a curve given as points. */
 const table = (xs: number[], ys: number[], x: number) => {
   let i = 0;
@@ -147,7 +164,23 @@ const table = (xs: number[], ys: number[], x: number) => {
 };
 const db = (v: number) => Math.pow(10, v / 20);
 
-export function createRack(c: BaseAudioContext, out: AudioNode = c.destination): Rack {
+/**
+ * How long after an effect is turned to 0 its connections are let go (seconds; see gate.ts):
+ * once its level has glided down (τ 30 ms) to far under hearing; the echo once its longest
+ * repeat (1.9 s) has gone by too; the wobble once its sweep is so small that letting go of it
+ * moves nothing by a measurable fraction of a sample.
+ */
+const SETTLE = 0.3;
+const WOBBLE_SETTLE = 0.5;
+const ECHO_SETTLE = 2.2;
+/** how a track's send crosses over to another room (time constant, seconds) */
+const ROOM_TAU = 0.01;
+
+/**
+ * `out`: where the rack's own sound goes (the track's fader, through its fade). `sendTo`: the
+ * track's fader as its reverb hears it (mix.ts sendFader); none, a unity gain of its own.
+ */
+export function createRack(c: BaseAudioContext, out: AudioNode = c.destination, sendTo?: AudioNode): Rack {
   const gain = (v = 1) => {
     const g = c.createGain();
     g.gain.value = v;
@@ -200,19 +233,22 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const stages = [0, 1, 2, 3].map(() => filter("allpass", 870, 0.6));
   const phaseLfo = lfo(0.33);
   const phaseDepth = gain(1500); // cents either side of 870 Hz: about 360 Hz to 2.1 kHz
-  phaseLfo.connect(phaseDepth);
   stages.forEach((s) => phaseDepth.connect(s.detune));
   highShelf.connect(phased);
-  stages.reduce<AudioNode>((a, s) => a.connect(s), highShelf).connect(phaseWet).connect(phased);
+  stages.slice(1).reduce<AudioNode>((a, s) => a.connect(s), stages[0]).connect(phaseWet).connect(phased);
+  // (each effect at 0 rests: its way in and its sweep are let go, see gate.ts)
+  const phaserFeed = gate(c, [[highShelf, stages[0]], [phaseLfo, phaseDepth]], SETTLE);
 
   // ── wobble: a short delay whose length drifts, as a worn tape does ──
   const tape = c.createDelay(0.05);
   tape.delayTime.value = 0.006;
   const wow = gain(0);
   const flutter = gain(0);
-  lfo(0.55).connect(wow).connect(tape.delayTime);
-  lfo(6.3).connect(flutter).connect(tape.delayTime);
+  lfo(0.55).connect(wow);
+  lfo(6.3).connect(flutter);
   phased.connect(tape);
+  // (at 0 the delay's length is left steady, which the browser works out far more cheaply)
+  const wobbleFeed = gate(c, [[wow, tape.delayTime], [flutter, tape.delayTime]], WOBBLE_SETTLE);
 
   // ── chorus: two delayed copies, drifting opposite ways, one in each speaker ──
   const chorused = gain();
@@ -220,6 +256,7 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const merge = c.createChannelMerger(2);
   const chorusLfo = lfo(0.62, "triangle");
   const slowLfo = lfo(0.17);
+  const chorusEdges: [AudioNode, AudioNode][] = [];
   [0.013, 0.0175].forEach((base, ch) => {
     const d = c.createDelay(0.05);
     d.delayTime.value = base;
@@ -227,10 +264,12 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
     d.channelCountMode = "explicit";
     const depth = gain(ch ? -0.0026 : 0.0026);
     const slow = gain(ch ? 0.0011 : -0.0011);
-    chorusLfo.connect(depth).connect(d.delayTime);
-    slowLfo.connect(slow).connect(d.delayTime);
-    tape.connect(d).connect(merge, 0, ch);
+    depth.connect(d.delayTime);
+    slow.connect(d.delayTime);
+    d.connect(merge, 0, ch);
+    chorusEdges.push([tape, d], [chorusLfo, depth], [slowLfo, slow]);
   });
+  const chorusFeed = gate(c, chorusEdges, SETTLE);
   tape.connect(chorused);
   merge.connect(chorusWet).connect(chorused);
 
@@ -238,8 +277,9 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const trem = gain(1);
   const tremLfo = lfo(4);
   const tremDepth = gain(0);
-  tremLfo.connect(tremDepth).connect(trem.gain);
+  tremLfo.connect(tremDepth);
   chorused.connect(trem);
+  const tremFeed = gate(c, [[tremDepth, trem.gain]], SETTLE);
 
   // ── echo: two delays feeding each other, so the repeats bounce from side to side; each repeat is duller and thinner ──
   const mix = gain();
@@ -254,25 +294,30 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const echoWet = gain(1);
   left.channelCount = right.channelCount = 1;
   left.channelCountMode = right.channelCountMode = "explicit";
-  trem.connect(echoSend).connect(left);
-  left.connect(right).connect(echoHp).connect(echoLp).connect(feedback).connect(left);
+  trem.connect(echoSend);
+  left.connect(right).connect(echoHp).connect(echoLp).connect(feedback);
   left.connect(echoOut, 0, 0);
   right.connect(echoOut, 0, 1);
   echoOut.connect(echoWet).connect(mix);
 
-  // ── reverb: a short gap before it, so the pluck stays clear; its lows cut, so it never booms ──
+  // ── reverb: sent to a room shared with the other tracks that have the same one (rooms.ts) ──
   const halo = gain();
   const verbSend = gain(0);
-  const pre = c.createDelay(0.2);
-  pre.delayTime.value = VERB_PRE;
-  const verbHp = filter("highpass", 120);
-  const verb = c.createConvolver();
-  verb.normalize = false; // the room is already scaled to return exactly the energy it is sent
-  const verbWet = gain(1);
-  trem.connect(verbSend).connect(pre);
-  echoWet.connect(gain(0.35)).connect(verbSend);
-  halo.connect(pre);
-  pre.connect(verbHp).connect(verb).connect(verbWet).connect(mix);
+  trem.connect(verbSend);
+  const echoToVerb = gain(0.35);
+  echoToVerb.connect(verbSend);
+  // (an echo at 0 is let go once its repeats have died away: it no longer feeds the room either)
+  const echoFeed = gate(c, [[echoSend, left], [feedback, left], [echoWet, echoToVerb]], ECHO_SETTLE);
+  // what came after the room when each track had its own (the dry mix's level, the volume, the
+  // track's fade and its fader) now comes before it, each the same gain set the same way
+  const sendIn = gain();
+  verbSend.connect(sendIn);
+  halo.connect(sendIn);
+  const sendMix = gain();
+  const sendLevel = gain(0.8);
+  const send = gain();
+  const sendEnd = sendTo ?? gain();
+  sendIn.connect(sendMix).connect(sendLevel).connect(send).connect(sendEnd);
 
   // ── out ──
   const duck = gain();
@@ -292,17 +337,77 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
     if (was.level === undefined) p.value = v;
     else p.cancelScheduledValues(when).setTargetAtTime(v, when, tc);
   };
-  const room = (s: HarpSound) => {
-    const sides = renderSpace(c.sampleRate, s.size, drumRng(11), s.verb);
-    const buf = c.createBuffer(2, sides[0].length, c.sampleRate);
-    sides.forEach((d, ch) => buf.getChannelData(ch).set(d));
-    verb.buffer = buf;
+  // the room sent to now, and the ones left that may still be ringing (■ fades them too)
+  let cur: { room: Room; g: GainNode } | null = null;
+  const leaving = new Set<{ room: Room; g: GainNode }>();
+  const timers = new Set<ReturnType<typeof setTimeout>>();
+  /** ■ has faded the track out (the rooms it moves to then wait for its next note) */
+  let hushed = false;
+  /** Send to the room for this kind and size, from `at` (the one before it rings out). */
+  const moveTo = (verb: HarpVerb, size: number, at: number) => {
+    if (cur && cur.room.key === roomKey(verb, size)) return;
+    const room = enterRoom(c, verb, size);
+    const g = c.createGain();
+    sendEnd.connect(g).connect(room.input);
+    const was = cur;
+    cur = { room, g };
+    if (!was) return;
+    g.gain.value = 0;
+    g.gain.setTargetAtTime(1, at, ROOM_TAU);
+    was.g.gain.cancelScheduledValues(at);
+    was.g.gain.setTargetAtTime(0, at, ROOM_TAU);
+    // (a room another track left faded at ■ is brought back for this one, which is playing)
+    if (!hushed) {
+      room.hush.gain.cancelScheduledValues(at);
+      room.hush.gain.setTargetAtTime(1, at, 0.006);
+    }
+    // live, the old send is let go once it has crossed over (a render keeps it: every export the same)
+    if (!live) return;
+    leaving.add(was);
+    const t = setTimeout(
+      () => {
+        timers.delete(t);
+        leaving.delete(was);
+        was.g.disconnect();
+        leaveRoom(c, was.room);
+      },
+      (Math.max(0, at - c.currentTime) + 0.2) * 1000,
+    );
+    timers.add(t);
   };
 
   return {
     input,
     halo,
     duck,
+    send,
+    room: () => cur?.room ?? null,
+    hush(at, tau) {
+      hushed = true;
+      for (const r of [cur, ...leaving]) {
+        if (!r) continue;
+        const h = r.room.hush.gain;
+        h.cancelScheduledValues(at);
+        h.setTargetAtTime(0, at, tau);
+      }
+    },
+    unplug() {
+      try {
+        send.disconnect(sendEnd);
+      } catch {
+        /* not connected */
+      }
+    },
+    plug() {
+      send.connect(sendEnd);
+    },
+    wake(at) {
+      hushed = false;
+      if (!cur) return;
+      const h = cur.room.hush.gain;
+      h.cancelScheduledValues(at);
+      h.setTargetAtTime(1, at, 0.006);
+    },
     set(s, bpm, at) {
       when = Math.max(at ?? 0, c.currentTime);
       if (s.squeeze !== was.squeeze) {
@@ -317,25 +422,35 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
       }
       if (s.tone !== was.tone) to(driven.gain, db(s.tone < 0 ? 1.2 * s.tone : 1.5 * s.tone));
       if (s.phaser !== was.phaser) {
+        if (s.phaser > 0) phaserFeed.on();
+        else phaserFeed.off(when);
         to(phaseWet.gain, s.phaser);
         to(phased.gain, 1 - 0.26 * s.phaser);
       }
       if (s.wobble !== was.wobble) {
+        if (s.wobble > 0) wobbleFeed.on();
+        else wobbleFeed.off(when);
         // up to about ±12 cents of slow drift and ±3 cents of flutter
         to(wow.gain, 0.002 * s.wobble * s.wobble);
         to(flutter.gain, 0.00005 * s.wobble);
       }
       if (s.chorus !== was.chorus) {
+        if (s.chorus > 0) chorusFeed.on();
+        else chorusFeed.off(when);
         to(chorusWet.gain, 0.75 * s.chorus);
         to(chorused.gain, 1 - 0.2 * s.chorus);
       }
       if (s.trem !== was.trem) {
+        if (s.trem > 0) tremFeed.on();
+        else tremFeed.off(when);
         // at full the volume swings from almost nothing to well above where it was
         to(tremDepth.gain, 0.62 * s.trem);
         to(trem.gain, 1 - 0.2 * s.trem);
       }
       if (s.tremSpeed !== was.tremSpeed || bpm !== was.bpm) to(tremLfo.frequency, ((TREM_SPEEDS.find((x) => x.id === s.tremSpeed)?.perBeat ?? 2) * bpm) / 60);
       if (s.echo !== was.echo) {
+        if (s.echo > 0) echoFeed.on();
+        else echoFeed.off(when);
         to(echoSend.gain, Math.pow(s.echo, 1.2) * 0.75);
         to(feedback.gain, s.echo > 0 ? 0.22 + 0.3 * s.echo : 0);
       }
@@ -346,24 +461,39 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
       }
       if (s.space !== was.space || s.verb !== was.verb) {
         to(verbSend.gain, verbSendOf(s));
-        to(mix.gain, db(-7 * Math.pow(s.space, 1.6)));
+        const m = db(-7 * Math.pow(s.space, 1.6));
+        to(mix.gain, m);
+        to(sendMix.gain, m);
       }
       if (s.size !== was.size || s.verb !== was.verb) {
-        // building a room takes a moment: wait until the knob stops moving
         clearTimeout(timer);
         const later = when - c.currentTime;
-        if (!verb.buffer) room(s);
-        else if (!live) {
-          // a section's own room, in a render: at exactly its moment (a render that cannot pause keeps the room it has)
-          if (later <= 0.001) room(s);
-          else atRenderTime(c, when, () => room(s));
-        } else timer = setTimeout(() => room(s), later > 0.001 ? later * 1000 : 140);
+        // the first room at once; a section's own room at its moment (live and in a render alike); a
+        // knob being turned, once it stops (a room takes a moment to build)
+        if (!cur || !live || later > 0.001) moveTo(s.verb, s.size, when);
+        else {
+          const { verb, size } = s;
+          timer = setTimeout(() => moveTo(verb, size, c.currentTime), 140);
+        }
       }
-      if (s.level !== was.level) to(level.gain, s.level * s.level * 1.25);
+      if (s.level !== was.level) {
+        const v = s.level * s.level * 1.25;
+        to(level.gain, v);
+        to(sendLevel.gain, v);
+      }
       was = { ...s, bpm };
     },
     dispose() {
       clearTimeout(timer);
+      for (const t of timers) clearTimeout(t);
+      timers.clear();
+      for (const r of [cur, ...leaving]) {
+        if (!r) continue;
+        r.g.disconnect();
+        leaveRoom(c, r.room);
+      }
+      cur = null;
+      leaving.clear();
       for (const o of oscs) {
         try {
           o.stop();

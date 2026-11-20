@@ -24,6 +24,7 @@ use cpal::{FromSample, Sample, SampleFormat, SizedSample, StreamInstant};
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeBody, Request, Response};
 
+use crate::dsp::OutSafety;
 use crate::fx::{Chain, VocalFx};
 use crate::meter::Shared;
 use crate::recfile::{self, Writing, MAX_FRAMES, RENDER};
@@ -174,6 +175,8 @@ pub struct Core {
     over: u32,
     levels: Arc<Shared>,
     pub stats: Arc<Stats>,
+    /// the last stage before the interface: nothing the engine plays goes over −1 dBFS (see dsp::OutSafety)
+    safe: OutSafety,
 }
 
 impl Core {
@@ -216,6 +219,7 @@ impl Core {
             over: 0,
             levels,
             stats: Arc::new(Stats::default()),
+            safe: OutSafety::new(sr),
         }
     }
     /// A message from the app. What it leaves behind comes back, to be freed off the audio thread.
@@ -495,6 +499,9 @@ impl Core {
                 l += a;
                 r += b;
             }
+            // the song (turned up by the Song slider), the click and the voice together could go over
+            // full scale, which the interface would flatten into a crackle: held under −1 dBFS instead
+            let (l, r) = self.safe.run(l, r);
             frame[0] = l;
             if ch > 1 {
                 frame[1] = r;
@@ -1136,12 +1143,13 @@ mod tests {
             c.on_output(&mut out, 0.0);
             heard.extend(out.chunks(2).map(|f| f[0]));
         }
-        // the loudest moment just after a beat: 1.0 where a bar begins, 0.7 on the other beats
+        // the loudest moment just after a beat: 1.0 where a bar begins (held at −1 dBFS by the output's
+        // safety limiter), 0.7 on the other beats
         let peak = |at: usize| heard[at..at + 1500].iter().fold(0.0f32, |m, v| m.max(v.abs()));
         let beat = |k: usize| 96000 + k * 24000;
-        assert!(peak(0) > 0.9 && peak(24000) < 0.8, "the count-in: four beats, the first accented");
+        assert!(peak(0) > 0.85 && peak(24000) < 0.8, "the count-in: four beats, the first accented");
         for (k, down) in [(0, true), (1, false), (4, true), (5, false), (7, true), (8, false), (11, true), (12, false)] {
-            assert_eq!(peak(beat(k)) > 0.9, down, "beat {k} of the loop (from the first pass)");
+            assert_eq!(peak(beat(k)) > 0.85, down, "beat {k} of the loop (from the first pass)");
             assert!(peak(beat(k)) > 0.5, "every beat clicks");
         }
     }
@@ -1166,6 +1174,41 @@ mod tests {
         // the singer hears frame 0 at 1.010 s; the first sample kept was captured at 1.004 s:
         // the take must be moved 6 ms (288 frames) earlier
         assert!(((heard.unwrap() - captured.unwrap()) * SR as f64 - 288.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn the_engine_never_plays_over_minus_1_dbfs_and_leaves_a_quiet_sum_untouched() {
+        // the loudest it can be asked for: a backing at full scale under the Song slider at 1.5,
+        // the click at full, and a voice monitored through the chain at its own limit
+        let mut c = core();
+        c.set_backing((0..48000).flat_map(|i| { let v = (i as f32 * 0.05).sin(); [v, -v] }).collect());
+        c.backing_gain = 1.5;
+        c.click_gain = 1.0;
+        c.click_on = true;
+        c.monitor = true;
+        c.start(120.0, 1, 4, vec![], None);
+        let mut out = vec![0.0f32; 1024];
+        let mut peak = 0.0f32;
+        for _ in 0..300 {
+            let voice: Vec<f32> = (0..512).flat_map(|i| { let v = 0.9 * (i as f32 * 0.2).sin(); [v, v] }).collect();
+            c.on_input(&voice, 0.0);
+            c.on_output(&mut out, 0.0);
+            peak = out.iter().fold(peak, |m, v| m.max(v.abs()));
+        }
+        assert!(peak <= crate::dsp::CEILING + 1e-6, "peak {peak}");
+        assert!(peak > 0.85, "it is held at the ceiling, not squashed far under it: {peak}");
+
+        // a quiet song with the click: the limiter never moves, so it passes bit for bit (OutSafety
+        // hands back exactly what it was given while its gain is 1)
+        let mut q = core();
+        q.set_backing((0..48000).flat_map(|i| { let v = 0.3 * (i as f32 * 0.01).sin(); [v, 0.5 * v] }).collect());
+        q.click_gain = 0.4;
+        q.start(120.0, 1, 4, vec![], None);
+        let mut a = vec![0.0f32; 1024];
+        for _ in 0..200 {
+            q.on_output(&mut a, 0.0);
+            assert_eq!(q.safe.gain(), 1.0);
+        }
     }
 
     #[test]

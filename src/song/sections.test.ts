@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barBeats, grooveOf, type Beat } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
+import { reviveSound } from "../audio/rack";
 import { letterClass } from "../ui/letters";
-import { addNewSection, commit, ensureSong, fitName, leadFirst, letters, linkState, loadCurrent, moveBlockTo, newLetter, removeBlock, renameSection, repeatSection, reviveSong, sections, selectBlock, setSectionBars, unlinkBlock, type Section } from "./structure";
-import { addTrack, normalize, type Track } from "./tracks";
+import { addNewSection, commit, ensureSong, fitName, letters, loadCurrent, moveBlockTo, newLetter, removeBlock, renameSection, repeatSection, reviveSong, sections, selectBlock, setSectionBars, unlinkBlock, type Section } from "./structure";
+import { addTrack, addTrackHere, focusTrack as focusOn, normalize, type Track } from "./tracks";
 import { conform, sectionSig, setSectionSig, setSig } from "./unity";
 import { sigName } from "./meter";
 import { copySection, pasteSection, reviveClips, sectionHasContent } from "./clip";
@@ -20,13 +21,11 @@ const C = { tonic: "C", scaleId: "ionian" };
 const D = { tonic: "D", scaleId: "ionian" };
 const labels = (p: Progression) => sections(p).map((s) => s.label).join(" ");
 const roots = (s: Section | undefined) => (s?.chords ?? []).map((c) => c.ref.root).join("");
-/** what every section plays, apart from which block it is (and the first tracks' sound, one for the whole song): so two songs that sound the same compare equal */
-const sound = (p: Progression) => {
-  const np = normalize(p);
-  return sections(p).map((s) => ({ part: s.partId, chords: roots(s), beats: s.chords.map((c) => c.beats), style: np.pattern, feel: np.feel, sound: np.sound, tune: np.tuneSound, groove: s.groove && { rows: s.groove.rows, steps: s.groove.steps, div: s.groove.div, on: s.groove.on }, kit: np.beat?.kit, bars: s.bars, meter: s.meter && sigName(s.meter) }));
-};
+/** what every section plays, apart from which block it is (with how its tracks sound there): so two songs that sound the same compare equal */
+const sound = (p: Progression) =>
+  sections(p).map((s) => ({ part: s.partId, chords: roots(s), beats: s.chords.map((c) => c.beats), style: s.style, feel: s.feel, sound: reviveSound(s.sound), tune: reviveSound(s.tuneSound), tones: s.tones, groove: s.groove && { rows: s.groove.rows, steps: s.groove.steps, div: s.groove.div, on: s.groove.on }, kit: s.kit?.kit, bars: s.bars, meter: s.meter && sigName(s.meter) }));
 
-/** A B C, each with its own chords; B with its own drum rhythm (the style and the kit were changed there: they are the song's). C is on screen. */
+/** A B C, each with its own chords; B with its own drum rhythm, style and kit (C was made from B: it starts with B's). C is on screen. */
 function abc(): Progression {
   let p = ensureSong(base(["C", "G"], { pattern: "strum", beat: on() }), id);
   p = addNewSection(p, id);
@@ -124,45 +123,26 @@ describe("section names and letters", () => {
     expect(s.map((x) => x.color)).toEqual([2, 0, 1]);
   });
 
-  it("whatever plays first leads: '= A' is always the first section, and nothing changes its sound", () => {
+  it("whatever plays first is A, and moving a section changes nothing about how any section sounds", () => {
     let p = abc();
     const before = sound(p);
     const [, b] = sections(p).map((s) => s.blockId);
-    p = moveBlockTo(p, b, 0); // B to the front: it leads now
-    expect(p.song!.parts[0].id).toBe(sections(p)[0].partId);
+    p = moveBlockTo(p, b, 0); // B to the front: it is A now
+    expect(labels(p)).toBe("A B C");
     expect(sound(p).sort((x, y) => x.part.localeCompare(y.part))).toEqual(before.sort((x, y) => x.part.localeCompare(y.part)));
-    expect(linkState(selectBlock(p, sections(p)[1].blockId)).source).toBe("A");
-    // the old first section kept what it had (now as its own): the rock beat
-    expect(linkState(selectBlock(p, sections(p)[1].blockId)).own).toBe(true);
-    // the new leader's rhythm is the song's: a new section starts with it (the sound is the song's anyway)
-    p = addNewSection(selectBlock(p, sections(p)[0].blockId), id);
-    expect(p.beat!.name).toBe(motorik.name);
-    expect(p.pattern).toBe("pinch");
-    expect(p.beat!.kit).toBe("909");
-    // named, the leader's name is what the others follow
-    p = renameSection(p, sections(p)[0].blockId, "Intro");
-    expect(linkState(p).source).toBe("Intro");
+    // a new section starts with the sound of the one it was made from
+    p = addNewSection(selectBlock(p, sections(p)[1].blockId), id);
+    expect(p.beat!.name).toBe(rock.name);
+    expect(p.pattern).toBe("strum");
+    expect(p.beat!.kit).toBe(DEFAULT_BEAT.kit);
   });
 
-  it("a song saved with another section leading is led by the first one when it opens, sounding the same", () => {
-    const p = abc();
-    const song = commit(p).song!;
-    // as an older build left it: the leader moved to the back
-    const moved = { ...song, blocks: [song.blocks[2], song.blocks[0], song.blocks[1]] };
-    const q0 = loadCurrent({ ...p, song: reviveSong(JSON.parse(JSON.stringify(moved)))! });
-    const q = leadFirst(q0);
-    expect(q.song!.parts[0].id).toBe(moved.blocks[0].partId);
-    expect(sound(q)).toEqual(sound(q0));
-    expect(leadFirst(q)).toBe(q);
-  });
-
-  it("removing the first block of a section that plays again later hands the lead to what now plays first", () => {
+  it("removing the first block of a section that plays again later: every section sounds as it did", () => {
     let p = abc();
     p = repeatSection(selectBlock(p, sections(p)[1].blockId), sections(p)[0].partId, id); // A B A C
     const before = sound(p).slice(1);
     p = removeBlock(p, sections(p)[0].blockId); // B A C
     expect(labels(p)).toBe("A B C");
-    expect(p.song!.parts[0].id).toBe(sections(p)[0].partId);
     expect(sound(p)).toEqual(before);
   });
 
@@ -224,22 +204,19 @@ describe("a time signature for each section", () => {
     expect(setSectionSig(q, b.blockId, { num: 3, den: 4 })).toBe(q);
   });
 
-  it("a section in another signature that follows the song's drums plays them in its own bars, and still follows", () => {
+  it("a section in another signature has its drums fitted to its own bars; a change in another section never reaches it", () => {
     let p = abc();
     const c = sections(p)[2];
     p = setSectionSig(p, c.blockId, { num: 3, den: 4 });
     expect(sections(p)[2].groove!.steps).toBe(12);
-    // C is on screen: it does not have the drums as its own
-    expect(linkState(p).own).toBe(false);
     p = selectBlock(selectBlock(p, sections(p)[0].blockId), c.blockId);
-    expect(linkState(p).own).toBe(false);
-    expect(p.song!.parts.find((x) => x.id === c.partId)!.groove).toBeUndefined();
     expect(barBeats(p.beat!)).toBe(3);
-    // A's drums change: C follows, in its bars
+    // A's drums change: C keeps its own
     p = selectBlock(p, sections(p)[0].blockId);
-    p = { ...p, beat: { ...applyPattern(p.beat!, motorik), kit: p.beat!.kit } };
+    p = { ...p, beat: { ...applyPattern(p.beat!, rock), swing: 0.4 } };
     p = conform(p);
-    expect(sections(p)[2].groove!.name).toBe("Motorik");
+    expect(sections(p)[2].groove!.name).toBe(motorik.name);
+    expect(sections(p)[2].groove!.swing).toBe(0);
     expect(sections(p)[2].groove!.steps).toBe(12);
   });
 
@@ -404,38 +381,45 @@ describe("copy and paste a whole section", () => {
     expect(s.chords.map((x) => x.beats)).toEqual([4, 4]);
   });
 
-  it("a copy carries the drum rhythm, never a sound; a track it makes in another idea brings its own sound and instrument, the others keep theirs", () => {
+  it("a copy carries how every track sounds there, and the instruments; the section pasted into takes them, its tracks too", () => {
     let p = full();
-    // the added tracks with sounds of their own, and an instrument
+    // B's added tracks with sounds of their own, and an instrument
+    p = focusOn(p, "chords", "c2");
+    p = { ...p, pattern: "pinch", sound: { space: 0.9 }, tones: { ...p.tones, c2: { inst: "piano" as const } } };
+    p = focusOn(p, "melody", "m2");
+    p = { ...p, tuneSound: { voice: "kora" } };
+    p = focusOn(p, "drums", "d2");
+    p = { ...p, beat: { ...p.beat!, kit: "lofi" } };
     p = normalize(p);
-    p = { ...p, tracks: p.tracks!.map((t) => (t.id === "c2" ? { ...t, style: "pinch" as const, sound: { space: 0.9 } } : t.id === "m2" ? { ...t, sound: { voice: "kora" as const } } : t.id === "d2" ? { ...t, kit: { ...t.kit!, kit: "lofi" as const } } : t)), tones: { c2: { inst: "piano" as const } } };
     const clip = copySection(p, sections(p)[1].blockId, C)!;
-    expect(Object.keys(clip.settings)).toEqual(["groove"]);
-    // the other idea: a Chords 2 of its own (found by name, keeps its sound); the first tracks with sounds of their own
+    expect(clip.whole).toBe(true);
+    expect([clip.settings.style, clip.settings.kit?.kit]).toEqual(["pinch", "909"]);
+    // the other idea: a Chords 2 of its own (found by name); the first tracks with sounds of their own
     let o = ensureSong(base(["G"], { pattern: "block", sound: { voice: "folk" }, tuneSound: { voice: "lyre" }, beat: { ...on(), kit: "707" } }), id);
     o = addTrack(o, "chords", "x9").p;
     o = { ...o, pattern: "strum", sound: { space: 0.1 } };
     o = conform(normalize(o));
     const q = normalize(pasteSection(o, sections(o)[0].blockId, JSON.parse(JSON.stringify(clip)), C, id));
-    expect([q.pattern, q.sound, q.tuneSound, q.beat?.kit]).toEqual(["block", { voice: "folk" }, { voice: "lyre" }, "707"]);
-    expect(q.tracks!.find((t) => t.id === "x9")).toMatchObject({ style: "strum", sound: { space: 0.1 } });
-    expect(q.tones?.x9).toBeUndefined();
-    // made by the paste: with the sound they had
-    expect(q.tracks!.find((t) => t.id === "m2")!.sound).toEqual({ voice: "kora" });
-    expect(q.tracks!.find((t) => t.id === "d2")!.kit!.kit).toBe("lofi");
-    // the section's rhythm came along
-    expect(sections(q)[0].groove!.name).toBe(sections(p)[1].groove!.name);
+    const s0 = sections(q)[0];
+    // the first tracks: as they were in B
+    expect([q.pattern, q.sound, q.tuneSound, q.beat?.kit]).toEqual(["pinch", undefined, { voice: "glass" }, "909"]);
+    // its Chords 2 (x9 here), Melody 2 and Drums 2: as they were in B
+    expect([s0.layers?.x9.pattern, s0.layers?.x9.sound, q.tones?.x9]).toEqual(["pinch", { space: 0.9 }, { inst: "piano" }]);
+    expect(s0.layers?.m2.tuneSound).toEqual({ voice: "kora" });
+    expect(s0.layers?.d2.beat?.kit).toBe("lofi");
+    expect(s0.groove!.name).toBe(sections(p)[1].groove!.name);
+    // the tracks are rows only: no sound on them
+    expect(q.tracks!.filter((t) => t.kind !== "vocals").map((t) => Object.keys(t).sort())).toEqual([["id", "kind", "name"], ["id", "kind", "name"], ["id", "kind", "name"]]);
   });
 
-  it("a section given its own copy, and one in another signature, keep only music: no sound in any section", () => {
+  it("a section given its own copy, and one in another signature, keep their own settings", () => {
     let p = abc();
     p = repeatSection(selectBlock(p, sections(p)[1].blockId), sections(p)[1].partId, id);
     p = unlinkBlock(p, sections(p)[2].blockId, id);
     p = setSectionSig(p, sections(p)[0].blockId, { num: 3, den: 4 });
-    const song = commit(normalize(p)).song!;
-    for (const x of [song.shared!, ...song.parts]) for (const k of ["style", "feel", "sound", "tuneSound", "kit"]) expect(k in x, k).toBe(false);
+    expect(sections(p).map((s) => s.style)).toEqual(["strum", "pinch", "pinch", "pinch"]);
     // the copy kept B's own rhythm
-    expect(sections(p).map((s) => s.groove!.name)).toEqual([sections(p)[0].groove!.name, motorik.name, motorik.name, sections(p)[3].groove!.name]);
+    expect(sections(p).map((s) => s.groove!.name)).toEqual([sections(p)[0].groove!.name, motorik.name, motorik.name, motorik.name]);
   });
 
   it("with no song yet, the page is section A", () => {
@@ -450,9 +434,15 @@ describe("copy and paste a whole section", () => {
   it("knows when a section has something in it", () => {
     let p = abc();
     p = addNewSection(p, id);
-    const fresh = sections(p).find((s) => s.current)!;
-    expect(sectionHasContent(p, fresh.blockId)).toBe(false); // it follows A's drums: nothing of its own
+    let fresh = sections(p).find((s) => s.current)!;
+    // it has a copy of C's drums: drums that play are something in it
+    expect(sectionHasContent(p, fresh.blockId)).toBe(true);
+    p = { ...p, beat: { ...p.beat!, on: false } };
+    fresh = sections(p).find((s) => s.current)!;
+    expect(sectionHasContent(p, fresh.blockId)).toBe(false);
     expect(sectionHasContent(p, sections(p)[0].blockId)).toBe(true);
+    // an added track with nothing in it is nothing
+    expect(sectionHasContent(addTrackHere(p, "chords", "c9").p, fresh.blockId)).toBe(false);
     expect(sectionHasContent({ ...p, melody: { div: 2, bars: 2, notes: [{ at: 0, midi: 60 }] } }, fresh.blockId)).toBe(true);
   });
 

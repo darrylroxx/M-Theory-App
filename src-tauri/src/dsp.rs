@@ -629,6 +629,56 @@ impl Limiter {
     }
 }
 
+/// The engine's last stage before the interface (backing x Song level + click + monitored voice):
+/// the same as the app's own master safety limiter (src/audio/safety.ts). While nothing goes over
+/// −1 dBFS its gain is exactly 1 and the sum passes bit for bit; an over is held down to −1 dBFS
+/// at once (left and right together), the gain holds for 10 ms and comes back over 150 ms. It
+/// looks at nothing ahead, so it delays nothing. (The voice chain's `safety` bends everything over
+/// −3 dBFS, which would colour a backing that is not too loud: it is not used on the sum.)
+#[derive(Clone, Debug)]
+pub struct OutSafety {
+    /// how far the gain is turned down from 1 (kept as the distance, which a 32-bit float can hold
+    /// all the way back to 0; the gain itself would stop just short of 1)
+    d: f32,
+    hold: u32,
+    hold_n: u32,
+    back: f32,
+}
+impl OutSafety {
+    pub fn new(sr: f32) -> Self {
+        OutSafety { d: 0.0, hold: 0, hold_n: (0.01 * sr).round() as u32, back: (-1.0 / (0.15 * sr)).exp() }
+    }
+    /// The gain now (1: not limiting).
+    pub fn gain(&self) -> f32 {
+        1.0 - self.d
+    }
+    #[inline]
+    pub fn run(&mut self, l: f32, r: f32) -> (f32, f32) {
+        let (l, r) = (if l.is_finite() { l } else { 0.0 }, if r.is_finite() { r } else { 0.0 });
+        let peak = l.abs().max(r.abs());
+        if self.d > 0.0 {
+            if self.hold > 0 {
+                self.hold -= 1;
+            } else {
+                self.d *= self.back;
+                if self.d < 1e-6 {
+                    self.d = 0.0;
+                }
+            }
+        }
+        if peak * (1.0 - self.d) > CEILING {
+            self.d = 1.0 - CEILING / peak;
+            self.hold = self.hold_n;
+        }
+        if self.d == 0.0 {
+            (l, r)
+        } else {
+            let g = 1.0 - self.d;
+            ((l * g).clamp(-1.0, 1.0), (r * g).clamp(-1.0, 1.0))
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -946,5 +996,36 @@ mod tests {
         assert!(half > 0.01 && half < 0.25, "half back after {half} s");
         // a plain exponential would need 3.3 times as long for nine tenths; the photo-cell takes longer still
         assert!(most > half * 3.6, "nine tenths back after {most} s (half after {half} s)");
+    }
+
+    #[test]
+    fn the_output_safety_holds_overs_at_the_ceiling_and_lets_go_without_a_jump() {
+        let mut s = OutSafety::new(SR);
+        // quiet: untouched, gain exactly 1
+        for i in 0..4800 {
+            let x = 0.5 * (i as f32 * 0.03).sin();
+            assert_eq!(s.run(x, -x), (x, -x));
+        }
+        // a loud burst: never over the ceiling, left and right turned down together
+        let mut most = 0.0f32;
+        for i in 0..4800 {
+            let x = 1.6 * (i as f32 * 0.03).sin();
+            let (l, r) = s.run(x, 0.5 * x);
+            most = most.max(l.abs()).max(r.abs());
+            if x.abs() > 1e-3 {
+                assert!((r / l - 0.5).abs() < 1e-4);
+            }
+        }
+        assert!(most <= CEILING + 1e-6 && most > CEILING - 1e-3, "{most}");
+        // quiet again: it comes back smoothly (no step bigger than the signal's own) and is exactly 1 in the end
+        let mut last = s.gain();
+        for i in 0..120000 {
+            s.run(0.1 * (i as f32 * 0.03).sin(), 0.0);
+            assert!(s.gain() >= last && s.gain() - last < 0.01);
+            last = s.gain();
+        }
+        assert_eq!(s.gain(), 1.0);
+        // not a number: silence
+        assert_eq!(s.run(f32::NAN, f32::INFINITY), (0.0, 0.0));
     }
 }

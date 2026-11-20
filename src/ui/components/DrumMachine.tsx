@@ -32,38 +32,19 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
 /** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
 const HOLD_MS = 1500;
 /**
- * Whether the page's drums go onto the track's desk at once: not while another section plays, as
- * the harp does (the kit is the track's own, the same in every section: the desk takes a change
- * when this section comes round, or when the music stops).
+ * Whether the page's drums go onto the track's desk at once: not while another section plays
+ * (the kit is the section's own: the desk takes a change when this section comes round, or when
+ * the music stops).
  * `pos`: how far into the page's section the music is (null: stopped, or another section sounding).
  */
 export const deskFollowsPage = (playing: boolean, pos: number | null) => !playing || pos !== null;
-
-/** Whether the section on screen plays the drum rhythm of the first section or one of its own. */
-export interface Link {
-  /** the section the others follow (the first one) */
-  source: string;
-  /** this is that section: nothing to show */
-  first: boolean;
-  own: boolean;
-  /** follow the first section again */
-  onReset: () => void;
-}
-
-/** "= A" while a section plays the first section's drum rhythm; "Own ↺" once it has its own (tap to follow again). */
-export function LinkChip({ link }: { link?: Link }) {
-  if (!link || link.first) return null;
-  return link.own
-    ? <button className="link-chip own" title={`This section has its own drum rhythm. Tap to use section ${link.source}'s again.`} onClick={link.onReset}>Own ↺</button>
-    : <span className="link-chip" title={`Same drum rhythm as section ${link.source}. Change it here and this section keeps its own.`}>= {link.source}</span>;
-}
 
 /**
  * The drum machine, always on the page under the chords.
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, grooveLink, frame, getPos, shown, follow, active }: {
+export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, frame, getPos, shown, follow, active, onAll }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
@@ -72,8 +53,8 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   frame: number;
   /** how many beats into the section the music is (null = stopped, or another section is sounding) */
   getPos: () => number | null;
-  /** whether this section plays the first section's drum rhythm or its own (the first drums track only; its kit is one for the whole song) */
-  grooveLink?: Link;
+  /** copy the kit (the machine, each drum's sound, the mix and the effects) to the same drums track in every other section that has it */
+  onAll?: () => void;
   /** changes when something is pasted: an edit in progress is let go */
   fresh?: number;
   /** bars on screen (0 = all of them) */
@@ -457,7 +438,6 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
         </span>
         <span className="pick-wrap">
           <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
-          <LinkChip link={grooveLink} />
         </span>
       </div>
 
@@ -546,6 +526,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
         <button className={`chip${panel === "mix" ? " on" : ""}`} aria-expanded={panel === "mix"} onClick={() => setPanel(panel === "mix" ? null : "mix")}>Mixer</button>
         <button className={`chip${panel === "sound" ? " on" : ""}`} aria-expanded={panel === "sound"} onClick={() => setPanel(panel === "sound" ? null : "sound")}>Sound</button>
         <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
+        {onAll && <button className="chip all-chip" title="These drums sound like this in every section that has them (the rhythm stays each section's own)" onClick={onAll}>All sections</button>}
       </div>
 
       {panel === "mix" && (

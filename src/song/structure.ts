@@ -12,36 +12,48 @@
  * chords, its melody and its drums are written into those bars: what is in a bar plays, an empty
  * bar is silent.
  *
- * A section holds music: its chords, its melody, every added track's part and the drum rhythm.
- * How each track sounds (its instrument, playing style, harp and effects, drum kit) is the
- * track's own and the same in every section (see ./tracks), so it is not kept here.
- *
- * The drum rhythm carries over. The section that plays first sets the first drums track's
- * rhythm for the whole song; every other section plays it until its rhythm is changed there, and
- * from then on keeps a rhythm of its own ("= A" / "Own ↺" on the Drums page). Move another
- * section to the front and it leads from then on, with every section still playing as it did.
+ * Every section is its own: its tracks (the first chords, melody and drums tracks, and the ones
+ * added there: see ./tracks), what each of them plays there, and how each sounds there (the
+ * instrument, the playing style and feel, the harp and its effects, the drum kit, the drum
+ * rhythm and on/off). Changing one never changes another track or another section. A new section
+ * starts with a copy of the settings of the section it was made from; a block given a section of
+ * its own is an exact copy of it. After that they are separate.
  *
  * The page always shows the block that is selected. Those live copies sit in `progression.chords`,
- * `.melody`, `.bars`, `.layers` and the rhythm of `.beat`; they are written back into the song
- * whenever another block is chosen, the song is played, saved or exported.
+ * `.melody`, `.bars`, `.layers`, `.pattern`, `.feel`, `.sound`, `.tuneSound`, `.beat` and `.tones`;
+ * they are written back into the song whenever another block is chosen, the song is played, saved
+ * or exported.
  */
-import { DEFAULT_BEAT, barBeats, barsOf, grooveOf, reviveGroove, sameGroove, type Beat, type Groove } from "../audio/beats";
-import { styleBar, type PatternId } from "../audio/patterns";
+import { DEFAULT_BEAT, barBeats, barsOf, grooveOf, kitOfBeat, onKit, reviveGroove, reviveKit, type Beat, type DrumKit, type Groove } from "../audio/beats";
+import { hasStyle, reviveFeel, styleBar, type Feel, type PatternId } from "../audio/patterns";
+import { reviveSound, type HarpSound } from "../audio/rack";
+import { reviveTones, type Tones } from "../audio/tone";
 import { melodyBeats, reviveMelody, tileMelody, type Melody } from "./melody";
 import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barsOr, fitBars, frameItems } from "./frame";
-import { DEFAULT_SIG, fitRhythm, isCompound, mapLayers, mapList, refit, reviveSig, sameSig, sigBeats, type TimeSig } from "./meter";
-import type { ProgChord, Progression } from "../ui/state";
-import { carryMarks, normalize, reviveLayers, settled, type Layers, type Track } from "./tracks";
+import { DEFAULT_SIG, mapLayers, mapList, refit, reviveSig, sameSig, type TimeSig } from "./meter";
+import type { ArrangeSettings, ProgChord, Progression } from "../ui/state";
+import { PLAIN_KIT, PLAIN_STYLE, carryMarks, isFirst, normalize, plainLayer, prune, refocus, reviveArrange, reviveLayers, settled, type EditKind, type Focus, type Layers, type Track } from "./tracks";
 import { outPrint } from "./prints";
 
-/** What carries over from the first section: the first drums track's rhythm (and whether the drums play). */
+/**
+ * How a section's first tracks sound there, apart from their notes: how the chords are played
+ * (style and feel) and their harp, the melody's harp, and the drums' kit and rhythm (and whether
+ * they play). Anything missing is the plain default.
+ */
 export interface Settings {
+  /** on the guitar: where on the neck the chords are arranged (none: each chord's own shape) */
+  arrange?: ArrangeSettings;
+  style?: PatternId;
+  feel?: Partial<Feel>;
+  sound?: Partial<HarpSound>;
+  tuneSound?: Partial<HarpSound>;
+  kit?: DrumKit;
   groove?: Groove;
 }
 
 /**
- * One set of chords and one melody, used by one or more blocks.
- * Its drum rhythm is kept only when it differs from the song's: otherwise it plays the first section's.
+ * One section: its music and its settings, used by one or more blocks (a section played twice
+ * is the same section).
  */
 export interface SongPart extends Settings {
   id: string;
@@ -56,8 +68,10 @@ export interface SongPart extends Settings {
   bars?: number;
   /** a time signature of its own (not set = the song's) */
   meter?: TimeSig;
-  /** what the extra tracks (added on the Track page) hold in this section, by track id */
+  /** the added tracks in this section, by track id: what each holds here and how it sounds here */
   layers?: Layers;
+  /** what plays each chords and melody track here (Guitar, Piano or Synth), by track id; none = Guitar */
+  tones?: Tones;
 }
 /** One step of the song, in playing order. */
 export interface SongBlock {
@@ -65,11 +79,8 @@ export interface SongBlock {
   partId: string;
 }
 export interface Song {
-  /** the first part is the one that plays first: the others follow its settings */
   parts: SongPart[];
   blocks: SongBlock[];
-  /** the song's drum rhythm: what the first section plays, and what every other section plays unless it has one of its own */
-  shared?: Settings;
   /** the block whose chords are in the tray */
   current: string;
 }
@@ -111,16 +122,6 @@ function freeColor(parts: SongPart[]): number {
 }
 const colorOf = (x: SongPart, fallback: number): number => (Number.isInteger(x.color) ? x.color! : fallback) % COLORS;
 
-/** The drum rhythm on screen right now (the first drums track's, with every track in its place). */
-export function liveSettings(p: Progression): Required<Settings> {
-  return { groove: grooveOf(p.beat ?? DEFAULT_BEAT) };
-}
-
-/** The song's drum rhythm; for songs saved before sections could differ, what is on screen stands in for what is missing. */
-function sharedOf(p: Progression, song: Song): Settings {
-  return { groove: song.shared?.groove ?? liveSettings(p).groove };
-}
-
 /**
  * A part's time signature: its own, or the song's. (The song's is `progression.meter`, which
  * song/unity sets on every change; it is missing only before that has happened, and then no
@@ -128,111 +129,55 @@ function sharedOf(p: Progression, song: Song): Settings {
  */
 const sigOfPart = (p: Progression, part: SongPart | undefined): TimeSig | undefined => part?.meter ?? p.meter;
 
-/**
- * The song's settings as one part plays them. The song's drum rhythm is kept in the bars of the
- * first section; a section in another time signature plays it fitted to its own bars (and never
- * writes that back, so nothing is lost on the way).
- */
-function fitShared(shared: Settings, from: TimeSig | undefined, to: TimeSig | undefined): Settings {
-  if (!shared.groove || !to || (from && sameSig(from, to))) return shared;
-  const g = fitRhythm(shared.groove, sigBeats(to), isCompound(to), !!from && isCompound(from) && !isCompound(to));
-  return g === shared.groove ? shared : { ...shared, groove: g };
-}
-/** The song's settings, in the bars of one part. */
-const sharedFor = (p: Progression, song: Song, part: SongPart | undefined): Settings => fitShared(sharedOf(p, song), sigOfPart(p, song.parts[0]), sigOfPart(p, part));
-
-/** The drum rhythm a part plays: its own where it has one, the song's (in its bars) otherwise. */
-function resolve(part: SongPart, first: boolean, shared: Settings): Settings {
-  return { groove: !first && part.groove !== undefined ? part.groove : shared.groove };
-}
-
 const tidy = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 const sig = (x: unknown) => JSON.stringify(x);
+const clone = <T>(x: T): T => (x === undefined ? x : (JSON.parse(JSON.stringify(x)) as T));
 
-/** What every part sounds like, by part id. */
-function resolvedAll(p: Progression, song: Song): Map<string, Settings> {
-  return new Map(song.parts.map((x, i) => [x.id, resolve(x, i === 0, sharedFor(p, song, x))]));
+/** The first tracks' settings on screen right now (with every track in its place). */
+export function liveSettings(p: Progression): Settings {
+  const beat = p.beat ?? DEFAULT_BEAT;
+  return tidy({ arrange: p.arrange ?? undefined, style: p.pattern, feel: p.feel, sound: p.sound, tuneSound: p.tuneSound, kit: kitOfBeat(beat), groove: grooveOf(beat) });
+}
+/** A section's settings on their own (the rest of it left out). */
+export const settingsOf = (x: Settings): Settings => tidy({ arrange: x.arrange, style: x.style, feel: x.feel, sound: x.sound, tuneSound: x.tuneSound, kit: x.kit, groove: x.groove });
+
+/** A section's first drums track, as it plays: its kit and its rhythm. */
+export function drumsIn(x: Settings): Beat {
+  const groove = x.groove ?? grooveOf(DEFAULT_BEAT);
+  return { ...DEFAULT_BEAT, ...(x.kit ?? PLAIN_KIT), ...groove, on: groove.on ?? false };
 }
 
 /**
- * Store the drum rhythms so that every part listed in `want` plays exactly as it says: the first
- * part's becomes the song's, and each other part keeps one of its own only where it differs from
- * that (as it plays it, in its own bars). A part whose `want` has no drum rhythm follows the
- * song's. Parts not listed are left as they are.
- */
-function rebase(p: Progression, song: Song, want: Map<string, Settings>): Song {
-  const lead = song.parts[0];
-  const shared = tidy({ ...sharedOf(p, song), ...tidy(want.get(lead.id) ?? {}) });
-  const parts = song.parts.map((x, i) => {
-    const w = want.get(x.id);
-    if (!w) return x;
-    let y: SongPart = { ...x, groove: undefined };
-    if (i > 0 && w.groove) {
-      const has = fitShared(shared, sigOfPart(p, lead), sigOfPart(p, x));
-      if (!sameGroove(w.groove, has.groove)) y = { ...y, groove: w.groove };
-    }
-    return tidy(y);
-  });
-  return { ...song, parts, shared };
-}
-
-/**
- * The part that plays first leads. When another part comes to the front (moved there, or the
- * first one removed), its drum rhythm becomes the song's and every section keeps playing as it
- * did: a section whose rhythm the song's no longer is keeps it as its own.
- * `before`: what each part played before the change.
- */
-function lead(p: Progression, song: Song, before: Map<string, Settings> = resolvedAll(p, song)): Song {
-  const first = song.blocks[0]?.partId;
-  const top = song.parts.find((x) => x.id === first);
-  if (!top || song.parts[0] === top) return song;
-  return rebase(p, { ...song, parts: [top, ...song.parts.filter((x) => x !== top)] }, before);
-}
-
-/**
- * Write what is on screen back into the song: the chords, the melody and the tracks' parts into
- * their section, and the drum rhythm either into the song (from the first section) or, where it
- * differs from the song's, into this section alone.
+ * Write what is on screen back into the song: the chords, the melody, the tracks and their parts,
+ * and how every track sounds, into the section on screen (and nowhere else).
  */
 function commitN(p: Progression): Progression {
   const song = p.song;
   if (!song) return p;
   const part = partOf(song, song.current);
   if (!part) return p;
-  const first = song.parts[0]?.id === part.id;
-  const live = liveSettings(p);
-  let shared = sharedOf(p, song);
-  // what this section would play if it followed the song, in its own bars
-  const theirs = fitShared(shared, sigOfPart(p, song.parts[0]), sigOfPart(p, part));
-  let next: SongPart = { ...part, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers };
-  if (first) {
-    shared = { ...shared, groove: live.groove };
-    next = { ...next, groove: undefined };
-  } else next = { ...next, groove: sameGroove(live.groove, theirs.groove) ? undefined : live.groove };
-  next = tidy(next);
-  shared = tidy(shared);
-  if (part.chords === p.chords && part.melody === p.melody && part.layers === p.layers && sig({ ...part, chords: 0, melody: 0 }) === sig({ ...next, chords: 0, melody: 0 }) && sig(song.shared) === sig(shared)) return p;
-  return { ...p, song: { ...song, shared, parts: song.parts.map((x) => (x.id === part.id ? next : x)) } };
+  const { arrange: _a, style: _s, feel: _f, sound: _o, tuneSound: _t, kit: _k, groove: _g, ...rest } = part;
+  const next: SongPart = tidy({ ...rest, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers, tones: p.tones && Object.keys(p.tones).length ? p.tones : undefined, ...liveSettings(p) });
+  if (part.chords === p.chords && part.melody === p.melody && part.layers === p.layers && part.tones === next.tones && sig({ ...part, chords: 0, melody: 0, layers: 0 }) === sig({ ...next, chords: 0, melody: 0, layers: 0 })) return p;
+  return { ...p, song: { ...song, parts: song.parts.map((x) => (x.id === part.id ? next : x)) } };
 }
 
 /** Turn the page into section A, if there is no song yet. */
 function ensureSongN(p: Progression, id: () => string = uid): Progression {
   if (p.song?.blocks.length) return commit(p);
-  const part: SongPart = tidy({ id: id(), color: 0, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers });
+  const part: SongPart = tidy({ id: id(), color: 0, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers, tones: p.tones && Object.keys(p.tones).length ? p.tones : undefined, ...liveSettings(p) });
   const block: SongBlock = { id: id(), partId: part.id };
   // what was sung over the page (before it had sections) was sung in section A: it goes with it
   const sung = p.tracks && mapList(p.tracks, (t) => (t.takes?.some((k) => !k.at.block) ? { ...t, takes: t.takes.map((k) => (k.at.block ? k : { ...k, at: { ...k.at, block: block.id } })) } : t));
   // and a harmony written on the page was written in section A
   const tracks = carryMarks(sung, "", part.id);
-  return { ...p, ...(tracks ? { tracks } : {}), song: { parts: [part], blocks: [block], current: block.id, shared: tidy(liveSettings(p)) } };
+  return { ...p, ...(tracks ? { tracks } : {}), song: { parts: [part], blocks: [block], current: block.id } };
 }
 
-/** Load a part onto the page: its chords, melody and tracks' parts, and the drum rhythm it plays (the drums keep their kit). */
+/** Load a part onto the page: its chords, melody, tracks and their parts, and how every track sounds there. */
 function show(p: Progression, song: Song, blockId: string): Progression {
   const part = partOf(song, blockId)!;
-  const s = resolve(part, song.parts[0]?.id === part.id, sharedFor(p, song, part));
-  const beat = { ...(p.beat ?? DEFAULT_BEAT), ...s.groove };
-  return { ...p, chords: part.chords, melody: part.melody, bars: part.bars, layers: part.layers, beat: { ...beat, on: s.groove?.on ?? beat.on }, song: { ...song, current: blockId } };
+  return { ...p, chords: part.chords, melody: part.melody, bars: part.bars, layers: part.layers, arrange: part.arrange ?? null, pattern: part.style ?? PLAIN_STYLE, feel: part.feel, sound: part.sound, tuneSound: part.tuneSound, beat: drumsIn(part), tones: part.tones, song: { ...song, current: blockId } };
 }
 
 /** Put the page back in step with the song (after loading one). */
@@ -240,35 +185,8 @@ function loadCurrentN(p: Progression): Progression {
   return p.song && partOf(p.song, p.song.current) ? show(p, p.song, p.song.current) : p;
 }
 
-/** Make sure the section that plays first is the one the others follow (songs saved before that was always so). */
-function leadFirstN(p0: Progression): Progression {
-  if (!p0.song || !p0.song.blocks.length || p0.song.parts[0]?.id === p0.song.blocks[0].partId) return p0;
-  const p = commit(p0);
-  return { ...p, song: lead(p, p.song!) };
-}
-
 /** What a part is called on screen: its name, or else its letter. */
 const labelOf = (part: SongPart | undefined, order: Map<string, number>): string => part?.name ?? letterAt(part ? order.get(part.id) ?? 0 : 0);
-
-/** Whether the section on screen has a drum rhythm of its own, and which section the others follow. */
-export function linkState(p0: Progression): { first: boolean; source: string; own: boolean } {
-  const p = normalize(p0);
-  const song = p.song;
-  const part = song && partOf(song, song.current);
-  if (!song || !part) return { first: true, source: "A", own: false };
-  const first = song.parts[0].id === part.id;
-  const source = labelOf(song.parts[0], playOrder(song));
-  if (first) return { first, source, own: false };
-  return { first, source, own: !sameGroove(liveSettings(p).groove, sharedFor(p, song, part).groove) };
-}
-
-/** Give up the section's own drum rhythm: it plays the song's again. */
-function relinkN(p: Progression): Progression {
-  if (!p.song) return p;
-  const sh = sharedFor(p, p.song, partOf(p.song, p.song.current));
-  const beat = p.beat ?? DEFAULT_BEAT;
-  return { ...p, beat: { ...beat, ...sh.groove, on: sh.groove?.on ?? beat.on } };
-}
 
 /** Insert a block right after the selected one and select it. */
 function insert(song: Song, block: SongBlock): Song {
@@ -290,11 +208,17 @@ export function newLetter(p: Progression): string {
 /** The colour a new section would have. */
 export const newColor = (p: Progression): number => (p.song?.blocks.length ? freeColor(p.song.parts) : 1);
 
-/** A brand-new section: no chords and no melody yet, the drum rhythm and the time signature follow the song, and it starts as long as the section it was made from. */
+/**
+ * A brand-new section: no chords and no melody yet, and no added tracks. Its first tracks start
+ * with a copy of how they sound in the section it was made from (the one on screen: its playing
+ * style, harps, instruments, drum kit and rhythm), so it sounds the same until it is changed; it
+ * starts as long as that section, and in the song's time signature.
+ */
 function addNewSectionN(p0: Progression, id: () => string = uid): Progression {
   const p = ensureSong(p0, id);
   const song = p.song!;
-  const part: SongPart = tidy({ id: id(), color: freeColor(song.parts), chords: [], bars: p.bars });
+  const tones = Object.fromEntries(Object.entries(p.tones ?? {}).filter(([k]) => isFirst(k)));
+  const part: SongPart = tidy({ id: id(), color: freeColor(song.parts), chords: [], bars: p.bars, ...clone(liveSettings(p)), tones: Object.keys(tones).length ? clone(tones) : undefined });
   return addBlock(p, song, part, id);
 }
 
@@ -321,7 +245,7 @@ function selectBlockN(p0: Progression, blockId: string): Progression {
 
 /**
  * Remove a block. Removing the last one turns the song back into a single idea (the page keeps what it shows).
- * If the section that played first goes, the next one leads, and every section keeps sounding as it did.
+ * A section no block plays any more goes, and with it its tracks: one that is then in no section leaves the song.
  */
 function removeBlockN(p0: Progression, blockId: string): Progression {
   const p = commit(p0);
@@ -335,11 +259,9 @@ function removeBlockN(p0: Progression, blockId: string): Progression {
     const tracks = carryMarks(p.tracks, partOf(song, song.current)?.id ?? "", "");
     return { ...p, ...(tracks ? { tracks } : {}), song: null };
   }
-  // the leader changes first (while the old one is still there to hand over from); then the part no block plays any more goes
-  const led = lead(p, { ...song, blocks });
-  const next: Song = { ...led, parts: led.parts.filter((x) => blocks.some((b) => b.partId === x.id)) };
-  if (song.current !== blockId) return { ...p, song: next };
-  return show(p, next, blocks[Math.min(at, blocks.length - 1)].id);
+  const next: Song = { ...song, blocks, parts: song.parts.filter((x) => blocks.some((b) => b.partId === x.id)) };
+  if (song.current !== blockId) return prune({ ...p, song: next });
+  return prune(show(p, next, blocks[Math.min(at, blocks.length - 1)].id));
 }
 
 /** Set how long a section lasts, in bars: the one on screen, or any other (every block of it). */
@@ -368,7 +290,7 @@ function moveBlockN(p: Progression, blockId: string, dir: -1 | 1): Progression {
   return i < 0 ? p : moveBlockTo(p, blockId, dir < 0 ? i - 1 : i + 2);
 }
 
-/** Move a block so it lands before the block now at `index` (blocks.length = the end). Whichever section then plays first leads. */
+/** Move a block so it lands before the block now at `index` (blocks.length = the end). Every section keeps sounding as it did. */
 function moveBlockToN(p0: Progression, blockId: string, index: number): Progression {
   const song0 = p0.song;
   if (!song0) return p0;
@@ -379,7 +301,7 @@ function moveBlockToN(p0: Progression, blockId: string, index: number): Progress
   blocks.splice(index > i ? index - 1 : index, 0, b);
   if (blocks.every((x, k) => x === song0.blocks[k])) return p0;
   const p = commit(p0);
-  return { ...p, song: lead(p, { ...p.song!, blocks }) };
+  return { ...p, song: { ...p.song!, blocks } };
 }
 
 /** How many blocks share this block's section. */
@@ -389,15 +311,15 @@ export function sharedCount(p: Progression, blockId: string): number {
   return song && partId ? song.blocks.filter((b) => b.partId === partId).length : 0;
 }
 
-/** Give a block a section of its own, with a copy of the chords, melody, tracks' parts, drum rhythm and time signature, so it can differ from the others. */
+/** Give a block a section of its own: an exact copy (its chords, melody, tracks and their parts, how every track sounds, its time signature), so it can differ from the others. */
 function unlinkBlockN(p0: Progression, blockId: string, id: () => string = uid): Progression {
   const p = commit(p0);
   const song = p.song;
   const part = song && partOf(song, blockId);
   if (!song || !part || sharedCount(p, blockId) < 2) return p;
-  // the first section's rhythm is the song's: the copy follows it, like any new section. It has its own colour, and its letter until it is named.
-  const copy: SongPart = tidy({ ...part, id: id(), name: undefined, color: freeColor(song.parts), chords: part.chords.map((c) => ({ ...c, id: id() })) });
-  const next = lead(p, { ...song, parts: [...song.parts, copy], blocks: song.blocks.map((b) => (b.id === blockId ? { ...b, partId: copy.id } : b)) });
+  // it has its own colour, and its letter until it is named
+  const copy: SongPart = tidy({ ...clone(part), id: id(), name: undefined, color: freeColor(song.parts), chords: part.chords.map((c) => ({ ...c, id: id() })) });
+  const next: Song = { ...song, parts: [...song.parts, copy], blocks: song.blocks.map((b) => (b.id === blockId ? { ...b, partId: copy.id } : b)) };
   // a harmony in the copy is what was written there, not a change by hand
   const tracks = carryMarks(p.tracks, part.id, copy.id);
   const q = tracks === p.tracks ? p : { ...p, tracks };
@@ -408,7 +330,7 @@ function unlinkBlockN(p0: Progression, blockId: string, id: () => string = uid):
  * New time signatures: the song's (`meter`), and perhaps one section's (`one`; the song's own
  * signature there means it follows the song again). Every section whose bars change has its
  * chords, melody, drums and tracks fitted to them; every other section keeps sounding exactly
- * as it did, even where the song's drum rhythm had to be fitted for the first section.
+ * as it did.
  */
 function retimeN(p0: Progression, meter: TimeSig, one: { block: string; sig: TimeSig } | null = null): Progression {
   const p = commit(p0);
@@ -418,20 +340,15 @@ function retimeN(p0: Progression, meter: TimeSig, one: { block: string; sig: Tim
   if (one && !target) return p;
   const same = (a?: TimeSig, b?: TimeSig) => (!a && !b) || sameSig(a, b);
   if (same(meter, p.meter) && (!target || same(sameSig(one!.sig, meter) ? undefined : one!.sig, target.meter))) return p0;
-  const before = resolvedAll(p, song);
-  const want = new Map(before);
-  const parts = song.parts.map((x, i) => {
+  const parts = song.parts.map((x) => {
     const own = x === target ? (sameSig(one!.sig, meter) ? undefined : one!.sig) : x.meter;
     const from = sigOfPart(p, x) ?? DEFAULT_SIG;
     const to = own ?? meter;
     let y: SongPart = same(own, x.meter) ? x : tidy({ ...x, meter: own });
     if (sameSig(from, to)) return y;
     const f = refit(from, to);
-    y = tidy({ ...y, chords: mapList(y.chords, f.chord!), melody: y.melody && f.melody!(y.melody), groove: y.groove && f.rhythm!(y.groove), layers: mapLayers(y.layers, f) });
-    // what it plays in its new bars: the first section's rhythm (the song's) moves with it; one of its own is fitted; otherwise it follows the song
-    const w = before.get(x.id)!;
-    want.set(x.id, { ...w, groove: i === 0 ? w.groove && f.rhythm!(w.groove) : x.groove !== undefined ? y.groove : undefined });
-    return y;
+    // its chords, melody, drum rhythm and every track's part, fitted to its new bars
+    return tidy({ ...y, chords: mapList(y.chords, f.chord!), melody: y.melody && f.melody!(y.melody), groove: y.groove && f.rhythm!(y.groove), layers: mapLayers(y.layers, f) });
   });
   // a harmony track fitted to the new bars is still what was written, only fitted: its record of
   // each section follows (unless changed by hand before), so it does not look changed by hand now
@@ -448,14 +365,15 @@ function retimeN(p0: Progression, meter: TimeSig, one: { block: string; sig: Tim
     return next === marks ? t : { ...t, harmony: { ...t.harmony!, marks: next } };
   });
   const q: Progression = { ...p, meter, ...(tracks ? { tracks } : {}) };
-  return show(q, rebase(q, { ...song, parts }, want), song.current);
+  return show(q, { ...song, parts }, song.current);
 }
 
 /**
- * Put new music into a section, in place of all it had: its chords, melody, length, time
- * signature, every track's part and its drum rhythm. Every block of it changes (it is one
- * section); every other section keeps playing as it did. Its name and colour stay. How the
- * tracks sound is theirs, and does not change.
+ * Put a copied section into a section, in place of all it had: its chords, melody, length, time
+ * signature, its tracks with their parts, and how every track sounds there. Every block of it
+ * changes (it is one section); every other section keeps playing as it did. Its name and colour
+ * stay. A copy from before sections had settings of their own (`whole` not set) brings only the
+ * drum rhythm: the section keeps the rest of how it sounds, and its instruments.
  */
 export interface SectionContent {
   chords: ProgChord[];
@@ -464,19 +382,24 @@ export interface SectionContent {
   /** the time signature it is written in */
   meter: TimeSig;
   layers?: Layers;
-  /** its drum rhythm, as it plays (in its own bars) */
+  /** how its first tracks sound (in its own bars) */
   settings: Settings;
+  /** what plays its chords and melody tracks */
+  tones?: Tones;
+  /** the settings and instruments are all there is (a copy from before held only the drum rhythm) */
+  whole?: boolean;
 }
 function replaceSectionN(p0: Progression, blockId: string, c: SectionContent): Progression {
   const p = commit(p0);
   const song = p.song;
   const part = song && partOf(song, blockId);
   if (!song || !part) return p;
-  const before = resolvedAll(p, song);
-  const next: SongPart = tidy({ id: part.id, name: part.name, color: part.color, chords: c.chords, melody: c.melody, bars: fitBars(c.bars), meter: p.meter && sameSig(c.meter, p.meter) ? undefined : c.meter, layers: c.layers });
-  const want = new Map(before).set(part.id, c.settings);
+  const settings = c.whole ? settingsOf(c.settings) : { ...settingsOf(part), ...settingsOf(c.settings) };
+  const keep = (id: string) => isFirst(id) || !!c.layers?.[id];
+  const tones = c.whole ? c.tones : Object.fromEntries(Object.entries({ ...part.tones, ...c.tones }).filter(([k]) => keep(k)));
+  const next: SongPart = tidy({ id: part.id, name: part.name, color: part.color, chords: c.chords, melody: c.melody, bars: fitBars(c.bars), meter: p.meter && sameSig(c.meter, p.meter) ? undefined : c.meter, layers: c.layers, ...settings, tones: tones && Object.keys(tones).length ? tones : undefined });
   const parts = song.parts.map((x) => (x.id === part.id ? next : x));
-  return show(p, rebase(p, { ...song, parts }, want), song.current);
+  return show(p, { ...song, parts }, song.current);
 }
 
 export interface Section extends Settings {
@@ -496,29 +419,30 @@ export interface Section extends Settings {
   bars?: number;
   /** a time signature of its own (not set = the song's) */
   meter?: TimeSig;
-  /** what the extra tracks hold in it */
+  /** the added tracks in it: what each holds there and how it sounds there */
   layers?: Layers;
+  /** what plays its chords and melody tracks */
+  tones?: Tones;
   current: boolean;
 }
 
-/** The song in playing order, each section with its chords, melody, tracks' parts and the drum rhythm it plays. Empty when there is no structure. */
+/** The song in playing order, each section with its chords, melody, tracks and their parts, and how every track sounds there. Empty when there is no structure. */
 export function sections(p0: Progression): Section[] {
   const p = commit(normalize(p0));
   const song = p.song;
   if (!song) return [];
   const order = playOrder(song);
-  const all = resolvedAll(p, song);
   return song.blocks.map((b) => {
     const part = song.parts.find((x) => x.id === b.partId)!;
     const i = order.get(part.id) ?? 0;
-    return { ...all.get(part.id)!, blockId: b.id, partId: b.partId, letter: letterAt(i), ...(part.name ? { name: part.name } : {}), label: labelOf(part, order), color: colorOf(part, i), chords: part.chords, melody: part.melody, bars: part.bars, ...(part.meter ? { meter: part.meter } : {}), layers: part.layers, current: b.id === song.current };
+    return { ...settingsOf(part), ...(part.tones ? { tones: part.tones } : {}), blockId: b.id, partId: b.partId, letter: letterAt(i), ...(part.name ? { name: part.name } : {}), label: labelOf(part, order), color: colorOf(part, i), chords: part.chords, melody: part.melody, bars: part.bars, ...(part.meter ? { meter: part.meter } : {}), layers: part.layers, current: b.id === song.current };
   });
 }
 
 /** The page as a section, when there is no song yet: section A, with everything on screen. */
 export function soloSection(p0: Progression): Section {
   const p = normalize(p0);
-  return { ...liveSettings(p), blockId: "", partId: "", letter: "A", label: "A", color: 0, current: true, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers };
+  return { ...liveSettings(p), ...(p.tones ? { tones: p.tones } : {}), blockId: "", partId: "", letter: "A", label: "A", color: 0, current: true, chords: p.chords, melody: p.melody, bars: p.bars, layers: p.layers };
 }
 
 /** Each section once, in the order it first plays, with the block to select for it. */
@@ -618,56 +542,139 @@ function settleN(p0: Progression): Progression {
   const parts = song.parts.map((part) => {
     if (fitBars(part.bars)) return part;
     const sec = secs.find((x) => x.partId === part.id);
-    const drums: Beat = { ...live, ...sec?.groove, on: sec?.groove?.on ?? live.on };
-    return { ...part, ...settleOne(part, barOfBeat(drums, p.pattern), drums.on ? barBeats(drums) * barsOf(drums) : 0) };
+    const drums: Beat = sec ? drumsIn(sec) : live;
+    return { ...part, ...settleOne(part, barOfBeat(drums, sec?.style ?? p.pattern), drums.on ? barBeats(drums) * barsOf(drums) : 0) };
   });
   return show(p, { ...song, parts }, song.current);
 }
 
-/** A section's drum rhythm loaded from storage, made safe (anything else it held is let go: see ./migrate). */
+/** A section's settings loaded from storage, made safe (what is broken is let go: it is then the plain default). */
 export function reviveSettings(x: { [K in keyof Settings]?: unknown } | undefined): Settings {
-  return tidy({ groove: reviveGroove(x?.groove) });
+  return tidy({
+    arrange: reviveArrange(x?.arrange),
+    style: hasStyle(x?.style) ? x.style : undefined,
+    feel: x?.feel && typeof x.feel === "object" ? reviveFeel(x.feel) : undefined,
+    sound: x?.sound && typeof x.sound === "object" ? reviveSound(x.sound) : undefined,
+    tuneSound: x?.tuneSound && typeof x.tuneSound === "object" ? reviveSound(x.tuneSound) : undefined,
+    kit: reviveKit(x?.kit),
+    groove: reviveGroove(x?.groove),
+  });
 }
 
+/** The tracks of a section that can have an instrument of their own: the first chords and melody, and the chords and melody tracks it has. */
+export const toneIdsIn = (layers: Layers | undefined, tracks: Track[] | undefined): string[] => ["chords", "melody", ...(tracks ?? []).filter((t) => (t.kind === "chords" || t.kind === "melody") && !!layers?.[t.id]).map((t) => t.id)];
+
 /**
- * Tidy up a song loaded from storage. Letters are never stored: they follow the playing order
- * (songs saved with letters, or with Intro / Verse / Chorus, are lettered that way too). Each
- * section keeps its colour; songs from before colours had one each get the colour their letter
- * had. Songs saved when every section kept a copy of its own drum rhythm are moved to today's
- * way: the first section's is the song's, and the others keep one only where it differs.
+ * Tidy up a song loaded from storage (one saved by an older version is moved over first: see
+ * ./migrate). Letters are never stored: they follow the playing order (songs saved with letters,
+ * or with Intro / Verse / Chorus, are lettered that way too). Each section keeps its colour; songs
+ * from before colours had one each get the colour their letter had.
  */
 export function reviveSong(raw: unknown, tracks?: Track[]): Song | null {
   const s = raw as Partial<Song> | null | undefined;
   if (!s || !Array.isArray(s.parts) || !Array.isArray(s.blocks)) return null;
-  type Raw = { id: string; chords: ProgChord[]; letter?: unknown; name?: unknown; color?: unknown; meter?: unknown; bars?: unknown } & { [K in keyof Settings | "melody"]?: unknown };
+  type Raw = { id: string; chords: ProgChord[]; letter?: unknown; name?: unknown; color?: unknown; meter?: unknown; bars?: unknown; layers?: unknown; tones?: unknown } & { [K in keyof Settings | "melody"]?: unknown };
   const valid = (s.parts as unknown[]).filter((x): x is Raw => !!x && typeof (x as Raw).id === "string" && Array.isArray((x as Raw).chords));
   const blocks = s.blocks.filter((b): b is SongBlock => !!b && typeof b.id === "string" && valid.some((x) => x.id === b.partId));
   if (!blocks.length) return null;
   const used = valid.filter((x) => blocks.some((b) => b.partId === x.id));
   const order = [...new Set(blocks.map((b) => b.partId))];
-  // older songs: the section that plays first is the one the others follow
-  if (!s.shared) used.sort((a, b) => order.indexOf(a.id) - order.indexOf(b.id));
   // a colour of its own; before sections had one, the colour went with the letter
   const stored = (x: Raw): number | undefined => {
     if (typeof x.color === "number" && Number.isInteger(x.color) && x.color >= 0 && x.color < COLORS) return x.color;
     const l = typeof x.letter === "string" ? x.letter.charCodeAt(0) - 65 : -1;
     return l >= 0 && l < 26 ? l % COLORS : undefined;
   };
-  let parts: SongPart[] = used.map((x) => tidy({ id: x.id, name: fitName(x.name), color: stored(x), chords: x.chords, melody: reviveMelody(x.melody), bars: fitBars(x.bars), meter: reviveSig(x.meter), layers: reviveLayers((x as { layers?: unknown }).layers, tracks), ...reviveSettings(x) }));
+  const parts: SongPart[] = used.map((x) => {
+    const layers = reviveLayers(x.layers, tracks);
+    return tidy({ id: x.id, name: fitName(x.name), color: stored(x), chords: x.chords, melody: reviveMelody(x.melody), bars: fitBars(x.bars), meter: reviveSig(x.meter), layers, ...reviveSettings(x), tones: reviveTones(x.tones, toneIdsIn(layers, tracks)) });
+  });
   // sections with no colour yet get the first free one, in playing order
   for (const pid of order) {
     const k = parts.findIndex((x) => x.id === pid);
     if (k >= 0 && parts[k].color === undefined) parts[k] = { ...parts[k], color: freeColor(parts) };
   }
-  let shared = reviveSettings(s.shared as Settings | undefined);
-  // the first section holds nothing of its own: whatever it has is the song's
-  const lead = parts[0];
-  if (lead.groove !== undefined) {
-    if (shared.groove === undefined) shared = { groove: lead.groove };
-    parts[0] = tidy({ ...parts[0], groove: undefined });
+  return { parts, blocks, current: blocks.some((b) => b.id === s.current) ? s.current! : blocks[0].id };
+}
+
+/**
+ * "All sections": how one track sounds in the section on screen, copied to the same track in
+ * every other section that has it: its instrument and how that is set, its playing style and
+ * feel and its harp (a chords track), its harp (a melody), or its kit (a drums track: the
+ * machine, each drum's sound, the mix and the effects). Never its music, nor its drum rhythm.
+ */
+function soundToAllN(p: Progression, kind: EditKind, id: string): Progression {
+  const song = p.song;
+  if (!song) return p;
+  const cur = partOf(song, song.current);
+  if (!cur || (!isFirst(id) && !p.layers?.[id])) return p;
+  const tone = p.tones?.[id];
+  const withTone = (x: SongPart): Tones | undefined => {
+    const { [id]: _, ...rest } = x.tones ?? {};
+    const t = tone ? { ...rest, [id]: clone(tone) } : rest;
+    return Object.keys(t).length ? t : undefined;
+  };
+  const src = p.layers?.[id];
+  const parts = song.parts.map((x): SongPart => {
+    if (x.id === cur.id) return x;
+    if (isFirst(id)) {
+      if (kind === "chords") return tidy({ ...x, arrange: clone(p.arrange ?? undefined), style: p.pattern, feel: clone(p.feel), sound: clone(p.sound), tones: withTone(x) });
+      if (kind === "melody") return tidy({ ...x, tuneSound: clone(p.tuneSound), tones: withTone(x) });
+      return { ...x, kit: clone(kitOfBeat(p.beat ?? DEFAULT_BEAT)) };
+    }
+    const l = x.layers?.[id];
+    if (!l || !src) return x;
+    const mine = kind === "chords" ? tidy({ ...l, arrange: clone(src.arrange), pattern: src.pattern, feel: clone(src.feel), sound: clone(src.sound) }) : kind === "melody" ? tidy({ ...l, tuneSound: clone(src.tuneSound) }) : { ...l, beat: onKit(l.beat ?? src.beat!, clone(kitOfBeat(src.beat ?? DEFAULT_BEAT))) };
+    return tidy({ ...x, layers: { ...x.layers, [id]: mine }, tones: kind === "drums" ? x.tones : withTone(x) });
+  });
+  return { ...p, song: { ...song, parts } };
+}
+/** How many other sections have this track (the "All sections" button is there only when some do). */
+export function sectionsWith(p0: Progression, id: string): number {
+  const p = normalize(p0);
+  const song = p.song;
+  if (!song) return 0;
+  const cur = partOf(song, song.current)?.id;
+  return song.parts.filter((x) => x.id !== cur && (isFirst(id) || !!x.layers?.[id])).length;
+}
+
+/** A track put into one section (the Track page's + in a section that does not have it): plain, empty, ready to write in. */
+function addTrackToN(p: Progression, blockId: string, id: string): Progression {
+  const t = p.tracks?.find((x) => x.id === id);
+  if (!t || t.kind === "vocals" || isFirst(id)) return p;
+  const kind = t.kind as EditKind;
+  const song = p.song;
+  const cur = song ? partOf(song, song.current) : undefined;
+  const part = song ? partOf(song, blockId) : undefined;
+  const plain = plainLayer(kind);
+  if (!song || !part || part.id === cur?.id) {
+    if (p.layers?.[id]) return p;
+    const { [id]: _, ...tones } = p.tones ?? {};
+    return { ...p, layers: { ...p.layers, [id]: plain }, tones: Object.keys(tones).length ? tones : undefined };
   }
-  parts = parts.map((x, i) => (i > 0 && x.groove && shared.groove && sameGroove(x.groove, shared.groove) ? tidy({ ...x, groove: undefined }) : x));
-  return { parts, blocks, shared: tidy(shared), current: blocks.some((b) => b.id === s.current) ? s.current! : blocks[0].id };
+  if (part.layers?.[id]) return p;
+  const { [id]: _, ...tones } = part.tones ?? {};
+  const next: SongPart = tidy({ ...part, layers: { ...part.layers, [id]: plain }, tones: Object.keys(tones).length ? tones : undefined });
+  return { ...p, song: { ...song, parts: song.parts.map((x) => (x.id === part.id ? next : x)) } };
+}
+
+const curPart = (p: Progression): string | undefined => (p.song ? partOf(p.song, p.song.current)?.id : undefined);
+/**
+ * A change that can put another section on screen: which track each page was editing in the
+ * section left is remembered, and in the one now on screen the tracks last edited there come
+ * forward again (where it still has them). In a section not seen yet, a track brought forward
+ * stays in front where it has that track too.
+ */
+function remembered<T extends unknown[]>(fn: (p: Progression, ...a: T) => Progression): (p: Progression, ...a: T) => Progression {
+  return (p, ...a) => {
+    const q = fn(p, ...a);
+    const from = curPart(p);
+    const to = curPart(q);
+    if (!from || from === to) return q;
+    const focusIn: Record<string, Focus> = { ...p.focusIn, [from]: { ...p.focus } };
+    const want = to ? focusIn[to] : undefined;
+    return { ...(want ? refocus(q, want) : q), focusIn };
+  };
 }
 
 // ── The song as the pages change it. Each change is made with every track in its place, and the
@@ -675,20 +682,20 @@ export function reviveSong(raw: unknown, tracks?: Track[]): Song | null {
 export const commit = settled(commitN);
 export const ensureSong = settled(ensureSongN);
 export const loadCurrent = settled(loadCurrentN);
-export const leadFirst = settled(leadFirstN);
-export const relink = settled(relinkN);
-export const addNewSection = settled(addNewSectionN);
-export const repeatSection = settled(repeatSectionN);
-export const selectBlock = settled(selectBlockN);
-export const removeBlock = settled(removeBlockN);
+export const addNewSection = remembered(settled(addNewSectionN));
+export const repeatSection = remembered(settled(repeatSectionN));
+export const selectBlock = remembered(settled(selectBlockN));
+export const removeBlock = remembered(settled(removeBlockN));
 export const setSectionBars = settled(setSectionBarsN);
 export const renameSection = settled(renameSectionN);
 export const moveBlock = settled(moveBlockN);
 export const moveBlockTo = settled(moveBlockToN);
-export const unlinkBlock = settled(unlinkBlockN);
+export const unlinkBlock = remembered(settled(unlinkBlockN));
 /** (song/unity's setSig and setSectionSig are the way in: they make sure the song has a signature first) */
 export const retime = settled(retimeN);
 export const replaceSection = settled(replaceSectionN);
 export const mapAllChords = settled(mapAllChordsN);
 export const mapAllMelodies = settled(mapAllMelodiesN);
 export const settle = settled(settleN);
+export const soundToAll = settled(soundToAllN);
+export const addTrackTo = settled(addTrackToN);

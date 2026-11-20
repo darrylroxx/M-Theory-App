@@ -107,7 +107,10 @@ const SAW_OFFSETS = [0, -0.11002313, 0.10745242, -0.06288439, 0.06216538, -0.019
  */
 // (kept in a typed array: a number stored in a module variable would be boxed, a small allocation every time)
 const RB = new Float64Array(4);
-function blep4(x: number) {
+/** blep4's input: written here rather than passed (a fraction passed to a function that is not inlined is boxed) */
+const BX = new Float64Array(1);
+function blep4() {
+  const x = BX[0];
   const x2 = x * x;
   const a = 1 - x;
   const a2 = a * a;
@@ -183,6 +186,16 @@ const semis = (st: number) => Math.exp(0.057762265046662105 * st);
 /** first-order smoothing coefficient for a time constant of `tau` seconds, stepping `n` samples at a time */
 const coef = (tau: number, sr: number, n = 1) => (tau <= 0 ? 1 : 1 - Math.exp(-n / (tau * sr)));
 const flush = (v: number) => (v > 1e-20 || v < -1e-20 ? v : 0);
+/**
+ * What every number field of the voices, the effects and the kernel starts as, before the
+ * constructor gives it its real value. The JavaScript engine lays a field out the way its first
+ * value looks, a whole number one way and a fraction another. A field that starts whole and first
+ * gets a fraction later (a voice's gain at the first stolen note, its step at the first arp note,
+ * its velocity at the first soft one) changes the layout of every voice at that moment, and every
+ * optimised function that reads one is thrown away: a burst of slow code on the audio thread,
+ * heard as a crackle. Started as a fraction, a field is laid out as one from the beginning.
+ */
+const DBL = 0.5;
 
 // ── One voice ────────────────────────────────────────────────────────────────────────────────
 
@@ -190,108 +203,171 @@ class Voice {
   active = false;
   held = false;
   kill = false;
-  killGain = 1;
+  killGain = DBL;
   id = -1;
-  midi = 60;
+  midi = DBL;
   slot = -1;
   vel = 0.8;
   order = 0;
   // envelope: 1 attack, 2 decay/sustain, 3 release
   stage = 0;
-  env = 0;
-  gate = 0;
-  gateEnv = 0;
+  env = DBL;
+  gate = DBL;
+  gateEnv = DBL;
   /** samples since the last (re)trigger, for the LFO fade-in */
   tOn = 0;
   // pitch in semitones (MIDI scale), sliding toward `target` when gliding
-  pitch = 60;
-  target = 60;
+  pitch = DBL;
+  target = DBL;
   // what velocity does to this note
-  vgT = 1;
-  vg = 1;
-  vgInc = 0;
-  velCut = 0;
-  velTex = 1;
+  vgT = DBL;
+  vg = DBL;
+  vgInc = DBL;
+  velCut = DBL;
+  velTex = DBL;
   // analogue drift and per-note slop
-  rng = 1;
-  walk = 0;
-  slopPitch = 0;
-  slopCut = 0;
-  slopTime = 1;
+  rng = DBL;
+  walk = DBL;
+  slopPitch = DBL;
+  slopCut = DBL;
+  slopTime = DBL;
   // where it sits between the speakers
-  gl = 1;
-  gr = 1;
+  gl = DBL;
+  gr = DBL;
   // oscillators: the seven saws and the sub use ph[0..7]; the two-oscillator types use pA/pB
   ph = new Float64Array(8);
   dt = new Float64Array(8);
   dtInc = new Float64Array(8);
   nSaw = 1;
-  gC = 1;
-  gS = 0;
-  gSub = 0;
-  gSubInc = 0;
-  pA = 0;
-  pB = 0;
+  gC = DBL;
+  gS = DBL;
+  gSub = DBL;
+  gSubInc = DBL;
+  pA = DBL;
+  pB = DBL;
   hiA = false;
   hiB = false;
-  dtA = 0;
-  dtAInc = 0;
-  dtB = 0;
-  dtBInc = 0;
+  dtA = DBL;
+  dtAInc = DBL;
+  dtB = DBL;
+  dtBInc = DBL;
   /** pulse width, or FM index */
   w = 0.5;
-  wInc = 0;
+  wInc = DBL;
   gA = 0.5;
   gB = 0.5;
-  gBInc = 0;
+  gBInc = DBL;
   /** the Pulse oscillator's current interval, and its fade while it changes step */
-  iv = 0;
-  ivFade = 1;
+  iv = DBL;
+  ivFade = DBL;
   // band-limited step corrections: the oscillator output runs two samples late so jumps can be smoothed on both sides
-  nm2 = 0;
-  nm1 = 0;
-  cm2 = 0;
-  cm1 = 0;
-  c0 = 0;
+  nm2 = DBL;
+  nm1 = DBL;
+  cm2 = DBL;
+  cm1 = DBL;
+  c0 = DBL;
   /** the decimator of the ring oscillator, which runs at twice the sample rate */
   hb = new Float64Array(10);
   /** the last two oscillator samples, for the treble lift (see DEDROOP) */
-  eq1 = 0;
-  eq2 = 0;
+  eq1 = DBL;
+  eq2 = DBL;
   /** the filter's way up to twice the sample rate and back down */
   up = new Float64Array(10);
   dn = new Float64Array(10);
   /** 2^(interval/12) of the Pulse oscillator's second square */
-  ivMul = 1;
+  ivMul = DBL;
   // DC blocker
-  dcx = 0;
-  dcy = 0;
+  dcx = DBL;
+  dcy = DBL;
   // ladder
-  s1 = 0;
-  s2 = 0;
-  s3 = 0;
-  s4 = 0;
+  s1 = DBL;
+  s2 = DBL;
+  s3 = DBL;
+  s4 = DBL;
   G = 0.5;
-  GInc = 0;
+  GInc = DBL;
   /** 1/(1 + k·G⁴): the zero-delay feedback solve's divisor, slid like G */
-  D = 1;
-  DInc = 0;
+  D = DBL;
+  DInc = DBL;
   // amplitude modulation by the LFO
-  trem = 1;
-  tremInc = 0;
+  trem = DBL;
+  tremInc = DBL;
   // envelope coefficients for this note (they carry its slop), and which version of the sound they were worked out for
-  cA = 0;
-  cD = 0;
-  cR = 0;
+  cA = DBL;
+  cD = DBL;
+  cR = DBL;
   envVer = -1;
   /** an arp or pulse step: the time to the next one (seconds), which its attack and release are kept within; 0 for any other note */
-  step = 0;
+  step = DBL;
+
+  constructor() {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.killGain = 1;
+    this.midi = 60;
+    this.env = 0;
+    this.gate = 0;
+    this.gateEnv = 0;
+    this.pitch = 60;
+    this.target = 60;
+    this.vgT = 1;
+    this.vg = 1;
+    this.vgInc = 0;
+    this.velCut = 0;
+    this.velTex = 1;
+    this.rng = 1;
+    this.walk = 0;
+    this.slopPitch = 0;
+    this.slopCut = 0;
+    this.slopTime = 1;
+    this.gl = 1;
+    this.gr = 1;
+    this.gC = 1;
+    this.gS = 0;
+    this.gSub = 0;
+    this.gSubInc = 0;
+    this.pA = 0;
+    this.pB = 0;
+    this.dtA = 0;
+    this.dtAInc = 0;
+    this.dtB = 0;
+    this.dtBInc = 0;
+    this.wInc = 0;
+    this.gBInc = 0;
+    this.iv = 0;
+    this.ivFade = 1;
+    this.nm2 = 0;
+    this.nm1 = 0;
+    this.cm2 = 0;
+    this.cm1 = 0;
+    this.c0 = 0;
+    this.eq1 = 0;
+    this.eq2 = 0;
+    this.ivMul = 1;
+    this.dcx = 0;
+    this.dcy = 0;
+    this.s1 = 0;
+    this.s2 = 0;
+    this.s3 = 0;
+    this.s4 = 0;
+    this.GInc = 0;
+    this.D = 1;
+    this.DInc = 0;
+    this.trem = 1;
+    this.tremInc = 0;
+    this.cA = 0;
+    this.cD = 0;
+    this.cR = 0;
+    this.step = 0;
+  }
 }
 
 // ── Effects (each owns its buffers; process in place) ────────────────────────────────────────
 
 /** Distortion: tanh with first-order antiderivative anti-aliasing, then a two-pole tone control. */
 class Dist {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  depth = DBL;
+  rate = DBL;
   private x1 = new Float64Array(2);
   private f1 = new Float64Array(2);
   private lp = new Float64Array(4);
@@ -300,7 +376,9 @@ class Dist {
     this.f1.fill(0);
     this.lp.fill(0);
   }
-  process(L: Float64Array, R: Float64Array, len: number, depth: number, rate: number, sr: number) {
+  process(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const depth = this.depth;
+    const rate = this.rate;
     const drive = Math.pow(10, (30 * depth) / 20);
     // loudness kept roughly level: the wet signal is squashed toward ±1, so bring it back down as drive rises
     const make = 1 / (1 + 0.35 * Math.sqrt(drive - 1));
@@ -364,14 +442,21 @@ function hermite(buf: Float32Array, w: number, d: number): number {
 
 /** Chorus at low depth, flanger (short delay with feedback) at high depth; the two sides swing in quadrature. */
 class ChorusFlanger {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  depth = DBL;
+  rate = DBL;
   private bl: Float32Array;
   private br: Float32Array;
   private w = 0;
   /** where its sweep is (restarted by a sync) */
-  ph = 0;
-  private fbl = 0;
-  private fbr = 0;
+  ph = DBL;
+  private fbl = DBL;
+  private fbr = DBL;
   constructor(sr: number) {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.ph = 0;
+    this.fbl = 0;
+    this.fbr = 0;
     const n = Math.ceil(0.045 * sr) + 4;
     this.bl = new Float32Array(n);
     this.br = new Float32Array(n);
@@ -381,7 +466,9 @@ class ChorusFlanger {
     this.br.fill(0);
     this.fbl = this.fbr = 0;
   }
-  process(L: Float64Array, R: Float64Array, len: number, depth: number, rate: number, sr: number) {
+  process(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const depth = this.depth;
+    const rate = this.rate;
     const t = depth < 0.4 ? 0 : depth > 0.6 ? 1 : ((depth - 0.4) / 0.2) * ((depth - 0.4) / 0.2) * (3 - 2 * ((depth - 0.4) / 0.2));
     const base = (0.012 + (0.0025 - 0.012) * t) * sr;
     const swing = (Math.min(0.005, depth * 0.01) * (1 - t) + 0.002 * (0.5 + depth) * t) * sr;
@@ -421,16 +508,21 @@ class ChorusFlanger {
 
 /** Six all-pass stages per side swept by an LFO, with feedback; the sides sweep a quarter-cycle apart. */
 class Phaser {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  depth = DBL;
+  rate = DBL;
   private s = new Float64Array(12);
   /** where its sweep is (restarted by a sync) */
-  ph = 0;
+  ph = DBL;
   private fb = new Float64Array(2);
   private G = new Float64Array(2);
   reset() {
     this.s.fill(0);
     this.fb.fill(0);
   }
-  process(L: Float64Array, R: Float64Array, len: number, depth: number, rate: number, sr: number) {
+  process(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const depth = this.depth;
+    const rate = this.rate;
     const fmin = 180;
     const span = 0.6 + 3.8 * depth;
     const fbk = 0.65 * depth;
@@ -469,17 +561,27 @@ class Phaser {
     this.ph += dph * len;
     this.ph -= Math.floor(this.ph);
   }
+
+  constructor() {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.ph = 0;
+  }
 }
 
 /** Ping-pong echo: each repeat crosses to the other side and gets darker and thinner. */
 class Delay {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  depth = DBL;
+  rate = DBL;
   private bl: Float32Array;
   private br: Float32Array;
   private w = 0;
-  private d = 0;
+  private d = DBL;
   private lp = new Float64Array(2);
   private hp = new Float64Array(2);
   constructor(sr: number) {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.d = 0;
     const n = Math.ceil(1.25 * sr) + 4;
     this.bl = new Float32Array(n);
     this.br = new Float32Array(n);
@@ -491,7 +593,9 @@ class Delay {
     this.hp.fill(0);
     this.d = 0;
   }
-  process(L: Float64Array, R: Float64Array, len: number, depth: number, rate: number, sr: number) {
+  process(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const depth = this.depth;
+    const rate = this.rate;
     const target = Math.min(delaySec(rate) * sr, this.bl.length - 4);
     if (this.d === 0) this.d = target;
     const smooth = coef(0.08, sr);
@@ -537,17 +641,26 @@ class Delay {
 
 /** Widens without hurting mono: a short, slowly moving delayed copy is added to one side and taken from the other. */
 class Widener {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  amount = DBL;
   private b: Float32Array;
   private w = 0;
   /** where its sweep is (restarted by a sync) */
-  ph = 0;
+  ph = DBL;
+  /** the level of what it adds, where the last block left it (each block glides on from there, sample by sample) */
+  private g0 = DBL;
+  private primed = false;
   constructor(sr: number) {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.ph = 0;
+    this.g0 = 0;
     this.b = new Float32Array(Math.ceil(0.03 * sr) + 4);
   }
   reset() {
     this.b.fill(0);
   }
-  process(L: Float64Array, R: Float64Array, len: number, amount: number, sr: number) {
+  process(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const amount = this.amount;
     const b = this.b;
     const size = b.length;
     const base = 0.013 * sr;
@@ -555,10 +668,19 @@ class Widener {
     const dph = 0.31 / sr;
     let w = this.w;
     let ph = this.ph;
-    const g = 0.4 * amount;
+    // the level glides across the block (a step every block, while the width moves, is a zipper)
+    const g1 = 0.4 * amount;
+    if (!this.primed) {
+      this.g0 = g1;
+      this.primed = true;
+    }
+    const dg = (g1 - this.g0) / len;
+    let g = this.g0;
+    this.g0 = g1;
     for (let i = 0; i < len; i++) {
       const m = 0.5 * (L[i] + R[i]);
       b[w] = m;
+      g += dg;
       const y = hermite(b, w, base + swing * sin2pi(ph)) * g;
       L[i] += y;
       R[i] -= y;
@@ -569,10 +691,31 @@ class Widener {
     this.w = w;
     this.ph = ph;
   }
+  /**
+   * Turned off: it still listens (its line keeps what is playing, its sweep keeps moving), so
+   * turned back on it carries on from the sound as it is, instead of reading back what it held
+   * when it went off (a jump 13 ms after it comes back).
+   */
+  listen(L: Float64Array, R: Float64Array, len: number, sr: number) {
+    const b = this.b;
+    const size = b.length;
+    let w = this.w;
+    for (let i = 0; i < len; i++) {
+      b[w] = 0.5 * (L[i] + R[i]);
+      w = w + 1 === size ? 0 : w + 1;
+    }
+    this.w = w;
+    this.ph = (this.ph + (0.31 / sr) * len) % 1;
+    // (turned back on, it comes in from nothing)
+    this.g0 = 0;
+    this.primed = true;
+  }
 }
 
 /** A light reverb: pre-delay, four all-pass diffusers, then eight delay lines mixed by a Hadamard matrix. */
 class Reverb {
+  /** set by the kernel before each block (a field, not an argument: see effects()) */
+  amount = DBL;
   private pre: Float32Array;
   private pw = 0;
   private ap: Float32Array[];
@@ -582,8 +725,10 @@ class Reverb {
   private damp = new Float64Array(8);
   private gains = new Float64Array(8);
   private v = new Float64Array(8);
-  private rt = -1;
+  private rt = DBL;
   constructor(private sr: number) {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.rt = -1;
     this.pre = new Float32Array(Math.ceil(0.02 * sr) + 1);
     this.ap = [142, 107, 379, 277].map((n) => new Float32Array(Math.max(2, Math.round((n * sr) / 44100))));
     this.apw = new Int32Array(4);
@@ -597,7 +742,8 @@ class Reverb {
     this.damp.fill(0);
   }
   /** wet output is added to L/R */
-  process(L: Float64Array, R: Float64Array, len: number, amount: number) {
+  process(L: Float64Array, R: Float64Array, len: number) {
+    const amount = this.amount;
     const sr = this.sr;
     const rt60 = 1.1 + 2.2 * amount;
     if (Math.abs(rt60 - this.rt) > 1e-3) {
@@ -715,7 +861,7 @@ export class SynthKernel {
   readonly sr: number;
   readonly poly: number;
   /** the frame the next render starts at */
-  now = 0;
+  now = DBL;
 
   private p: SynthParams = DEFAULT_PARAMS;
   private voices: Voice[];
@@ -723,7 +869,7 @@ export class SynthKernel {
   private notes = 0;
   private seed: number;
   private rng: number;
-  private nr = 1;
+  private nr = DBL;
 
   // event queue, kept in time order (struct of arrays so nothing is allocated per event)
   private evFrame = new Float64Array(256);
@@ -743,53 +889,55 @@ export class SynthKernel {
   private stackId = new Float64Array(64);
   private stackN = 0;
   private mono: Voice | null = null;
-  private lastPitch = -1;
+  private lastPitch = DBL;
 
   // smoothed knobs
   private ctlPos = 0;
-  private sTex = 0;
-  private sMod = 0;
-  private sNoise = 0;
-  private sCut = 0;
-  private sRes = 0;
-  private sKey = 0;
-  private sDrive = 0;
-  private sBal = 0;
-  private sSus = 0;
-  private sDrift = 0;
-  private sWidth = 0;
-  private lAmp = 0;
-  private lFilt = 0;
-  private lPitch = 0;
-  private lOsc = 0;
+  private sTex = DBL;
+  private sMod = DBL;
+  private sNoise = DBL;
+  private sCut = DBL;
+  private sRes = DBL;
+  private sKey = DBL;
+  private sDrive = DBL;
+  private sBal = DBL;
+  private sSus = DBL;
+  private sDrift = DBL;
+  private sWidth = DBL;
+  private lAmp = DBL;
+  private lFilt = DBL;
+  private lPitch = DBL;
+  private lOsc = DBL;
   private fxW = new Float64Array(4);
-  private sFxDepth = 0;
-  private sFxRate = 0;
-  private sRev = 0;
-  private gain = 0;
-  private gainInc = 0;
-  private og = 1;
-  private ogInc = 0;
+  /** the blend each effect was at when the last span ended (the next one glides on from there) */
+  private fxWas = new Float64Array(4);
+  private sFxDepth = DBL;
+  private sFxRate = DBL;
+  private sRev = DBL;
+  private gain = DBL;
+  private gainInc = DBL;
+  private og = DBL;
+  private ogInc = DBL;
   private osc: OscType = "saw";
   private pendingOsc: OscType | null = null;
 
   // LFO (one for the whole synth, as on the hardware)
-  private lfoPh = 0;
-  private lfoRaw = 0;
-  private lfoVal = 0;
-  private lfoHold = 0;
+  private lfoPh = DBL;
+  private lfoRaw = DBL;
+  private lfoVal = DBL;
+  private lfoHold = DBL;
 
-  private glideC = 0;
-  private fadeN = 0;
+  private glideC = DBL;
+  private fadeN = DBL;
   // a stop fading out: 0 not at all, 1 fading to silence, 2 coming back up (a note was played during the fade)
   private hushMode = 0;
   /** how far the fade has gone (0 … 1), and the level it gives */
-  private hushX = 0;
-  private hushG = 1;
+  private hushX = DBL;
+  private hushG = DBL;
   private idle = false;
   private silent = 0;
   /** the loudest sample of the stretch rendered last: was anything heard when a stop comes? */
-  private lastPeak = 0;
+  private lastPeak = DBL;
   private SM: number;
 
   // worked out once per control block and shared by every voice
@@ -798,18 +946,18 @@ export class SynthKernel {
   private tD = 0.1;
   private tR = 0.1;
   private sawN = 1;
-  private sawDet = 0;
-  private sawGC = 1;
-  private sawGS = 0;
-  private ringA = 1;
-  private ringB = 1;
-  private fmR = 1;
-  private kRes = 0;
-  private kIn = 1;
-  private outG = 1;
-  private aAmt = 1;
-  private oscAmt = 1;
-  private noiseAmt = 0;
+  private sawDet = DBL;
+  private sawGC = DBL;
+  private sawGS = DBL;
+  private ringA = DBL;
+  private ringB = DBL;
+  private fmR = DBL;
+  private kRes = DBL;
+  private kIn = DBL;
+  private outG = DBL;
+  private aAmt = DBL;
+  private oscAmt = DBL;
+  private noiseAmt = DBL;
   // constants for this sample rate
   private readonly dcR: number;
   private readonly cGOn: number;
@@ -839,6 +987,53 @@ export class SynthKernel {
   private revLive = false;
 
   constructor(sampleRate: number, opts: KernelOptions = {}) {
+    // (every number field starts as a fraction, so the engine stores it as one from the start: see DBL)
+    this.now = 0;
+    this.nr = 1;
+    this.lastPitch = -1;
+    this.sTex = 0;
+    this.sMod = 0;
+    this.sNoise = 0;
+    this.sCut = 0;
+    this.sRes = 0;
+    this.sKey = 0;
+    this.sDrive = 0;
+    this.sBal = 0;
+    this.sSus = 0;
+    this.sDrift = 0;
+    this.sWidth = 0;
+    this.lAmp = 0;
+    this.lFilt = 0;
+    this.lPitch = 0;
+    this.lOsc = 0;
+    this.sFxDepth = 0;
+    this.sFxRate = 0;
+    this.sRev = 0;
+    this.gain = 0;
+    this.gainInc = 0;
+    this.og = 1;
+    this.ogInc = 0;
+    this.lfoPh = 0;
+    this.lfoRaw = 0;
+    this.lfoVal = 0;
+    this.lfoHold = 0;
+    this.glideC = 0;
+    this.fadeN = 0;
+    this.hushX = 0;
+    this.hushG = 1;
+    this.lastPeak = 0;
+    this.sawDet = 0;
+    this.sawGC = 1;
+    this.sawGS = 0;
+    this.ringA = 1;
+    this.ringB = 1;
+    this.fmR = 1;
+    this.kRes = 0;
+    this.kIn = 1;
+    this.outG = 1;
+    this.aAmt = 1;
+    this.oscAmt = 1;
+    this.noiseAmt = 0;
     this.sr = sampleRate;
     this.poly = Math.max(1, Math.min(16, Math.round(opts.voices ?? 8)));
     this.seed = (opts.seed ?? 0x5eed) >>> 0 || 1;
@@ -913,7 +1108,7 @@ export class SynthKernel {
     this.lFilt = p.lfoDest === "filter" ? 48 * d * d : 0;
     this.lPitch = p.lfoDest === "pitch" ? 2 * d * d : 0;
     this.lOsc = p.lfoDest === "osc" ? d : 0;
-    for (let i = 0; i < 4; i++) this.fxW[i] = FX_INDEX[p.fx] === i ? 1 : 0;
+    for (let i = 0; i < 4; i++) this.fxW[i] = this.fxWas[i] = FX_INDEX[p.fx] === i ? 1 : 0;
     this.sFxDepth = p.fxDepth;
     this.sFxRate = p.fxRate;
     this.sRev = p.reverb;
@@ -946,20 +1141,28 @@ export class SynthKernel {
       this.evHead = 0;
       return;
     }
-    const cap = Math.max(256, 1 << Math.ceil(Math.log2(live + n + 1)));
-    const grow = <T extends Float64Array | Int8Array>(a: T, make: (n: number) => T) => {
-      const b = make(cap);
-      b.set(a.subarray(this.evHead, this.evTail));
+    this.growQueue(Math.max(256, 1 << Math.ceil(Math.log2(live + n + 1))));
+  }
+
+  /** (apart from ensure: a closure in it would make every call allocate, even the ones that grow nothing) */
+  private growQueue(cap: number) {
+    const h = this.evHead;
+    const t = this.evTail;
+    const f64 = (a: Float64Array) => {
+      const b = new Float64Array(cap);
+      b.set(a.subarray(h, t));
       return b;
     };
-    this.evFrame = grow(this.evFrame, (k) => new Float64Array(k));
-    this.evType = grow(this.evType, (k) => new Int8Array(k));
-    this.evA = grow(this.evA, (k) => new Float64Array(k));
-    this.evB = grow(this.evB, (k) => new Float64Array(k));
-    this.evC = grow(this.evC, (k) => new Float64Array(k));
-    this.evD = grow(this.evD, (k) => new Float64Array(k));
-    this.evE = grow(this.evE, (k) => new Float64Array(k));
-    this.evTail = live;
+    this.evFrame = f64(this.evFrame);
+    const ty = new Int8Array(cap);
+    ty.set(this.evType.subarray(h, t));
+    this.evType = ty;
+    this.evA = f64(this.evA);
+    this.evB = f64(this.evB);
+    this.evC = f64(this.evC);
+    this.evD = f64(this.evD);
+    this.evE = f64(this.evE);
+    this.evTail = t - h;
     this.evHead = 0;
   }
 
@@ -1048,7 +1251,10 @@ export class SynthKernel {
   panic() {
     this.wake();
     this.clearEvents();
-    for (const v of this.voices) if (v.active) v.kill = true;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) v.kill = true;
+    }
     this.stackN = 0;
     this.mono = null;
     this.hushMode = 0;
@@ -1057,7 +1263,10 @@ export class SynthKernel {
   /** How many voices are sounding. */
   activeVoices() {
     let n = 0;
-    for (const v of this.voices) if (v.active) n++;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) n++;
+    }
     return n;
   }
 
@@ -1094,10 +1303,14 @@ export class SynthKernel {
     this.lfoRaw = 0;
     this.lfoVal = 0;
     this.ctlPos = 0;
-    // the effects' own sweeps too
-    this.chorus.ph = 0;
-    this.phaser.ph = 0;
-    this.widener.ph = 0;
+    // the effects' own sweeps too, but only from silence: a sweep jumped while a sound still rings in it
+    // (a chord heard on the page, a stop's fade, a tail) is a click; started from silence, playing from
+    // here sounds exactly like a render from here
+    if (this.lastPeak < 1e-7 && this.activeVoices() === 0) {
+      this.chorus.ph = 0;
+      this.phaser.ph = 0;
+      this.widener.ph = 0;
+    }
   }
 
   private random() {
@@ -1122,9 +1335,13 @@ export class SynthKernel {
   private on(midi: number, vel: number, id: number, slot: number, step = 0) {
     vel = vel < 0 ? 0 : vel > 1 ? 1 : vel;
     if (this.p.voice !== "poly" && !(step > 0)) return this.monoOn(midi, vel, id);
-    if (slot >= 0) for (const v of this.voices) if (v.active && v.held && !v.kill && v.slot === slot) this.release(v);
+    if (slot >= 0) for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held && !v.kill && v.slot === slot) this.release(v);
+    }
     // the same key struck again while it rings: strike that voice again, as a piano would
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       if (v.active && !v.held && !v.kill && v.midi === midi && v !== this.mono) {
         this.retrigger(v, midi, vel, id, slot);
         this.stepOf(v, step);
@@ -1145,12 +1362,18 @@ export class SynthKernel {
 
   private off(id: number) {
     // (an arp's steps on a mono sound have voices of their own, outside the mono line)
-    for (const v of this.voices) if (v.active && v.held && v.id === id && v !== this.mono && (this.p.voice === "poly" || v.step > 0)) this.release(v);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held && v.id === id && v !== this.mono && (this.p.voice === "poly" || v.step > 0)) this.release(v);
+    }
     if (this.p.voice !== "poly") this.monoOff(id);
   }
 
   private releaseAll() {
-    for (const v of this.voices) if (v.active && v.held) this.release(v);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held) this.release(v);
+    }
     this.stackN = 0;
   }
 
@@ -1160,14 +1383,18 @@ export class SynthKernel {
    * so the new note is heard in full.
    */
   private unhush() {
-    for (const v of this.voices) if (v.active) v.kill = true;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) v.kill = true;
+    }
     this.mono = null;
     this.hushMode = 2;
   }
 
   /** A stop has faded to silence: nothing of what was playing is left, not a voice, not an echo. */
   private hushed() {
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       v.active = false;
       v.held = false;
       v.kill = false;
@@ -1188,19 +1415,37 @@ export class SynthKernel {
   /** A free voice; when all are busy the oldest released (else the oldest held) note fades out quickly to make room. */
   private allocate(): Voice {
     let busy = 0;
-    for (const v of this.voices) if (v.active && !v.kill) busy++;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && !v.kill) busy++;
+    }
     if (busy >= this.poly) {
       let victim: Voice | null = null;
-      for (const v of this.voices) if (v.active && !v.kill && !v.held && (!victim || v.order < victim.order)) victim = v;
-      if (!victim) for (const v of this.voices) if (v.active && !v.kill && (!victim || v.order < victim.order)) victim = v;
+      for (let vi = 0; vi < this.voices.length; vi++) {
+        const v = this.voices[vi];
+        if (v.active && !v.kill && !v.held && (!victim || v.order < victim.order)) victim = v;
+      }
+      if (!victim) for (let vi = 0; vi < this.voices.length; vi++) {
+        const v = this.voices[vi];
+        if (v.active && !v.kill && (!victim || v.order < victim.order)) victim = v;
+      }
       if (victim) victim.kill = true;
     }
-    for (const v of this.voices) if (!v.active) return v;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (!v.active) return v;
+    }
     // more notes stolen within a few milliseconds than there are spares: cut the quietest of the
     // notes already fading out (never one that is still meant to sound)
     let q: Voice | null = null;
-    for (const v of this.voices) if (v.kill && (!q || v.killGain < q.killGain)) q = v;
-    if (!q) for (const v of this.voices) if (!q || v.order < q.order) q = v;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.kill && (!q || v.killGain < q.killGain)) q = v;
+    }
+    if (!q) for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (!q || v.order < q.order) q = v;
+    }
     q = q as Voice;
     q.active = false;
     return q;
@@ -1375,8 +1620,9 @@ export class SynthKernel {
         R.fill(0, offset + i, offset + i + len);
       } else {
         if (this.ctlPos === 0) this.controlTick();
-        const peak = this.renderSpan(L, R, offset + i, len);
-        this.lastPeak = peak;
+        // (its loudest sample is left in lastPeak: returned, the number would be boxed, an allocation every span)
+        this.renderSpan(L, R, offset + i, len);
+        const peak = this.lastPeak;
         // silent for half a second with no note sounding: rest
         if (peak < 1e-7 && this.activeVoices() === 0) {
           this.silent += len;
@@ -1403,6 +1649,11 @@ export class SynthKernel {
     return this.idle;
   }
 
+  /** Are notes or changes waiting for their moment? */
+  hasEvents() {
+    return this.evHead < this.evTail;
+  }
+
   /** Move this kernel's clock (the worklet keeps it equal to the audio clock). */
   seek(frame: number) {
     this.now = frame;
@@ -1419,7 +1670,8 @@ export class SynthKernel {
       if (this.og < 0.002) {
         this.osc = this.pendingOsc;
         this.pendingOsc = null;
-        for (const v of this.voices) {
+        for (let vi = 0; vi < this.voices.length; vi++) {
+          const v = this.voices[vi];
           v.nm2 = v.nm1 = v.cm2 = v.cm1 = v.c0 = 0;
           v.hb.fill(0);
           v.eq1 = v.eq2 = 0;
@@ -1490,7 +1742,10 @@ export class SynthKernel {
     this.lfoVal += (this.lfoRaw - this.lfoVal) * this.lfoC;
 
     this.shared();
-    for (const v of this.voices) if (v.active) this.voiceControl(v, false);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) this.voiceControl(v, false);
+    }
   }
 
   /** What every voice uses this control block (worked out once, not once per voice). */
@@ -1693,14 +1948,19 @@ export class SynthKernel {
   }
 
   /** Render one span (at most one control block) and return its peak. */
-  private renderSpan(L: Float32Array, R: Float32Array, at: number, len: number): number {
+  private renderSpan(L: Float32Array, R: Float32Array, at: number, len: number): void {
     const mixL = this.mixL;
     const mixR = this.mixR;
     for (let i = 0; i < len; i++) mixL[i] = mixR[i] = 0;
     const osc = this.osc;
     const buf = this.oscBuf;
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       if (!v.active) continue;
+      // a key held on a sound that dies away to nothing: its envelope creeps toward 0 for ever and, once
+      // far below hearing, into numbers the processor works with many times more slowly; 0 it is
+      if (v.env < 1e-30) v.env = 0;
+      if (v.gateEnv < 1e-30) v.gateEnv = 0;
       if (osc === "saw") this.oscSaw(v, buf, len);
       else if (osc === "pulse") this.oscPulse(v, buf, len);
       else if (osc === "sync") this.oscSync(v, buf, len);
@@ -1742,7 +2002,7 @@ export class SynthKernel {
     this.hushG = hg;
     if (hm === 1 && hx >= 1) this.hushed();
     else if (hm === 2 && hg >= 1) this.hushMode = 0;
-    return peak;
+    this.lastPeak = peak;
   }
 
   // ── Oscillators: each writes `len` samples into `out` ──
@@ -1773,7 +2033,8 @@ export class SynthKernel {
         const g = j === 0 ? gc : gs;
         if (p >= 1) {
           p -= 1;
-          blep4(p / d);
+          BX[0] = p / d;
+          blep4();
           const h = -2 * g;
           cm2 += h * RB[0];
           cm1 += h * RB[1];
@@ -1788,7 +2049,8 @@ export class SynthKernel {
       sdt += sdi;
       let q = sp + sdt;
       if (q >= 0.5 && sp < 0.5) {
-        blep4((q - 0.5) / sdt);
+        BX[0] = (q - 0.5) / sdt;
+        blep4();
         const h = -2 * gsub;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1797,14 +2059,16 @@ export class SynthKernel {
       }
       if (q >= 1) {
         q -= 1;
-        blep4(q / sdt);
+        BX[0] = q / sdt;
+        blep4();
         const h = 2 * gsub;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
         c0 += h * RB[2];
         cp1 += h * RB[3];
         if (q >= 0.5) {
-          blep4((q - 0.5) / sdt);
+          BX[0] = (q - 0.5) / sdt;
+          blep4();
           cm2 -= h * RB[0];
           cm1 -= h * RB[1];
           c0 -= h * RB[2];
@@ -1858,7 +2122,8 @@ export class SynthKernel {
       // first square
       pa += da;
       if (ha && pa >= w) {
-        blep4(Math.min(0.99999, (pa - w) / da));
+        BX[0] = Math.min(0.99999, (pa - w) / da);
+        blep4();
         const h = -2 * ga;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1868,7 +2133,8 @@ export class SynthKernel {
       }
       if (pa >= 1) {
         pa -= 1;
-        blep4(pa / da);
+        BX[0] = pa / da;
+        blep4();
         const h = 2 * ga;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1876,7 +2142,8 @@ export class SynthKernel {
         cp1 += h * RB[3];
         ha = true;
         if (pa >= w) {
-          blep4(Math.min(0.99999, (pa - w) / da));
+          BX[0] = Math.min(0.99999, (pa - w) / da);
+          blep4();
           cm2 -= h * RB[0];
           cm1 -= h * RB[1];
           c0 -= h * RB[2];
@@ -1887,7 +2154,8 @@ export class SynthKernel {
       // second square
       pb += db;
       if (hb && pb >= w) {
-        blep4(Math.min(0.99999, (pb - w) / db));
+        BX[0] = Math.min(0.99999, (pb - w) / db);
+        blep4();
         const h = -2 * gb;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1897,7 +2165,8 @@ export class SynthKernel {
       }
       if (pb >= 1) {
         pb -= 1;
-        blep4(pb / db);
+        BX[0] = pb / db;
+        blep4();
         const h = 2 * gb;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1905,7 +2174,8 @@ export class SynthKernel {
         cp1 += h * RB[3];
         hb = true;
         if (pb >= w) {
-          blep4(Math.min(0.99999, (pb - w) / db));
+          BX[0] = Math.min(0.99999, (pb - w) / db);
+          blep4();
           cm2 -= h * RB[0];
           cm1 -= h * RB[1];
           c0 -= h * RB[2];
@@ -1961,14 +2231,16 @@ export class SynthKernel {
         let at = ps - ds * xm;
         if (at >= 1) {
           // the slave wrapped on its own just before the restart
-          blep4(Math.min(0.99999, (ps - 1) / ds));
+          BX[0] = Math.min(0.99999, (ps - 1) / ds);
+          blep4();
           cm2 -= 2 * RB[0];
           cm1 -= 2 * RB[1];
           c0 -= 2 * RB[2];
           cp1 -= 2 * RB[3];
           at -= 1;
         }
-        blep4(xm);
+        BX[0] = xm;
+        blep4();
         const h = -2 * at;
         cm2 += h * RB[0];
         cm1 += h * RB[1];
@@ -1977,7 +2249,8 @@ export class SynthKernel {
         ps = ds * xm;
       } else if (ps >= 1) {
         ps -= 1;
-        blep4(ps / ds);
+        BX[0] = ps / ds;
+        blep4();
         cm2 -= 2 * RB[0];
         cm1 -= 2 * RB[1];
         c0 -= 2 * RB[2];
@@ -2034,7 +2307,8 @@ export class SynthKernel {
         if (pa >= 1) {
           pa -= 1;
           const x = pa / da;
-          blep4(x);
+          BX[0] = x;
+          blep4();
           // the jump is the saw's drop times the sine where it was at the moment of the wrap, not at the sample
           const h = -2 * (0.2 + 0.8 * sin2pi(pb - db * x));
           cm2 += h * RB[0];
@@ -2252,11 +2526,17 @@ export class SynthKernel {
     const fxL = this.fxL;
     const fxR = this.fxR;
     const sr = this.sr;
+    // (handed over in fields: a fraction passed as an argument to a function that is not inlined is boxed, a small allocation every block)
     const depth = this.sFxDepth;
     const rate = this.sFxRate;
+    this.dist.depth = this.chorus.depth = this.phaser.depth = this.delay.depth = depth;
+    this.dist.rate = this.chorus.rate = this.phaser.rate = this.delay.rate = rate;
     for (let e = 0; e < 4; e++) {
-      const w = this.fxW[e];
-      if (w <= 0) {
+      // the blend glides sample by sample from where the last span left it (a step every span is a zipper)
+      const w1 = this.fxW[e];
+      const w0 = this.fxWas[e];
+      this.fxWas[e] = w1;
+      if (w1 <= 0 && w0 <= 0) {
         this.fxLive[e] = false;
         continue;
       }
@@ -2268,11 +2548,11 @@ export class SynthKernel {
         else this.delay.reset();
         this.fxLive[e] = true;
       }
-      if (w >= 1) {
-        if (e === 0) this.dist.process(mixL, mixR, len, depth, rate, sr);
-        else if (e === 1) this.chorus.process(mixL, mixR, len, depth, rate, sr);
-        else if (e === 2) this.phaser.process(mixL, mixR, len, depth, rate, sr);
-        else this.delay.process(mixL, mixR, len, depth, rate, sr);
+      if (w1 >= 1 && w0 >= 1) {
+        if (e === 0) this.dist.process(mixL, mixR, len, sr);
+        else if (e === 1) this.chorus.process(mixL, mixR, len, sr);
+        else if (e === 2) this.phaser.process(mixL, mixR, len, sr);
+        else this.delay.process(mixL, mixR, len, sr);
         continue;
       }
       // crossfading between effects: process a copy and blend
@@ -2280,16 +2560,23 @@ export class SynthKernel {
         fxL[i] = mixL[i];
         fxR[i] = mixR[i];
       }
-      if (e === 0) this.dist.process(fxL, fxR, len, depth, rate, sr);
-      else if (e === 1) this.chorus.process(fxL, fxR, len, depth, rate, sr);
-      else if (e === 2) this.phaser.process(fxL, fxR, len, depth, rate, sr);
-      else this.delay.process(fxL, fxR, len, depth, rate, sr);
+      if (e === 0) this.dist.process(fxL, fxR, len, sr);
+      else if (e === 1) this.chorus.process(fxL, fxR, len, sr);
+      else if (e === 2) this.phaser.process(fxL, fxR, len, sr);
+      else this.delay.process(fxL, fxR, len, sr);
+      const dw = (w1 - w0) / len;
+      let w = w0;
       for (let i = 0; i < len; i++) {
+        w += dw;
         mixL[i] += w * (fxL[i] - mixL[i]);
         mixR[i] += w * (fxR[i] - mixR[i]);
       }
     }
-    if (this.sWidth > 0.01) this.widener.process(mixL, mixR, len, this.sWidth, sr);
+    // (on until the width has all but gone: switched at 0.01, the side it adds jumped from 0.4% of the sound to nothing)
+    if (this.sWidth > 1e-4) {
+      this.widener.amount = this.sWidth;
+      this.widener.process(mixL, mixR, len, sr);
+    } else this.widener.listen(mixL, mixR, len, sr);
     // reverb: runs while it is turned up (it starts from silence each time it is turned back on)
     const rev = this.sRev;
     if (rev > 1e-4) {
@@ -2297,7 +2584,8 @@ export class SynthKernel {
         this.reverb.reset();
         this.revLive = true;
       }
-      this.reverb.process(mixL, mixR, len, rev);
+      this.reverb.amount = rev;
+      this.reverb.process(mixL, mixR, len);
     } else this.revLive = false;
   }
 }

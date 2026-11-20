@@ -845,6 +845,50 @@ export class Sim {
     return back;
   }
 
+  /**
+   * The picture as `show` last drew it, read back without making the page wait: the pixels are
+   * copied into a buffer of the graphics card's own and taken once the card says it is done (a
+   * frame or two later), as `measure` does. Reading them at once (drawImage of the canvas,
+   * toDataURL) makes the page wait for everything the card has still to draw, which stops the
+   * music's timers too. Resolves with the picture top row first, or null if the card was lost.
+   */
+  readBack(): Promise<ImageData | null> {
+    const gl = this.gl;
+    const w = this.w;
+    const h = this.h;
+    const buf = gl.createBuffer();
+    if (!buf) return Promise.resolve(null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+    gl.bufferData(gl.PIXEL_PACK_BUFFER, w * h * 4, gl.STREAM_READ);
+    gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, 0);
+    gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+    const fence = gl.fenceSync(gl.SYNC_GPU_COMMANDS_COMPLETE, 0);
+    gl.flush();
+    return new Promise((done) => {
+      const poll = () => {
+        if (this.lost || !fence) {
+          gl.deleteBuffer(buf);
+          return done(null);
+        }
+        const st = gl.clientWaitSync(fence, 0, 0);
+        if (st !== gl.ALREADY_SIGNALED && st !== gl.CONDITION_SATISFIED) return void setTimeout(poll, 16);
+        gl.deleteSync(fence);
+        const raw = new Uint8Array(w * h * 4);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, buf);
+        gl.getBufferSubData(gl.PIXEL_PACK_BUFFER, 0, raw);
+        gl.bindBuffer(gl.PIXEL_PACK_BUFFER, null);
+        gl.deleteBuffer(buf);
+        // (the card's rows run bottom to top)
+        const img = new ImageData(w, h);
+        const row = w * 4;
+        for (let y = 0; y < h; y++) img.data.set(raw.subarray((h - 1 - y) * row, (h - y) * row), y * row);
+        done(img);
+      };
+      setTimeout(poll, 16);
+    });
+  }
+
   /** Is any paint still wet? (So the canvas can rest when everything has set.) */
   private idle = 0;
   settled(dt: number): boolean {

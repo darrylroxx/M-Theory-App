@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
-import type { FakeSource } from "../keys/fakeaudio";
+import type { FakeParam, FakeSource } from "../keys/fakeaudio";
 import { DEFAULT_BEAT, ECHO_TIMES, fxOf, type Beat } from "./beats";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import { TrackVoice } from "./trackvoice";
@@ -64,6 +64,8 @@ afterEach(() => {
 });
 
 const S = await import("./synth");
+/** a noise bed fades out over 20 ms when it stops, and its source stops just after */
+const BED_STOP = 0.021;
 
 /** Every note a track's voice is asked for (nothing is really played: the strings are not made). */
 function notes() {
@@ -171,32 +173,98 @@ describe("a melody on a synth's drone, in a loop of a section's second bar", () 
   });
 });
 
-describe("the sound the music carries", () => {
-  it("is let go when the music stops: the sound the track is set to is heard again", () => {
+describe("each section plays a track its own way", () => {
+  const piano: Tone = { inst: "piano" };
+  const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
+  const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
+  /** two one-bar sections at 120 (two seconds each): A on the strings with one sound, B on its own */
+  const two = (b: Partial<PlayItem>): PlayItem[] => [
+    { midi: CHORD, beats: 4, section: true, sound: verse },
+    { midi: CHORD, beats: 4, section: true, sound: verse, ...b },
+  ];
+  const run = (to: number) => {
+    live.currentTime = to;
+    vi.advanceTimersByTime(30);
+  };
+  it("live: B's chords are on a voice of B's own from B's first beat, and A's voice is never touched", () => {
     const log = notes();
-    const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
-    const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
-    S.setHarpSound(verse, 120);
+    const swaps = vi.spyOn(TrackVoice.prototype, "setTone");
     const p = new S.ProgressionPlayer();
-    p.start([{ midi: CHORD, beats: 4, section: true, sound: chorus }], 120, "ring", false);
-    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
-    expect(v.sound).toEqual(chorus);
+    S.getAudio();
+    live.currentTime = 0;
+    p.start(two({ tone: piano, sound: chorus }), 120, "ring", false);
+    for (let t = 0.2; t < 4.2; t += 0.2) run(t);
+    const a = log.filter((n) => n.track === "chord" && n.when < 2.08 - 1e-6);
+    const b = log.filter((n) => n.track === "chord" && n.when >= 2.08 - 1e-6);
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    const va = a[0].v;
+    const vb = b[0].v;
+    expect(va).not.toBe(vb);
+    expect(a.every((n) => n.v === va) && b.every((n) => n.v === vb)).toBe(true);
+    // B starts exactly where B starts, on its own instrument and sound
+    expect(Math.min(...b.map((n) => n.when))).toBeCloseTo(0.08 + 2, 9);
+    expect([vb.tone.inst, vb.sound]).toEqual(["piano", chorus]);
+    expect([va.tone.inst, va.sound]).toEqual(["guitar", verse]);
+    // nothing was switched on A's voice while it played (no instrument change cuts its notes off)
+    expect(swaps.mock.calls.filter((c) => swaps.mock.contexts[swaps.mock.calls.indexOf(c)] === va && (c[0] as Tone).inst !== "guitar")).toEqual([]);
     p.stop();
-    expect(v.sound).toEqual(verse);
   });
-  it("a track's sound turned while it plays is heard at once, and kept when the music stops", () => {
+  it("in a render: each section on its own voice, made on its own instrument and sound, nothing changed mid-render", async () => {
     const log = notes();
-    const before: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
-    const after: HarpSound = { ...SOUND_DEFAULT, level: 0.4, echo: 0.5 };
-    S.setHarpSound(before, 120);
+    vi.spyOn(TrackVoice.prototype, "prepare").mockResolvedValue(undefined);
+    const swaps = vi.spyOn(TrackVoice.prototype, "setTone");
+    const sounds = vi.spyOn(TrackVoice.prototype, "setSound");
+    await S.renderSong(two({ tone: piano, sound: chorus }), { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    const a = log.filter((n) => n.track === "chord" && n.when < 2 - 1e-6);
+    const b = log.filter((n) => n.track === "chord" && n.when >= 2 - 1e-6);
+    expect(a[0].v).not.toBe(b[0].v);
+    expect(Math.min(...b.map((n) => n.when))).toBe(2);
+    expect([b[0].v.tone.inst, b[0].v.sound]).toEqual(["piano", chorus]);
+    expect([a[0].v.tone.inst, a[0].v.sound]).toEqual(["guitar", verse]);
+    // each voice took its tone and its sound once, when it was made, and never another
+    for (const v of [a[0].v, b[0].v]) {
+      expect(new Set(swaps.mock.contexts.flatMap((x, i) => (x === v ? [JSON.stringify(swaps.mock.calls[i][0])] : []))).size).toBe(1);
+      expect(new Set(sounds.mock.contexts.flatMap((x, i) => (x === v ? [JSON.stringify(sounds.mock.calls[i][0])] : []))).size).toBe(1);
+    }
+  });
+  it("sections that play a track the same way share one voice, live and in a render", async () => {
+    const log = notes();
+    vi.spyOn(TrackVoice.prototype, "prepare").mockResolvedValue(undefined);
     const p = new S.ProgressionPlayer();
-    p.start([{ midi: CHORD, beats: 4, section: true, sound: before }], 120, "ring", false);
-    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
-    // one sound for the whole song: whichever section is on the page, the ringing chord takes it
-    S.setHarpSound(after, 120);
-    expect(v.sound).toEqual(after);
+    S.getAudio();
+    live.currentTime = 0;
+    // (equal sounds, made separately: it is what they are that counts)
+    p.start(two({ sound: { ...verse } }), 120, "ring", false);
+    for (let t = 0.2; t < 4.2; t += 0.2) run(t);
     p.stop();
-    expect(v.sound).toEqual(after);
+    expect(new Set(log.filter((n) => n.track === "chord").map((n) => n.v)).size).toBe(1);
+    log.length = 0;
+    await S.renderSong(two({ sound: { ...verse } }), { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    expect(new Set(log.filter((n) => n.track === "chord").map((n) => n.v)).size).toBe(1);
+  });
+  it("a knob turned on the page is heard at once on the same voice, never a new one", () => {
+    notes();
+    S.getAudio();
+    // (sounds of this test's own: no voice has them yet)
+    const verse: HarpSound = { ...SOUND_DEFAULT, level: 0.31 };
+    const chorus: HarpSound = { ...SOUND_DEFAULT, level: 0.32 };
+    S.hearOn("chord", { track: "chords", kind: "chord", sound: verse });
+    const log = notes();
+    S.strum([48, 52, 55]);
+    const v = log[0].v;
+    S.hearOn("chord", { track: "chords", kind: "chord", sound: chorus });
+    log.length = 0;
+    S.strum([48, 52, 55]);
+    expect(log[0].v).toBe(v);
+    expect(v.sound).toEqual(chorus);
+    // an instrument chosen: the same voice takes it
+    S.hearOn("chord", { track: "chords", kind: "chord", tone: piano, sound: chorus });
+    log.length = 0;
+    S.strum([48, 52, 55]);
+    expect(log[0].v).toBe(v);
+    expect(v.tone.inst).toBe("piano");
+    S.hearOn("chord", null);
   });
   it("an added track's first chord is on the track's own sound from its start, in a render and on every ▶", async () => {
     const log = notes();
@@ -238,7 +306,12 @@ describe("the drum desks", () => {
     const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
     expect(beds.length).toBe(1);
     // and stops where the song ends, as live: not on through a file's tail or round over the loop's start
-    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
+    // (faded out from there over 20 ms, so it is not cut off with a click)
+    expect(beds[0].src.stopsAt).toBeCloseTo(2 + BED_STOP, 6);
+    const fade = (beds[0].src.outputs[0] as unknown as { gain: FakeParam }).gain;
+    expect(fade.at(2)).toBe(1);
+    expect(fade.at(2.01)).toBeCloseTo(0.5, 6);
+    expect(fade.at(2.02)).toBe(0);
   });
   it("in a render, an added drums track's noise bed stops where a section without it starts, and comes back with it", async () => {
     notes();
@@ -254,8 +327,8 @@ describe("the drum desks", () => {
     await S.renderSong(items, { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
     const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
     expect(beds.map((s) => s.when)).toEqual([0, 4]);
-    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
-    expect(beds[1].src.stopsAt).toBeCloseTo(6, 6);
+    expect(beds[0].src.stopsAt).toBeCloseTo(2 + BED_STOP, 6);
+    expect(beds[1].src.stopsAt).toBeCloseTo(6 + BED_STOP, 6);
   });
   describe("live, the first track's noise bed follows the section that is playing, as a render has it", () => {
     // two one-bar sections at 120 (two seconds each); the page shows the first
@@ -300,7 +373,9 @@ describe("the drum desks", () => {
       run(p, 2.5);
       p.update(items, 120, "ring", false, vinyl);
       expect(beds().length).toBe(1);
-      expect(beds()[0].src.stopsAt).toBeCloseTo(t0 + 2, 6);
+      // (booked late, the page having been busy until 2.5 s: it fades out from then, as a stop booked in the past would have been heard)
+      expect(t0 + 2).toBeLessThan(2.5);
+      expect(beds()[0].src.stopsAt).toBeCloseTo(2.5 + BED_STOP, 6);
       p.stop();
     });
     it("showing another section's page while one plays leaves the playing one's bed alone", () => {
@@ -328,6 +403,19 @@ describe("the drum desks", () => {
     const set = live.nodes.some((n) => (n as FakeAny).delayTime?.events.some((e) => Math.abs(e.v - want) < 1e-9));
     expect(set).toBe(true);
   });
+  it("live, a kick pumps as its own section's kit has it: A's last kicks keep A's, B's first take B's", () => {
+    S.getAudio();
+    live.currentTime = 0;
+    const pumped: number[] = [];
+    onKickHit((when) => pumped.push(when));
+    syncDrums(beat({ pump: 0.6 }), 120, "dp");
+    // B, with no pump, booked to start at 2 s
+    syncDrums(beat({ pump: 0 }), 120, "dp", 2);
+    playStep(beat(), "kick", 3, 1.9, "dp");
+    playStep(beat(), "kick", 3, 2.1, "dp");
+    expect(pumped).toEqual([1.9]);
+    onKickHit(null);
+  });
   it("a kick that cannot be heard (its track muted, or another soloed) pumps nothing", () => {
     S.getAudio();
     const pumped: number[] = [];
@@ -349,7 +437,7 @@ describe("the drum desks", () => {
 describe("a note played to be heard", () => {
   it("goes to the track being edited, so an instrument that finishes loading after another track was picked is not heard on that one", () => {
     expect(S.heardTrack("chord")).toBe("chords");
-    S.hearOn("chord", { id: "c2", sound: SOUND_DEFAULT });
+    S.hearOn("chord", { track: "c2", kind: "chord", sound: SOUND_DEFAULT });
     expect(S.heardTrack("chord")).toBe("c2");
     expect(S.heardTrack("melody")).toBe("melody");
     S.hearOn("chord", null);
@@ -357,3 +445,55 @@ describe("a note played to be heard", () => {
   });
 });
 
+
+describe("the page held up while the song plays (see late.ts)", () => {
+  it("drum hits whose moment has passed are left out, not piled up at once; the rest come on time", async () => {
+    const { lateCount } = await import("./late");
+    notes();
+    const b: Beat = { ...DEFAULT_BEAT, on: true };
+    const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, drums: b }];
+    const p = new S.ProgressionPlayer();
+    S.getAudio();
+    live.currentTime = 0;
+    p.start(items, 120, "ring", true, b);
+    const tick = (to: number) => {
+      live.currentTime = to;
+      vi.advanceTimersByTime(25);
+    };
+    for (let t = 0.025; t <= 1; t += 0.025) tick(t);
+    const hits = () => starts.filter((s) => s.ctx === live && !s.loop);
+    const before = hits().length;
+    const dropped = lateCount.drums;
+    expect(before).toBeGreaterThan(4);
+    // the page is held up for 600 ms: the next timer runs at 1.6 s
+    tick(1.6);
+    const after = hits().slice(before);
+    // nothing was booked more than 30 ms before the clock, so nothing piles up in the same instant
+    expect(after.filter((s) => s.when < 1.6 - 0.03).length).toBe(0);
+    expect(lateCount.drums - dropped).toBeGreaterThan(0);
+    // and it carries on in time
+    tick(2);
+    expect(hits().length).toBeGreaterThan(before + after.length);
+    p.stop();
+  });
+  it("a recorded note booked late starts now, that far into itself (at the speed it plays at), so it ends where it would have", async () => {
+    const { startRecorded } = await import("./late");
+    const c = new FakeAudio();
+    c.currentTime = 2;
+    const got: number[][] = [];
+    const src = { start: (w: number, o: number) => got.push([w, o]), playbackRate: { value: 1 }, detune: { value: 1200 } };
+    expect(startRecorded(asAudio(c), src as never, 1.8, 0.01)).toBeCloseTo(0.2, 9);
+    expect(got[0][0]).toBe(2);
+    // an octave up plays twice as fast: 0.2 s late is 0.4 s into the recording
+    expect(got[0][1]).toBeCloseTo(0.41, 9);
+    // on time, or a moment old (a sound tapped to be heard): as asked
+    expect(startRecorded(asAudio(c), src as never, 2.1, 0)).toBe(0);
+    expect(got[1]).toEqual([2.1, 0]);
+    expect(startRecorded(asAudio(c), src as never, 1.995, 0)).toBe(0);
+    // a render is never late
+    const off = new FakeOffline();
+    off.currentTime = 2;
+    startRecorded(asAudio(off), src as never, 1, 0);
+    expect(got[3]).toEqual([1, 0]);
+  });
+});
