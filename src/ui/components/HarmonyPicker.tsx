@@ -18,7 +18,8 @@
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, partHere, rewriteHarmony, writeHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
-import { allTracks, fromIn, normalize, optionIn, writeTarget, type Track, type WriteTarget } from "../../song/tracks";
+import { allTracks, fromIn, normalize, optionIn, shapeIn, writeTarget, type Track, type WriteTarget } from "../../song/tracks";
+import { MIDDLE, controlsFor, type Level, type Shape } from "../../theory/harmonize";
 import { undoTo } from "../../song/structure";
 import { newId, useApp, type AppState } from "../state";
 
@@ -66,6 +67,9 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   // one track with music: there is only one answer, so it is already chosen
   const [picked, setPicked] = useState<string | null>(() => (live?.harmony ? fromIn(live.harmony, here) : null) ?? (sources.length === 1 ? sources[0].id : null));
   const [option, setOption] = useState<string | null>(own ?? null);
+  // the three controls, remembered for each option while the sheet is open (written again: its own option starts where it was written)
+  const [shapes, setShapes] = useState<Record<string, Shape>>(() => (own && live?.harmony ? { [own]: shapeIn(live.harmony, here) } : {}));
+  const shape = (option && shapes[option]) || MIDDLE;
   // the chosen track went (removed, or nothing left in it) while the sheet was open: ask again
   const lost = !track && !!picked && !sources.some((t) => t.id === picked);
   useEffect(() => {
@@ -139,11 +143,17 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   const pick = (o: string) => {
     if (gone) return;
     setOption(o);
-    if (from) hear({ plan: { kind: newKind, from, option: o }, target });
+    if (from) hear({ plan: { kind: newKind, from, option: o, shape: shapes[o] ?? MIDDLE }, target });
   };
   const toggleHear = () => {
     if (hearing && playing) hear(null);
-    else if (from && option) hear({ plan: { kind: newKind, from, option }, target });
+    else if (from && option) hear({ plan: { kind: newKind, from, option, shape }, target });
+  };
+  /** A control moved: the option is heard with it at once. */
+  const reshape = (s: Shape) => {
+    if (!option || gone) return;
+    setShapes((m) => ({ ...m, [option]: s }));
+    if (from) hear({ plan: { kind: newKind, from, option, shape: s }, target });
   };
   /** Keep it: add the track, or write it again; either can be taken back while nothing else has changed. */
   const keep = () => {
@@ -154,10 +164,10 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
     let msg: string;
     if (track) {
       if (status?.edited.length && !window.confirm(`${track.name} was changed in ${status.edited.join(", ")} since it was written. Write over it?`)) return;
-      after = rewriteHarmony(before, key, track.id, option);
+      after = rewriteHarmony(before, key, track.id, option, shape);
       msg = `${after.tracks?.find((t) => t.id === track.id)?.name ?? track.name} ⟳`;
     } else {
-      const r = writeHarmony(before, key, { kind: newKind, from, option }, target);
+      const r = writeHarmony(before, key, { kind: newKind, from, option, shape }, target);
       if (!r.track) return;
       after = r.p;
       msg = `${target.isNew ? `${r.track.name} added` : `${r.track.name}: ${item.label}`}${item.instead ? `, in place of ${nameOf(item.instead)} here` : ""}`;
@@ -196,15 +206,20 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
         <>
           {menu.length ? (
             <div className="hz-opts" role="group" aria-label="Harmonies">
-              {menu.map((x) => (
-                <button key={x.option.id} className={`chip hz-opt${option === x.option.id ? " on" : ""}${own === x.option.id ? " now" : ""}`} aria-pressed={option === x.option.id} title={x.hint} onClick={() => pick(x.option.id)}>
-                  {x.label}
-                </button>
+              {menu.map((x, i) => (
+                <span key={x.option.id} className="hz-opt-wrap">
+                  {/* the ones played instead of the chords stand apart */}
+                  {x.option.instead && !menu[i - 1]?.option.instead && i > 0 && <span className="hz-div">Instead</span>}
+                  <button className={`chip hz-opt${option === x.option.id ? " on" : ""}${own === x.option.id ? " now" : ""}`} aria-pressed={option === x.option.id} title={x.hint} onClick={() => pick(x.option.id)}>
+                    {x.label}
+                  </button>
+                </span>
               ))}
             </div>
           ) : (
             <span className="hz-none">Nothing to add to {nameOf(from)} yet</span>
           )}
+          {option && item && <ShapeControls shape={shape} on={controlsFor(newKind, option)} onChange={reshape} />}
           <div className="hz-foot">
             <span className="hz-hint">{hint}</span>
             <button className="icon-btn" disabled={!option} aria-pressed={hearing && playing} aria-label={hearing && playing ? "Stop" : "Hear it"} title={hearing && playing ? "Stop" : "Hear it"} onClick={toggleHear}>{hearing && playing ? "■" : "▶"}</button>
@@ -216,6 +231,40 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+const CONTROLS: { key: keyof Shape; ends: [string, string]; label: string }[] = [
+  { key: "busy", ends: ["Simpler", "Busier"], label: "Simpler or busier" },
+  { key: "wide", ends: ["Closer", "Wider"], label: "Closer or wider" },
+  { key: "colour", ends: ["Plain", "Colourful"], label: "Plain or colourful" },
+];
+/**
+ * The three controls on the chosen harmony: each three steps, the middle first. Tapping an end
+ * word moves a step toward it; a step is heard at once. One that means nothing for this harmony is
+ * greyed out. (Nothing here is about sound: these shape the notes only.)
+ */
+function ShapeControls({ shape, on, onChange }: { shape: Shape; on: Record<keyof Shape, boolean>; onChange: (s: Shape) => void }) {
+  return (
+    <div className="hz-ctls" role="group" aria-label="Shape it">
+      {CONTROLS.map(({ key, ends, label }) => {
+        const v = shape[key];
+        const off = !on[key];
+        const set = (x: number) => !off && onChange({ ...shape, [key]: Math.max(0, Math.min(2, x)) as Level });
+        const names = [ends[0], "Middle", ends[1]];
+        return (
+          <div key={key} className="hz-ctl" role="radiogroup" aria-label={label} aria-disabled={off || undefined} title={off ? "Not for this one" : undefined}>
+            <button className="hz-end" disabled={off} tabIndex={-1} aria-hidden="true" onClick={() => set(v - 1)}>{ends[0]}</button>
+            {names.map((n, i) => (
+              <button key={n} className={`hz-step${v === i ? " on" : ""}`} role="radio" aria-checked={v === i} aria-label={n} title={off ? "Not for this one" : n} disabled={off} onClick={() => set(i)}>
+                <i aria-hidden="true" />
+              </button>
+            ))}
+            <button className="hz-end" disabled={off} tabIndex={-1} aria-hidden="true" onClick={() => set(v + 1)}>{ends[1]}</button>
+          </div>
+        );
+      })}
     </div>
   );
 }

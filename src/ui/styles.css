@@ -1334,6 +1334,20 @@ span.cv-better { cursor: default; }
 /* the options stand apart from the tracks to go with (a track and an option can share a name) */
 .hz-sheet > .hz-opts, .hz-sheet > .hz-none { padding-top: 8px; border-top: 1px solid var(--border-2); }
 .hz-foot { flex-wrap: nowrap; }
+/* the options played instead of the chords stand apart, after a small label */
+.hz-opt-wrap { display: contents; }
+.hz-div { color: var(--muted); font-size: 0.72rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.04em; padding-inline: 4px 0; border-left: 1px solid var(--border-2); margin-left: 2px; }
+/* the three controls on the chosen harmony: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful */
+.hz-ctls { display: flex; flex-wrap: wrap; gap: 4px 14px; align-items: center; }
+.hz-ctl { display: inline-flex; align-items: center; gap: 0; }
+.hz-ctl[aria-disabled="true"] { opacity: 0.38; }
+.hz-ctl .hz-end { background: none; border: 0; color: var(--muted); font-size: 0.78rem; font-weight: 700; padding: 4px 4px; cursor: pointer; }
+.hz-ctl .hz-end:disabled { cursor: default; }
+.hz-ctl .hz-step { background: none; border: 0; width: 26px; height: 30px; display: inline-grid; place-items: center; cursor: pointer; padding: 0; }
+.hz-ctl .hz-step:disabled { cursor: default; }
+.hz-ctl .hz-step i { width: 10px; height: 10px; border-radius: 50%; border: 2px solid var(--border-2); background: transparent; }
+.hz-ctl .hz-step.on i { background: var(--accent); border-color: var(--accent); }
+@media (pointer: coarse) { .hz-ctl .hz-step { width: 44px; height: 44px; } .hz-ctl .hz-end { min-height: 44px; } }
 .hz-hint { flex: 1 1 auto; min-width: 0; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .hz-foot .icon-btn { width: 34px; height: 34px; }
 .hz-keep { min-width: 52px; justify-content: center; background: var(--accent); border-color: var(--accent); color: var(--accent-ink); font-weight: 850; }
