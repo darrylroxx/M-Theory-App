@@ -157,6 +157,29 @@ export interface HarmonizeInput {
   seed?: number;
   /** 6/8, 9/8, 12/8: every beat divides in three (written lines use triplet steps) */
   compound?: boolean;
+  /** everything else heard in the section, as the notes that really sound (chords as voiced, their bass, other tunes) */
+  around?: Sounding[];
+  /** the three controls: simpler or busier, closer or wider, plain or colourful (none: all in the middle) */
+  shape?: Shape;
+  /** can the new chords track's instrument play exactly these notes (chord layers; none: anything goes) */
+  playable?: (notes: number[]) => boolean;
+}
+
+/** One step of a control: 0, 1 (the middle) or 2. */
+export type Level = 0 | 1 | 2;
+/** The three controls on a harmony: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful. */
+export interface Shape {
+  busy: Level;
+  wide: Level;
+  colour: Level;
+}
+export const MIDDLE: Shape = { busy: 1, wide: 1, colour: 1 };
+/** A note that sounds in the section, from another track (in ticks): a chords track's note, its lowest (the bass), or a tune's. */
+export interface Sounding {
+  at: number;
+  end: number;
+  midi: number;
+  part: "chords" | "bass" | "tune";
 }
 
 export interface HarmonizeOutput {
