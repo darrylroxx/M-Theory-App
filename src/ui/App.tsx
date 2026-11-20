@@ -1,4 +1,4 @@
-import { Component, useState, type ReactNode } from "react";
+import { Component, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { IdeasPanel } from "./components/IdeasPanel";
 import { useBarsView } from "./components/BarsControl";
 import { barsOr } from "../song/frame";
@@ -44,15 +44,22 @@ function Shell() {
   // a page that shows more than one bar at a time gets the whole width of the screen
   const { shown } = useBarsView();
   const wide = widePage(page, shown, barsOr(state.progression.bars));
-  /** Open a page at its top. (On a phone the first row of the bar scrolls away; the page tabs stay.) */
   const go = (pane: Pane) => {
     // the page that opens can hold the page up for a moment: the song is booked a second ahead first, so it plays on
     if (pane !== page) bookAhead();
     set((s) => ({ ...s, pane }));
+  };
+  // Another page opens at its top, however it was opened: a tab, a section's track on Frame, a track on
+  // the Track page, the key. (The pages stay mounted, so the window would keep the last page's scroll.)
+  // On a phone the first row of the bar scrolls away; the page tabs stay.
+  const shownPage = useRef(page);
+  useLayoutEffect(() => {
+    if (shownPage.current === page) return;
+    shownPage.current = page;
     const bar = document.querySelector<HTMLElement>(".topbar");
     const gone = bar ? Math.max(0, -parseFloat(getComputedStyle(bar).top) || 0) : 0;
     window.scrollTo({ top: Math.min(window.scrollY, gone) });
-  };
+  }, [page]);
 
   return (
     <div className="app">

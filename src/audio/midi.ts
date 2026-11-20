@@ -6,7 +6,7 @@ import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import { hasTune, melodyBeats } from "../song/melody";
 import type { DrumId } from "./drums";
 import { itemNotes, itemTune, meterOf, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
-import { midiProgram, synthOf, type Tones } from "./tone";
+import { GUITAR, midiProgram, synthOf, type Tone, type Tones } from "./tone";
 import { playNotes, type PlayNote } from "../synth/play";
 import type { PlaySettings } from "../synth/params";
 
@@ -82,19 +82,49 @@ function clockOf(items: PlayItem[], first: Sig): Clock {
  * exported as four bars (or its whole pattern if longer), with the melody. Each section's time
  * signature is written where it starts (`sig` is the song's, for items that do not say).
  * Each chords and melody track is written with the General MIDI program of its instrument
- * (`tones`, by track id: the strings as a harp, the pianos as pianos, the synth by the kind of
- * sound); a synth track's chords are written as held chords, as they are written in the app,
- * except on a synth that arpeggiates them: then the notes its arpeggio plays are written (and a
- * melody on such a synth likewise), so the file plays what the app plays.
+ * (the strings as a harp, the pianos as pianos, the synth by the kind of sound): as each section
+ * has it (the items carry it), with a change of program where a section on another instrument
+ * starts; `tones`, by track id, stands in where the items do not say. A synth track's chords are
+ * written as held chords, as they are written in the app, except on a synth that arpeggiates
+ * them (in every section it plays): then the notes its arpeggio plays are written (and a melody on
+ * such a synth likewise), so the file plays what the app plays.
  */
 export function progressionToMidi(items: PlayItem[], bpm: number, pattern: PatternId, name = "M-Theory progression", beat: Beat | null = null, tune: PlayTune | null = null, names: Record<string, string> = {}, sig: Sig = { num: 4, den: 4 }, tones: Tones = {}): Uint8Array {
-  const program = (id: string) => (tones[id] ? midiProgram(tones[id]) : 46);
-  const held = (id: string) => tones[id]?.inst === "synth";
-  /** the synth's way of playing, if it is an arpeggio */
+  /** what plays a track in each item where it plays (undefined where it does not): as its section has it, else as `tones` says, else the strings */
+  const toneAt = (id: string): (Tone | undefined)[] =>
+    items.map((it) => {
+      const own = id === "chords" ? { tone: it.tone } : id === "melody" ? it.tune && { tone: it.tune.tone } : it.extra?.chords.find((c) => c.track === id) ?? (it.extra?.tunes.find((x) => x.track === id) && { tone: it.extra.tunes.find((x) => x.track === id)!.tune.tone });
+      return own ? own.tone ?? tones[id] ?? GUITAR : undefined;
+    });
+  const toneOfTrack = (id: string): Tone => toneAt(id).find((t) => !!t) ?? tones[id] ?? GUITAR;
+  const program = (id: string) => midiProgram(toneOfTrack(id));
+  /** a synth's chords are written held (in the items where the track plays the synth) */
+  const held = (id: string) => {
+    const ts = toneAt(id);
+    return (i: number) => (ts[i] ?? toneOfTrack(id)).inst === "synth";
+  };
+  /** the synth's way of playing, if it is an arpeggio (in every item the track plays in) */
   const arpOf = (id: string, kind: "chords" | "melody"): PlaySettings | null => {
-    const t = tones[id];
-    const play = t?.inst === "synth" ? synthOf(t, kind).play : null;
-    return play?.mode === "arp" ? play : null;
+    const ts = toneAt(id).filter((t): t is Tone => !!t);
+    const plays = (ts.length ? ts : [toneOfTrack(id)]).map((t) => (t.inst === "synth" ? synthOf(t, kind).play : null));
+    const play = plays[0];
+    return play?.mode === "arp" && plays.every((x) => JSON.stringify(x) === JSON.stringify(play)) ? play : null;
+  };
+  /** a change of program on a channel wherever a section plays the track on another instrument */
+  const switches = (id: string, ch: number): Ev[] => {
+    const ts = toneAt(id);
+    const out: Ev[] = [];
+    let last = program(id);
+    let at = 0;
+    items.forEach((it, i) => {
+      const t = ts[i];
+      if (t && midiProgram(t) !== last) {
+        last = midiProgram(t);
+        out.push({ tick: Math.round(clock.at(at)), data: [0xc0 | ch, last], order: -0.5 });
+      }
+      at += it.beats;
+    });
+    return out;
   };
   const drums = beat?.on ? beat : null;
   if (!items.length) {
@@ -120,9 +150,9 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
   const tracks: number[][] = [];
   // the first track carries the name, tempo and time signature, and the harp
   const chordsArp = arpOf("chords", "chords");
-  tracks.push(chordsArp ? arpTrack(arpChords(items, beat, bpm, chordsArp), clock, 0, null, totalTicks, meta, changes, program("chords")) : harpTrack(items, pattern, beat, bpm, clock, 0, null, totalTicks, meta, changes, program("chords"), held("chords")));
+  tracks.push(chordsArp ? arpTrack(arpChords(items, beat, bpm, chordsArp), clock, 0, null, totalTicks, meta, [...changes, ...switches("chords", 0)], program("chords")) : harpTrack(items, pattern, beat, bpm, clock, 0, null, totalTicks, meta, [...changes, ...switches("chords", 0)], program("chords"), held("chords")));
   const tuneArp = arpOf("melody", "melody");
-  const melody = tuneArp ? arpTuneTrack(arpTune(items, tune, beat, bpm, tuneArp), clock, 1, "Melody", totalTicks, program("melody")) : tuneTrack(itemTune(items, tune), clock, 1, "Melody", totalTicks, program("melody"));
+  const melody = tuneArp ? arpTuneTrack(arpTune(items, tune, beat, bpm, tuneArp), clock, 1, "Melody", totalTicks, program("melody"), switches("melody", 1)) : tuneTrack(itemTune(items, tune), clock, 1, "Melody", totalTicks, program("melody"), switches("melody", 1));
   if (melody) tracks.push(melody);
   if (items.some((x) => (x.drums ?? drums)?.on)) tracks.push(drumTrack(items, drums, clock, "Drums", totalTicks));
 
@@ -150,13 +180,14 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     const own = extraChordItems(items, id);
     const a = arpOf(id, "chords");
     const ch = nextCh(program(id));
-    tracks.push(a ? arpTrack(arpChords(own, beat, bpm, a), clock, ch, names[id] ?? "Chords", totalTicks, [], [], program(id)) : harpTrack(own, pattern, beat, bpm, clock, ch, names[id] ?? "Chords", totalTicks, [], [], program(id), held(id)));
+    const heldOwn = (i: number) => (own[i].tone ?? toneOfTrack(id)).inst === "synth";
+    tracks.push(a ? arpTrack(arpChords(own, beat, bpm, a), clock, ch, names[id] ?? "Chords", totalTicks, [], switches(id, ch), program(id)) : harpTrack(own, pattern, beat, bpm, clock, ch, names[id] ?? "Chords", totalTicks, [], switches(id, ch), program(id), heldOwn));
   }
   for (const id of ids.tunes) {
     const own = items.map((it) => ({ ...it, tune: it.extra?.tunes.find((x) => x.track === id)?.tune ?? null }));
     const a = arpOf(id, "melody");
     const ch = nextCh(program(id));
-    const t = a ? arpTuneTrack(arpTune(own, null, beat, bpm, a), clock, ch, names[id] ?? "Melody", totalTicks, program(id)) : tuneTrack(itemTune(own, null), clock, ch, names[id] ?? "Melody", totalTicks, program(id));
+    const t = a ? arpTuneTrack(arpTune(own, null, beat, bpm, a), clock, ch, names[id] ?? "Melody", totalTicks, program(id), switches(id, ch)) : tuneTrack(itemTune(own, null), clock, ch, names[id] ?? "Melody", totalTicks, program(id), switches(id, ch));
     if (t) tracks.push(t);
   }
   for (const id of ids.drums) {
@@ -189,9 +220,11 @@ const named = (name: string) => [0, 0xff, 0x03, ...vlq(str(name).length), ...str
  * A chords track: what the playing style plays over each chord, or (`held`) each chord held for
  * its length. (`more`: events that go with it, such as changes of signature.)
  */
-function harpTrack(items: PlayItem[], pattern: PatternId, beat: Beat | null, bpm: number, clock: Clock, ch: number, name: string | null, end: number, head: number[] = [], more: Ev[] = [], program = 46, held = false): number[] {
+function harpTrack(items: PlayItem[], pattern: PatternId, beat: Beat | null, bpm: number, clock: Clock, ch: number, name: string | null, end: number, head: number[] = [], more: Ev[] = [], program = 46, held: boolean | ((item: number) => boolean) = false): number[] {
   const events: Ev[] = [...more];
-  for (const { at, e, beats } of held ? heldNotes(items) : itemNotes(items, pattern, beat)) {
+  // (held in the items that say so: a section on the synth among sections on the strings)
+  const notes = typeof held === "function" ? [...itemNotes(items, pattern, beat).filter((n) => !held(n.item)), ...heldNotes(items).filter((n) => held(n.item))] : held ? heldNotes(items) : itemNotes(items, pattern, beat);
+  for (const { at, e, beats } of notes) {
     const tpb = clock.tpb(at + e.beat);
     // seconds to ticks there: the playing styles' small delays are in seconds
     const tps = (bpm / 60) * tpb;
@@ -294,15 +327,15 @@ function arpTrack(notes: BeatNote[], clock: Clock, ch: number, name: string | nu
   return trackOf([...head, ...(name ? named(name) : []), 0, 0xc0 | ch, program], events, end);
 }
 /** A melody's arpeggio as a track of its own (none if it plays nothing in the song). */
-function arpTuneTrack(notes: BeatNote[], clock: Clock, ch: number, name: string, end: number, program: number): number[] | null {
-  return notes.some((n) => Math.round(clock.at(n.beat)) < end) ? arpTrack(notes, clock, ch, name, end, [], [], program) : null;
+function arpTuneTrack(notes: BeatNote[], clock: Clock, ch: number, name: string, end: number, program: number, more: Ev[] = []): number[] | null {
+  return notes.some((n) => Math.round(clock.at(n.beat)) < end) ? arpTrack(notes, clock, ch, name, end, [], more, program) : null;
 }
 
 /** A melody track, each note held until the next one. */
-function tuneTrack(hits: { beat: number; midi: number }[], clock: Clock, ch: number, name: string, end: number, program = 46): number[] | null {
+function tuneTrack(hits: { beat: number; midi: number }[], clock: Clock, ch: number, name: string, end: number, program = 46, more: Ev[] = []): number[] | null {
   hits = hits.filter((h) => Math.round(clock.at(h.beat)) < end);
   if (!hits.length) return null;
-  const ev: Ev[] = [];
+  const ev: Ev[] = [...more];
   hits.forEach((h, i) => {
     const on = Math.round(clock.at(h.beat));
     const after = hits.slice(i + 1).find((x) => x.beat > h.beat + 1e-6);
@@ -359,7 +392,7 @@ export function extraChordItems(items: PlayItem[], track: string): PlayItem[] {
         at = c.at;
       }
       const beats = Math.min(c.beats, len - c.at);
-      push({ midi: c.midi, beats, style: c.style, feel: c.feel });
+      push({ midi: c.midi, beats, style: c.style, feel: c.feel, tone: c.tone });
       at += beats;
     }
     if (at < len - 1e-6) push({ midi: [], beats: len - at });

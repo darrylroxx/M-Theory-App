@@ -1,30 +1,28 @@
 /**
- * Tracks. A song has one chords track, one melody track and one drums track to begin with (the
- * "first" of each kind), and any number of extra tracks of any kind added with a + (vocals among
- * them). A new track is plain: nothing is copied from another track.
+ * Tracks. Every section has one chords track, one melody track and one drums track (the "first"
+ * of each kind; they can be empty or off), and any number of tracks added with a + in only the
+ * sections they were added to. A new track is plain: nothing is copied from another track.
  *
- * Every track has something in every section: an extra chords track its own chords, an extra
- * melody its own notes, an extra drums track its own drum rhythm. Those live in each section as
- * `layers`, keyed by the track's id.
- *
- * Every track has one sound of its own, the same in every section, and changing it never changes
- * another track's. The first tracks keep theirs on the page (`pattern`, `feel`, `sound` for the
- * chords; `tuneSound` for the melody; the kit part of `beat` for the drums); an extra track keeps
- * it on the track itself (`style`, `feel`, `sound`; `kit` for drums; `fx` for vocals). What plays
- * a chords or melody track (Guitar, Piano or Synth) is in `tones`, by track id. Anything missing
- * is the plain default.
+ * A track is a row of the song (its name, its place on the Track page, its volume, mute and solo),
+ * and it is in a section when that section has a part for it: its `layers` entry, keyed by the
+ * track's id. That part is everything about the track in that section, and only there: an added
+ * chords track's chords and how they are played (`pattern`, `feel`, `sound`), an added melody's
+ * notes and its harp (`tuneSound`), an added drums track's rhythm with its kit (`beat`). What
+ * plays a chords or melody track (Guitar, Piano or Synth) is in the section's `tones`, by track
+ * id. Anything missing is the plain default. The first tracks keep theirs on the section itself
+ * (see ./structure). Vocal tracks are the exception: they run across the whole song.
  *
  * The pages edit one track of their kind at a time. The track being edited sits in the same
  * place the first track always does, so every page works the same for any track. While another
  * track of a kind is being edited, the first track's things (its notes and its sound) are kept
  * aside in `layers` under the kind's own name. `normalize` puts everything back where it belongs;
- * `refocus` brings a chosen track forward again.
+ * `refocus` brings a chosen track forward again (only in a section that has it).
  */
-import { DEFAULT_BEAT, emptyRows, kitOfBeat, reviveBeat, reviveKit, type Beat, type DrumKit } from "../audio/beats";
+import { DEFAULT_BEAT, emptyRows, kitOfBeat, reviveBeat, type Beat, type DrumKit } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { reviveMelody, type Melody } from "./melody";
-import type { ProgChord, Progression } from "../ui/state";
+import type { ArrangeSettings, ProgChord, Progression } from "../ui/state";
 import { reviveFx, type VocalFx } from "../audio/vocalfx";
 import { reviveTakes, type Take } from "./takes";
 import { migrateClips, reviveClips, type Clip } from "./clips";
@@ -42,13 +40,6 @@ export interface Track {
   id: string;
   kind: TrackKind;
   name: string;
-  /** an extra chords track: how it is played, and its harp */
-  style?: PatternId;
-  feel?: Partial<Feel>;
-  /** an extra chords or melody track: its harp's sound and effects */
-  sound?: Partial<HarpSound>;
-  /** an extra drums track: its kit (the machine, each drum's sound, the mix and the effects), the same in every section */
-  kit?: DrumKit;
   /** a vocal track: which input it records (1 = the mic input, 2 = the instrument/line jack) */
   input?: 1 | 2;
   /** a vocal track: its live sound (the vocal chain), its recorded takes, and which take plays from each recording */
@@ -61,8 +52,10 @@ export interface Track {
   role?: "harmony";
   /** a harmony track: what it was written from and how (see song/harmony), so it can be written again */
   harmony?: HarmonyOf;
-  /** a chords track that played instead of another and lost its source: the one it still plays instead of */
+  /** a chords track that played instead of another and lost its source: the one it still plays instead of… */
   replaces?: string;
+  /** …and the sections it does, by part id (a track from an older version has none: it did so through the mixer) */
+  replacesIn?: string[];
 }
 
 /**
@@ -73,20 +66,33 @@ export interface Track {
  */
 export interface HarmonyOf {
   from: string;
+  /** the option it was last written with (a section's record says what it was written with there) */
   option: string;
   marks?: Record<string, HarmonyMark>;
 }
 export interface HarmonyMark {
   src: string;
   out: string;
+  /** the option it was written with in this section (a record from before has none: the track's) */
+  option?: string;
+  /**
+   * it plays along with the chords here, though it was written to play instead of them: a song
+   * from an older version, where those chords were unmuted by hand to hear both
+   */
+  along?: true;
 }
 
 /**
- * What one track holds in one section (and, for the first track kept aside, its sound too). An
- * added drums track's `beat` is its rhythm there: its kit is the track's (`Track.kit`).
+ * What one track is in one section: its music there and how it sounds there. An added chords
+ * track: its chords, playing style, feel and harp; an added melody: its notes and its harp; an
+ * added drums track: its rhythm and on/off, on its kit there (`beat`). (The first track of a kind
+ * kept aside while another is edited is kept the same way.) An empty one (`{}`) is a track that is
+ * in the section with nothing in it yet, on plain settings.
  */
 export interface Layer {
   chords?: ProgChord[];
+  /** on the guitar: the area of the neck its chords are arranged in (none: each chord's own shape) */
+  arrange?: ArrangeSettings;
   pattern?: PatternId;
   feel?: Partial<Feel>;
   sound?: Partial<HarpSound>;
@@ -125,33 +131,57 @@ export const emptyBeat = (like: Beat = DEFAULT_BEAT): Beat => ({ ...like, on: fa
 export const PLAIN_STYLE: PatternId = "ring";
 /** The kit a new drums track starts on. */
 export const PLAIN_KIT: DrumKit = kitOfBeat(DEFAULT_BEAT);
-/** What an added drums track plays in a section: its rhythm there, on its own kit. */
-export const drumsOf = (t: Pick<Track, "kit">, l: Layer | undefined): Beat | undefined => l?.beat && { ...l.beat, ...(t.kit ?? PLAIN_KIT) };
+/** What an added drums track plays in a section: its rhythm there, on its kit there. */
+export const drumsOf = (l: Layer | undefined): Beat | undefined => l?.beat;
+/** A plain new drums track: nothing in it yet, on the plain kit. */
+export const plainBeat = (): Beat => emptyBeat(DEFAULT_BEAT);
+/** A track of a kind as it comes into a section: plain, with nothing in it yet. */
+export function plainLayer(kind: EditKind): Layer {
+  return kind === "chords" ? { chords: [] } : kind === "melody" ? {} : { beat: plainBeat() };
+}
+/** Does a track's part of a section hold music: a chord that is not a rest, a melody note, drums on with a hit? */
+export function hasMusic(l: Layer | undefined): boolean {
+  if (!l) return false;
+  if (l.chords?.some((c) => !c.rest)) return true;
+  if (l.melody?.notes.length) return true;
+  return !!l.beat?.on && Object.values(l.beat.rows ?? {}).some((r) => /[1-9]/.test(r));
+}
 
 /** What the page shows for a kind, taken off the page. */
 function takeLive(p: Progression, kind: EditKind): Layer {
-  if (kind === "chords") return { chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound };
+  if (kind === "chords") return { chords: p.chords, arrange: p.arrange ?? undefined, pattern: p.pattern, feel: p.feel, sound: p.sound };
   if (kind === "melody") return { melody: p.melody, tuneSound: p.tuneSound };
   return { beat: p.beat };
 }
 /** Put a kind's things on the page. */
 function putLive(p: Progression, kind: EditKind, l: Layer): Progression {
-  if (kind === "chords") return { ...p, chords: l.chords ?? [], pattern: l.pattern ?? p.pattern, feel: l.feel, sound: l.sound };
+  if (kind === "chords") return { ...p, chords: l.chords ?? [], arrange: l.arrange ?? null, pattern: l.pattern ?? p.pattern, feel: l.feel, sound: l.sound };
   if (kind === "melody") return { ...p, melody: l.melody, tuneSound: l.tuneSound };
   return { ...p, beat: l.beat };
 }
+const tidy = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
 const without = (o: Layers | undefined, key: string): Layers | undefined => {
   if (!o || !(key in o)) return o;
   const { [key]: _, ...rest } = o;
   return Object.keys(rest).length ? rest : undefined;
 };
 
+/**
+ * The first track of a kind as it is, also while its page has an added track of that kind brought
+ * forward: the first's things then wait aside in `layers` (empty where it never had any of its own),
+ * and the page holds the added track's, which must never stand in for them.
+ */
+export function firstLayer(p: Progression, kind: EditKind): Layer {
+  const id = p.focus?.[kind];
+  return id && id !== kind ? p.layers?.[kind] ?? {} : takeLive(p, kind);
+}
+
 /** Is some page editing a track other than the first of its kind? */
 export const focused = (p: Progression): boolean => EDIT_KINDS.some((k) => !!p.focus?.[k] && p.focus[k] !== k);
 
 /**
- * Everything back where it belongs: the first tracks on the page, every extra track's notes in
- * `layers` and its sound on the track. Nothing is brought forward afterwards (`focus` is empty).
+ * Everything back where it belongs: the first tracks on the page, every extra track's notes and
+ * sound in its part of the section (`layers`). Nothing is brought forward afterwards (`focus` is empty).
  */
 export function normalize(p: Progression): Progression {
   if (!focused(p)) return p.focus ? { ...p, focus: undefined } : p;
@@ -159,22 +189,19 @@ export function normalize(p: Progression): Progression {
   for (const kind of EDIT_KINDS) {
     const id = p.focus?.[kind];
     if (!id || id === kind) continue;
-    const live = takeLive(q, kind);
+    // the extra track's notes and its sound go back into its part of this section
+    const content = tidy(takeLive(q, kind));
     const first = q.layers?.[kind] ?? {};
-    // the extra track's notes go back into its layer, and its sound back onto the track
-    const content: Layer = kind === "chords" ? { chords: live.chords } : kind === "melody" ? { melody: live.melody } : { beat: live.beat };
-    const tracks = (q.tracks ?? []).map((t) =>
-      t.id !== id ? t : kind === "chords" ? { ...t, style: live.pattern, feel: live.feel, sound: live.sound } : kind === "melody" ? { ...t, sound: live.tuneSound } : live.beat ? { ...t, kit: kitOfBeat(live.beat) } : t,
-    );
-    q = putLive({ ...q, tracks, layers: { ...without(q.layers, kind), [id]: content } }, kind, first);
+    q = putLive({ ...q, layers: { ...without(q.layers, kind), [id]: content } }, kind, first);
   }
   return q;
 }
 
 /**
  * Bring tracks forward for editing (one per kind): `focus` says which. A track that does not
- * exist is left alone; the first track needs nothing. Each comes with its own sound (a plain one
- * if it has none yet); an added drums track with nothing yet in this section starts empty, on its own kit.
+ * exist, or is not in the section on screen, is left alone (the page edits the first track of
+ * its kind there); the first track needs nothing. Each comes with its sound in this section (the
+ * plain one where it has none yet).
  */
 export function refocus(q0: Progression, focus: Focus | undefined): Progression {
   const q1 = normalize(q0);
@@ -185,14 +212,14 @@ export function refocus(q0: Progression, focus: Focus | undefined): Progression 
     const id = focus[kind];
     if (!id || id === kind) continue;
     const t = q.tracks?.find((x) => x.id === id && x.kind === kind);
-    if (!t) continue;
+    const mine = q.layers?.[id];
+    if (!t || !mine) continue;
     keep[kind] = id;
     const first = takeLive(q, kind);
-    const mine = q.layers?.[id] ?? {};
     const layer: Layer =
-      kind === "chords" ? { chords: mine.chords ?? [], pattern: t.style ?? PLAIN_STYLE, feel: t.feel, sound: t.sound }
-      : kind === "melody" ? { melody: mine.melody, tuneSound: t.sound }
-      : { beat: { ...(mine.beat ?? emptyBeat(DEFAULT_BEAT)), ...(t.kit ?? PLAIN_KIT) } };
+      kind === "chords" ? { chords: mine.chords ?? [], arrange: mine.arrange, pattern: mine.pattern ?? PLAIN_STYLE, feel: mine.feel, sound: mine.sound }
+      : kind === "melody" ? { melody: mine.melody, tuneSound: mine.tuneSound }
+      : { beat: mine.beat ?? plainBeat() };
     q = putLive({ ...q, layers: { ...without(q.layers, id), [kind]: first } }, kind, layer);
   }
   return Object.keys(keep).length ? { ...q, focus: keep } : q;
@@ -211,13 +238,86 @@ export function settled<T extends unknown[]>(fn: (p: Progression, ...a: T) => Pr
   };
 }
 
-/** Add a plain track of a kind (nothing copied from another); it is brought forward when its kind is one a page edits. */
+/** Is a track in the section on screen? (The first three always are; so is every vocal track: they run across the song.) */
+export function inSection(p: Progression, id: string): boolean {
+  if (isFirst(id)) return true;
+  const t = p.tracks?.find((x) => x.id === id);
+  if (!t) return false;
+  return t.kind === "vocals" || p.focus?.[t.kind as EditKind] === id || !!p.layers?.[id];
+}
+/** The tracks of a kind in the section on screen, in the song's order. */
+export const tracksHere = (p: Progression, kind: TrackKind): Track[] => tracksOf(p, kind).filter((t) => inSection(p, t.id));
+
+/**
+ * Number a track's name ends with ("Chords 3" → 3), so rows are reused lowest first; a renamed
+ * one comes after the numbered ones.
+ */
+const numberOf = (t: Track) => {
+  const m = /(\d+)\s*$/.exec(t.name);
+  return m ? Number(m[1]) : Infinity;
+};
+
+/**
+ * A plain track of a kind in the section on screen only, brought forward for editing. It is the
+ * same row as a track of that kind in other sections (the lowest-numbered plain one this section
+ * does not have yet), so the rows of the Track page line up; with none, a new row. Nothing is
+ * copied: in this section it starts empty, on plain settings.
+ */
+export function addTrackHere(p0: Progression, kind: EditKind, id: string): { p: Progression; track: Track; reused: boolean } {
+  const p = normalize(p0);
+  const free = (p.tracks ?? []).map((t, i) => ({ t, i })).filter(({ t }) => t.kind === kind && t.role !== "harmony" && !p.layers?.[t.id]);
+  free.sort((a, b) => numberOf(a.t) - numberOf(b.t) || a.i - b.i);
+  const reuse = free[0]?.t;
+  const track: Track = reuse ?? { id, kind, name: nextName(p, kind) };
+  const next: Progression = withoutTone({ ...p, tracks: reuse ? p.tracks : [...(p.tracks ?? []), track], layers: { ...p.layers, [track.id]: plainLayer(kind) } }, track.id);
+  return { p: refocus(next, { ...p0.focus, [kind]: track.id }), track, reused: !!reuse };
+}
+
+/**
+ * A new row: a plain track of a kind, in the section on screen only (a vocal track runs across
+ * the whole song). It is brought forward when its kind is one a page edits.
+ */
 export function addTrack(p0: Progression, kind: TrackKind, id: string): { p: Progression; track: Track } {
   const p = normalize(p0);
   const track: Track = { id, kind, name: nextName(p, kind), ...(kind === "vocals" ? { input: 1 as const } : {}) };
-  const next: Progression = { ...p, tracks: [...(p.tracks ?? []), track] };
+  const layers = kind === "vocals" ? p.layers : { ...p.layers, [id]: plainLayer(kind) };
+  const next: Progression = { ...p, tracks: [...(p.tracks ?? []), track], ...(layers ? { layers } : {}) };
   const focus: Focus = { ...p0.focus, ...(kind !== "vocals" ? { [kind]: id } : {}) };
   return { p: refocus(next, focus), track };
+}
+
+/**
+ * Take a track out of the section on screen only (the first three stay: they are in every
+ * section). Its music and sound there go with it; every other section keeps it. A track that is
+ * then in no section at all leaves the song.
+ */
+export function removeHere(p0: Progression, id: string): Progression {
+  if (isFirst(id)) return p0;
+  const t = p0.tracks?.find((x) => x.id === id);
+  if (!t || t.kind === "vocals") return p0;
+  const focus = Object.fromEntries(Object.entries(p0.focus ?? {}).filter(([, v]) => v !== id)) as Focus;
+  const p = normalize(p0);
+  const left = withoutTone({ ...p, layers: without(p.layers, id) }, id);
+  return refocus(prune(left), focus);
+}
+
+/** Is a track in any section of the song (the one on screen included)? `p` has every track in its place. */
+function anywhere(p: Progression, id: string): boolean {
+  if (p.layers?.[id]) return true;
+  const song = p.song;
+  if (!song) return false;
+  const cur = song.blocks.find((b) => b.id === song.current)?.partId;
+  return song.parts.some((x) => x.id !== cur && !!x.layers?.[id]);
+}
+
+/** The song without the added tracks that are in no section any more (vocal tracks always stay). */
+export function prune(p0: Progression): Progression {
+  const p = normalize(p0);
+  const gone = (p.tracks ?? []).filter((t) => t.kind !== "vocals" && !anywhere(p, t.id));
+  if (!gone.length) return p0;
+  let q = p;
+  for (const t of gone) q = removeTrack(q, t.id);
+  return refocus(q, p0.focus);
 }
 
 /** Take a track out of the song, with everything it holds in every section (the first three stay). */
@@ -225,7 +325,8 @@ export function removeTrack(p0: Progression, id: string): Progression {
   if (isFirst(id)) return p0;
   const focus = Object.fromEntries(Object.entries(p0.focus ?? {}).filter(([, v]) => v !== id)) as Focus;
   const p = normalize(p0);
-  const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => ({ ...x, layers: without(x.layers, id) })) } : p.song;
+  // its part of every section goes, and its instrument there with it
+  const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => withoutTone({ ...x, layers: without(x.layers, id) }, id)) } : p.song;
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
   // tracks written from it keep their notes, but can no longer be written again from it
   const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t, p.tracks ?? [], id) : t));
@@ -234,23 +335,62 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const gone = p.tracks?.find((t) => t.id === id);
   const target = gone && insteadTarget(gone, p.tracks ?? []);
   const freed = target && !tracks.some((t) => insteadTarget(t, tracks) === target) ? unmuteInstead(mix, target) : mix;
-  // its instrument goes with it
   return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: freed && Object.keys(freed).length ? freed : undefined }, id), focus);
 }
 
+/** Does a chords option play instead of the chords it goes with (a re-harmonisation, or Best fit)? */
+export function replacing(option: string | undefined): boolean {
+  const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === option);
+  return !!opt && (!!opt.instead || opt.id === "fit");
+}
+/** The chords track a harmony written from `from` would play instead of: those chords, or (from a tune) the song's. */
+const targetOf = (h: HarmonyOf, tracks: Track[]): string => (h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords");
+
+/** The option a harmony track was written with in a section (by part id; "" is the page of an idea with no sections yet). */
+export const optionIn = (h: HarmonyOf, part: string): string => h.marks?.[part]?.option ?? h.option;
+
 /**
- * The chords track a harmony track plays instead of: a re-harmonisation (an Instead option)
- * replaces the chords it was written from (from a melody: the song's chords, which it re-voices),
- * and Best fit chooses chords of its own for the tune, so it replaces the song's chords too.
- * Undefined for a track that plays with its source.
+ * The chords track a harmony track plays instead of, as the track was last written: a
+ * re-harmonisation (an Instead option) replaces the chords it was written from (from a melody:
+ * the song's chords, which it re-voices), and Best fit chooses chords of its own for the tune, so
+ * it replaces the song's chords too. Undefined for a track that plays with its source. (Which
+ * sections it does that in is `insteadHere`'s; this is for an older song, whose mixer muted them.)
  */
 export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
   const h = t.harmony;
   if (t.kind !== "chords") return undefined;
   if (!h) return t.replaces;
-  const opt = HARMONY_OPTIONS.find((o) => o.kind === "chords" && o.id === h.option);
-  if (!opt || !(opt.instead || opt.id === "fit")) return undefined;
-  return h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords";
+  return replacing(h.option) ? targetOf(h, tracks) : undefined;
+}
+
+/**
+ * The chords track a chords track plays instead of in one section (by part id): only where it
+ * was written to replace them, with the option it was written with there. A section it was never
+ * written in (a track put there by hand), or one from an older song where both were heard, has none.
+ */
+export function insteadHere(t: Track, tracks: Track[], part: string): string | undefined {
+  if (t.kind !== "chords") return undefined;
+  const h = t.harmony;
+  if (!h) return t.replaces && t.replacesIn?.includes(part) ? t.replaces : undefined;
+  const m = h.marks?.[part];
+  if (!m || m.along) return undefined;
+  return replacing(m.option ?? h.option) ? targetOf(h, tracks) : undefined;
+}
+
+/**
+ * The chords tracks that are not heard in a section (by part id) because a harmony track there
+ * plays instead of them (a re-harmonisation, or Best fit), each with the track that does: only
+ * where it was written to, where it has chords to play, and is not muted. Everywhere else they
+ * play as they are.
+ */
+export function insteadIn(part: string, layers: Layers | undefined, tracks: Track[] | undefined, mix?: Mix): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const t of tracks ?? []) {
+    if (t.kind !== "chords" || mix?.[t.id]?.mute || !layers?.[t.id]?.chords?.some((c) => !c.rest)) continue;
+    const target = insteadHere(t, tracks ?? [], part);
+    if (target && !out.has(target)) out.set(target, t.id);
+  }
+  return out;
 }
 
 /**
@@ -259,25 +399,33 @@ export function insteadTarget(t: Track, tracks: Track[]): string | undefined {
  * Without it those notes would look changed by hand and out of date, though nobody touched them.
  */
 export function carryMarks(tracks: Track[] | undefined, from: string, to: string): Track[] | undefined {
-  if (!tracks?.some((t) => t.harmony?.marks?.[from] && !t.harmony.marks[to])) return tracks;
+  const moves = (t: Track) => (!!t.harmony?.marks?.[from] && !t.harmony.marks[to]) || (!!t.replacesIn?.includes(from) && !t.replacesIn.includes(to));
+  if (!tracks?.some(moves)) return tracks;
+  // a record moving between the page and section A moves (only one of them is there now); a section's is shared with its copy
+  const move = from === "" || to === "";
   return tracks.map((t) => {
-    const m = t.harmony?.marks?.[from];
-    if (!t.harmony || !m || t.harmony.marks?.[to]) return t;
-    // a record moving between the page and section A moves (only one of them is there now); a section's is shared with its copy
-    const { [from]: _, ...rest } = t.harmony.marks ?? {};
-    return { ...t, harmony: { ...t.harmony, marks: { ...(from === "" || to === "" ? rest : t.harmony.marks), [to]: m } } };
+    if (!moves(t)) return t;
+    if (t.replacesIn) return { ...t, replacesIn: [...t.replacesIn.filter((x) => !move || x !== from), to] };
+    const m = t.harmony!.marks![from];
+    const { [from]: _, ...rest } = t.harmony!.marks!;
+    return { ...t, harmony: { ...t.harmony!, marks: { ...(move ? rest : t.harmony!.marks), [to]: m } } };
   });
 }
 
 /**
  * A harmony track without its source (it stays a harmony line; it just can no longer be written
- * again). One that plays instead of chords still does (`gone`: a track going out of the song),
- * so those chords are heard again when it goes.
+ * again). One that plays instead of chords still does, in the same sections (`gone`: a track
+ * going out of the song), so those chords are heard again when it goes.
  */
 export function forget(t: Track, tracks: Track[], gone?: string): Track {
-  const target = insteadTarget(t, tracks);
-  const { harmony: _, ...rest } = t;
-  return target && target !== gone ? { ...rest, replaces: target } : rest;
+  const { harmony: h, ...rest } = t;
+  if (!h || t.kind !== "chords") return rest;
+  const target = targetOf(h, tracks);
+  if (target === gone) return rest;
+  const where = Object.keys(h.marks ?? {}).filter((part) => insteadHere(t, tracks, part) === target);
+  // (one with no record of where it was written, from an older song, did so through the mixer: it still names them, so they are heard again when it goes)
+  const old = !h.marks && insteadTarget(t, tracks) === target;
+  return where.length ? { ...rest, replaces: target, replacesIn: where } : old ? { ...rest, replaces: target } : rest;
 }
 
 /**
@@ -321,14 +469,12 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
     if (!r || typeof r.id !== "string" || isFirst(r.id) || !kinds.includes(r.kind as TrackKind) || out.some((t) => t.id === r.id)) continue;
     out.push({
       id: r.id, kind: r.kind as TrackKind, name: typeof r.name === "string" && r.name.trim() ? r.name.trim().slice(0, 32) : KIND_NAME[r.kind as TrackKind],
-      ...(hasStyle(r.style) ? { style: r.style } : {}), ...(r.feel ? { feel: reviveFeel(r.feel) } : {}), ...(r.sound ? { sound: reviveSound(r.sound) } : {}),
-      ...(r.kind === "drums" && reviveKit(r.kit) ? { kit: reviveKit(r.kit) } : {}),
       ...(r.kind === "vocals" ? { input: r.input === 2 ? 2 : 1 } : {}),
       ...(r.kind === "vocals" && reviveFx(r.fx) ? { fx: reviveFx(r.fx) } : {}),
       ...(r.kind === "vocals" ? reviveVocal(r) : {}),
       ...((r.kind === "melody" || r.kind === "chords") && r.role === "harmony" ? { role: "harmony" as const } : {}),
       ...(r.kind === "melody" || r.kind === "chords" ? reviveHarmony(r.harmony, r.kind) : {}),
-      ...(r.kind === "chords" && typeof r.replaces === "string" && r.replaces ? { replaces: r.replaces } : {}),
+      ...(r.kind === "chords" && typeof r.replaces === "string" && r.replaces ? { replaces: r.replaces, ...(Array.isArray(r.replacesIn) ? { replacesIn: r.replacesIn.filter((x): x is string => typeof x === "string") } : {}) } : {}),
     });
   }
   // a harmony's source must still be a chords or melody track of the song (and not itself)
@@ -344,21 +490,45 @@ function reviveHarmony(raw: unknown, kind: "chords" | "melody"): { harmony?: Har
   if (!HARMONY_OPTIONS.some((o) => o.id === h.option && o.kind === kind)) return {};
   const marks: Record<string, HarmonyMark> = {};
   if (h.marks && typeof h.marks === "object")
-    for (const [k, m] of Object.entries(h.marks)) if (m && typeof m.src === "string" && typeof m.out === "string") marks[k] = { src: m.src, out: m.out };
+    for (const [k, m] of Object.entries(h.marks))
+      if (m && typeof m.src === "string" && typeof m.out === "string")
+        marks[k] = { src: m.src, out: m.out, ...(typeof m.option === "string" && HARMONY_OPTIONS.some((o) => o.id === m.option && o.kind === kind) ? { option: m.option } : {}), ...(m.along === true ? { along: true as const } : {}) };
   return { harmony: { from: h.from, option: h.option, ...(Object.keys(marks).length ? { marks } : {}) } };
 }
 
-/** Layers loaded from storage, made safe; only tracks that exist are kept. */
+/**
+ * Layers loaded from storage, made safe; only tracks that exist are kept. A track's part of a
+ * section is kept even when it holds nothing (the track is in that section); each keeps the
+ * things of its own kind, and what is broken is let go (it is then the plain default).
+ */
 export function reviveLayers(raw: unknown, tracks: Track[] | undefined): Layers | undefined {
   if (!raw || typeof raw !== "object") return undefined;
   const out: Layers = {};
   for (const t of tracks ?? []) {
     const l = (raw as Record<string, Layer | undefined>)[t.id];
-    if (!l || typeof l !== "object") continue;
-    if (t.kind === "chords" && Array.isArray(l.chords)) out[t.id] = { chords: l.chords.filter((c) => c && c.ref && typeof c.ref.root === "string" && Number.isFinite(c.beats) && c.beats > 0) };
-    else if (t.kind === "melody" && l.melody) { const m = reviveMelody(l.melody); if (m) out[t.id] = { melody: m }; }
-    else if (t.kind === "drums" && l.beat) { const b = reviveBeat(l.beat); if (b) out[t.id] = { beat: b }; }
+    if (!l || typeof l !== "object" || t.kind === "vocals") continue;
+    out[t.id] = reviveLayer(l, t.kind);
   }
   return Object.keys(out).length ? out : undefined;
 }
+/** One track's part of a section, made safe. */
+export function reviveLayer(l: Layer, kind: EditKind): Layer {
+  if (kind === "chords")
+    return tidy({
+      chords: Array.isArray(l.chords) ? l.chords.filter((c) => c && c.ref && typeof c.ref.root === "string" && Number.isFinite(c.beats) && c.beats > 0) : [],
+      arrange: reviveArrange(l.arrange),
+      pattern: hasStyle(l.pattern) ? l.pattern : undefined,
+      feel: l.feel && typeof l.feel === "object" ? reviveFeel(l.feel) : undefined,
+      sound: l.sound && typeof l.sound === "object" ? reviveSound(l.sound) : undefined,
+    });
+  if (kind === "melody") return tidy({ melody: l.melody ? reviveMelody(l.melody) : undefined, tuneSound: l.tuneSound && typeof l.tuneSound === "object" ? reviveSound(l.tuneSound) : undefined });
+  return { beat: (l.beat && reviveBeat(l.beat)) || plainBeat() };
+}
 
+/** Where on the neck a guitar track's chords are arranged, loaded from storage (anything broken: each chord's own shape). */
+export function reviveArrange(raw: unknown): ArrangeSettings | undefined {
+  const a = raw as Partial<ArrangeSettings> | null | undefined;
+  if (!a || typeof a !== "object" || !Number.isInteger(a.zone) || a.zone! < 0 || a.zone! > 12) return undefined;
+  const strings = a.strings === 3 || a.strings === 4 || a.strings === 5 ? a.strings : "any";
+  return { zone: a.zone!, strings, inversions: a.inversions === true };
+}

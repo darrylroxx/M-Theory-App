@@ -269,3 +269,58 @@ describe("midi export of a synth that arpeggiates", () => {
     expect(new Set(notesOf(readMidi(a)[0]).map((x) => x.midi)).size).toBe(9);
   });
 });
+
+describe("midi export of a song whose sections play a track on different instruments", () => {
+  /** every program change in a file, with its track and its tick */
+  function changes(b: Uint8Array): { track: number; tick: number; ch: number; prog: number }[] {
+    const out: { track: number; tick: number; ch: number; prog: number }[] = [];
+    let i = 14;
+    let track = 0;
+    while (i < b.length) {
+      const end = i + 8 + ((b[i + 4] << 24) | (b[i + 5] << 16) | (b[i + 6] << 8) | b[i + 7]);
+      i += 8;
+      let status = 0;
+      let tick = 0;
+      const vlq = () => {
+        let n = 0;
+        let x: number;
+        do {
+          x = b[i++];
+          n = (n << 7) | (x & 0x7f);
+        } while (x & 0x80);
+        return n;
+      };
+      while (i < end) {
+        tick += vlq();
+        if (b[i] & 0x80) status = b[i++];
+        if (status === 0xff) {
+          i++;
+          const len = vlq();
+          i += len;
+        } else if ((status & 0xf0) === 0xc0) out.push({ track, tick, ch: status & 0x0f, prog: b[i++] });
+        else if ((status & 0xf0) === 0xd0) i++;
+        else i += 2;
+      }
+      track++;
+    }
+    return out;
+  }
+  const C = [48, 52, 55];
+  it("the instrument changes exactly where the section on another one starts, on the first tracks and on an added one", () => {
+    const piano: Tone = { inst: "piano" };
+    const tune = { m: { div: 2 as const, bars: 1, notes: [{ at: 0, midi: 72 }] }, bar: 4, swing: 0 };
+    const ex = (tone?: Tone): ExtraPlay => ({ chords: [{ track: "c2", at: 0, beats: 4, midi: C, style: "ring", sound: SOUND_DEFAULT, ...(tone ? { tone } : {}) }], tunes: [], drums: [] });
+    const items: PlayItem[] = [
+      { midi: C, beats: 4, section: true, tune, extra: ex() },
+      { midi: C, beats: 4, section: true, tone: piano, tune: { ...tune, tone: piano }, extra: ex(piano) },
+    ];
+    const set = changes(progressionToMidi(items, 100, "ring", "x", null, null, { c2: "Chords 2" }));
+    // each track: the strings (a harp) from the start, the piano from the second section's first tick
+    const bar = set.filter((x) => x.tick > 0).map((x) => x.tick);
+    expect(new Set(bar).size).toBe(1);
+    for (const ch of [0, 1, 2]) expect(set.filter((x) => x.ch === ch).map((x) => x.prog)).toEqual([46, 0]);
+    // the same everywhere: one program per track, no change
+    const same = changes(progressionToMidi(items.map((x) => ({ ...x, tone: piano, tune: { ...tune, tone: piano }, extra: ex(piano) })), 100, "ring", "x", null, null, { c2: "Chords 2" }));
+    for (const ch of [0, 1, 2]) expect(same.filter((x) => x.ch === ch).map((x) => x.prog)).toEqual([0]);
+  });
+});

@@ -106,7 +106,7 @@ describe("the melody grid", () => {
 describe("melody and feel travel with the song", () => {
   const tune: Melody = { div: 2, bars: 1, notes: [{ at: 0, midi: 72 }, { at: 24, midi: 76 }] };
 
-  it("each section keeps its own melody (the feel is the chords track's, one for the song); a new section starts with an empty grid", () => {
+  it("each section keeps its own melody and its own feel; a new section starts with an empty grid and a copy of the feel", () => {
     let p = ensureSong({ ...base(["C", "G"]), melody: tune, feel: { speed: 2 } }, id);
     p = addNewSection(p, id);
     expect(p.melody).toBeUndefined();
@@ -114,7 +114,7 @@ describe("melody and feel travel with the song", () => {
     p = { ...p, chords: [chord("F")], melody: toggleNote(EMPTY_MELODY, 12, 65), feel: { speed: 0.5, octave: 1 } };
     p = selectBlock(p, sections(p)[0].blockId);
     expect(p.melody).toEqual(tune);
-    expect(reviveFeel(p.feel)).toMatchObject({ speed: 0.5, octave: 1 });
+    expect(reviveFeel(p.feel)).toMatchObject({ speed: 2 });
     p = selectBlock(p, sections(p)[1].blockId);
     expect(p.melody!.notes).toEqual([{ at: 12, midi: 65 }]);
     expect(reviveFeel(p.feel)).toMatchObject({ speed: 0.5, octave: 1 });

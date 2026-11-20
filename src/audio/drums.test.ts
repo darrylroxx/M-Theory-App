@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, knownVoice, oldGrit, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
+import { BEAT_GROUPS, BEAT_LIBRARY, DEFAULT_BEAT, ECHO_TIMES, MAX_BARS, barsOf, beatHitsBetween, chordRounds, copyBar, grooveOf, lenOf, removeBar, reviveGroove, setBars, FX_DEFAULTS, BUILTIN_KITS, NOISE_BEDS, VERBS, VIBES, knownVoice, oldGrit, applyKit, applyPattern, applyUserKit, barBeats, beatHits, clearBeat, heardAt, fxOf, kitFrom, levelAt, reviveBeat, reviveUserKits, setStep, soundOf, stepBeat, varyBeat, vibeOf, voiceOf } from "./beats";
 import { softCeiling } from "./drumbus";
 import { isSatType } from "./saturation";
 import { DRUM_IDS, KITS, SAMPLERS, VARIANTS, defaultParams, drumRng, renderDrum, renderNoiseBed, renderSpace } from "./drums";
@@ -645,5 +645,17 @@ describe("MIDI with song sections", () => {
     let kicks = 0;
     for (let i = 0; i < bytes.length - 2; i++) if (bytes[i] === 0x99 && bytes[i + 1] === GM_DRUM.kick && bytes[i + 2] > 0) kicks++;
     expect(kicks).toBe(2 + 4); // Backbeat: 2 kicks a bar; four on the floor: 4
+  });
+
+  it("a drum muted in the kit is not heard on any step, and the hits the player plays leave it out the same way", () => {
+    const b = { ...DEFAULT_BEAT, steps: 16, div: 4, bars: 1, rows: { ...DEFAULT_BEAT.rows, kick: "3000300030003000", hat: "2222222222222222" } };
+    expect(heardAt(b, "hat", 1)).toBe(2);
+    const m = { ...b, mutes: ["hat" as const] };
+    for (let i = 0; i < 16; i++) expect(heardAt(m, "hat", i)).toBe(0);
+    expect(heardAt(m, "kick", 0)).toBe(3);
+    // what the Track page draws (heardAt) and what plays (beatHitsBetween) agree, drum by drum
+    const drawn = (x: typeof b, id: "kick" | "hat") => Array.from({ length: 16 }, (_, i) => heardAt(x, id, i)).filter(Boolean).length;
+    const played = (x: typeof b, id: string) => beatHitsBetween(x, 0, 4).filter((h) => h.id === id).length;
+    for (const x of [b, m]) for (const id of ["kick", "hat"] as const) expect(drawn(x, id)).toBe(played(x, id));
   });
 });

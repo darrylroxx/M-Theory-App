@@ -21,109 +21,178 @@ export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import type { HarpString } from "./harp";
 import { TrackVoice, type VoiceKind } from "./trackvoice";
-import { GUITAR, type Tone, type Tones } from "./tone";
+import { GUITAR, type Tone } from "./tone";
 import { playNotes, withSteps, type PlayNote } from "../synth/play";
 import { TUNE_LIFT, TUNE_SLOT, clipChords, playChord, playTuneNote, playTuneSpan, synthWay, type SecChord, type SynthCache } from "./trackplay";
 
 
 // ── the live voices ──────────────────────────────────────────
 
-/** Every chords and melody track's voice on the live context, by track id ("chords" and "melody" are the first tracks). */
-const voices = new Map<string, TrackVoice>();
-/** What each track is set to on the page, so a voice made later starts the same way. */
-const liveSound = new Map<string, HarpSound>();
-let liveTones: Tones = {};
+/**
+ * What a track plays with in a section: its instrument (`tone`) and its sound and effects. Every
+ * section has its own, so a track can play the piano in A and the strings in B: each different
+ * way a track is played gets a voice of its own (a "slot"), and sections that play it the same way
+ * share one. A song whose sections all play a track the same way has one voice for it, as it
+ * always had; where a section starts, its notes are simply on its own voice, so nothing has to
+ * switch on the beat and nothing of the section before is cut off.
+ */
+export interface SlotUse {
+  track: string;
+  kind: VoiceKind;
+  tone?: Tone;
+  sound?: HarpSound;
+}
+/** A short name for a tone or a sound (worked out once for each object: the plan shares them). */
+const names = new WeakMap<object, string>();
+const nameOf = (x: object): string => {
+  let k = names.get(x);
+  if (k === undefined) {
+    k = JSON.stringify(x);
+    names.set(x, k);
+  }
+  return k;
+};
+/** The slot a track's notes go to when it plays with this tone and sound. */
+export const slotOf = (u: Pick<SlotUse, "track" | "tone" | "sound">): string => `${u.track}|${nameOf(u.tone ?? GUITAR)}|${nameOf(u.sound ?? SOUND_DEFAULT)}`;
+
+/** Every voice on the live context, by slot. */
+const voices = new Map<string, { v: TrackVoice; track: string; drop?: ReturnType<typeof setTimeout> }>();
+/** The slots the song uses (see keepSlots): a voice of another one is free to be retuned in place, or let go. */
+let kept = new Set<string>();
 let tempo = 90;
 let pumping = false;
 
+const isFirstTrack = (id: string) => id === "chords" || id === "melody";
 const kindOf = (id: string, kind?: VoiceKind): VoiceKind => kind ?? (id === "melody" ? "melody" : "chord");
 
-/** A track's voice on the live context (made the first time it is needed, on the page's sound for it, else on `sound`: the track's own). */
-function voiceOf(id: string, kind?: VoiceKind, sound?: HarpSound): TrackVoice {
+/**
+ * A slot's voice on the live context, made the first time it is needed, on its own sound and
+ * instrument. `prefer`: the slot this track was heard on until now (a knob just turned, an
+ * instrument just chosen): when the song no longer uses it, that voice is retuned in place
+ * instead, so turning a knob never makes a new one.
+ */
+function voiceFor(u: SlotUse, prefer?: string): TrackVoice {
   const ctx = audioContext();
-  let v = voices.get(id);
-  if (!v || v.c !== ctx) {
-    const f = fader(id, ctx);
-    const first = id === "chords" || id === "melody";
-    v = new TrackVoice(ctx, f, kindOf(id, kind), first ? undefined : id, liveSound.get(id) ?? sound ?? SOUND_DEFAULT, tempo, sendFader(id, ctx));
-    // every track goes out through a tap, so the canvas's guide hears each kind of part apart
-    tapStem(v.kind === "melody" ? "melody" : "chords", f, id);
-    v.setTone(liveTones[id] ?? GUITAR);
-    voices.set(id, v);
-    if (!pumping) {
-      pumping = true;
-      // Pump: every track dips under each kick and swells back, like a sidechained compressor
-      // (the reverb rooms the tracks share dip the same way, as each track's own room did)
-      onKickHit((when, depth) => {
-        const c = audioIfStarted();
-        for (const duck of [...[...voices.values()].map((x) => x.rack.duck.gain), ...(c ? roomsOf(c).map((r) => r.duck.gain) : [])]) {
-          duck.cancelScheduledValues(when);
-          duck.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
-          duck.setTargetAtTime(1, when + 0.03, 0.09);
-        }
-      });
-    }
+  const key = slotOf(u);
+  const tone = u.tone ?? GUITAR;
+  const sound = u.sound ?? SOUND_DEFAULT;
+  const e = voices.get(key);
+  if (e && e.v.c === ctx) {
+    clearTimeout(e.drop);
+    return e.v;
+  }
+  const old = prefer && prefer !== key ? voices.get(prefer) : undefined;
+  if (old && old.v.c === ctx && old.track === u.track && old.v.kind === kindOf(u.track, u.kind) && !kept.has(prefer!)) {
+    clearTimeout(old.drop);
+    voices.delete(prefer!);
+    voices.set(key, { ...old, drop: undefined });
+    old.v.setTone(tone);
+    old.v.turn(sound, tempo, () => prepareNotes(queue));
+    return old.v;
+  }
+  const f = fader(u.track, ctx);
+  const v = new TrackVoice(ctx, f, kindOf(u.track, u.kind), isFirstTrack(u.track) ? undefined : u.track, sound, tempo, sendFader(u.track, ctx));
+  // every track goes out through a tap, so the canvas's guide hears each kind of part apart (all its voices through the one)
+  tapStem(v.kind === "melody" ? "melody" : "chords", f, u.track);
+  v.setTone(tone);
+  // (it rests until its first note: a voice made ahead costs nothing until it plays)
+  v.rest();
+  voices.set(key, { v, track: u.track });
+  if (!pumping) {
+    pumping = true;
+    // Pump: every track dips under each kick and swells back, like a sidechained compressor
+    // (the reverb rooms the tracks share dip the same way, as each track's own room did)
+    onKickHit((when, depth) => {
+      const c = audioIfStarted();
+      for (const duck of [...[...voices.values()].map((x) => x.v.rack.duck.gain), ...(c ? roomsOf(c).map((r) => r.duck.gain) : [])]) {
+        duck.cancelScheduledValues(when);
+        duck.setTargetAtTime(1 - 0.75 * Math.min(1, depth), when, 0.004);
+        duck.setTargetAtTime(1, when + 0.03, 0.09);
+      }
+    });
   }
   return v;
 }
+/** Every live voice there is. */
+const allVoices = () => [...voices.values()].map((x) => x.v);
+
+/** Every slot a list of items plays (each track as each section has it), once each. */
+export function slotsOf(items: PlayItem[]): SlotUse[] {
+  const out = new Map<string, SlotUse>();
+  const add = (u: SlotUse) => {
+    const k = slotOf(u);
+    if (!out.has(k)) out.set(k, u);
+  };
+  for (const it of items) {
+    if (it.midi.length) add({ track: "chords", kind: "chord", tone: it.tone, sound: it.sound });
+    if (it.tune) add({ track: "melody", kind: "melody", tone: it.tune.tone, sound: it.tune.sound });
+    for (const c of it.extra?.chords ?? []) add({ track: c.track, kind: "chord", tone: c.tone, sound: c.sound });
+    for (const t of it.extra?.tunes ?? []) add({ track: t.track, kind: "melody", tone: t.tune.tone, sound: t.tune.sound });
+  }
+  return [...out.values()];
+}
 
 export function getAudio(): AudioContext {
-  return voiceOf("chords").c as AudioContext;
+  return audioContext();
 }
 
-/**
- * Change a track's sound and effects (one for the whole song: heard at once, whatever is playing).
- * Safe to call before any sound has been made. The effects follow at once; new strings wait until
- * the knob has stopped moving.
- */
-export function setTrackSound(id: string, s: HarpSound, bpm: number) {
-  liveSound.set(id, s);
+/** The song's tempo: a voice made or retuned on the page keeps its echo in time with it. */
+export function setTempo(bpm: number) {
   tempo = bpm;
-  voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
-}
-/** The first chords track. */
-export const setHarpSound = (s: HarpSound, bpm: number) => setTrackSound("chords", s, bpm);
-/** The first melody track: a separate instrument with separate effects. */
-export const setTuneSound = (s: HarpSound, bpm: number) => setTrackSound("melody", s, bpm);
-
-/** What every track plays (its instrument and that instrument's settings). The voices that exist change at once. */
-export function setTones(t: Tones | undefined) {
-  liveTones = t ?? {};
-  for (const [id, v] of voices) v.setTone(liveTones[id] ?? GUITAR);
 }
 
 /**
- * Get a track ready on the instrument just chosen for it, before the song says so: the voice
- * takes the tone straight away and starts loading. Resolves when it can sound.
+ * Get a track ready on the instrument just chosen for it in the section on screen, before the
+ * song says so: its voice takes the tone straight away and starts loading. Resolves when it can sound.
  */
-export function warmTrack(id: string, kind: "chords" | "melody", tone: Tone): Promise<void> {
-  liveTones = { ...liveTones, [id]: tone };
-  const v = voiceOf(id, kind === "melody" ? "melody" : "chord");
-  v.setTone(tone);
-  return v.load();
+export function warmSlot(u: SlotUse): Promise<void> {
+  return voiceFor(u, heardOn[u.kind]?.track === u.track ? slotOf(heardOn[u.kind]!) : undefined).load();
 }
 /**
- * Get every track that plays a piano or the synth ready to sound (a piano loads its recordings,
+ * Get every slot that plays a piano or the synth ready to sound (a piano loads its recordings,
  * the synth its processor) before the music starts, so the first chord is heard. Resolves when
  * they all can, or after `ms` whatever happens (the rest then joins in as it arrives).
  */
-export function readyTracks(tracks: { id: string; kind: VoiceKind; sound?: HarpSound }[], ms = 4000): Promise<void> {
-  const loading = tracks.map((t) => voiceOf(t.id, t.kind, t.sound)).filter((v) => !v.ready());
+export function readySlots(uses: SlotUse[], ms = 4000): Promise<void> {
+  const loading = uses.map((u) => voiceFor(u)).filter((v) => !v.ready());
   if (!loading.length) return Promise.resolve();
   const all = Promise.all(loading.map((v) => v.load().catch(() => {}))).then(() => {});
   return Promise.race([all, new Promise<void>((r) => setTimeout(r, ms))]);
 }
 
-/** Let go of the voices and drum desks of tracks that are no longer in the song (they fade out). */
-export function keepTracks(ids: string[]) {
-  for (const [id, v] of voices) {
-    if (id === "chords" || id === "melody" || ids.includes(id)) continue;
-    v.dispose();
-    voices.delete(id);
-    liveSound.delete(id);
-    untapStem(id);
+/** How long a voice the song no longer uses is kept, in case it is used again (a change undone), before it is let go. */
+const DROP_MS = 15000;
+/**
+ * What the song uses now: every slot of every section (`uses`), and its tracks (`trackIds`). A
+ * voice of a track no longer in the song is let go at once (it fades out), with the track's drum
+ * desk; one whose slot the song no longer uses is let go a little later, once it has rung out
+ * (unless it is used again, or retuned in place, first). Voices the song will need are made now
+ * and start resting, so a section's piano is loading long before the section comes.
+ */
+export function keepSlots(uses: SlotUse[], trackIds: string[]) {
+  kept = new Set(uses.map(slotOf));
+  for (const [key, x] of [...voices]) {
+    if (isFirstTrack(x.track) || trackIds.includes(x.track)) {
+      if (kept.has(key) || [heardOn.chord, heardOn.melody].some((h) => h && slotOf(h) === key)) clearTimeout(x.drop);
+      else if (x.drop === undefined)
+        x.drop = setTimeout(() => {
+          const now = voices.get(key);
+          if (now !== x || kept.has(key) || [heardOn.chord, heardOn.melody].some((h) => h && slotOf(h) === key)) return;
+          voices.delete(key);
+          x.v.dispose();
+        }, DROP_MS);
+      continue;
+    }
+    clearTimeout(x.drop);
+    voices.delete(key);
+    x.v.dispose();
+    if (![...voices.values()].some((y) => y.track === x.track)) untapStem(x.track);
   }
-  keepDrums(ids);
+  // (only on a context already running: nothing is made just to be ready)
+  if (audioIfStarted())
+    for (const u of uses)
+      if (!voices.has(slotOf(u)) && u.tone && u.tone.inst !== "guitar") void voiceFor(u).load().catch(() => {});
+  keepDrums(trackIds);
 }
 
 /** A note to get ready: for the chords or the melody, on that track's own strings or on those of the sound it is played with. */
@@ -131,9 +200,13 @@ export interface Prep {
   midi: number;
   tune?: boolean;
   as?: HarpString;
+  /** the slot that plays it (see slotOf) */
+  slot?: string;
 }
 let queue: Prep[] = [];
 let queued = 0;
+/** The voice a note is got ready on: its slot's, else the first track's. */
+const prepVoice = (n: Prep): TrackVoice | undefined => (n.slot ? voices.get(n.slot)?.v : undefined) ?? [...voices.values()].find((x) => x.track === (n.tune ? "melody" : "chords"))?.v;
 /** Get these notes ready in the background, one at a time, so playing never has to wait for them. */
 export function prepareNotes(list: Prep[]) {
   queue = list;
@@ -141,29 +214,28 @@ export function prepareNotes(list: Prep[]) {
   const step = () => {
     queued = 0;
     const next = queue.find((n) => {
-      const v = voices.get(n.tune ? "melody" : "chords");
+      const v = prepVoice(n);
       return !!v && !v.instrument && !v.harp.has(n.midi, n.as);
     });
     if (!next) return;
-    voices.get(next.tune ? "melody" : "chords")!.harp.buffer(next.midi, next.as);
+    prepVoice(next)!.harp.buffer(next.midi, next.as);
     queued = window.setTimeout(step, 0);
   };
   queued = window.setTimeout(step, 0);
 }
 
-/** While a page edits a track added on the Track page, the notes it plays to be heard go to that track. */
-const heardOn: { chord: { id: string; sound: HarpSound } | null; melody: { id: string; sound: HarpSound } | null } = { chord: null, melody: null };
-export function hearOn(kind: "chord" | "melody", track: { id: string; sound: HarpSound } | null) {
-  heardOn[kind] = track;
-  if (track) {
-    liveSound.set(track.id, track.sound);
-    voices.get(track.id)?.setSound(track.sound, tempo);
-  }
+/** The slot each page's notes played to be heard go to: the track it is editing, as it is set in the section on screen. */
+const heardOn: Record<VoiceKind, SlotUse | null> = { chord: null, melody: null };
+/** The page shows another track, or the one it shows was changed: what is played to be heard goes to it, as it is set now. */
+export function hearOn(kind: VoiceKind, u: SlotUse | null) {
+  const prev = heardOn[kind];
+  heardOn[kind] = u;
+  if (u && audioIfStarted()) voiceFor(u, prev && prev.track === u.track ? slotOf(prev) : undefined);
 }
 /** The track a note played to be heard goes to now (the first tracks: "chords" and "melody"). */
-export const heardTrack = (kind: "chord" | "melody") => heardOn[kind]?.id ?? (kind === "chord" ? "chords" : "melody");
-const chordVoice = () => (heardOn.chord ? voiceOf(heardOn.chord.id, "chord") : voiceOf("chords"));
-const tuneVoice = () => (heardOn.melody ? voiceOf(heardOn.melody.id, "melody") : voiceOf("melody"));
+export const heardTrack = (kind: VoiceKind) => heardOn[kind]?.track ?? (kind === "chord" ? "chords" : "melody");
+const chordVoice = () => voiceFor(heardOn.chord ?? { track: "chords", kind: "chord" });
+const tuneVoice = () => voiceFor(heardOn.melody ?? { track: "melody", kind: "melody" });
 
 /** Play a single note (on the melody track's instrument when `slot` is the melody's). */
 export function playNote(midi: number, when?: number, velocity = 0.8, slot?: number, lengthSec = Infinity) {
@@ -201,26 +273,26 @@ export function strum(midi: (number | null)[], opts: { when?: number; dir?: "dow
 
 export function stopAll() {
   if (!audioIfStarted()) return;
-  for (const v of voices.values()) v.stopAll();
+  for (const v of allVoices()) v.stopAll();
 }
 
 /** Play a scale / list of notes one after another. */
 export function playSequence(midis: number[], noteSec = 0.28) {
-  const v = voiceOf("chords");
+  const v = chordVoice();
   if (!v.instrument) for (const m of new Set(midis)) v.harp.buffer(m);
   const t0 = v.c.currentTime + 0.05;
   midis.forEach((m, i) => v.note(m, t0 + i * noteSec, 0.75, noteSec * 1.6, { slot: v.instrument ? undefined : 0 }));
 }
 
-/** Every note a run of chords and its melodies will need, each on the sound it is played with. */
+/** Every note a run of chords and its melodies will need, each on the sound and the voice it is played with. */
 export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null = null, tune: PlayTune | null = null): Prep[] {
-  const out: Prep[] = itemNotes(items, pattern, beat).map((n) => ({ midi: n.e.midi, as: items[n.item].sound }));
+  const out: Prep[] = itemNotes(items, pattern, beat).map((n) => ({ midi: n.e.midi, as: items[n.item].sound, slot: slotOf({ track: "chords", tone: items[n.item].tone, sound: items[n.item].sound }) }));
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
     origin = sectionStart(item, i, at, origin);
     const t = item.tune === undefined ? tune : item.tune;
-    if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats)) out.push({ midi: h.midi, tune: true, as: t.sound });
+    if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats)) out.push({ midi: h.midi, tune: true, as: t.sound, slot: slotOf({ track: "melody", tone: t.tone, sound: t.sound }) });
     at += item.beats;
   });
   return out;
@@ -390,6 +462,8 @@ export class ProgressionPlayer {
   position(): { index: number; beat: number; gen: number } | null {
     if (!this.playing) return null;
     const now = getAudio().currentTime;
+    // (a song that does not go round: once its last beat has sounded, nothing is)
+    if (this.endAt !== null && now >= this.endAt) return null;
     let at: Anchor | null = null;
     for (const s of this.spans) if (s.time <= now) at = s;
     return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb, gen: at.gen } : null;
@@ -410,6 +484,7 @@ export class ProgressionPlayer {
   start(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, fromIndex = 0, tune: PlayTune | null = null) {
     this.stop();
     this.gen++;
+    tempo = bpm;
     this.beat = beat;
     this.tune = tune;
     const list = this.fill(items);
@@ -430,13 +505,16 @@ export class ProgressionPlayer {
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
     }
     for (const it of list) for (const d of it.extra?.drums ?? []) prepareBeat(d.beat);
-    // the first chords are made ready before the clock starts, the rest while they play
-    const v = voiceOf("chords");
+    // the first chords are made ready before the clock starts (each on its section's voice), the rest while they play
     const need = itemNotes(list, pattern, beat);
-    if (!v.instrument) for (const n of need) if (n.item <= fromIndex + 1 && n.item >= fromIndex) v.harp.buffer(n.e.midi, list[n.item].sound);
+    for (const n of need)
+      if (n.item <= fromIndex + 1 && n.item >= fromIndex) {
+        const v = voiceFor({ track: "chords", kind: "chord", tone: list[n.item].tone, sound: list[n.item].sound });
+        if (!v.instrument) v.harp.buffer(n.e.midi, list[n.item].sound);
+      }
     prepareNotes(prepFor(list, pattern, beat, tune));
     this.startTime = c.currentTime + 0.08;
-    for (const x of voices.values()) x.sync(this.startTime);
+    for (const x of allVoices()) x.sync(this.startTime);
     this.nextTime = this.startTime;
     this.playing = true;
     this.timer = window.setInterval(() => this.schedule(), 25);
@@ -478,6 +556,7 @@ export class ProgressionPlayer {
     // a new tempo: every drums track's desk (its echo) follows at once, not only when its beat changes
     if (bpm !== this.bpm) for (const [track, lane] of this.lanes) if (lane.synced) syncDrums(lane.synced, bpm, track);
     this.bpm = bpm;
+    tempo = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
     // the first track's noise bed follows the section that is playing, not the one on the page
@@ -581,12 +660,21 @@ export class ProgressionPlayer {
     const horizon = c.currentTime + 0.25 + (c.currentTime < this.aheadUntil ? this.aheadBy : 0);
     const spb = 60 / this.bpm;
     while (this.playing && this.nextTime < horizon) {
+      if (this.endAt !== null) {
+        // the end is booked (it is a moment ahead): the player plays on until it comes (see `tick`), and an
+        // edit made in that last moment that goes on past it (a loop set, a list waiting to take over, more
+        // of the song) still has the music go on, in time
+        const on = this.pending || (this.loop && this.items.length) || this.nextIndex < this.items.length;
+        if (!on || c.currentTime >= this.endAt) break;
+        this.endAt = null;
+        this.marks = this.marks.filter((m) => m.index !== -1);
+      }
       if (this.pending && this.atBoundary()) this.takeOver();
       if (this.nextIndex >= this.items.length) {
         if (!this.loop || !this.items.length) {
+          // (what is booked plays out: the player is over when the end comes, not when it is booked)
           this.endAt = this.nextTime;
           this.marks.push({ time: this.nextTime, index: -1, gen: this.gen });
-          this.playing = false;
           break;
         }
         this.nextIndex = 0;
@@ -612,7 +700,8 @@ export class ProgressionPlayer {
       this.spans.push(anchor);
       if (this.spans.length > 24) this.spans.shift();
       const items = this.items;
-      playChord(voiceOf("chords"), item, t, spb, this.pattern, s0, this.beat, this.synthNotes, () => {
+      // each section's chords on its own voice: the track as that section has it
+      playChord(voiceFor({ track: "chords", kind: "chord", tone: item.tone, sound: item.sound }), item, t, spb, this.pattern, s0, this.beat, this.synthNotes, () => {
         const chords: SecChord[] = [];
         let at = s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0);
         for (let j = firstOf(i); j < items.length && groups[j] === groups[i]; j++) {
@@ -628,7 +717,7 @@ export class ProgressionPlayer {
         const run = clipChords(ex.chords, s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0), s0 + (this.secs.rest[i] ?? item.beats));
         for (const ch of run)
           if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-            playChord(voiceOf(ch.track, "chord", ch.sound), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
+            playChord(voiceFor({ track: ch.track, kind: "chord", tone: ch.tone, sound: ch.sound }), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
               key: `${ch.track}@${t0.toFixed(4)}`,
               t0,
               chords: run.filter((x) => x.track === ch.track),
@@ -681,8 +770,7 @@ export class ProgressionPlayer {
       const tunes: { id: string; t: PlayTune }[] = [...(t ? [{ id: "melody", t }] : []), ...(this.itemOf(cur)?.extra?.tunes ?? []).map((x) => ({ id: x.track, t: x.tune }))];
       for (const { id, t: tune } of tunes) {
         if (tune.m.on === false || !tune.m.notes.length) continue;
-        const v = voiceOf(id, "melody", tune.sound);
-        if (tune.tone) v.setTone(tune.tone);
+        const v = voiceFor({ track: id, kind: "melody", tone: tune.tone, sound: tune.sound });
         if (synthWay(v)) {
           // a synth with a way of its own plays the whole section its way: this twelfth of a beat plays what starts in it
           const t0 = at(0);
@@ -703,8 +791,9 @@ export class ProgressionPlayer {
 
   /** A melody on the piano with its pedal on changes pedal with every chord, as the chords' own pianist does. */
   private repedalTunes(a: Anchor) {
-    voices.get("melody")?.repedal(a.time);
-    for (const x of this.itemOf(a)?.extra?.tunes ?? []) voices.get(x.track)?.repedal(a.time);
+    const t = this.tuneAt(a);
+    const tunes = [...(t ? [{ track: "melody", tune: t }] : []), ...(this.itemOf(a)?.extra?.tunes ?? [])];
+    for (const x of tunes) voices.get(slotOf({ track: x.track, tone: x.tune.tone, sound: x.tune.sound }))?.v.repedal(a.time);
   }
 
   /** Every drums track, each on its own short look-ahead, so edits to a grid are heard on the very next step. */
@@ -768,9 +857,9 @@ export class ProgressionPlayer {
   }
 
   /**
-   * A drums track reaches a chord whose section has other drums (another rhythm, or none): its desk
-   * and its noise bed follow from where the section starts. The kit is the track's, the same in every
-   * section. (Only when the beat changed, so it is cheap.)
+   * A drums track reaches a chord whose section has other drums (another rhythm, another kit, or
+   * none): its desk and its noise bed follow from where the section starts, as every section has
+   * its own kit. (Only when the beat changed, so it is cheap.)
    */
   private syncLane(track: string, lane: Lane, a: Anchor) {
     const b = this.beatOf(track, a);
@@ -820,12 +909,10 @@ export class ProgressionPlayer {
       r.duck.gain.cancelScheduledValues(0);
       r.duck.gain.setValueAtTime(1, getAudio().currentTime);
     }
-    for (const [id, v] of voices) {
+    // (each voice keeps its own sound: it is the one its sections have)
+    for (const v of allVoices()) {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
-      // the sound the music carried was played on each track's voice: it goes back to the one the track is set to
-      // (an added track the page is not editing has none set: it keeps its own, so the next ▶ starts on it)
-      if (!v.track || liveSound.has(id)) v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     }
     stopAll();
     stopDrums();
@@ -855,14 +942,15 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
   await loadSafety(off);
   const made = new Map<string, TrackVoice>();
   withContext(off, () => {
-    const voice = (id: string, kind: VoiceKind, sound?: HarpSound) => {
-      let v = made.get(id);
+    // a voice for every way a track is played (see slotOf): each made on its own sound and instrument,
+    // so a section's first note is on its own from its very start, and nothing is changed mid-render
+    const voice = (id: string, kind: VoiceKind, sound?: HarpSound, tone?: Tone) => {
+      const key = slotOf({ track: id, tone, sound });
+      let v = made.get(key);
       if (!v) {
-        // each track starts on the sound it plays with (none given: as the page has it), so its first note
-        // does not glide in from another
-        v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm, sendFader(id, off));
-        v.setTone(liveTones[id] ?? GUITAR);
-        made.set(id, v);
+        v = new TrackVoice(off, fader(id, off), kind, isFirstTrack(id) ? undefined : id, sound ?? SOUND_DEFAULT, o.bpm, sendFader(id, off));
+        v.setTone(tone ?? GUITAR);
+        made.set(key, v);
       }
       return v;
     };
@@ -889,7 +977,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       let first = i;
       while (first > 0 && Math.abs(secs.origin[first - 1] - origin) < 1e-6) first--;
       const runStart = s0 - items.slice(first, i).reduce((n, it) => n + it.beats, 0);
-      playChord(voice("chords", "chord", item.sound), item, t, spb, o.pattern, s0, o.beat, cache, () => {
+      playChord(voice("chords", "chord", item.sound, item.tone), item, t, spb, o.pattern, s0, o.beat, cache, () => {
         const chords: SecChord[] = [];
         let a = i;
         while (a > 0 && Math.abs(secs.origin[a - 1] - origin) < 1e-6) a--;
@@ -903,9 +991,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       const tunes: { id: string; tune: PlayTune | null }[] = [{ id: "melody", tune: item.tune ?? null }, ...(item.extra?.tunes ?? []).map((x) => ({ id: x.track, tune: x.tune }))];
       for (const { id, tune } of tunes) {
         if (!tune || tune.m.on === false) continue;
-        const v = voice(id, "melody", tune.sound);
-        if (tune.tone) v.setTone(tune.tone);
-        if (tune.sound) v.setSound(tune.sound, o.bpm, t);
+        const v = voice(id, "melody", tune.sound, tune.tone);
         v.repedal(t);
         if (synthWay(v)) {
           playTuneSpan(v, cache, `${id}~${t0.toFixed(4)}`, tune, t0, spb, s0 + secs.rest[i], t, t + item.beats * spb, runStart);
@@ -926,7 +1012,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       const run = clipChords(ex?.chords ?? [], runStart, s0 + secs.rest[i]);
       for (const ch of run)
         if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-          playChord(voice(ch.track, "chord", ch.sound), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
+          playChord(voice(ch.track, "chord", ch.sound, ch.tone), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
             key: `${ch.track}@${t0.toFixed(4)}`,
             t0,
             chords: run.filter((x) => x.track === ch.track),

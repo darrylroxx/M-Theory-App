@@ -13,8 +13,8 @@ import { retime, sections, type SongPart } from "./structure";
 import { normalize } from "./tracks";
 import { outPrint } from "./prints";
 
-/** Which things a change is for: what is on the page, the song's own settings, or one section. */
-type Scope = "live" | "shared" | SongPart;
+/** Which things a change is for: what is on the page, or one section. */
+type Scope = "live" | SongPart;
 
 /** Change every chord, melody and drum rhythm of the song, wherever it is kept (`f` says what to do in each place; null = nothing). Unchanged parts keep their identity. */
 function mapSong(p: Progression, f: (scope: Scope) => Maps | null): Progression {
@@ -30,10 +30,6 @@ function mapSong(p: Progression, f: (scope: Scope) => Maps | null): Progression 
     put("layers", mapLayers(p.layers, live));
   }
   if (p.song) {
-    const sh = p.song.shared;
-    const fs = f("shared");
-    const g = sh?.groove && fs?.rhythm ? fs.rhythm(sh.groove) : sh?.groove;
-    const shared = sh && g !== sh.groove ? { ...sh, groove: g } : sh;
     const parts = mapList(p.song.parts, (x) => {
       const m = f(x);
       if (!m) return x;
@@ -43,7 +39,7 @@ function mapSong(p: Progression, f: (scope: Scope) => Maps | null): Progression 
       const ls = mapLayers(x.layers, m);
       return c === x.chords && me === x.melody && gr === x.groove && ls === x.layers ? x : { ...x, chords: c, melody: me, groove: gr, layers: ls };
     });
-    if (shared !== sh || parts !== p.song.parts) q = { ...q, song: { ...p.song, shared, parts } };
+    if (parts !== p.song.parts) q = { ...q, song: { ...p.song, parts } };
   }
   return q;
 }
@@ -59,7 +55,7 @@ function inferSig(p: Progression): TimeSig {
     const live = np.beat ?? DEFAULT_BEAT;
     const g = first?.groove ?? live;
     const on = first ? first.groove?.on ?? live.on : live.on;
-    const beats = on ? barBeats(g) : styleBar(np.pattern);
+    const beats = on ? barBeats(g) : styleBar(first?.style ?? np.pattern);
     return sigFor(beats, on && g.div === 3);
   } catch {
     return DEFAULT_SIG;
@@ -94,7 +90,7 @@ export function conform(p: Progression): Progression {
   };
   const song = p.song;
   const cur = song?.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId);
-  const q = mapSong(p, (scope) => fit((scope === "live" ? cur?.meter : scope === "shared" ? song?.parts[0]?.meter : scope.meter) ?? sig));
+  const q = mapSong(p, (scope) => fit((scope === "live" ? cur?.meter : scope.meter) ?? sig));
   return q.meter ? q : { ...q, meter: sig };
 }
 

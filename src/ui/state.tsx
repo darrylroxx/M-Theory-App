@@ -11,19 +11,20 @@ import { isLayer, type LayerKind } from "../canvas/layers";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
-import { easyVoicing, voicingsFor } from "../guitar/arrange";
+import { stopAlone } from "../audio/takeplay";
+import { chordShape } from "../guitar/arrange";
 import { getTuning, type Tuning } from "../guitar/tunings";
-import { fretsFromId, voicingFromFrets, type Voicing } from "../guitar/voicings";
-import { getChordType } from "../theory/chords";
+import type { Voicing } from "../guitar/voicings";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
-import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
+import { commit, reviveSong, settle, toneIdsIn, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
-import { SOUND_V, migrateSound } from "../song/migrate";
+import { reidea } from "./openidea";
+import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -70,17 +71,17 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
-  /** When set, shapes are arranged together in one area of the neck. null = each chord uses your own shape. */
+  /** The chords track on screen in the section on screen, on the guitar: when set, its shapes are arranged together in one area of the neck. null = each chord uses your own shape. (Every chords track in every section has its own.) */
   arrange?: ArrangeSettings | null;
-  /** The drum beat under the chords (undefined = never touched). */
+  /** The first drums track of the section on screen: its rhythm and on/off, and its kit there (undefined = never touched). */
   beat?: Beat;
-  /** How the first chords track's style is played, in every section: speed, swing, touch … */
+  /** How the first chords track is played in the section on screen (its style is `pattern`): speed, swing, touch … */
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
   /** How long the section on screen lasts, in bars. */
   bars?: number;
-  /** The sound and effects of the harp that plays the first chords track, the same in every section (missing knobs are at their defaults). */
+  /** The sound and effects of the harp that plays the first chords track in the section on screen (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
   /** The same for the harp that plays the first melody track: a separate instrument on a separate effects channel. */
   tuneSound?: Partial<HarpSound>;
@@ -90,17 +91,19 @@ export interface Progression {
   song?: Song | null;
   /** The mixer: each track's volume, mute and solo, for the whole song (set on the Track page) */
   mix?: Mix;
-  /** Tracks added on the Track page (the first chords, melody and drums tracks are always there) */
+  /** The song's tracks beyond the first chords, melody and drums tracks (which every section has): rows of the Track page */
   tracks?: Track[];
-  /** What the extra tracks hold in the section on screen (see song/tracks) */
+  /** The added tracks in the section on screen: what each holds there and how it sounds there (see song/tracks) */
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
   focus?: Focus;
+  /** Which track each page was editing in each section, the last time it was on screen (by part id): going back there brings them forward again */
+  focusIn?: Record<string, Focus>;
   /** The song's time signature, set on the Frame page: how long every bar is, on every page, in every section that has no signature of its own */
   meter?: TimeSig;
-  /** What plays each chords and melody track (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
+  /** What plays each chords and melody track in the section on screen (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
   tones?: Tones;
-  /** How it is stored: 2 = every track has one sound for the whole song (older songs are moved over: see song/migrate) */
+  /** How it is stored: 3 = every section has its own tracks and settings (older songs are moved over: see song/migrate) */
   v?: number;
 }
 
@@ -156,6 +159,8 @@ export interface AppState {
   canvas?: CanvasPrefs;
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
+  /** The idea not saved yet that is open, told apart from the next one (see ./openidea) */
+  draft?: string;
   /** Ideas that were deleted, and when, so other devices delete them too */
   tombs?: Record<string, number>;
   /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each), and the last whole section copied on the Frame page */
@@ -221,17 +226,19 @@ export const DEFAULT_STATE: AppState = {
   mySounds: [],
 };
 
-/** The idea on the page, loaded from storage and made whole (a song from before one sound per track is moved over first). */
+/** The idea on the page, loaded from storage and made whole (a song saved by an older version is moved over first). */
 export function reviveProgression(raw0: Partial<Progression> | undefined): Progression {
-  const raw = migrateSound(raw0);
+  const raw = migrateSong(raw0);
   const melody = reviveMelody(raw?.melody);
   const tracks = reviveTracks(raw?.tracks);
+  const layers = reviveLayers(raw?.layers, tracks);
   const p: Progression = {
     ...DEFAULT_STATE.progression, ...raw,
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
-    tracks, layers: reviveLayers(raw?.layers, tracks), focus: undefined,
+    tracks, layers, focus: undefined, focusIn: undefined,
+    arrange: reviveArrange(raw?.arrange) ?? null,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),
@@ -240,18 +247,15 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
     meter: reviveSig(raw?.meter),
-    tones: reviveTones(raw?.tones, toneIds(tracks)),
+    tones: reviveTones(raw?.tones, toneIdsIn(layers, tracks)),
     v: SOUND_V,
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
-  // Songs where a section other than the first one led (moved before that changed) are led by the first.
+  // An added track that is in no section is not part of the song.
   // Songs from before sections had lengths get them here.
   // Songs from before the time signature could be chosen get the one their first section played in.
-  return conform(settle(leadFirst(commit(p))));
+  return conform(settle(prune(commit(p))));
 }
-
-/** The tracks that can have an instrument of their own: every chords and melody track. */
-export const toneIds = (tracks: Track[] | undefined): string[] => ["chords", "melody", ...(tracks ?? []).filter((t) => t.kind === "chords" || t.kind === "melody").map((t) => t.id)];
 
 /** After any change, the whole song is in the bars of its time signature (see song/unity). */
 function unify(s: AppState): AppState {
@@ -314,6 +318,12 @@ interface Ctx {
   openIdea: (id: string) => void;
   /** Start a blank idea (keeps the key) */
   newIdea: () => void;
+  /**
+   * Goes up each time an idea is opened or a new one started: what belongs to the idea on screen (a
+   * loop, an undo) is let go when it changes. (ideaId cannot tell: it stays null from one idea not yet
+   * saved to a new one, and every idea without sections calls its one section "".)
+   */
+  opened: number;
   renameIdea: (id: string, name: string) => void;
   deleteIdea: (id: string) => void;
   /** Add ideas from a backup file; returns how many were new */
@@ -397,16 +407,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { capo, avoidBarre, tuningId } = state.settings;
   const shapes = state.shapes;
   const shapeOf = useCallback(
-    (ref: ChordRef, slotVoicingId?: string) => {
-      const id = slotVoicingId ?? shapes[shapeKey(ref, tuningId, capo)];
-      if (id) {
-        const found = voicingsFor(ref, tuning, capo).find((v) => v.id === id);
-        if (found) return found;
-        const frets = fretsFromId(id);
-        if (slotVoicingId && frets.length === tuning.notes.length) return voicingFromFrets(frets, pc(ref.root), getChordType(ref.typeId), tuning, capo);
-      }
-      return easyVoicing(ref, tuning, capo, avoidBarre);
-    },
+    // (a slot's shape is kept as frets: with another capo or tuning on, one that no longer makes its chord gives way)
+    (ref: ChordRef, slotVoicingId?: string) => chordShape(ref, tuning, capo, avoidBarre, slotVoicingId, shapes[shapeKey(ref, tuningId, capo)]),
     [shapes, tuning, tuningId, capo, avoidBarre],
   );
   const setShape = useCallback(
@@ -460,7 +462,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (open && !asNew) return { ...s, saved: s.saved.map((i) => (i.id === open.id ? { ...i, ...snap, updatedAt: at } : i)) };
         const id = newId();
         const name = asNew && open ? `${open.name} copy` : autoName(s.key, s.saved);
-        return { ...s, ideaId: id, saved: [{ id, name, ...snap, savedAt: at, updatedAt: at }, ...s.saved] };
+        // (saved for the first time, it is the same idea: a copy is another one)
+        const now = asNew && open ? { ...s, ideaId: id } : reidea(s, id);
+        return { ...now, saved: [{ id, name, ...snap, savedAt: at, updatedAt: at }, ...s.saved] };
       });
       return update ? "updated" : "new";
     },
@@ -469,8 +473,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [recordingTo, setRecordingTo] = useState<string | null>(null);
   const recRef = useRef(recordingTo);
   recRef.current = recordingTo;
+  const [opened, setOpened] = useState(0);
   const openIdea = useCallback((id: string) => {
     if (recRef.current) return toast("Stop recording first");
+    // a take heard alone belongs to the idea it was recorded in: it stops with it
+    stopAlone();
+    setOpened((n) => n + 1);
     setState((s) => {
       const it = reviveIdea(s.saved.find((i) => i.id === id));
       if (!it) return s;
@@ -480,12 +488,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [toast]);
   const newIdea = useCallback(() => {
     if (recRef.current) return toast("Stop recording first");
-    setState((s) => ({ ...s, ideaId: null, progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
+    stopAlone();
+    setOpened((n) => n + 1);
+    setState((s) => ({ ...s, ideaId: null, draft: newId(), progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
     openSheet(null);
   }, [toast]);
   const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
   const deleteIdea = useCallback(
-    (id: string) => setState((s) => ({ ...s, ideaId: s.ideaId === id ? null : s.ideaId, saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
+    // (the idea open stays on screen, not saved)
+    (id: string) => setState((s) => ({ ...(s.ideaId === id ? reidea(s, null, newId()) : s), saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
     [],
   );
   const importIdeas = useCallback(
@@ -520,7 +531,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         remote.forEach((r) => known.current.set(r.id, r.deleted ? -r.updatedAt : r.updatedAt));
         setState((s) => {
           const m = mergeIdeas(s.saved, s.tombs ?? {}, remote);
-          return { ...s, saved: m.ideas, tombs: m.tombs, ideaId: m.ideas.some((i) => i.id === s.ideaId) ? s.ideaId : null };
+          const gone = !!s.ideaId && !m.ideas.some((i) => i.id === s.ideaId);
+          return { ...(gone ? reidea(s, null, newId()) : s), saved: m.ideas, tombs: m.tombs };
         });
         cloudRef.current = c;
         setCloud("synced");
@@ -557,7 +569,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state.saved, state.tombs, cloud]);
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, opened, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>

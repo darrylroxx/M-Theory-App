@@ -173,32 +173,98 @@ describe("a melody on a synth's drone, in a loop of a section's second bar", () 
   });
 });
 
-describe("the sound the music carries", () => {
-  it("is let go when the music stops: the sound the track is set to is heard again", () => {
+describe("each section plays a track its own way", () => {
+  const piano: Tone = { inst: "piano" };
+  const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
+  const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
+  /** two one-bar sections at 120 (two seconds each): A on the strings with one sound, B on its own */
+  const two = (b: Partial<PlayItem>): PlayItem[] => [
+    { midi: CHORD, beats: 4, section: true, sound: verse },
+    { midi: CHORD, beats: 4, section: true, sound: verse, ...b },
+  ];
+  const run = (to: number) => {
+    live.currentTime = to;
+    vi.advanceTimersByTime(30);
+  };
+  it("live: B's chords are on a voice of B's own from B's first beat, and A's voice is never touched", () => {
     const log = notes();
-    const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
-    const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
-    S.setHarpSound(verse, 120);
+    const swaps = vi.spyOn(TrackVoice.prototype, "setTone");
     const p = new S.ProgressionPlayer();
-    p.start([{ midi: CHORD, beats: 4, section: true, sound: chorus }], 120, "ring", false);
-    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
-    expect(v.sound).toEqual(chorus);
+    S.getAudio();
+    live.currentTime = 0;
+    p.start(two({ tone: piano, sound: chorus }), 120, "ring", false);
+    for (let t = 0.2; t < 4.2; t += 0.2) run(t);
+    const a = log.filter((n) => n.track === "chord" && n.when < 2.08 - 1e-6);
+    const b = log.filter((n) => n.track === "chord" && n.when >= 2.08 - 1e-6);
+    expect(a.length).toBeGreaterThan(0);
+    expect(b.length).toBeGreaterThan(0);
+    const va = a[0].v;
+    const vb = b[0].v;
+    expect(va).not.toBe(vb);
+    expect(a.every((n) => n.v === va) && b.every((n) => n.v === vb)).toBe(true);
+    // B starts exactly where B starts, on its own instrument and sound
+    expect(Math.min(...b.map((n) => n.when))).toBeCloseTo(0.08 + 2, 9);
+    expect([vb.tone.inst, vb.sound]).toEqual(["piano", chorus]);
+    expect([va.tone.inst, va.sound]).toEqual(["guitar", verse]);
+    // nothing was switched on A's voice while it played (no instrument change cuts its notes off)
+    expect(swaps.mock.calls.filter((c) => swaps.mock.contexts[swaps.mock.calls.indexOf(c)] === va && (c[0] as Tone).inst !== "guitar")).toEqual([]);
     p.stop();
-    expect(v.sound).toEqual(verse);
   });
-  it("a track's sound turned while it plays is heard at once, and kept when the music stops", () => {
+  it("in a render: each section on its own voice, made on its own instrument and sound, nothing changed mid-render", async () => {
     const log = notes();
-    const before: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
-    const after: HarpSound = { ...SOUND_DEFAULT, level: 0.4, echo: 0.5 };
-    S.setHarpSound(before, 120);
+    vi.spyOn(TrackVoice.prototype, "prepare").mockResolvedValue(undefined);
+    const swaps = vi.spyOn(TrackVoice.prototype, "setTone");
+    const sounds = vi.spyOn(TrackVoice.prototype, "setSound");
+    await S.renderSong(two({ tone: piano, sound: chorus }), { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    const a = log.filter((n) => n.track === "chord" && n.when < 2 - 1e-6);
+    const b = log.filter((n) => n.track === "chord" && n.when >= 2 - 1e-6);
+    expect(a[0].v).not.toBe(b[0].v);
+    expect(Math.min(...b.map((n) => n.when))).toBe(2);
+    expect([b[0].v.tone.inst, b[0].v.sound]).toEqual(["piano", chorus]);
+    expect([a[0].v.tone.inst, a[0].v.sound]).toEqual(["guitar", verse]);
+    // each voice took its tone and its sound once, when it was made, and never another
+    for (const v of [a[0].v, b[0].v]) {
+      expect(new Set(swaps.mock.contexts.flatMap((x, i) => (x === v ? [JSON.stringify(swaps.mock.calls[i][0])] : []))).size).toBe(1);
+      expect(new Set(sounds.mock.contexts.flatMap((x, i) => (x === v ? [JSON.stringify(sounds.mock.calls[i][0])] : []))).size).toBe(1);
+    }
+  });
+  it("sections that play a track the same way share one voice, live and in a render", async () => {
+    const log = notes();
+    vi.spyOn(TrackVoice.prototype, "prepare").mockResolvedValue(undefined);
     const p = new S.ProgressionPlayer();
-    p.start([{ midi: CHORD, beats: 4, section: true, sound: before }], 120, "ring", false);
-    const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
-    // one sound for the whole song: whichever section is on the page, the ringing chord takes it
-    S.setHarpSound(after, 120);
-    expect(v.sound).toEqual(after);
+    S.getAudio();
+    live.currentTime = 0;
+    // (equal sounds, made separately: it is what they are that counts)
+    p.start(two({ sound: { ...verse } }), 120, "ring", false);
+    for (let t = 0.2; t < 4.2; t += 0.2) run(t);
     p.stop();
-    expect(v.sound).toEqual(after);
+    expect(new Set(log.filter((n) => n.track === "chord").map((n) => n.v)).size).toBe(1);
+    log.length = 0;
+    await S.renderSong(two({ sound: { ...verse } }), { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
+    expect(new Set(log.filter((n) => n.track === "chord").map((n) => n.v)).size).toBe(1);
+  });
+  it("a knob turned on the page is heard at once on the same voice, never a new one", () => {
+    notes();
+    S.getAudio();
+    // (sounds of this test's own: no voice has them yet)
+    const verse: HarpSound = { ...SOUND_DEFAULT, level: 0.31 };
+    const chorus: HarpSound = { ...SOUND_DEFAULT, level: 0.32 };
+    S.hearOn("chord", { track: "chords", kind: "chord", sound: verse });
+    const log = notes();
+    S.strum([48, 52, 55]);
+    const v = log[0].v;
+    S.hearOn("chord", { track: "chords", kind: "chord", sound: chorus });
+    log.length = 0;
+    S.strum([48, 52, 55]);
+    expect(log[0].v).toBe(v);
+    expect(v.sound).toEqual(chorus);
+    // an instrument chosen: the same voice takes it
+    S.hearOn("chord", { track: "chords", kind: "chord", tone: piano, sound: chorus });
+    log.length = 0;
+    S.strum([48, 52, 55]);
+    expect(log[0].v).toBe(v);
+    expect(v.tone.inst).toBe("piano");
+    S.hearOn("chord", null);
   });
   it("an added track's first chord is on the track's own sound from its start, in a render and on every ▶", async () => {
     const log = notes();
@@ -337,6 +403,19 @@ describe("the drum desks", () => {
     const set = live.nodes.some((n) => (n as FakeAny).delayTime?.events.some((e) => Math.abs(e.v - want) < 1e-9));
     expect(set).toBe(true);
   });
+  it("live, a kick pumps as its own section's kit has it: A's last kicks keep A's, B's first take B's", () => {
+    S.getAudio();
+    live.currentTime = 0;
+    const pumped: number[] = [];
+    onKickHit((when) => pumped.push(when));
+    syncDrums(beat({ pump: 0.6 }), 120, "dp");
+    // B, with no pump, booked to start at 2 s
+    syncDrums(beat({ pump: 0 }), 120, "dp", 2);
+    playStep(beat(), "kick", 3, 1.9, "dp");
+    playStep(beat(), "kick", 3, 2.1, "dp");
+    expect(pumped).toEqual([1.9]);
+    onKickHit(null);
+  });
   it("a kick that cannot be heard (its track muted, or another soloed) pumps nothing", () => {
     S.getAudio();
     live.currentTime = 0;
@@ -359,7 +438,7 @@ describe("the drum desks", () => {
 describe("a note played to be heard", () => {
   it("goes to the track being edited, so an instrument that finishes loading after another track was picked is not heard on that one", () => {
     expect(S.heardTrack("chord")).toBe("chords");
-    S.hearOn("chord", { id: "c2", sound: SOUND_DEFAULT });
+    S.hearOn("chord", { track: "c2", kind: "chord", sound: SOUND_DEFAULT });
     expect(S.heardTrack("chord")).toBe("c2");
     expect(S.heardTrack("melody")).toBe("melody");
     S.hearOn("chord", null);

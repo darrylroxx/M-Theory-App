@@ -3,10 +3,10 @@
  * electric one) or the synth, with that instrument's own settings. Every track has its own, so
  * tracks can be layered: a piano under a synth pad under a guitar.
  *
- * The choice belongs to the track, the same in every section (so a track's chord pictures never
- * flip between guitar boxes and keyboards from one section to the next). It is kept in
- * `Progression.tones`, by track id; a track with nothing there plays Guitar, which is how every
- * song made before this sounds.
+ * Every section has its own choice for each of its tracks (a section's `tones`, by track id; the
+ * page's `Progression.tones` for the section on screen): A can play the chords on the strings and
+ * B on the piano. A track with nothing there plays Guitar, which is how every song made before
+ * instruments sounds.
  */
 import { KEY_STYLES, REGISTERS, arrangeKeys, pianoVoicing, type KeyStyle, type Register } from "../keys/voicing";
 import type { ChordRef } from "../theory/chords";

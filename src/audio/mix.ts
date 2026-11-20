@@ -30,6 +30,22 @@ export function audible(mix: Mix | undefined, id: TrackId): boolean {
   return !solo || !!t?.solo;
 }
 
+/**
+ * Why a track is not heard: "mute" (muted), "solo" (other tracks are soloed and it is not), or null
+ * (it is heard). Everything a track plays goes out through its fader, a tap on its page too.
+ */
+export function quietWhy(mix: Mix | undefined, id: TrackId): "mute" | "solo" | null {
+  if (mix?.[id]?.mute) return "mute";
+  return audible(mix, id) ? null : "solo";
+}
+
+/** The mix with a track's volume, mute or solo changed by hand (a mute set by hand is the songwriter's own, not one a harmony track made). */
+export function mixWith(mix: Mix | undefined, id: TrackId, patch: Partial<TrackMix>): Mix {
+  const t: TrackMix = { ...mix?.[id], ...patch };
+  if ("mute" in patch) delete t.instead;
+  return { ...mix, [id]: t };
+}
+
 /** The gain a track's fader is set to (a plain multiplier). */
 export function gainOf(mix: Mix | undefined, id: TrackId): number {
   if (!audible(mix, id)) return 0;

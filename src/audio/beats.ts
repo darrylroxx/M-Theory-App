@@ -382,7 +382,7 @@ export const barsOf = (b: { bars?: number }) => Math.max(1, Math.min(MAX_BARS, M
 export const lenOf = (b: { steps: number; bars?: number }) => b.steps * barsOf(b);
 export const MAX_BARS = 32;
 
-/** The rhythm on its own: what each song section keeps for itself. The kit, its sounds and effects belong to the track (one for the whole song). */
+/** The rhythm on its own (a section keeps it apart from the kit: see song/structure's Settings). */
 export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
 /** A section's drum rhythm: the pattern, and whether the drums play at all there. */
 export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]> & { on?: boolean };
@@ -395,6 +395,11 @@ export type DrumKit = Omit<Beat, (typeof GROOVE_KEYS)[number] | "on">;
 export function kitOfBeat(b: Beat): DrumKit {
   const { patternId: _p, name: _n, edited: _e, steps: _s, div: _d, bars: _b, swing: _w, rows: _r, on: _o, ...kit } = b;
   return kit;
+}
+/** A beat's rhythm and on/off played on another kit: all of the kit is that one's (nothing of its own kit is kept). */
+export function onKit(b: Beat, kit: DrumKit): Beat {
+  const rhythm = Object.fromEntries(Object.entries(b).filter(([k]) => k === "on" || (GROOVE_KEYS as readonly string[]).includes(k)));
+  return { ...kit, ...rhythm } as Beat;
 }
 /** A drum sound as one string, the same for the same sound (a missing effect setting is its default). */
 export const kitSig = (k: DrumKit): string => {
@@ -472,6 +477,8 @@ export function copyBar(beat: Beat, from: number, to: number): Beat {
 }
 
 export const levelAt = (rows: Record<DrumId, string>, id: DrumId, step: number): StepLevel => (Number(rows[id]?.[step] ?? 0) || 0) as StepLevel;
+/** A step as it is heard: a drum muted in its kit plays nothing (what plays it, and what draws it, both ask this). */
+export const heardAt = (b: Pick<Beat, "rows" | "mutes">, id: DrumId, step: number): StepLevel => (b.mutes?.includes(id) ? 0 : levelAt(b.rows, id, step));
 
 export function setStep(beat: Beat, id: DrumId, step: number, level: StepLevel): Beat {
   const len = lenOf(beat);
@@ -543,8 +550,7 @@ export function beatHitsBetween(b: Beat, from: number, to: number): DrumHit[] {
   for (let n = first; n < end; n++) {
     const step = n % len;
     for (const id of DRUM_IDS) {
-      if (b.mutes?.includes(id)) continue;
-      const lv = levelAt(b.rows, id, step);
+      const lv = heardAt(b, id, step);
       if (lv) out.push({ beat: stepBeat(n, b.div, b.swing), id, velocity: STEP_VELOCITY[lv] });
     }
   }
