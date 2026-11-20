@@ -669,7 +669,13 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const name = window.prompt("Name this vocal track", track.name);
     if (name) set((s) => ({ ...s, progression: renameTrack(s.progression, track.id, name) }));
   };
+  /** Another vocal track: one with nothing recorded on it yet is used first (no second empty one). */
   const add = () => {
+    const free = (state.progression.tracks ?? []).find((t) => t.kind === "vocals" && !t.takes?.length && t.id !== track?.id) ?? (track && !track.takes?.length ? track : undefined);
+    if (free) {
+      setSel(free.id);
+      return;
+    }
     const id = newId();
     set((s) => ({ ...s, progression: addTrack(s.progression, "vocals", id).p }));
     setSel(id);

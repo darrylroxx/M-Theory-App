@@ -186,7 +186,7 @@ export function GuitarView() {
   const secs = useMemo(() => sections(prog), [prog]);
   // A harmony being auditioned (see HarmonyPicker): the song plays as if it were added, the page stays as it is.
   const [preview, setPreview] = useState<Preview | null>(null);
-  const heard = useMemo(() => (preview ? previewHarmony(prog, state.key, preview.plan, preview.id) : prog), [prog, preview, state.key]);
+  const heard = useMemo(() => (preview ? previewHarmony(prog, state.key, preview.plan, preview.target) : prog), [prog, preview, state.key]);
   const playSecs = useMemo(() => (heard === prog ? secs : sections(heard)), [heard, prog, secs]);
   // Each section plays its own music, and only its own tracks, each with its sound in that section.
   const plan = useMemo(() => {
@@ -467,7 +467,8 @@ export function GuitarView() {
   // ── the harmony sheet: a page's Harmonize button, and ⟳ (write it again) on a harmony track ──
   const [hz, setHz] = useState<HzOpen | null>(null);
   // it belongs to this page and this idea
-  useEffect(() => setHz(null), [state.ideaId, opened, pane]);
+  // (and when another track or section comes on screen: the sheet writes into the one it opened on)
+  useEffect(() => setHz(null), [state.ideaId, opened, pane, prog.focus?.chords, prog.focus?.melody, prog.song?.current]);
   const closeHz = useCallback(() => setHz(null), []);
   // there is something to harmonize with: a chords or melody track with music in it somewhere
   const canHarmonize = useMemo(() => harmonizeSources(prog).length > 0, [prog]);
@@ -1340,9 +1341,18 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
     return by ? { id: by, name: list.find((t) => t.id === by)?.name ?? "" } : null;
   }, [ek, state.progression, on, list]);
   /** Another track of this kind in this section only (a second set of chords, another melody, more drums): plain, empty, ready to write in. */
+  const [flash, setFlash] = useState<string | null>(null);
+  useEffect(() => {
+    if (!flash) return;
+    const t = window.setTimeout(() => setFlash(null), 1200);
+    return () => window.clearTimeout(t);
+  }, [flash]);
   const add = () => {
     const id = newId();
+    const r = addTrackHere(state.progression, ek, id);
     set((s) => ({ ...s, progression: addTrackHere(s.progression, ek, id).p }));
+    // a track of this kind that is empty here already comes forward (and its tab lights up): no second empty one
+    if (r.existing) setFlash(r.track.id);
   };
   /** Take a track out of this section only (asked first only when it has music here). */
   const drop = (t: Track) => {
@@ -1355,7 +1365,7 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
       <span className={`clip-of ${letterClass(color)}`}><b title={label}>{label}</b></span>
       <span className="seg clip-tracks" role="radiogroup" aria-label={`Which ${what} track`}>
         {list.map((t) => (
-          <button key={t.id} role="radio" aria-checked={on === t.id} className={on === t.id ? "on" : ""} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, ek, t.id) }))}>
+          <button key={t.id} role="radio" aria-checked={on === t.id} className={`${on === t.id ? "on" : ""}${flash === t.id ? " flash" : ""}`} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, ek, t.id) }))}>
             {t.name}
             {on === t.id && t.harmony && ek !== "drums" && onAgain && <HarmonyAgain track={t} className="clip-hz" onOpen={() => onAgain(t)} />}
             {on === t.id && !isFirst(t.id) && <i className="clip-x" role="button" aria-label={`Remove ${t.name}`} title="Remove" onClick={(e) => { e.stopPropagation(); drop(t); }}>✕</i>}

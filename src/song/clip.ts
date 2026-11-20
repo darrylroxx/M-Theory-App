@@ -232,9 +232,12 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   const to = new Map<string, string>();
   /** the tracks the paste made */
   const made = new Set<string>();
+  // the section's own tracks that are empty there: a copied track lands in one of its kind before a new one is made
+  const there = sectionAt(p, target)?.layers;
+  const emptyThere = (x: Track) => !!there?.[x.id] && !hasMusic(there[x.id]) && !c.tracks.some((ct) => ct.id === x.id || ct.name === x.name);
   for (const t of c.tracks) {
     const free = (x: Track) => x.kind === t.kind && ![...to.values()].includes(x.id);
-    const same = tracks.find((x) => x.id === t.id && free(x)) ?? tracks.find((x) => x.name === t.name && free(x));
+    const same = tracks.find((x) => x.id === t.id && free(x)) ?? tracks.find((x) => x.name === t.name && free(x)) ?? (isFirst(t.id) ? undefined : tracks.find((x) => free(x) && emptyThere(x)));
     if (same) {
       to.set(t.id, same.id);
       continue;

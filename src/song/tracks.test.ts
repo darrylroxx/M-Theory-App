@@ -54,13 +54,14 @@ describe("tracks", () => {
     p = addNewSection(p, id); // B: no Chords 2 there, the page edits the first chords track
     expect(p.focus).toBeUndefined();
     expect(p.chords).toEqual([]);
+    p = { ...p, chords: [chord("A")] }; // B: Chords = A (an empty Chords here would be the one + brings forward)
     p = addTrackHere(p, "chords", "x").p; // Chords 2 in B too: the same row
     expect(p.focus).toEqual({ chords: "c2" });
     p = { ...p, chords: [chord("D")] }; // B: Chords 2 = D
     const [a, b] = sections(p);
     expect(roots(a.chords)).toEqual(["G", "C"]);
     expect(roots(a.layers?.c2.chords)).toEqual(["E"]);
-    expect(roots(b.chords)).toEqual([]);
+    expect(roots(b.chords)).toEqual(["A"]);
     expect(roots(b.layers?.c2.chords)).toEqual(["D"]);
     // going back to A shows A's Chords 2
     p = selectBlock(p, a.blockId);
@@ -155,6 +156,7 @@ describe("tracks", () => {
     p = addTrack(p, "melody", "m2").p;
     p = { ...p, melody: tune(67) }; // A: Melody 2
     p = addNewSection(p, id);
+    p = { ...p, melody: tune(62) }; // B: Melody (an empty one here would be the one + brings forward)
     p = addTrackHere(p, "melody", "x").p;
     p = { ...p, melody: tune(64) }; // B: Melody 2
     const moved = mapAllMelodies(p, (m) => transposeMelody(m, 2));

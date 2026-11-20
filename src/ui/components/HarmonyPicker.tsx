@@ -1,30 +1,31 @@
 /**
- * Harmonize: a new chords or melody track written to go with a track of the song.
+ * Harmonize: chords or a melody line written to go with a track of the song.
  *
- * It works in the section on screen. It asks one thing: which track to harmonize with (every
- * chords and melody track of this section that has some music, the one on screen first). Then it
- * offers the harmonies for that track, best first, as music theory ranks them (song/harmony,
- * theory/harmonize), only those that give something here. The new track is the page's kind:
- * harmonized on the Chords page it is chords, on the Melody page a melody line. Tapping an option
- * plays the section on screen, round and round, with that option added; tapping another swaps it
- * straight away. ✓ keeps it, in this section only. Nothing about how it sounds is chosen: it
- * starts as a plain track, like any new one.
+ * It works in the section on screen, and writes into the track on screen when that is empty here
+ * (or holds a harmony just as it was written): an empty Chords 2 is filled, not left behind for a
+ * third track. Only when the track on screen holds music of its own does the harmony go to
+ * another empty track of the kind, or a new one (tracks' `writeTarget`); the sheet says which.
+ * It asks one thing: which track to harmonize with (every chords and melody track of this section
+ * that has some music). Then it offers the harmonies for that track, best first, as music theory
+ * ranks them (song/harmony, theory/harmonize), only those that give something here. Tapping an
+ * option plays the section on screen, round and round, with it; tapping another swaps it straight
+ * away. ✓ keeps it, in this section only. Nothing about how it sounds is chosen.
  *
  * The same sheet writes an existing harmony track again (from its ⟳), in the section on screen:
  * with another option, or the same one after its source changed. A section changed by hand since
  * is only written over after a yes.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { addHarmony, harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, partHere, rewriteHarmony, type HarmonyPlan } from "../../song/harmony";
+import { harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, partHere, rewriteHarmony, writeHarmony, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
-import { allTracks, normalize, optionIn, type Track } from "../../song/tracks";
+import { allTracks, fromIn, normalize, optionIn, writeTarget, type Track, type WriteTarget } from "../../song/tracks";
 import { undoTo } from "../../song/structure";
 import { newId, useApp, type AppState } from "../state";
 
-/** What is being auditioned: a harmony track as it would be added (or written again), by id. */
+/** What is being auditioned: a harmony as it would be written (or written again), and where. */
 export interface Preview {
   plan: HarmonyPlan;
-  id: string;
+  target: WriteTarget;
 }
 /** The page's player, for auditioning: the song plays with the preview in it while one is set. */
 export interface Audition {
@@ -52,14 +53,18 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   const { state, set, toast } = useApp();
   const { preview, hear, playing } = useContext(AuditionCtx);
   const p = state.progression;
-  const [id] = useState(() => track?.id ?? newId());
+  const [fresh] = useState(() => newId());
   const [top] = useState(() => first ?? kind);
-  const sources = useMemo(() => (track ? [] : harmonizeSources(p, top)), [track, p, top]);
+  // where it goes: the track on screen when it is free here, another free one, or a new track (written again: the track itself)
+  const target = useMemo<WriteTarget>(() => (track ? { id: track.id, isNew: false, name: track.name, over: true } : writeTarget(p, kind, fresh, "")), [track, p, kind, fresh]);
+  const id = target.id;
+  const sources = useMemo(() => (track ? [] : harmonizeSources(p, top, kind, id)), [track, p, top, kind, id]);
+  // a track written again: the track and the option it was written with in the section on screen (each section has its own)
+  const live = track ? allTracks(normalize(p)).find((x) => x.id === track.id) : undefined;
+  const here = partHere(p);
+  const own = live?.harmony ? optionIn(live.harmony, here) : undefined;
   // one track with music: there is only one answer, so it is already chosen
-  const [picked, setPicked] = useState<string | null>(() => track?.harmony?.from ?? (sources.length === 1 ? sources[0].id : null));
-  // a track written again: the option it was written with in the section on screen (each section has its own)
-  const live = track ? normalize(p).tracks?.find((x) => x.id === track.id) : undefined;
-  const own = live?.harmony ? optionIn(live.harmony, partHere(p)) : undefined;
+  const [picked, setPicked] = useState<string | null>(() => (live?.harmony ? fromIn(live.harmony, here) : null) ?? (sources.length === 1 ? sources[0].id : null));
   const [option, setOption] = useState<string | null>(own ?? null);
   // the chosen track went (removed, or nothing left in it) while the sheet was open: ask again
   const lost = !track && !!picked && !sources.some((t) => t.id === picked);
@@ -75,7 +80,15 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   const newKind = track ? (track.kind as "chords" | "melody") : kind;
   const menu = useMemo(() => (from ? harmonyMenu(p, state.key, newKind, from, id, own) : []), [p, state.key, newKind, from, id, own]);
   const status = useMemo(() => (track ? harmonyState(p, state.key, track.id) : null), [track, p, state.key]);
-  const hearing = !!preview && preview.id === id;
+  const hearing = !!preview && preview.target.id === id;
+  // the track it writes into changed while the sheet was open (another track came forward): nothing chosen yet
+  const was = useRef(id);
+  useEffect(() => {
+    if (was.current === id) return;
+    was.current = id;
+    setOption(null);
+    hear(null);
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
   // the track went while its sheet was open (removed, or its source was): there is nothing left to write again
   const gone = !!track && !isHarmony(p, track.id);
   useEffect(() => {
@@ -126,11 +139,11 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   const pick = (o: string) => {
     if (gone) return;
     setOption(o);
-    if (from) hear({ plan: { kind: newKind, from, option: o }, id });
+    if (from) hear({ plan: { kind: newKind, from, option: o }, target });
   };
   const toggleHear = () => {
     if (hearing && playing) hear(null);
-    else if (from && option) hear({ plan: { kind: newKind, from, option }, id });
+    else if (from && option) hear({ plan: { kind: newKind, from, option }, target });
   };
   /** Keep it: add the track, or write it again; either can be taken back while nothing else has changed. */
   const keep = () => {
@@ -144,10 +157,10 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       after = rewriteHarmony(before, key, track.id, option);
       msg = `${after.tracks?.find((t) => t.id === track.id)?.name ?? track.name} ⟳`;
     } else {
-      const r = addHarmony(before, key, { kind: newKind, from, option }, id);
+      const r = writeHarmony(before, key, { kind: newKind, from, option }, target);
       if (!r.track) return;
       after = r.p;
-      msg = `${r.track.name} added${item.instead ? `, in place of ${nameOf(item.instead)} here` : ""}`;
+      msg = `${target.isNew ? `${r.track.name} added` : `${r.track.name}: ${item.label}`}${item.instead ? `, in place of ${nameOf(item.instead)} here` : ""}`;
     }
     hear(null);
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
@@ -168,7 +181,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
           </span>
         ) : (
           <>
-            <span className="hz-q">Harmonize with</span>
+            <span className="hz-q">Harmonize {target.isNew ? <b>a new track</b> : <b className="hz-to">{target.name}</b>} with</span>
             {sources.map((t) => (
               <button key={t.id} className={`chip${from === t.id ? " on" : ""}`} aria-pressed={from === t.id} aria-label={`Harmonize with ${t.name}`} onClick={() => toSource(t.id)}>
                 {t.name}
@@ -198,7 +211,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
             {track ? (
               <button className="btn hz-keep" disabled={!item} aria-label="Write it again" title="Write it again" onClick={keep}>⟳</button>
             ) : (
-              <button className="btn hz-keep" disabled={!item} aria-label="Keep it" title="Keep as a new track" onClick={keep}>✓</button>
+              <button className="btn hz-keep" disabled={!item} aria-label="Keep it" title={target.isNew ? "Keep as a new track" : `Keep it in ${target.name}`} onClick={keep}>✓</button>
             )}
           </div>
         </>

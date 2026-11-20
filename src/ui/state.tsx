@@ -24,7 +24,7 @@ import { reidea } from "./openidea";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { normalize, prune, reviveArrange, reviveFirstHarmony, reviveLayers, reviveTracks, type FirstHarmony, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -94,6 +94,8 @@ export interface Progression {
   mix?: Mix;
   /** The song's tracks beyond the first chords, melody and drums tracks (which every section has): rows of the Track page */
   tracks?: Track[];
+  /** The first chords and melody tracks' harmony records, when Harmonize wrote into them (see song/tracks) */
+  firstHarmony?: FirstHarmony;
   /** The added tracks in the section on screen: what each holds there and how it sounds there (see song/tracks) */
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
@@ -238,7 +240,7 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
-    tracks, layers, focus: undefined, focusIn: undefined,
+    tracks, layers, focus: undefined, focusIn: undefined, firstHarmony: reviveFirstHarmony(raw?.firstHarmony, tracks),
     arrange: reviveArrange(raw?.arrange) ?? null,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,

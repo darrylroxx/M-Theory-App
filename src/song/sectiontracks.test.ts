@@ -6,7 +6,7 @@ import { reviveProgression, type ProgChord, type Progression } from "../ui/state
 import { addNewSection, addTrackTo, commit, ensureSong, removeBlock, repeatSection, sections, sectionsWith, selectBlock, soundToAll, undoTo, unlinkBlock } from "./structure";
 import { addTrack, addTrackHere, allTracks, focusTrack, inSection, insteadIn, normalize, removeHere, removeTrack, tracksHere } from "./tracks";
 import { copyDrums, copyMelody, copyRhythm, copySection, pasteDrums, pasteMelody, pastePart, pasteRhythm, pasteSection, unpastePart } from "./clip";
-import { addHarmony, harmonizeSources, rewriteHarmony } from "./harmony";
+import { addHarmony, harmonizeSources, rewriteHarmony, writeHarmony } from "./harmony";
 import { fingerprint, sameMusic, snapshot } from "./library";
 
 const C = { tonic: "C", scaleId: "ionian" };
@@ -59,7 +59,13 @@ describe("every section has its own tracks", () => {
   it("+ in B reuses the row A has, lowest number first; with none free, a new row", () => {
     let p = song();
     p = addTrackHere(p, "chords", "c2").p;
-    p = addTrackHere(p, "chords", "c3").p;
+    // + again while Chords 2 is still empty here: it comes forward, and no Chords 3 is made
+    const again = addTrackHere(p, "chords", "c3");
+    expect(again.existing).toBe(true);
+    expect(again.track.id).toBe("c2");
+    expect(tabs(again.p, "chords")).toEqual(["Chords", "Chords 2"]);
+    p = addTrackHere({ ...p, chords: [chord("E")] }, "chords", "c3").p;
+    p = { ...p, chords: [chord("D")] };
     expect(tabs(p, "chords")).toEqual(["Chords", "Chords 2", "Chords 3"]);
     p = go(p, 1);
     const r1 = addTrackHere(p, "chords", "x1");
@@ -69,9 +75,9 @@ describe("every section has its own tracks", () => {
     // plain and empty here: nothing of A's comes along
     expect(r1.p.chords).toEqual([]);
     expect(r1.p.pattern).toBe("ring");
-    const r2 = addTrackHere(r1.p, "chords", "x2");
+    const r2 = addTrackHere({ ...r1.p, chords: [chord("E")] }, "chords", "x2");
     expect(r2.track.id).toBe("c3");
-    const r3 = addTrackHere(r2.p, "chords", "c4");
+    const r3 = addTrackHere({ ...r2.p, chords: [chord("D")] }, "chords", "c4");
     expect(r3.reused).toBe(false);
     expect(r3.track.name).toBe("Chords 4");
     expect(allTracks(r3.p).filter((t) => t.kind === "chords").map((t) => t.name)).toEqual(["Chords", "Chords 2", "Chords 3", "Chords 4"]);
@@ -346,6 +352,7 @@ describe("Harmonize works in the section on screen", () => {
   it("lists only this section's tracks with music, writes this section only, adds the track here only", () => {
     let p = song();
     p = go(p, 1);
+    p = { ...p, melody: mel([[0, 60]]) };
     p = addTrackHere(p, "melody", "m2").p;
     p = { ...p, melody: mel([[0, 72], [12, 74]]) };
     expect(harmonizeSources(p).map((t) => t.id)).toEqual(["chords", "melody", "m2"]);
@@ -362,7 +369,9 @@ describe("Harmonize works in the section on screen", () => {
     // written again in A after it was put there, B keeps what it has
     let q = addTrackTo(r.p, blockOf(r.p, 0), "h1");
     q = go(q, 0);
-    q = rewriteHarmony(q, C, "h1");
+    // (it was never written in A: ⟳ has nothing to write again there; Harmonize writes into it, empty there)
+    expect(rewriteHarmony(q, C, "h1")).toBe(q);
+    q = writeHarmony(q, C, { kind: "melody", from: "melody", option: "third-above" }, { id: "h1", isNew: false, name: "High harmony" }).p;
     const [a2, b2] = sections(q);
     expect(a2.layers?.h1?.melody?.notes.length).toBeGreaterThan(0);
     expect(b2.layers?.h1?.melody).toEqual(b.layers?.h1?.melody);

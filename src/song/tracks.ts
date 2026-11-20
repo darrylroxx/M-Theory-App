@@ -28,7 +28,8 @@ import { reviveTakes, type Take } from "./takes";
 import { migrateClips, reviveClips, type Clip } from "./clips";
 import { withoutTone } from "../audio/tone";
 import type { Mix } from "../audio/mix";
-import { HARMONY_OPTIONS } from "../theory/harmonize";
+import { HARMONY_OPTIONS, MIDDLE, type Shape } from "../theory/harmonize";
+import { outPrint } from "./prints";
 
 export type TrackKind = "chords" | "melody" | "drums" | "vocals";
 /** The kinds a page edits by bringing a track forward. */
@@ -80,7 +81,28 @@ export interface HarmonyMark {
    * from an older version, where those chords were unmuted by hand to hear both
    */
   along?: true;
+  /** the track it was written with in this section (a record from before has none: the track's `from`) */
+  from?: string;
+  /** the three controls it was written with here (none: all in the middle) */
+  shape?: Shape;
 }
+
+/** The track a harmony was written with in a section (by part id). */
+export const fromIn = (h: HarmonyOf, part: string): string => h.marks?.[part]?.from ?? h.from;
+/** The controls a harmony was written with in a section. */
+export const shapeIn = (h: HarmonyOf, part: string): Shape => h.marks?.[part]?.shape ?? MIDDLE;
+/**
+ * What a harmony wrote in a section, if it was written there (a song that got its sections after
+ * the harmony was written: its one section is the page it was written on). A record from long ago
+ * with no sections noted at all counts as written everywhere.
+ */
+export function markIn(p: Pick<Progression, "song">, h: HarmonyOf | undefined, part: string): HarmonyMark | undefined {
+  if (!h) return undefined;
+  if (!h.marks) return { src: "", out: "" };
+  return h.marks[part] ?? ((p.song?.parts.length ?? 1) === 1 ? h.marks[""] : undefined);
+}
+/** A first track's harmony record (the first chords or melody, written by Harmonize), by kind. */
+export type FirstHarmony = Partial<Record<"chords" | "melody", HarmonyOf>>;
 
 /**
  * What one track is in one section: its music there and how it sounds there. An added chords
@@ -107,15 +129,16 @@ export type Focus = Partial<Record<EditKind, string>>;
 export const isFirst = (id: string) => (EDIT_KINDS as string[]).includes(id);
 
 /** Every track of the song in order: the first three, then the extra ones as they were added. */
-export function allTracks(p: Pick<Progression, "tracks">): Track[] {
+export function allTracks(p: Pick<Progression, "tracks" | "firstHarmony">): Track[] {
+  const fh = p.firstHarmony;
   return [
-    { id: "chords", kind: "chords", name: "Chords" },
-    { id: "melody", kind: "melody", name: "Melody" },
+    { id: "chords", kind: "chords", name: "Chords", ...(fh?.chords ? { harmony: fh.chords } : {}) },
+    { id: "melody", kind: "melody", name: "Melody", ...(fh?.melody ? { harmony: fh.melody } : {}) },
     { id: "drums", kind: "drums", name: "Drums" },
     ...(p.tracks ?? []),
   ];
 }
-export const tracksOf = (p: Pick<Progression, "tracks">, kind: TrackKind) => allTracks(p).filter((t) => t.kind === kind);
+export const tracksOf = (p: Pick<Progression, "tracks" | "firstHarmony">, kind: TrackKind) => allTracks(p).filter((t) => t.kind === kind);
 
 /** The next free name for a new track of a kind: "Chords 2", "Vocal 1" … */
 export function nextName(p: Pick<Progression, "tracks">, kind: TrackKind): string {
@@ -263,7 +286,10 @@ const numberOf = (t: Track) => {
  * does not have yet), so the rows of the Track page line up; with none, a new row. Nothing is
  * copied: in this section it starts empty, on plain settings.
  */
-export function addTrackHere(p0: Progression, kind: EditKind, id: string): { p: Progression; track: Track; reused: boolean } {
+export function addTrackHere(p0: Progression, kind: EditKind, id: string): { p: Progression; track: Track; reused: boolean; existing?: boolean } {
+  // a track of this kind that is empty here already is the one to write in: it comes forward, and no second empty one is made
+  const ready = emptyHere(p0, kind)[0];
+  if (ready) return { p: (p0.focus?.[kind] ?? kind) === ready.id ? p0 : focusTrack(p0, kind, ready.id), track: ready, reused: true, existing: true };
   const p = normalize(p0);
   const free = (p.tracks ?? []).map((t, i) => ({ t, i })).filter(({ t }) => t.kind === kind && t.role !== "harmony" && !p.layers?.[t.id]);
   free.sort((a, b) => numberOf(a.t) - numberOf(b.t) || a.i - b.i);
@@ -271,6 +297,71 @@ export function addTrackHere(p0: Progression, kind: EditKind, id: string): { p: 
   const track: Track = reuse ?? { id, kind, name: nextName(p, kind) };
   const next: Progression = withoutTone({ ...p, tracks: reuse ? p.tracks : [...(p.tracks ?? []), track], layers: { ...p.layers, [track.id]: plainLayer(kind) } }, track.id);
   return { p: refocus(next, { ...p0.focus, [kind]: track.id }), track, reused: !!reuse };
+}
+
+/** What a track holds in the section on screen: an added track's part, or the first track's own music. */
+export function contentIn(p0: Progression, id: string, kind: EditKind): Layer | undefined {
+  const p = normalize(p0);
+  return id === kind ? takeLive(p, kind) : p.layers?.[id];
+}
+/** The tracks of a kind in the section on screen that hold nothing there: the one on screen first, then in the song's order. */
+export function emptyHere(p0: Progression, kind: EditKind): Track[] {
+  const p = normalize(p0);
+  const on = p0.focus?.[kind] ?? kind;
+  const list = tracksHere(p, kind).filter((t) => !hasMusic(contentIn(p, t.id, kind)));
+  return [...list.filter((t) => t.id === on), ...list.filter((t) => t.id !== on)];
+}
+/** The section on screen, by part id ("" with no sections yet). */
+const partOf = (p: Pick<Progression, "song">): string => {
+  const song = p.song;
+  return (song && song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId)?.id) ?? "";
+};
+/** A track's harmony record (the first tracks' included). */
+export const harmonyOf = (p: Pick<Progression, "tracks" | "firstHarmony">, id: string): HarmonyOf | undefined =>
+  id === "chords" || id === "melody" ? p.firstHarmony?.[id] : p.tracks?.find((t) => t.id === id)?.harmony;
+/** The song with a track's harmony record set (or taken off, with undefined), the first tracks' included. */
+export function withHarmony(p: Progression, id: string, h: HarmonyOf | undefined): Progression {
+  if (id === "chords" || id === "melody") {
+    const fh: FirstHarmony = { ...p.firstHarmony };
+    if (h) fh[id] = h;
+    else delete fh[id];
+    return { ...p, firstHarmony: Object.keys(fh).length ? fh : undefined };
+  }
+  return { ...p, tracks: (p.tracks ?? []).map((t) => (t.id !== id ? t : h ? { ...t, harmony: h } : (({ harmony: _, ...rest }) => rest)(t))) };
+}
+/** Does a track hold, in the section on screen, a harmony exactly as it was written there (nothing changed by hand)? */
+export function asWritten(p0: Progression, id: string, kind: EditKind): boolean {
+  const p = normalize(p0);
+  const m = markIn(p, harmonyOf(p, id), partOf(p));
+  return !!m && !!m.out && m.out === outPrint(contentIn(p, id, kind));
+}
+
+/** Where music for a kind goes in the section on screen (see `writeTarget`). */
+export interface WriteTarget {
+  id: string;
+  /** a new track, made only because no track of the kind here was free */
+  isNew: boolean;
+  name: string;
+  /** it writes over a harmony kept unchanged here */
+  over?: boolean;
+}
+/**
+ * Where an action that makes music for a kind writes, in the section on screen: into the track on
+ * screen when it is empty here, or holds a harmony exactly as it was written here (nothing made by
+ * hand is lost); else into another track of the kind that is empty here; only with none, a new
+ * track (`newId`, `newName`).
+ */
+export function writeTarget(p0: Progression, kind: "chords" | "melody", newId: string, newName: string): WriteTarget {
+  const p = normalize(p0);
+  const on = p0.focus?.[kind] ?? kind;
+  const cur = tracksHere(p, kind).find((t) => t.id === on);
+  if (cur) {
+    const empty = !hasMusic(contentIn(p, cur.id, kind));
+    if (empty || asWritten(p, cur.id, kind)) return { id: cur.id, isNew: false, name: cur.name, ...(empty ? {} : { over: true }) };
+  }
+  const other = emptyHere(p0, kind).find((t) => t.id !== on);
+  if (other) return { id: other.id, isNew: false, name: other.name };
+  return { id: newId, isNew: true, name: newName };
 }
 
 /**
@@ -329,13 +420,39 @@ export function removeTrack(p0: Progression, id: string): Progression {
   const song = p.song ? { ...p.song, parts: p.song.parts.map((x) => withoutTone({ ...x, layers: without(x.layers, id) }, id)) } : p.song;
   const mix = p.mix ? Object.fromEntries(Object.entries(p.mix).filter(([k]) => k !== id)) : undefined;
   // tracks written from it keep their notes, but can no longer be written again from it
-  const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => (t.harmony?.from === id ? forget(t, p.tracks ?? [], id) : t));
+  const tracks = (p.tracks ?? []).filter((t) => t.id !== id).map((t) => dropSource(t, p.tracks ?? [], id));
+  const firstHarmony = dropFirst(p.firstHarmony, id);
   // a re-harmonisation that went: the chords it played instead of are heard again (unless another still
   // replaces them, or they were muted by hand before it came)
   const gone = p.tracks?.find((t) => t.id === id);
   const target = gone && insteadTarget(gone, p.tracks ?? []);
   const freed = target && !tracks.some((t) => insteadTarget(t, tracks) === target) ? unmuteInstead(mix, target) : mix;
-  return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, layers: without(p.layers, id), song, mix: freed && Object.keys(freed).length ? freed : undefined }, id), focus);
+  return refocus(withoutTone({ ...p, tracks: tracks.length ? tracks : undefined, firstHarmony, layers: without(p.layers, id), song, mix: freed && Object.keys(freed).length ? freed : undefined }, id), focus);
+}
+
+/** A harmony record without the sections written from a track that went (undefined: nothing left). */
+function withoutSource(h: HarmonyOf, id: string): HarmonyOf | undefined {
+  if (!h.marks) return h.from === id ? undefined : h;
+  const keep = Object.entries(h.marks).filter(([part]) => fromIn(h, part) !== id);
+  if (!keep.length) return undefined;
+  if (keep.length === Object.keys(h.marks).length) return h;
+  // (every mark left names its own source when the track's own went)
+  return { ...h, from: h.from === id ? keep[0][1].from! : h.from, marks: Object.fromEntries(keep) };
+}
+/** A track that was written from a track that went: the sections written from it can no longer be written again. */
+function dropSource(t: Track, tracks: Track[], id: string): Track {
+  if (!t.harmony) return t;
+  const h = withoutSource(t.harmony, id);
+  return h === t.harmony ? t : h ? { ...t, harmony: h } : forget(t, tracks, id);
+}
+function dropFirst(fh: FirstHarmony | undefined, id: string): FirstHarmony | undefined {
+  if (!fh) return fh;
+  const out: FirstHarmony = {};
+  for (const k of ["chords", "melody"] as const) {
+    const h = fh[k] && withoutSource(fh[k]!, id);
+    if (h) out[k] = h;
+  }
+  return Object.keys(out).length ? out : undefined;
 }
 
 /** Does a chords option play instead of the chords it goes with (a re-harmonisation, or Best fit)? */
@@ -344,7 +461,10 @@ export function replacing(option: string | undefined): boolean {
   return !!opt && (!!opt.instead || opt.id === "fit");
 }
 /** The chords track a harmony written from `from` would play instead of: those chords, or (from a tune) the song's. */
-const targetOf = (h: HarmonyOf, tracks: Track[]): string => (h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? h.from : "chords");
+const targetOf = (h: HarmonyOf, tracks: Track[], part?: string): string => {
+  const from = part === undefined ? h.from : fromIn(h, part);
+  return from === "chords" || tracks.some((x) => x.id === from && x.kind === "chords") ? from : "chords";
+};
 
 /** The option a harmony track was written with in a section (by part id; "" is the page of an idea with no sections yet). */
 export const optionIn = (h: HarmonyOf, part: string): string => h.marks?.[part]?.option ?? h.option;
@@ -374,7 +494,8 @@ export function insteadHere(t: Track, tracks: Track[], part: string): string | u
   if (!h) return t.replaces && t.replacesIn?.includes(part) ? t.replaces : undefined;
   const m = h.marks?.[part];
   if (!m || m.along) return undefined;
-  return replacing(m.option ?? h.option) ? targetOf(h, tracks) : undefined;
+  const target = replacing(m.option ?? h.option) ? targetOf(h, tracks, part) : undefined;
+  return target === t.id ? undefined : target;
 }
 
 /**
@@ -483,6 +604,26 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
   return fixed.length ? fixed : undefined;
 }
 
+const level = (x: unknown): x is 0 | 1 | 2 => x === 0 || x === 1 || x === 2;
+function reviveShape(raw: unknown): Shape | undefined {
+  const s = raw as Partial<Shape> | null | undefined;
+  return s && typeof s === "object" && level(s.busy) && level(s.wide) && level(s.colour) ? { busy: s.busy, wide: s.wide, colour: s.colour } : undefined;
+}
+/** The first tracks' harmony records, loaded from storage (a source that is not a chords or melody track of the song is let go). */
+export function reviveFirstHarmony(raw: unknown, tracks: Track[] | undefined): FirstHarmony | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const out: FirstHarmony = {};
+  const ok = (id: string, self: string) => id !== self && (id === "chords" || id === "melody" || !!tracks?.some((t) => t.id === id && (t.kind === "chords" || t.kind === "melody")));
+  for (const k of ["chords", "melody"] as const) {
+    const h = reviveHarmony((raw as Record<string, unknown>)[k], k).harmony;
+    if (!h || !ok(h.from, k)) continue;
+    const marks = h.marks && Object.fromEntries(Object.entries(h.marks).filter(([, m]) => !m.from || ok(m.from, k)));
+    out[k] = { ...h, ...(marks && Object.keys(marks).length ? { marks } : { marks: undefined }) };
+    if (!out[k]!.marks) delete out[k]!.marks;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
 /** Where a harmony track came from, loaded from storage: dropped when it makes no sense. */
 function reviveHarmony(raw: unknown, kind: "chords" | "melody"): { harmony?: HarmonyOf } {
   const h = raw as Partial<HarmonyOf> | null | undefined;
@@ -492,7 +633,13 @@ function reviveHarmony(raw: unknown, kind: "chords" | "melody"): { harmony?: Har
   if (h.marks && typeof h.marks === "object")
     for (const [k, m] of Object.entries(h.marks))
       if (m && typeof m.src === "string" && typeof m.out === "string")
-        marks[k] = { src: m.src, out: m.out, ...(typeof m.option === "string" && HARMONY_OPTIONS.some((o) => o.id === m.option && o.kind === kind) ? { option: m.option } : {}), ...(m.along === true ? { along: true as const } : {}) };
+        marks[k] = {
+          src: m.src, out: m.out,
+          ...(typeof m.option === "string" && HARMONY_OPTIONS.some((o) => o.id === m.option && o.kind === kind) ? { option: m.option } : {}),
+          ...(m.along === true ? { along: true as const } : {}),
+          ...(typeof m.from === "string" && m.from ? { from: m.from } : {}),
+          ...(reviveShape(m.shape) ? { shape: reviveShape(m.shape) } : {}),
+        };
   return { harmony: { from: h.from, option: h.option, ...(Object.keys(marks).length ? { marks } : {}) } };
 }
 

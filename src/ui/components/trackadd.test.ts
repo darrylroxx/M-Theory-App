@@ -1,3 +1,4 @@
+import { DEFAULT_BEAT } from "../../audio/beats";
 /**
  * A track added on the Track page is added plainly and you stay on the Track page; its own page
  * shows it next time, a vocal track included (the Vocals page shows, and records onto, the one just added).
@@ -12,6 +13,11 @@ describe("adding a track on the Track page", () => {
     s = trackAdded(s, "vocals", "v1").s;
     expect(s.pane).toBe("track");
     expect(s.studio?.vocal).toBe("v1");
+    // Vocal 1 has nothing recorded yet: + uses it, no second empty one
+    const same = trackAdded({ ...s, pane: "track" }, "vocals", "v2");
+    expect(same.existing).toBe(true);
+    expect(same.s.progression.tracks?.filter((t) => t.kind === "vocals").map((t) => t.id)).toEqual(["v1"]);
+    s = { ...s, progression: { ...s.progression, tracks: s.progression.tracks!.map((t) => (t.id === "v1" ? { ...t, takes: [{ id: "k" } as never] } : t)) } };
     const r = trackAdded({ ...s, pane: "track" }, "vocals", "v2");
     expect(r.track.name).toBe("Vocal 2");
     expect(r.s.pane).toBe("track");
@@ -23,7 +29,12 @@ describe("adding a track on the Track page", () => {
     const s: AppState = { ...DEFAULT_STATE, studio: { countIn: 2, monitor: "effects", vocal: "old" } };
     expect(trackAdded(s, "vocals", "v9").s.studio).toEqual({ countIn: 2, monitor: "effects", vocal: "v9" });
     // another kind leaves the vocal track chosen alone, and is brought forward on its own page
-    const d = trackAdded({ ...s, pane: "track" }, "drums", "d2").s;
+    // (the first drums track is empty in a new idea: + brings it forward instead of making a second)
+    const d0 = trackAdded({ ...s, pane: "track" }, "drums", "d2");
+    expect(d0.existing).toBe(true);
+    expect(d0.track.id).toBe("drums");
+    const full: AppState = { ...s, progression: { ...s.progression, beat: { ...DEFAULT_BEAT, on: true, rows: { ...DEFAULT_BEAT.rows, kick: "1000100010001000" } } } };
+    const d = trackAdded({ ...full, pane: "track" }, "drums", "d2").s;
     expect(d.pane).toBe("track");
     expect(d.studio).toBe(s.studio);
     expect(d.progression.focus?.drums).toBe("d2");
