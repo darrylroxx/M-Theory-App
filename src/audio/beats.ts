@@ -472,6 +472,8 @@ export function copyBar(beat: Beat, from: number, to: number): Beat {
 }
 
 export const levelAt = (rows: Record<DrumId, string>, id: DrumId, step: number): StepLevel => (Number(rows[id]?.[step] ?? 0) || 0) as StepLevel;
+/** A step as it is heard: a drum muted in its kit plays nothing (what plays it, and what draws it, both ask this). */
+export const heardAt = (b: Pick<Beat, "rows" | "mutes">, id: DrumId, step: number): StepLevel => (b.mutes?.includes(id) ? 0 : levelAt(b.rows, id, step));
 
 export function setStep(beat: Beat, id: DrumId, step: number, level: StepLevel): Beat {
   const len = lenOf(beat);
@@ -543,8 +545,7 @@ export function beatHitsBetween(b: Beat, from: number, to: number): DrumHit[] {
   for (let n = first; n < end; n++) {
     const step = n % len;
     for (const id of DRUM_IDS) {
-      if (b.mutes?.includes(id)) continue;
-      const lv = levelAt(b.rows, id, step);
+      const lv = heardAt(b, id, step);
       if (lv) out.push({ beat: stepBeat(n, b.div, b.swing), id, velocity: STEP_VELOCITY[lv] });
     }
   }

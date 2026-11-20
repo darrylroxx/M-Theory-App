@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, reviveTakes, sameSound, soundTag, toggled, type Recorded, type Take } from "./takes";
+import { activeTake, barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, renudge, renudgeTracks, reviveTakes, sameSound, soundTag, toggled, type Recorded, type Take } from "./takes";
 
 let n = 0;
 const id = () => `t${++n}`;
@@ -42,6 +42,30 @@ describe("takes", () => {
     expect(activeTake(takes, "g")?.n).toBe(3);
     expect(activeTake(takes, "g", takes[0].id)?.n).toBe(1);
     expect(groupsOf(takes)).toEqual(["g"]);
+  });
+
+  it("a change of the timing nudge moves the takes already recorded, by the change, each from the nudge it was cut with", () => {
+    // cut with no nudge, then the nudge set to 120 ms: every pass moves 5760 frames (at 48 kHz) and keeps its length
+    const takes = cutTakes(rec(300 + 96000 + 192000 * 2), { group: "g", at, id });
+    const moved = renudge(takes, 0, 120);
+    expect(moved.map((t) => t.start)).toEqual([96300 + 5760, 96300 + 192000 + 5760]);
+    expect(moved.map((t) => t.frames)).toEqual(takes.map((t) => t.frames));
+    // a recording made after it is cut with it once; turned back to 0, every take is where it was cut with none
+    const later = cutTakes(rec(300 + 96000 + 192000), { group: "h", at, nudge: 5760, id });
+    const back = renudge([...moved, ...later], 120, 0);
+    expect(back.map((t) => t.start)).toEqual([96300, 96300 + 192000, 96300]);
+    // a take of another rate moves by as much time; nothing changed, nothing moves (the same list)
+    expect(renudge([{ ...takes[0], rate: 44100, nudge: 0 }], 0, 120)[0].start).toBe(96300 + 5292);
+    expect(renudge(moved, 120, 120)).toBe(moved);
+    // a take saved before the nudge was kept on it was cut with the nudge as it was then
+    const { nudge: _, ...old } = takes[0];
+    expect(renudge([{ ...old, start: 96300 + 960 }], 20, 120)[0]).toMatchObject({ start: 96300 + 5760, nudge: 5760 });
+    // a song's tracks: only those with takes change
+    const tracks = [{ id: "v", takes }, { id: "c" }];
+    const out = renudgeTracks(tracks, 0, 120)!;
+    expect(out[1]).toBe(tracks[1]);
+    expect(out[0].takes?.[0].start).toBe(96300 + 5760);
+    expect(renudgeTracks(tracks, 0, 0)).toBe(tracks);
   });
 
   it("takes survive a reload; broken ones are dropped", () => {

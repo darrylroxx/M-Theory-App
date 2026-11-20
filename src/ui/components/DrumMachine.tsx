@@ -64,7 +64,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, opened } = useApp();
   const mine = state.myBeats;
   const myKits = state.myKits;
   const current = findPattern(beat.patternId, mine);
@@ -209,7 +209,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     setEdit(null);
     setBar(0);
     setStart(0);
-  }, [state.ideaId, section, fresh, track, meter]);
+  }, [state.ideaId, opened, section, fresh, track, meter]);
   // a drum soloed in one track's kit is not carried into the next track's, nor off this page: it is for
   // listening while working here, and no other page shows it (the Track page would play one drum while
   // drawing them all)

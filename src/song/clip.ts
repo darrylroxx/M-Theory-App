@@ -75,7 +75,7 @@ export interface DrumClip extends ClipBase {
 }
 /** A whole section. */
 export interface SectionClip extends ClipBase {
-  /** the block and section it was copied from, and the idea (null = one not saved yet) */
+  /** the block and section it was copied from, and the idea (see ui/openidea: null = one not saved yet, from before ideas not saved had an id) */
   block: string;
   part?: string;
   idea: string | null;
@@ -186,6 +186,16 @@ export function copySection(p0: Progression, blockId: string, key: Key, idea: st
     return [{ ...t, takes, active, clips }];
   });
   return clone({ from: sec.label, key, block: sec.blockId, part: sec.partId || undefined, idea, meter: sec.meter ?? sigOf(p), bars: barsOr(sec.bars), chords: sec.chords, melody: sec.melody, settings: settingsOf(sec), layers: sec.layers, tracks, ...(sec.tones && Object.keys(sec.tones).length ? { tones: sec.tones } : {}), whole: true });
+}
+
+/**
+ * Is a row the section a copy was taken from: the very block (`exact`), or any block of the same
+ * section? Only in the idea it was copied in (`idea`: see ui/openidea), as rows in another idea
+ * can be called the same.
+ */
+export function clipSource(c: SectionClip | undefined, idea: string | null, row: { blockId: string; partId: string }, exact = false): boolean {
+  if (!c || c.idea !== idea) return false;
+  return c.block === row.blockId || (!exact && !!c.part && c.part === row.partId);
 }
 
 /** Is anything written in a section: chords, notes, drums with a hit, recordings? (Pasting over it asks first.) */

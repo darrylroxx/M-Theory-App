@@ -7,7 +7,7 @@ import { hearAlone, hearingAlone, onAlone as onAloneChange, stopAlone } from "..
 import { Quiet, engineWanted, freeInterface, holdInterface } from "../../audio/handoff";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../audio/vocalfx";
 import { audioDevices, engineBacking, engineClose, engineOpen, engineSet, engineStart, engineStop, fxRender, isDesktop, type AudioHost, type EngineOpened, type EngineStatus } from "../../desktop";
-import { barsInto, clickPlan, cutTakes, groupsOf, passAt, passToMark, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
+import { barsInto, clickPlan, cutTakes, groupsOf, nudgeFrames, passAt, passToMark, renudgeTracks, sameSound, soundTag, toggled, type Recorded, type Take } from "../../song/takes";
 import { addRecording, chooseTake, clipsOf, sameSpot, compClip, deleteClip, deleteTake, inUse, moveClip, placedClips, popUndo, removeRecording, splitClip, trimClip, type Clip, type UndoStep } from "../../song/clips";
 import { TakeLane, type LaneBar, type LaneRow } from "./TakeLane";
 import { addTrack, renameTrack, tracksOf, type Track } from "../../song/tracks";
@@ -15,6 +15,7 @@ import { newId, useApp, type Studio } from "../state";
 import { setLive } from "../live";
 import { EqGraph } from "./EqGraph";
 import { EarIcon } from "../icons";
+import { MixMark } from "./MixMark";
 import { BarsControl, useBarsView } from "./BarsControl";
 import { sigName } from "../../song/meter";
 import { sectionSig } from "../../song/unity";
@@ -105,6 +106,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   // which vocal track is shown (the Frame and Track pages can open one)
   const sel = studio.vocal ?? null;
   const setSel = (id: string) => setStudio({ vocal: id });
+  /** The timing nudge: the takes already in the song (and in a section copied) move with it, and every recording after it is cut with it. */
+  const setNudge = (ms: number) =>
+    set((s) => {
+      const was = s.studio?.nudge ?? 0;
+      const tracks = renudgeTracks(s.progression.tracks, was, ms);
+      const sec = s.clip?.section;
+      const copied = sec && renudgeTracks(sec.tracks, was, ms);
+      return {
+        ...s,
+        studio: { ...s.studio, nudge: ms },
+        progression: tracks === s.progression.tracks ? s.progression : { ...s.progression, tracks },
+        clip: sec && copied !== sec.tracks ? { ...s.clip, section: { ...sec, tracks: copied ?? [] } } : s.clip,
+      };
+    });
   const track = vocals.find((t) => t.id === sel) ?? vocals[0];
   // a sound saved before colours, spaces and echo types existed gets their defaults
   const fx: VocalFx = useMemo(() => reviveFx(track?.fx) ?? FX_DEFAULT, [track?.fx]);
@@ -388,7 +403,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
    */
   const save = (r: Recorded, c: NonNullable<ReturnType<typeof claim>>, used: VocalFx, lead = "") => {
     const group = newId();
-    const nudge = Math.round(((studio.nudge ?? 0) / 1000) * r.rate);
+    const nudge = nudgeFrames(studio.nudge ?? 0, r.rate);
     // with no vocal sound on it (no room for that file), a take plays dry and "Apply sound" is offered
     const sound = r.wet === r.dry ? "" : soundTag(used);
     // the tempo, key and time signature it was sung in
@@ -743,6 +758,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
           {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
           <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
         </span>
+        {track && <MixMark id={track.id} name={track.name} />}
         <span className="spacer" />
         {laneBars.length > 0 && <BarsControl />}
       </div>
@@ -831,7 +847,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
               <details className="small">
                 <summary>On the interface</summary>
                 {CHECKS.map((c) => <label key={c.id} className="toggle" title={c.hint}><input type="checkbox" checked={!!checks[c.id]} onChange={(e) => setStudio({ checks: { ...checks, [c.id]: e.target.checked } })} /> {c.label}</label>)}
-                <label className="vc-mini" title="Takes are lined up using the delay the driver reports. If they sound early or late, move them here">Timing nudge <input type="number" step={0.5} value={studio.nudge ?? 0} onChange={(e) => setStudio({ nudge: Number(e.target.value) || 0 })} /> ms</label>
+                <label className="vc-mini" title="Takes are lined up using the delay the driver reports. If they sound late, raise this; early, lower it. The takes already in this song move too">Timing nudge <input type="number" step={0.5} value={studio.nudge ?? 0} onChange={(e) => setNudge(Number(e.target.value) || 0)} /> ms</label>
               </details>
             </div>
 

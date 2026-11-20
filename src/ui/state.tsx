@@ -11,15 +11,16 @@ import { isLayer, type LayerKind } from "../canvas/layers";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
 import { strum } from "../audio/synth";
-import { easyVoicing, voicingsFor } from "../guitar/arrange";
+import { stopAlone } from "../audio/takeplay";
+import { chordShape } from "../guitar/arrange";
 import { getTuning, type Tuning } from "../guitar/tunings";
-import { fretsFromId, voicingFromFrets, type Voicing } from "../guitar/voicings";
-import { getChordType } from "../theory/chords";
+import type { Voicing } from "../guitar/voicings";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, reviveSong, settle, toneIdsIn, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { reidea } from "./openidea";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
@@ -156,6 +157,8 @@ export interface AppState {
   canvas?: CanvasPrefs;
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
+  /** The idea not saved yet that is open, told apart from the next one (see ./openidea) */
+  draft?: string;
   /** Ideas that were deleted, and when, so other devices delete them too */
   tombs?: Record<string, number>;
   /** What was last copied on the Rhythm, Melody and Drums pages (one clipboard each), and the last whole section copied on the Frame page */
@@ -312,6 +315,12 @@ interface Ctx {
   openIdea: (id: string) => void;
   /** Start a blank idea (keeps the key) */
   newIdea: () => void;
+  /**
+   * Goes up each time an idea is opened or a new one started: what belongs to the idea on screen (a
+   * loop, an undo) is let go when it changes. (ideaId cannot tell: it stays null from one idea not yet
+   * saved to a new one, and every idea without sections calls its one section "".)
+   */
+  opened: number;
   renameIdea: (id: string, name: string) => void;
   deleteIdea: (id: string) => void;
   /** Add ideas from a backup file; returns how many were new */
@@ -395,16 +404,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const { capo, avoidBarre, tuningId } = state.settings;
   const shapes = state.shapes;
   const shapeOf = useCallback(
-    (ref: ChordRef, slotVoicingId?: string) => {
-      const id = slotVoicingId ?? shapes[shapeKey(ref, tuningId, capo)];
-      if (id) {
-        const found = voicingsFor(ref, tuning, capo).find((v) => v.id === id);
-        if (found) return found;
-        const frets = fretsFromId(id);
-        if (slotVoicingId && frets.length === tuning.notes.length) return voicingFromFrets(frets, pc(ref.root), getChordType(ref.typeId), tuning, capo);
-      }
-      return easyVoicing(ref, tuning, capo, avoidBarre);
-    },
+    // (a slot's shape is kept as frets: with another capo or tuning on, one that no longer makes its chord gives way)
+    (ref: ChordRef, slotVoicingId?: string) => chordShape(ref, tuning, capo, avoidBarre, slotVoicingId, shapes[shapeKey(ref, tuningId, capo)]),
     [shapes, tuning, tuningId, capo, avoidBarre],
   );
   const setShape = useCallback(
@@ -458,7 +459,9 @@ export function AppProvider({ children }: { children: ReactNode }) {
         if (open && !asNew) return { ...s, saved: s.saved.map((i) => (i.id === open.id ? { ...i, ...snap, updatedAt: at } : i)) };
         const id = newId();
         const name = asNew && open ? `${open.name} copy` : autoName(s.key, s.saved);
-        return { ...s, ideaId: id, saved: [{ id, name, ...snap, savedAt: at, updatedAt: at }, ...s.saved] };
+        // (saved for the first time, it is the same idea: a copy is another one)
+        const now = asNew && open ? { ...s, ideaId: id } : reidea(s, id);
+        return { ...now, saved: [{ id, name, ...snap, savedAt: at, updatedAt: at }, ...s.saved] };
       });
       return update ? "updated" : "new";
     },
@@ -467,8 +470,12 @@ export function AppProvider({ children }: { children: ReactNode }) {
   const [recordingTo, setRecordingTo] = useState<string | null>(null);
   const recRef = useRef(recordingTo);
   recRef.current = recordingTo;
+  const [opened, setOpened] = useState(0);
   const openIdea = useCallback((id: string) => {
     if (recRef.current) return toast("Stop recording first");
+    // a take heard alone belongs to the idea it was recorded in: it stops with it
+    stopAlone();
+    setOpened((n) => n + 1);
     setState((s) => {
       const it = reviveIdea(s.saved.find((i) => i.id === id));
       if (!it) return s;
@@ -478,12 +485,15 @@ export function AppProvider({ children }: { children: ReactNode }) {
   }, [toast]);
   const newIdea = useCallback(() => {
     if (recRef.current) return toast("Stop recording first");
-    setState((s) => ({ ...s, ideaId: null, progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
+    stopAlone();
+    setOpened((n) => n + 1);
+    setState((s) => ({ ...s, ideaId: null, draft: newId(), progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
     openSheet(null);
   }, [toast]);
   const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
   const deleteIdea = useCallback(
-    (id: string) => setState((s) => ({ ...s, ideaId: s.ideaId === id ? null : s.ideaId, saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
+    // (the idea open stays on screen, not saved)
+    (id: string) => setState((s) => ({ ...(s.ideaId === id ? reidea(s, null, newId()) : s), saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
     [],
   );
   const importIdeas = useCallback(
@@ -518,7 +528,8 @@ export function AppProvider({ children }: { children: ReactNode }) {
         remote.forEach((r) => known.current.set(r.id, r.deleted ? -r.updatedAt : r.updatedAt));
         setState((s) => {
           const m = mergeIdeas(s.saved, s.tombs ?? {}, remote);
-          return { ...s, saved: m.ideas, tombs: m.tombs, ideaId: m.ideas.some((i) => i.id === s.ideaId) ? s.ideaId : null };
+          const gone = !!s.ideaId && !m.ideas.some((i) => i.id === s.ideaId);
+          return { ...(gone ? reidea(s, null, newId()) : s), saved: m.ideas, tombs: m.tombs };
         });
         cloudRef.current = c;
         setCloud("synced");
@@ -555,7 +566,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state.saved, state.tombs, cloud]);
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, opened, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>

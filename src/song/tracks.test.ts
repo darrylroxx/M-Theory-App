@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BEAT, kitOfBeat, kitSig } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { addNewSection, commit, ensureSong, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
-import { PLAIN_KIT, PLAIN_STYLE, addTrack, addTrackHere, allTracks, drumsOf, focusTrack, nextName, normalize, refocus, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
+import { PLAIN_KIT, PLAIN_STYLE, addTrack, addTrackHere, allTracks, drumsOf, firstLayer, focusTrack, nextName, normalize, refocus, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
 import { transposeRef } from "../theory/keys";
 import { transposeMelody, type Melody } from "./melody";
 
@@ -260,5 +260,36 @@ describe("tracks", () => {
     p = { ...p, tones: { chords: { inst: "piano" }, c2: { inst: "synth" } } };
     const q = removeTrack(p, "c2");
     expect(q.tones).toEqual({ chords: { inst: "piano" } });
+  });
+
+  it("the first track of a kind is never stood in for by the added track its page has brought forward", () => {
+    // a song whose first tracks never had a sound or a beat set: the defaults, until they are set
+    let p = base(["G"]);
+    p = addTrack(p, "chords", "c2").p;
+    p = addTrack(p, "melody", "m2").p;
+    p = addTrack(p, "drums", "d2").p;
+    // the added tracks get sounds and a beat of their own, on the pages
+    const d2 = { ...DEFAULT_BEAT, on: true, kit: "909" as const, rows: { ...DEFAULT_BEAT.rows, kick: "3000300030003000" } };
+    p = { ...p, sound: { voice: "wire", space: 0.9 }, tuneSound: { voice: "bray" }, beat: d2 };
+    expect(p.focus).toEqual({ chords: "c2", melody: "m2", drums: "d2" });
+    expect(firstLayer(p, "chords").sound).toBeUndefined();
+    expect(firstLayer(p, "chords").chords?.map((c) => c.ref.root)).toEqual(["G"]);
+    expect(firstLayer(p, "melody").tuneSound).toBeUndefined();
+    expect(firstLayer(p, "drums").beat).toBeUndefined();
+    // each is what the first track has once everything is back in its place
+    const n0 = normalize(p);
+    expect(n0.sound).toBeUndefined();
+    expect(n0.tuneSound).toBeUndefined();
+    expect(n0.beat).toBeUndefined();
+    // with the first tracks on their pages, it is what the page holds
+    const back = normalize({ ...n0, sound: { space: 0.3 }, beat: { ...DEFAULT_BEAT, on: true } });
+    expect(firstLayer(back, "chords").sound).toEqual({ space: 0.3 });
+    expect(firstLayer(back, "drums").beat?.on).toBe(true);
+    // and it stays the same when an added track is brought forward again
+    const again = focusTrack(focusTrack(back, "chords", "c2"), "drums", "d2");
+    expect(again.sound).toEqual({ voice: "wire", space: 0.9 });
+    expect(firstLayer(again, "chords").sound).toEqual({ space: 0.3 });
+    expect(firstLayer(again, "drums").beat?.on).toBe(true);
+    expect(firstLayer(again, "drums").beat?.kit).toBe(DEFAULT_BEAT.kit);
   });
 });

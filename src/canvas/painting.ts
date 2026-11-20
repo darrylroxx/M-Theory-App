@@ -143,7 +143,7 @@ export class Artist {
   private now = -1;
   /** where marks go */
   put: (s: Stamp, layer: LayerKind) => void = () => {};
-  /** how many marks have gone down */
+  /** how many marks have gone down (on the canvas as it is: none since it was cleared) */
   made = 0;
   feeling: Feeling = new Mood().feeling;
 
@@ -282,6 +282,7 @@ export class Artist {
   clear() {
     this.budget.clear();
     this.run++;
+    this.made = 0;
     this.lift();
   }
 

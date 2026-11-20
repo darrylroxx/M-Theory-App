@@ -154,6 +154,16 @@ const without = (o: Layers | undefined, key: string): Layers | undefined => {
   return Object.keys(rest).length ? rest : undefined;
 };
 
+/**
+ * The first track of a kind as it is, also while its page has an added track of that kind brought
+ * forward: the first's things then wait aside in `layers` (empty where it never had any of its own),
+ * and the page holds the added track's, which must never stand in for them.
+ */
+export function firstLayer(p: Progression, kind: EditKind): Layer {
+  const id = p.focus?.[kind];
+  return id && id !== kind ? p.layers?.[kind] ?? {} : takeLive(p, kind);
+}
+
 /** Is some page editing a track other than the first of its kind? */
 export const focused = (p: Progression): boolean => EDIT_KINDS.some((k) => !!p.focus?.[k] && p.focus[k] !== k);
 

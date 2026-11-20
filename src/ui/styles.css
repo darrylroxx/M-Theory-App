@@ -626,23 +626,30 @@ button.dm-strip-name:hover { color: var(--accent); }
 .topbar { position: sticky; top: 0; }
 .topbar-inner { height: 52px; padding-block: 0; }
 .tabs { flex: 0 1 auto; }
-.tab { padding: 7px 18px; }
+.tab { padding: 7px 18px; white-space: nowrap; }
+/* short of room on one line (Saved ✓, a count by Ideas), the name gives way first: nothing is pushed off the side */
+.brand { min-width: 0; }
+.brand-mark { flex: none; }
+.brand span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 /* play, on every page: it sits under the page tabs and stays there */
 .song-frame.transport { top: var(--bar-h); flex-direction: row; align-items: center; gap: 8px; padding: 7px 10px; margin-top: -16px; }
 .transport .songbar { flex: 1; min-width: 0; }
 .transport .sec .sec-name { cursor: pointer; }
 .sf-sum { flex: 0 0 auto; height: 34px; padding: 0 10px; border-radius: 10px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.8rem; font-weight: 750; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .sf-sum:hover { border-color: var(--accent); color: var(--text); }
-@media (max-width: 620px) {
-  /* phone: the name and the buttons scroll away; the four pages and play stay */
+@media (max-width: 960px) {
+  /* too narrow for the name, the seven pages and the buttons on one line (a phone either way up, a tablet held
+     upright): the pages get a line of their own; the name and the buttons scroll away, the pages and play stay */
   :root { --bar-h: 45px; }
   .topbar { top: -46px; }
-  .topbar-inner { height: auto; flex-wrap: wrap; gap: 0 6px; padding-inline: 10px; }
+  .topbar-inner { height: auto; flex-wrap: wrap; gap: 0 6px; padding-left: max(10px, env(safe-area-inset-left, 0px)); padding-right: max(10px, env(safe-area-inset-right, 0px)); }
   .topbar-inner > * { margin-block: 5px; }
   .brand { margin-right: auto; height: 36px; }
   .tabs { order: 9; flex: 1 1 100%; margin: 0 0 5px; height: 39px; border-radius: 12px; padding: 3px; }
   /* each tab as wide as its name plus an even share of the rest, so the gaps between names are even */
   .tab { flex: 1 1 auto; padding: 0; border-radius: 9px; font-size: 0.92rem; font-weight: 800; }
+}
+@media (max-width: 620px) {
   .song-frame.transport { padding: 6px 8px; margin-inline: -4px; }
   .sf-mode button { padding-inline: 8px; font-size: 0.8rem; }
   .sf-sum { display: none; }
@@ -887,6 +894,10 @@ button.dm-strip-name:hover { color: var(--accent); }
 .tv-ms { width: 24px; height: 22px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--card-2); font-size: 0.7rem; font-weight: 900; color: var(--muted); padding: 0; }
 .tv-ms.on { background: var(--tension, #c0392b); border-color: transparent; color: #fff; }
 .tv-ms.solo.on { background: var(--fifth, #e2b33c); color: #14161a; }
+/* the same M or S beside the track a page edits, while the Track page keeps it from being heard */
+.mix-mark { flex: none; width: 30px; height: 30px; border-radius: 8px; font-size: 0.78rem; }
+.mix-mark.solo:not(.on) { border-color: var(--fifth, #e2b33c); color: var(--fifth, #e2b33c); }
+@media (pointer: coarse) { .mix-mark { width: 36px; height: 36px; } }
 .tv-vol { width: 100%; height: 16px; margin: 0; }
 .tv-db { font-size: 0.68rem; color: var(--muted); min-width: 34px; text-align: right; }
 .tv-scroll { flex: 1; overflow-x: auto; overflow-y: hidden; position: relative; }
@@ -1155,6 +1166,11 @@ button.dm-strip-name:hover { color: var(--accent); }
   .clip-bar.many { flex-wrap: wrap; row-gap: 8px; }
   .clip-bar.many .clip-tracks { flex: 1 1 calc(100% - 40px); }
   .clip-bar.many .bars-ctl { margin-left: auto; }
+  /* the M or S beside the track stays beside it: the tools go under them */
+  .clip-bar.many:has(.mix-mark) .clip-tracks { flex-basis: calc(100% - 82px); }
+  .clip-bar:not(.many):has(.mix-mark) { flex-wrap: wrap; row-gap: 4px; }
+  .clip-bar:not(.many):has(.mix-mark) .spacer { flex-basis: 100%; height: 0; }
+  .clip-bar:not(.many):has(.mix-mark) .bars-ctl { margin-left: auto; }
   .dm-bar > .dm-tabrow { flex-basis: 100%; }
   .bg-steps, .mg-steps { gap: 10px; }
   .bg-bar { gap: 2px; min-width: calc(var(--steps) * var(--cell) + (var(--steps) - 1) * 2px); }

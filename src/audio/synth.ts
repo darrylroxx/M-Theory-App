@@ -451,6 +451,8 @@ export class ProgressionPlayer {
   position(): { index: number; beat: number; gen: number } | null {
     if (!this.playing) return null;
     const now = getAudio().currentTime;
+    // (a song that does not go round: once its last beat has sounded, nothing is)
+    if (this.endAt !== null && now >= this.endAt) return null;
     let at: Anchor | null = null;
     for (const s of this.spans) if (s.time <= now) at = s;
     return at ? { index: at.index, beat: at.beat - at.origin + (now - at.time) / at.spb, gen: at.gen } : null;
@@ -627,12 +629,21 @@ export class ProgressionPlayer {
     const horizon = c.currentTime + 0.25;
     const spb = 60 / this.bpm;
     while (this.playing && this.nextTime < horizon) {
+      if (this.endAt !== null) {
+        // the end is booked (it is a moment ahead): the player plays on until it comes (see `tick`), and an
+        // edit made in that last moment that goes on past it (a loop set, a list waiting to take over, more
+        // of the song) still has the music go on, in time
+        const on = this.pending || (this.loop && this.items.length) || this.nextIndex < this.items.length;
+        if (!on || c.currentTime >= this.endAt) break;
+        this.endAt = null;
+        this.marks = this.marks.filter((m) => m.index !== -1);
+      }
       if (this.pending && this.atBoundary()) this.takeOver();
       if (this.nextIndex >= this.items.length) {
         if (!this.loop || !this.items.length) {
+          // (what is booked plays out: the player is over when the end comes, not when it is booked)
           this.endAt = this.nextTime;
           this.marks.push({ time: this.nextTime, index: -1, gen: this.gen });
-          this.playing = false;
           break;
         }
         this.nextIndex = 0;
