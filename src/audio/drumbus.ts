@@ -113,8 +113,12 @@ interface Desk {
   applied: Partial<BeatFx> & { bpm?: number };
   mixed: Map<DrumId, string>;
   openHat: Ringing | null;
+  /** how much the other tracks duck under its kick: as set now, and from when (a section's own kit starts where the section does) */
   pump: number;
+  pumps: { at: number; pump: number }[];
   sizeTimer?: number;
+  /** its saturation's change, waiting for the moment its section starts (live) */
+  satTimer?: number;
   /** which of the two rooms is heard, and when the other has faded out (free to load) */
   verbOn: 0 | 1;
   verbFree: number;
@@ -272,7 +276,7 @@ function getBus(track = FIRST_DRUMS): Bus {
     channels[id] = { input, pan, space, echo: send };
   }
   const bus: Bus = { dry, sat, verbs, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
-  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbFree: 0 });
+  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbFree: 0 });
   return bus;
 }
 
@@ -339,7 +343,9 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
     to(b.bed.gain, fx.noise === "off" ? 0 : Math.pow(10, (-66 + 36 * fx.noiseAmt) / 20) * BED_LEVEL[fx.noise], 0.05);
     if (fx.noise !== was.noise && desk.bedOn) startBed(desk, fx.noise, t);
   }
+  // the pump a kick gives is the one set where that kick is (an earlier section's last kicks keep theirs)
   desk.pump = fx.pump;
+  desk.pumps = [...desk.pumps.filter((x) => x.at < t && x.at > c.currentTime - 2), { at: t, pump: fx.pump }];
   if (fx.echo !== was.echo) {
     if (fx.echo > 0) b.echoFeed.on();
     else b.echoFeed.off(t);
@@ -350,7 +356,15 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
     const beats = ECHO_TIMES.find((e) => e.id === fx.echoTime)?.beats ?? 0.75;
     to(b.echo.delayTime, Math.min(1.9, (beats * 60) / bpm), 0.05);
   }
-  if (fx.grit !== was.grit || fx.color !== was.color || fx.blend !== was.blend) b.sat.set(fx.color, fx.grit, fx.blend, quarter(SAT_DB[fx.color], fx.grit));
+  if (fx.grit !== was.grit || fx.color !== was.color || fx.blend !== was.blend) {
+    // (its curve cannot be booked ahead: it changes exactly where the section starts, as the room does)
+    const sat = () => b.sat.set(fx.color, fx.grit, fx.blend, quarter(SAT_DB[fx.color], fx.grit));
+    window.clearTimeout(desk.satTimer);
+    if (later <= 0.001) sat();
+    else if (isRendering()) {
+      if (!atRenderTime(c, t, sat)) sat();
+    } else desk.satTimer = window.setTimeout(sat, later * 1000);
+  }
   if (fx.tape !== was.tape) {
     if (fx.tape > 0) b.tapeFeed.on();
     else b.tapeFeed.off(t);
@@ -614,7 +628,8 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   live.add(r);
   src.onended = () => live.delete(r);
   // (a kick that cannot be heard, muted or soloed out, pumps nothing)
-  if (id === "kick" && desk.pump > 0 && onKick && levelOf(track) > 0) onKick(t, desk.pump * velocity);
+  const pump = [...desk.pumps].reverse().find((x) => x.at <= t + 1e-6)?.pump ?? desk.pump;
+  if (id === "kick" && pump > 0 && onKick && levelOf(track) > 0) onKick(t, pump * velocity);
 }
 
 /** Play one step of a track's grid for a drum, respecting mute, solo and the "human" setting. */

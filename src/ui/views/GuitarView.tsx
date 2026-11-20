@@ -3,8 +3,8 @@ import { DEFAULT_BEAT, applyPattern, type Beat, type BeatPattern } from "../../a
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepTracks, playNote, playSequence, prepFor, prepareNotes, readyTracks, renderSong, setHarpSound, setTones, setTuneSound, strum, warmTrack } from "../../audio/synth";
-import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone } from "../../audio/tone";
+import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepSlots, playNote, playSequence, prepFor, prepareNotes, readySlots, renderSong, slotsOf, strum, warmSlot } from "../../audio/synth";
+import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone, type Tones } from "../../audio/tone";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
 import { setHome } from "../../audio/trackplay";
@@ -347,20 +347,21 @@ export function GuitarView() {
   trayRef.current = trayMidi;
   const nChords = useRef(0);
   nChords.current = prog.chords.length;
-  const editChords = prog.focus?.chords && prog.focus.chords !== "chords" ? prog.focus.chords : null;
   const editTune = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : null;
-  // (while an added track is edited the first track's sound waits aside: its voice keeps it, never the edited track's)
-  const firstSound = editChords ? prog.layers?.chords?.sound : prog.sound;
-  const firstTune = editTune ? prog.layers?.melody?.tuneSound : prog.tuneSound;
-  // (a track's sound is the same in every section: a change is heard at once, whichever section is playing)
   const playingRef = useRef(false);
-  useEffect(() => setHarpSound(reviveSound(firstSound), prog.bpm), [firstSound, prog.bpm]);
   // the melody has a harp of its own, with its own effects
   const tuneSound = useMemo(() => reviveSound(prog.tuneSound), [prog.tuneSound]);
-  useEffect(() => setTuneSound(reviveSound(firstTune), prog.bpm), [firstTune, prog.bpm]);
-  // a track added on the Track page is heard on its own harp while it is being edited
-  useEffect(() => hearOn("chord", editChords ? { id: editChords, sound } : null), [editChords, sound]);
-  useEffect(() => hearOn("melody", editTune ? { id: editTune, sound: tuneSound } : null), [editTune, tuneSound]);
+  const tuneId = editTune ?? "melody";
+  const tuneTone = toneOf(prog, tuneId);
+  // The song's voices: one for every way a track is played (each section has its own, see audio/synth's
+  // slots), made ready ahead; a track that is removed lets go of its voices and its drum desk (they fade out)
+  const trackIds = (heard.tracks ?? []).map((t) => t.id).join("|");
+  const slots = useMemo(() => slotsOf(plan.items), [plan.items]);
+  useEffect(() => keepSlots(slots, trackIds ? trackIds.split("|") : []), [slots, trackIds]);
+  // what a page plays to be heard goes to the track it shows, as the section on screen has it: a change is
+  // heard there at once (and in the song when this section plays: each section keeps its own)
+  useEffect(() => hearOn("chord", { track: chordsId, kind: "chord", tone: chordTone, sound }), [chordsId, chordTone, sound]);
+  useEffect(() => hearOn("melody", { track: tuneId, kind: "melody", tone: tuneTone, sound: tuneSound }), [tuneId, tuneTone, tuneSound]);
   // every note the section (and the song) will need is made ready ahead of time
   useEffect(() => {
     const t = window.setTimeout(() => prepareNotes([...prepFor(items, prog.pattern, beat, tune), ...prepFor(plan.items, prog.pattern, beat)]), 250);
@@ -384,16 +385,11 @@ export function GuitarView() {
     window.clearTimeout(hear.current);
     hear.current = window.setTimeout(() => !playingRef.current && playNote(melodyBase(keyRef.current) + 12, undefined, 0.86, 48), 240);
   }, []);
-  // ── what plays each track (Guitar, Piano or Synth) ──
-  const tuneId = editTune ?? "melody";
-  const tuneTone = toneOf(prog, tuneId);
-  // (a harmony being auditioned has its instrument too, and is kept while it is heard)
-  useEffect(() => setTones(heard.tones), [heard.tones]);
+  // ── what plays each track (Guitar, Piano or Synth), in the section on screen ──
   // a synth drone holds the song's home note
   useEffect(() => setHome(pc(state.key.tonic)), [state.key.tonic]);
-  // a track that is removed lets go of its instrument and its drum desk (they fade out)
-  const trackIds = (heard.tracks ?? []).map((t) => t.id).join("|");
-  useEffect(() => keepTracks(trackIds ? trackIds.split("|") : []), [trackIds]);
+  const soundsRef = useRef({ chords: sound, melody: tuneSound });
+  soundsRef.current = { chords: sound, melody: tuneSound };
   /** the track whose piano or synth is loading after it was chosen */
   const [loading, setLoading] = useState<string | null>(null);
   /** each track's last change of instrument: a slower load that ends after a later change is not heard, nor clears its mark */
@@ -407,7 +403,7 @@ export function GuitarView() {
     if (patch.inst !== undefined || patch.keys !== undefined) {
       setLoading(id);
       const mine = toneLoads.current.begin(id);
-      void warmTrack(id, kind, next).then(
+      void warmSlot({ track: id, kind: kind === "melody" ? "melody" : "chord", tone: next, sound: soundsRef.current[kind] }).then(
         () => {
           if (!mine()) return;
           setLoading((x) => (x === id ? null : x));
@@ -416,7 +412,7 @@ export function GuitarView() {
         },
         () => mine() && setLoading((x) => (x === id ? null : x)),
       );
-    } else void warmTrack(id, kind, next);
+    } else void warmSlot({ track: id, kind: kind === "melody" ? "melody" : "chord", tone: next, sound: soundsRef.current[kind] });
   }, [set]);
   const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, compound: meter.triplet, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, meter.triplet, toneSetter, hearSoon]);
   const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, compound: meter.triplet, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, meter.triplet, toneSetter, hearTune]);
@@ -543,17 +539,12 @@ export function GuitarView() {
     stopAlone();
     getAudio();
     // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
-    const keys: { id: string; kind: "melody" | "chord" }[] = [];
-    for (const sec of playSecs.length ? playSecs : [soloSection(normalize(heard))])
-      for (const [id, t] of Object.entries(sec.tones ?? {})) {
-        if (!onKeys(t) || keys.some((k) => k.id === id)) continue;
-        const tr = heard.tracks?.find((x) => x.id === id);
-        keys.push({ id, kind: id === "melody" || tr?.kind === "melody" ? "melody" : "chord" });
-      }
+    // (each on the voice it plays in each section, made on its own sound, so its first chord does not glide in from another)
+    const keys = slotsOf(listRef.current.items).filter((u) => u.tone && onKeys(u.tone));
     waiting.current = true;
     const mine = starts.begin();
     // (on the Vocals page the interface's own engine closes first, so the driver settles in silence: see handoff.ts)
-    void Promise.all([readyTracks(keys), freeInterface()]).then(() => {
+    void Promise.all([readySlots(keys), freeInterface()]).then(() => {
       if (!mine() || recordingRef.current) return;
       waiting.current = false;
       go();
@@ -632,11 +623,7 @@ export function GuitarView() {
     setChosen(sectionBars(layoutRef.current, curRef.current));
     if (!playingRef.current) setAudition((n) => n + 1);
   }, []);
-  // a candidate on a piano or the synth starts loading as soon as it is chosen
-  const previewTone = preview ? heard.tones?.[preview.id] : undefined;
-  useEffect(() => {
-    if (preview && previewTone && onKeys(previewTone)) void warmTrack(preview.id, preview.plan.kind, previewTone);
-  }, [preview?.id, previewTone]); // eslint-disable-line react-hooks/exhaustive-deps
+  // (a candidate on a piano or the synth is made ready with the rest of the song's voices: see keepSlots)
   const auditionCtx = useMemo<Audition>(() => ({ preview, hear: audit, playing }), [preview, audit, playing]);
   /**
    * What a recording goes round: the loop if there is one, else the section on screen. A loop of
@@ -1455,10 +1442,12 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   const chart = () => {
     const stringNames = tuning.notes.map((m) => ["C", "C#", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][(m + state.settings.capo) % 12]);
     // the capo is only for the chords that are played on the guitar
-    const guitar = tracks.some((t) => t.kind === "chords" && !onKeys(toneOf(np, t.id)));
+    // (each section has its own instruments: the capo counts when any section plays chords on the guitar)
+    const secsOf = plan ? plan.parts.map((x) => x.sec) : [soloSection(np)];
+    const guitar = secsOf.some((sec) => tracks.some((t) => t.kind === "chords" && (t.id === "chords" || !!sec.layers?.[t.id]) && !onKeys(toneOf(sec, t.id))));
     const head = `${name || "Untitled"} | ${state.key.tonic} ${scale.name} | ${prog.bpm} bpm${state.settings.capo && guitar ? ` | Capo ${state.settings.capo}` : ""}`;
-    /** a track on the keys: its chords' keys by name, in place of the guitar tab */
-    const keysOf = (id: string, chords: ProgChord[]) => (onKeys(toneOf(np, id)) ? keysVoicings(chords, toneOf(np, id)) : null);
+    /** a track on the keys in a section: its chords' keys by name, in place of the guitar tab */
+    const keysOf = (id: string, chords: ProgChord[], where: { tones?: Tones } = np) => (onKeys(toneOf(where, id)) ? keysVoicings(chords, toneOf(where, id)) : null);
     const block = (chords: ProgChord[], vs: (Voicing | undefined)[], keys: number[][] | null = null) => {
       const names = chords.map((c) => (c.rest ? "-" : chordSymbolAscii(c.ref)));
       const real = chords.map((c, i) => ({ c, v: vs[i], k: keys?.[i] ?? [], name: names[i] })).filter((x) => !x.c.rest);
@@ -1466,9 +1455,9 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
       return ["| " + names.join(" | ") + " |", "  " + chords.map((c) => (c.rest ? "-" : analyzeChord(c.ref, state.key).roman)).join("  "), "", shapes];
     };
     /** the added chords tracks in a section, each under its name */
-    const added = (layers: Layers | undefined) => chordTracks.flatMap((t) => {
+    const added = (layers: Layers | undefined, where: { tones?: Tones } = np) => chordTracks.flatMap((t) => {
       const cs = layers?.[t.id]?.chords ?? [];
-      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs), keysOf(t.id, cs))] : [];
+      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs), keysOf(t.id, cs, where))] : [];
     });
     if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords), keysOf("chords", np.chords)), ...added(np.layers)].join("\n");
     // a song: the running order, then each different section once
@@ -1477,7 +1466,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
     for (const { sec, voicings: vs } of plan.parts) {
       if (done.has(sec.partId)) continue;
       done.add(sec.partId);
-      out.push(`[${sec.label}] ${barsOr(sec.bars)} bars${sec.meter ? ` in ${sigName(sec.meter)}` : ""}`,...(sec.chords.length ? block(sec.chords, vs, keysOf("chords", sec.chords)) : ["(no chords)"]), ...added(sec.layers), "");
+      out.push(`[${sec.label}] ${barsOr(sec.bars)} bars${sec.meter ? ` in ${sigName(sec.meter)}` : ""}`,...(sec.chords.length ? block(sec.chords, vs, keysOf("chords", sec.chords, sec)) : ["(no chords)"]), ...added(sec.layers, sec), "");
     }
     return out.join("\n");
   };

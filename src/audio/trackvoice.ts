@@ -177,6 +177,11 @@ export class TrackVoice {
   /** a while after ■ it is let go of its fader (and its room), so nothing of it is worked out until its next note */
   private restTimer: ReturnType<typeof setTimeout> | undefined;
   private resting = false;
+  /** live: when the last note booked on it is over; a while after, it rests until its next note (see `idle`) */
+  private quietAt = 0;
+  private idleTimer: ReturnType<typeof setTimeout> | undefined;
+  /** notes booked since the idle check was last set */
+  private booked = 0;
   private dest: AudioNode;
   /** the tempo the rack was last set for (its echo keeps time with it) */
   private bpm = 90;
@@ -344,6 +349,8 @@ export class TrackVoice {
   note(midi: number, when: number, velocity: number, length: number, o: NoteOpts = {}) {
     if (this.gone) return;
     this.wake(when);
+    // (the strings ring for 5 seconds at most; a key or a synth note for as long as it is held, then lets go)
+    this.idle(when + (Number.isFinite(length) ? Math.min(length, 120) : 6) + (this.inst ? 2 : 0));
     const inst = this.inst;
     if (!inst) {
       this.harp.play(midi, when, velocity, o.slot, length, !!o.cut, o.lift ?? 1, o.as, o.until);
@@ -421,6 +428,38 @@ export class TrackVoice {
     }, after * 1000);
   }
 
+  /**
+   * Live: a voice whose notes are over rests a while after (its fader and its room let go, as
+   * after ■), so a voice the song is not playing (another section's way of playing the track, a
+   * track with nothing here) costs the audio thread nothing until its next note brings it back.
+   */
+  private idle(end: number) {
+    if (this.offline || this.gone) return;
+    this.quietAt = Math.max(this.quietAt, end);
+    this.booked++;
+    if (this.idleTimer === undefined) this.armIdle();
+  }
+  private armIdle() {
+    this.booked = 0;
+    const wait = Math.max(0, this.quietAt - this.c.currentTime) + (this.sound.echo > 0 ? REST_ECHO : REST);
+    this.idleTimer = setTimeout(() => {
+      this.idleTimer = undefined;
+      if (this.gone) return;
+      // more notes were booked since: it waits for those to be over too
+      if (this.booked > 0) return this.armIdle();
+      this.rest();
+    }, wait * 1000);
+  }
+  /** Rest now (it is silent): let go of its fader and its room; its next note brings it back. */
+  rest() {
+    if (this.offline || this.gone || this.resting) return;
+    clearTimeout(this.restTimer);
+    this.hushed = true;
+    this.resting = true;
+    this.out.disconnect();
+    this.rack.unplug();
+  }
+
   /** The track's own fade, on its sound and on what it sends to its room. */
   private fades(): AudioParam[] {
     return [this.out.gain, this.rack.send.gain];
@@ -460,6 +499,7 @@ export class TrackVoice {
     this.gone = true;
     clearTimeout(this.settle);
     clearTimeout(this.restTimer);
+    clearTimeout(this.idleTimer);
     const inst = this.inst;
     const end = () => {
       inst?.dispose();
