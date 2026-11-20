@@ -339,6 +339,7 @@ describe("the drum desks", () => {
   });
   it("a kick that cannot be heard (its track muted, or another soloed) pumps nothing", () => {
     S.getAudio();
+    live.currentTime = 0;
     const pumped: number[] = [];
     onKickHit((when) => pumped.push(when));
     const pump = beat({ pump: 0.6 });
@@ -368,8 +369,8 @@ describe("a note played to be heard", () => {
 
 
 describe("the page held up while the song plays (see late.ts)", () => {
-  it("drum hits whose moment has passed are left out, not piled up at once; the rest come on time", async () => {
-    const { lateCount } = await import("./late");
+  it("drum hits whose moment has passed start part-way in, faded in, or are left out once over: none is piled up at once", async () => {
+    const { LATE_FADE, lateCount } = await import("./late");
     notes();
     const b: Beat = { ...DEFAULT_BEAT, on: true };
     const items: PlayItem[] = [{ midi: CHORD, beats: 4, section: true, drums: b }];
@@ -384,37 +385,90 @@ describe("the page held up while the song plays (see late.ts)", () => {
     for (let t = 0.025; t <= 1; t += 0.025) tick(t);
     const hits = () => starts.filter((s) => s.ctx === live && !s.loop);
     const before = hits().length;
-    const dropped = lateCount.drums;
+    const was = { ...lateCount };
     expect(before).toBeGreaterThan(4);
     // the page is held up for 600 ms: the next timer runs at 1.6 s
     tick(1.6);
     const after = hits().slice(before);
-    // nothing was booked more than 30 ms before the clock, so nothing piles up in the same instant
-    expect(after.filter((s) => s.when < 1.6 - 0.03).length).toBe(0);
-    expect(lateCount.drums - dropped).toBeGreaterThan(0);
+    // nothing is booked for a moment already gone (the audio thread would play it at once, from its start)
+    expect(after.filter((s) => s.when < 1.6 - 1e-9).length).toBe(0);
+    // the hits that fell due while the page was held up start now, each as far into itself as it is late
+    const partway = after.filter((s) => s.when === 1.6 && s.offset > 0.01);
+    expect(partway.length).toBeGreaterThan(0);
+    expect(lateCount.drums - was.drums).toBe(partway.length);
+    // (the hits whose sound was over by then are left out: counted, not played)
+    expect(lateCount.over).toBeGreaterThanOrEqual(was.over);
+    for (const s of partway) {
+      // a hit begun in its middle starts with a step: it fades in from silence, over a few milliseconds
+      const fade = s.src.outputs[0] as unknown as { gain: FakeParam };
+      expect(fade.gain.at(1.6)).toBe(0);
+      expect(fade.gain.at(1.6 + LATE_FADE / 2)).toBeCloseTo(0.5, 6);
+      expect(fade.gain.at(1.6 + LATE_FADE)).toBe(1);
+      // and it is still a sound of its own length: it ends where it would have
+      expect(s.offset).toBeLessThan((s.buffer as { duration: number }).duration);
+    }
+    // the hits on time go straight on, with no fade of their own
+    const onTime = after.filter((s) => s.when > 1.6);
+    expect(onTime.length).toBeGreaterThan(0);
+    for (const s of onTime) expect(s.offset).toBe(0);
     // and it carries on in time
     tick(2);
     expect(hits().length).toBeGreaterThan(before + after.length);
     p.stop();
   });
-  it("a recorded note booked late starts now, that far into itself (at the speed it plays at), so it ends where it would have", async () => {
-    const { startRecorded } = await import("./late");
+  it("a kick started late pumps nothing (its thump has passed), and a late hat chokes an open one from when it really starts", async () => {
+    S.getAudio();
+    const pumped: number[] = [];
+    onKickHit((when) => pumped.push(when));
+    const pump: Beat = { ...DEFAULT_BEAT, on: true, pump: 0.6 };
+    syncDrums(pump, 120, "d2");
+    live.currentTime = 1;
+    playStep(pump, "kick", 3, 0.95, "d2");
+    expect(pumped).toEqual([]);
+    playStep(pump, "kick", 3, 1.1, "d2");
+    expect(pumped).toEqual([1.1]);
+    onKickHit(null);
+    // an open hat rings; a closed one booked 50 ms late cuts it from the moment it starts, not from a moment gone
+    playStep(pump, "open", 3, 1.2, "d2");
+    const open = starts[starts.length - 1].src.outputs[0] as unknown as { gain: FakeParam };
+    live.currentTime = 1.35;
+    playStep(pump, "hat", 3, 1.3, "d2");
+    expect(open.gain.at(1.35)).toBeCloseTo(open.gain.at(1.34), 6);
+    expect(open.gain.at(1.45)).toBeLessThan(0.1 * open.gain.at(1.35));
+  });
+  it("a recorded note booked late starts in a moment, that far into itself (at the speed it plays at), faded in, so it ends where it would have", async () => {
+    const { LATE_FADE, startRecorded } = await import("./late");
     const c = new FakeAudio();
     c.currentTime = 2;
+    const into = c.createGain();
     const got: number[][] = [];
-    const src = { start: (w: number, o: number) => got.push([w, o]), playbackRate: { value: 1 }, detune: { value: 1200 } };
-    expect(startRecorded(asAudio(c), src as never, 1.8, 0.01)).toBeCloseTo(0.2, 9);
+    const conns: unknown[] = [];
+    const src = { start: (w: number, o: number) => got.push([w, o]), connect: (n: unknown) => (conns.push(n), n), playbackRate: { value: 1 }, detune: { value: 1200 } };
+    expect(startRecorded(asAudio(c), src as never, 1.8, into as never, 0.01)).toBe(2);
     expect(got[0][0]).toBe(2);
     // an octave up plays twice as fast: 0.2 s late is 0.4 s into the recording
     expect(got[0][1]).toBeCloseTo(0.41, 9);
-    // on time, or a moment old (a sound tapped to be heard): as asked
-    expect(startRecorded(asAudio(c), src as never, 2.1, 0)).toBe(0);
-    expect(got[1]).toEqual([2.1, 0]);
-    expect(startRecorded(asAudio(c), src as never, 1.995, 0)).toBe(0);
+    // through a fade of its own, from silence, into where it was going
+    const fade = conns[0] as FakeAny;
+    expect(fade).not.toBe(into);
+    expect(fade.outputs).toEqual([into]);
+    expect(fade.gain.at(2)).toBe(0);
+    expect(fade.gain.at(2 + LATE_FADE)).toBe(1);
+    // the audio thread works ahead of the clock the page reads: a late note starts after that, so its fade is heard whole
+    (c as unknown as { baseLatency: number }).baseLatency = 0.02;
+    expect(startRecorded(asAudio(c), src as never, 1.8, into as never, 0)).toBeCloseTo(2.023, 9);
+    expect(got[1][1]).toBeCloseTo(2 * 0.223, 9);
+    (c as unknown as { baseLatency: number }).baseLatency = 0;
+    // on time, or a moment old (a sound tapped to be heard): as asked, straight in
+    expect(startRecorded(asAudio(c), src as never, 2.1, into as never, 0)).toBe(2.1);
+    expect(got[2]).toEqual([2.1, 0]);
+    expect(conns[2]).toBe(into);
+    expect(startRecorded(asAudio(c), src as never, 1.995, into as never, 0)).toBe(1.995);
+    expect(conns[3]).toBe(into);
     // a render is never late
     const off = new FakeOffline();
     off.currentTime = 2;
-    startRecorded(asAudio(off), src as never, 1, 0);
-    expect(got[3]).toEqual([1, 0]);
+    startRecorded(asAudio(off), src as never, 1, into as never, 0);
+    expect(got[4]).toEqual([1, 0]);
   });
 });

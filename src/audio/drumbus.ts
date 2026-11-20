@@ -20,6 +20,7 @@
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { atRenderTime, audioContext, audioIfStarted, isRendering, soonest } from "./context";
 import { gate, type Gate } from "./gate";
+import { lateCount, pastEnd, startRecorded } from "./late";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem, untapStem } from "./stems";
@@ -602,14 +603,24 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const b = getBus(track);
   const desk = deskOf(track);
   const t = when ?? c.currentTime + 0.01;
+  const buffer = takeFor(c, beat, id);
+  const speed = human ? 1 + (Math.random() - 0.5) * 0.014 * human : 1;
+  // booked late (the page was held up) and already over by now: left out (see late.ts)
+  if (pastEnd(c, t, buffer, speed) > 0) {
+    lateCount.over++;
+    // (a hat that came and went still closed the open one: it is let go now, with its fade)
+    if ((id === "hat" || id === "open") && desk.openHat) damp(desk.openHat, soonest(c));
+    if (id === "hat" || id === "open") desk.openHat = null;
+    return;
+  }
   const src = c.createBufferSource();
-  src.buffer = takeFor(c, beat, id);
+  src.buffer = buffer;
   // for the canvas: what this hit is made of, measured from the hit itself
   if (listening() && !isRendering()) pulse({ kind: "drum", track: track === FIRST_DRUMS ? undefined : track, time: t, drum: id, velocity, gain: soundOf(beat, id).level / 0.8, sound: measure(src.buffer) });
-  if (human) src.playbackRate.value = 1 + (Math.random() - 0.5) * 0.014 * human;
+  if (human) src.playbackRate.value = speed;
   const g = c.createGain();
   g.gain.value = velocity * velocity * 1.1;
-  let tail: AudioNode = src.connect(g);
+  let tail: AudioNode = g;
   if (velocity < 0.7 && id !== "kick") {
     const soft = c.createBiquadFilter();
     soft.type = "lowpass";
@@ -619,17 +630,18 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   }
   tail.connect(b.channels[id].input);
   const r: Ringing = { src, gain: g };
-  src.start(t);
+  // booked late: it starts in a moment, as far into the hit as it is late, faded in (see late.ts); `at` is when it really starts
+  const at = startRecorded(c, src, t, g, 0, "drums");
   // (an offline render plays every hit as written: no choking hats, no pumping harps)
   if (isRendering()) return;
   if (id === "hat" || id === "open") {
-    if (desk.openHat) damp(desk.openHat, t);
+    if (desk.openHat) damp(desk.openHat, at);
     desk.openHat = id === "open" ? r : null;
   }
   live.add(r);
   src.onended = () => live.delete(r);
-  // (a kick that cannot be heard, muted or soloed out, pumps nothing)
-  if (id === "kick" && desk.pump > 0 && onKick && levelOf(track) > 0) onKick(t, desk.pump * velocity);
+  // (a kick that cannot be heard, muted or soloed out, pumps nothing; nor does one whose thump has passed, started late)
+  if (id === "kick" && at === t && desk.pump > 0 && onKick && levelOf(track) > 0) onKick(t, desk.pump * velocity);
 }
 
 /** Play one step of a track's grid for a drum, respecting mute, solo and the "human" setting. */

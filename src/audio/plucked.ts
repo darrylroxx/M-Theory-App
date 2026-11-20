@@ -112,10 +112,11 @@ export class Harp {
     g.gain.value = VOICE_GAIN * Math.pow(velocity, 1.3) * lift;
     const pan = c.createStereoPanner();
     pan.pan.value = slot !== undefined ? (((slot % 6) - 2.5) / 2.5) * 0.7 * s.wide : 0;
-    src.connect(vcf).connect(g).connect(pan).connect(this.out.input);
+    vcf.connect(g).connect(pan).connect(this.out.input);
     const r: Ringing = { srcs: [src], gain: g };
-    // (booked late, the page having been held up: it starts now, that far in, rather than piling up on the others: see late.ts)
-    startRecorded(c, src, when);
+    // (booked late, the page having been held up: it starts in a moment, that far in and faded in, rather than piling
+    // up on the others: see late.ts. `at` is when it really starts, which is when the string's last note gives way)
+    const at = startRecorded(c, src, when, vcf);
     if (s.octave > 0) {
       // the octave string of a twelve-string: the same pluck an octave up, a moment later
       const oct = c.createBufferSource();
@@ -123,8 +124,8 @@ export class Harp {
       oct.detune.value = 1200;
       const og = c.createGain();
       og.gain.value = 0.7 * s.octave;
-      oct.connect(og).connect(vcf);
-      startRecorded(c, oct, when + 0.009);
+      og.connect(vcf);
+      startRecorded(c, oct, when + 0.009, og);
       r.srcs.push(oct);
     }
     if (s.shimmer > 0 && !cut) {
@@ -135,13 +136,13 @@ export class Harp {
       const sg = c.createGain();
       sg.gain.setValueAtTime(0, when);
       sg.gain.linearRampToValueAtTime(VOICE_GAIN * velocity * s.shimmer * 0.85, when + 0.28);
-      sh.connect(sg).connect(this.out.halo);
-      startRecorded(c, sh, when);
+      sg.connect(this.out.halo);
+      startRecorded(c, sh, when, sg);
       r.srcs.push(sh);
     }
     if (slot !== undefined) {
       const prev = this.ringing.get(slot);
-      if (prev) this.damp(prev, when);
+      if (prev) this.damp(prev, at);
       this.ringing.set(slot, r);
     }
     this.all.add(r);

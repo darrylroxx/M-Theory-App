@@ -10,6 +10,7 @@
  * render books the whole song at once), so a voice's release can be moved while it is still to come:
  * a pedal pressed after the note was booked keeps it ringing.
  */
+import { soonest } from "../audio/context";
 import { PedalLine, damperAt, fadeSeconds, soundingAt, victims, type VoiceTimes } from "./damper";
 
 export interface KeyVoice extends VoiceTimes {
@@ -75,9 +76,14 @@ export abstract class Keyboard<V extends KeyVoice> {
   /** A damper sound booked for a release that has moved or will not happen: it must not play. */
   protected dropDamper(_v: V): void {}
 
-  /** A time to book at: `when`, or now if it has passed (or is not a number, so nothing bad is booked). */
+  /**
+   * A time to book at: `when`, or if it has passed (or is not a number, so nothing bad is booked)
+   * the soonest moment the audio thread has not yet worked out (see `soonest`): a change booked for
+   * a moment it has already passed would be heard as a jump.
+   */
   protected at(when: number): number {
-    return Number.isFinite(when) ? Math.max(when, this.ctx.currentTime) : this.ctx.currentTime;
+    const now = soonest(this.ctx);
+    return Number.isFinite(when) ? Math.max(when, now) : now;
   }
 
   /** Notes sounding at time `t` (default now). */

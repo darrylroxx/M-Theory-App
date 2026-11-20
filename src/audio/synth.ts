@@ -16,7 +16,6 @@ import { fader, sendFader } from "./mix";
 import { roomsOf } from "./rooms";
 import { loadSafety } from "./safety";
 import { TakeRuns, type PlayTake, type TakeSpan } from "./takeplay";
-import { DRUM_LATE, lateCount } from "./late";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import type { HarpString } from "./harp";
@@ -680,7 +679,6 @@ export class ProgressionPlayer {
   private scheduleDrums(horizon: number) {
     // first grid step at or after a chord's start, counted from where the pattern started
     const firstStep = (a: Anchor, div: number) => Math.ceil((a.beat - a.origin) * div - 1e-6);
-    const now = getAudio().currentTime;
     for (const [track, lane] of this.lanes) {
       const main = track === FIRST_DRUMS;
       for (let guard = 0; guard < 400; guard++) {
@@ -715,13 +713,11 @@ export class ProgressionPlayer {
         const step = b ? lane.step % lenOf(b) : 0;
         const t = cur.time + (cur.origin + Math.floor(lane.step / div) + stepBeat(lane.step % div, div, b?.swing ?? 0) - cur.beat) * cur.spb;
         if (b?.on) {
-          // a hit whose moment has passed (the page was held up) is left out, not piled onto the next (see late.ts)
-          const late = t < now - DRUM_LATE;
+          // (a hit whose moment has passed, the page having been held up, starts as far into itself as it is late, or
+          // is left out if it is over: never piled onto the next. See late.ts)
           for (const id of DRUM_IDS) {
             const lv = levelAt(b.rows, id, step);
-            if (!lv) continue;
-            if (late) lateCount.drums++;
-            else playStep(b, id, lv, t, track);
+            if (lv) playStep(b, id, lv, t, track);
           }
           if (main) this.drumMarks.push({ time: t, step });
         }
