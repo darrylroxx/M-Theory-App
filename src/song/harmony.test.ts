@@ -8,7 +8,7 @@ import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { addTrackHere, allTracks, focusTrack, insteadIn, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
-import { MELODY_RANGE, addHarmony, harmonizeSources, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
+import { MELODY_RANGE, addHarmony, chordsUnder, harmonizeSources, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { HARMONY_MENU, HARMONY_OPTIONS, labelFor } from "../theory/harmonize";
 import { reviveIdea, sameMusic } from "./library";
 import { copySection, pasteSection, reviveClips, undoFits } from "./clip";
@@ -365,6 +365,25 @@ describe("a harmony against what is heard", () => {
     const two = addHarmony(p, C, { kind: "chords", from: "chords", option: "lead-in" }, "l").p;
     expect(replaced(removeTrack(two, "b"), "A")).toBe(true);
     expect(replaced(removeTrack(removeTrack(two, "b"), "l"), "A")).toBe(false);
+  });
+
+  it("the chords under the melody are the ones heard, whichever chords track the Chords page has open", () => {
+    const names = (cs: ProgChord[]) => cs.map((c) => c.ref.root);
+    const p0 = plain();
+    expect(names(chordsUnder(p0))).toEqual(["C", "F", "G", "C"]);
+    // + on the Chords page: an empty Chords 2 comes forward there, and the song still plays Chords 1
+    const q = addTrackHere(p0, "chords", "c2").p;
+    expect(q.chords).toEqual([]);
+    expect(names(chordsUnder(q))).toEqual(["C", "F", "G", "C"]);
+    // chords written into Chords 2: they play along, the first track's are still the ones under the melody
+    const r = { ...q, chords: [ch("A", 4, "min"), ch("D", 4, "min")] };
+    expect(names(chordsUnder(r))).toEqual(["C", "F", "G", "C"]);
+    // back on Chords 1: the same
+    expect(names(chordsUnder(focusTrack(r, "chords", "chords")))).toEqual(["C", "F", "G", "C"]);
+    // a swap that plays instead of the chords in this section: its chords are the ones heard
+    const sw = addHarmony(p0, C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
+    expect(chordsUnder(sw)).toEqual(layer(sw, "A", "b")!.chords);
+    expect(chordsUnder(focusTrack(sw, "chords", "chords"))).toEqual(layer(sw, "A", "b")!.chords);
   });
 
   it("Best fit plays instead of the song's chords when there are some (its own chords would clash with them), and with nothing otherwise", () => {

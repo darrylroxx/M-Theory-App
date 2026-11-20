@@ -34,7 +34,7 @@ import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { MixMark } from "../components/MixMark";
 import { AuditionCtx, HarmonizeButton, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
-import { harmonizeSources, partHere, previewHarmony, writtenAs } from "../../song/harmony";
+import { harmonizeSources, chordsUnder, partHere, previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { PLAIN_STYLE, addTrackHere, allTracks, drumsOf, firstLayer, focusTrack, hasMusic, insteadIn, isFirst, normalize, removeHere, tracksHere, type EditKind, type Layers, type Track } from "../../song/tracks";
@@ -459,6 +459,8 @@ export function GuitarView() {
   const drumsAll = useMemo(() => (drumsOthers ? allFor("drums") : undefined), [drumsOthers, allFor]);
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects): never the edited one's. */
   const firstBeat = firstLayer(prog, "drums").beat ?? DEFAULT_BEAT;
+  /** The chords heard under the melody in this section (the Melody grid names them and marks their notes): never just the one the Chords page has open. */
+  const under = useMemo(() => chordsUnder(prog), [prog]);
   const pane: Pane = state.pane ?? "frame";
   // ── the harmony sheet: a page's Harmonize button, and ⟳ (write it again) on a harmony track ──
   const [hz, setHz] = useState<HzOpen | null>(null);
@@ -935,7 +937,7 @@ export function GuitarView() {
         <div className="pane" hidden={pane !== "melody"}>
           <ClipBar kind="melody" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} onAgain={again} />
           {/* undo belongs to one melody track: switching track (or writing a harmony track again) starts it afresh, so one track's past can never be written over another */}
-          <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={prog.chords} playing={playing} getPos={getPos}
+          <MelodyGrid fresh={`${curBlock}:${pasted}:${tuneId}:${writtenAs(prog, tuneId)}`} place={`${state.ideaId ?? ""}:${curBlock}`} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={under} playing={playing} getPos={getPos}
             sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active={pane === "melody"} inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} onAll={tuneAll} />
         </div>
         <div className="pane" hidden={pane !== "vocals"}>

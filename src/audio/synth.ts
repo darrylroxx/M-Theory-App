@@ -9,7 +9,7 @@ import { audioContext, audioIfStarted, withContext } from "./context";
 import { FIRST_DRUMS, keepDrums, onKickHit, playStep, prepareBeat, setBedPlaying, stopDrums, syncDrums } from "./drumbus";
 import { DRUM_IDS } from "./drums";
 import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
-import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
 import { fader, sendFader } from "./mix";
@@ -201,11 +201,26 @@ export interface Prep {
   as?: HarpString;
   /** the slot that plays it (see slotOf) */
   slot?: string;
+  /** the track and the way it plays there: its voice is made to get the note ready on, when there is none yet */
+  use?: SlotUse;
+  /** when it sounds: beats from the start of the list */
+  at?: number;
+  /** which item of the list books it: a chord's notes are all booked with the item it starts under */
+  item?: number;
 }
 let queue: Prep[] = [];
 let queued = 0;
-/** The voice a note is got ready on: its slot's, else the first track's. */
-const prepVoice = (n: Prep): TrackVoice | undefined => (n.slot ? voices.get(n.slot)?.v : undefined) ?? [...voices.values()].find((x) => x.track === (n.tune ? "melody" : "chords"))?.v;
+/**
+ * The voice a note is got ready on: its slot's (made now, on a running context, if the song uses
+ * it and there is none yet), else, for a first track, that track's.
+ */
+function prepVoice(n: Prep): TrackVoice | undefined {
+  const v = n.slot ? voices.get(n.slot)?.v : undefined;
+  if (v) return v;
+  if (n.use && kept.has(n.slot!) && audioIfStarted()) return voiceFor(n.use);
+  if (n.use && !isFirstTrack(n.use.track)) return undefined;
+  return [...voices.values()].find((x) => x.track === (n.tune ? "melody" : "chords"))?.v;
+}
 /** Get these notes ready in the background, one at a time, so playing never has to wait for them. */
 export function prepareNotes(list: Prep[]) {
   queue = list;
@@ -283,18 +298,32 @@ export function playSequence(midis: number[], noteSec = 0.28) {
   midis.forEach((m, i) => v.note(m, t0 + i * noteSec, 0.75, noteSec * 1.6, { slot: v.instrument ? undefined : 0 }));
 }
 
-/** Every note a run of chords and its melodies will need, each on the sound and the voice it is played with. */
+/**
+ * Every note a run of chords and its melodies will need, each on the sound and the voice it is
+ * played with: the first chords and melody tracks and every added one, soonest first.
+ */
 export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null = null, tune: PlayTune | null = null): Prep[] {
-  const out: Prep[] = itemNotes(items, pattern, beat).map((n) => ({ midi: n.e.midi, as: items[n.item].sound, slot: slotOf({ track: "chords", tone: items[n.item].tone, sound: items[n.item].sound }) }));
+  const out: Prep[] = [];
+  const add = (midi: number, use: SlotUse, at: number, item: number) => out.push({ midi, tune: use.kind === "melody" || undefined, as: use.sound, slot: slotOf(use), use, at, item });
+  for (const n of itemNotes(items, pattern, beat)) add(n.e.midi, { track: "chords", kind: "chord", tone: items[n.item].tone, sound: items[n.item].sound }, n.at + n.e.beat, n.item);
   let at = 0;
   let origin = 0;
   items.forEach((item, i) => {
     origin = sectionStart(item, i, at, origin);
+    const s0 = at - origin;
+    const s1 = s0 + item.beats;
     const t = item.tune === undefined ? tune : item.tune;
-    if (t && t.m.on !== false) for (const h of tuneBetween(t.m, t.bar, at - origin, at - origin + item.beats)) out.push({ midi: h.midi, tune: true, as: t.sound, slot: slotOf({ track: "melody", tone: t.tone, sound: t.sound }) });
+    const tunes = [...(t ? [{ track: "melody", tune: t }] : []), ...(item.extra?.tunes ?? [])];
+    for (const x of tunes)
+      if (x.tune.m.on !== false) for (const h of tuneBetween(x.tune.m, x.tune.bar, s0, s1)) add(h.midi, { track: x.track, kind: "melody", tone: x.tune.tone, sound: x.tune.sound }, origin + h.beat, i);
+    // the added chords tracks: every chord that starts under this item, in its own style
+    for (const c of item.extra?.chords ?? [])
+      if (c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
+        for (const e of styleNotes(c.midi, c.beats, c.style, c.at, meterOf(item.drums ?? beat, item.meter), c.feel)) add(e.midi, { track: c.track, kind: "chord", tone: c.tone, sound: c.sound }, origin + c.at + e.beat, i);
     at += item.beats;
   });
-  return out;
+  // (the queue is worked through in order: what sounds first is ready first)
+  return out.sort((a, b) => a.at! - b.at!);
 }
 
 // ── Progression player (look-ahead scheduler) ─────────────────
@@ -493,14 +522,17 @@ export class ProgressionPlayer {
       for (const b of new Set([beat, ...list.map((x) => x.drums).filter((x): x is Beat => !!x)])) prepareBeat(b);
     }
     for (const it of list) for (const d of it.extra?.drums ?? []) prepareBeat(d.beat);
-    // the first chords are made ready before the clock starts (each on its section's voice), the rest while they play
-    const need = itemNotes(list, pattern, beat);
+    // what every chords and melody track plays first is made ready before the clock starts (each on its own voice), the
+    // rest while they play: the chords of the first two items (each chord's notes are booked at once), and the melodies'
+    // first half second (they are booked a little at a time). Nothing booked straight away then waits for a note to be made.
+    const need = prepFor(list, pattern, beat, tune);
+    const soon = this.passBeat + (0.5 * bpm) / 60;
     for (const n of need)
-      if (n.item <= fromIndex + 1 && n.item >= fromIndex) {
-        const v = voiceFor({ track: "chords", kind: "chord", tone: list[n.item].tone, sound: list[n.item].sound });
-        if (!v.instrument) v.harp.buffer(n.e.midi, list[n.item].sound);
+      if (n.tune ? n.at! >= this.passBeat - 1e-6 && n.at! < soon : n.item! >= fromIndex && n.item! <= fromIndex + 1) {
+        const v = voiceFor(n.use!);
+        if (!v.instrument) v.harp.buffer(n.midi, n.as);
       }
-    prepareNotes(prepFor(list, pattern, beat, tune));
+    prepareNotes(need);
     this.startTime = c.currentTime + 0.08;
     for (const x of allVoices()) x.sync(this.startTime);
     this.nextTime = this.startTime;

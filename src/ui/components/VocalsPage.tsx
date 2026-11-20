@@ -76,6 +76,8 @@ const LOW_DISK = 2e9;
 const ROOM_MIN = 10;
 /** The first moments of a pass in which K marks the pass that has just ended: at most this long (s), and at most an eighth of the pass. */
 const GRACE_S = 2;
+/** a rehearsal being made ready over an idea that was left meanwhile: it does not start */
+const LEFT = new Error("left");
 /** Only a box that takes words keeps K to itself: a slider, a tick box or a list touched mid-session must not stop K from keeping a pass. */
 const TEXT_INPUTS = new Set(["text", "number", "search", "email", "url", "password", "tel"]);
 const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el instanceof HTMLInputElement && TEXT_INPUTS.has(el.type)) || el.tagName === "TEXTAREA" || el.isContentEditable);
@@ -101,7 +103,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   /** a take is about to be heard alone: the song stops */
   onAlone: () => void;
 }) {
-  const { state, set, toast, setRecordingTo } = useApp();
+  const { state, set, toast, setRecordingTo, opened: idea } = useApp();
   const studio = state.studio ?? {};
   const setStudio = (patch: Partial<Studio>) => set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
   const vocals = tracksOf(state.progression, "vocals");
@@ -178,6 +180,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const fxRef = useRef<VocalFx>(fx);
   fxRef.current = fx;
   phaseRef.current = phase;
+  /** which idea is open (counts every one opened): a rehearsal belongs to the idea it was begun in */
+  const ideaRef = useRef(idea);
+  ideaRef.current = idea;
 
   const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
@@ -357,6 +362,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const plan = recordPlan();
     if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
     const t = record ? ensureTrack() : track;
+    // a rehearsal ends when another idea is opened, also while it is being made ready (a recording keeps its idea open: see recordingTo)
+    const inIdea = ideaRef.current;
+    const left = () => !record && ideaRef.current !== inIdea;
     // until its takes are on the track, the idea stays open and the track stays (see recordingTo)
     if (record && t) setRecordingTo(t.id);
     planRef.current = plan;
@@ -374,16 +382,19 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     setPhase("preparing");
     try {
       const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: rateNow, skip: record ? t?.id : undefined });
+      if (left()) throw LEFT;
       await engineBacking(l, r);
+      if (left()) throw LEFT;
       // the count-in is in the meter of the loop's first bar; after it, every bar clicks in its own
       const click = clickPlan(plan.bars, plan.beatsPerBar, studio.countIn ?? 1);
       const path = await engineStart({ bpm: plan.bpm, countInBeats: click.countInBeats, beatsPerBar: click.beatsPerBar, bars: click.bars, record, name: t?.name ?? "Vocal" });
       pathRef.current = record ? path : null;
+      if (left()) return void stop();
       setPhase(record ? "recording" : "rehearsing");
     } catch (e) {
       setPhase("idle");
       onRecording(false);
-      toast(String(e));
+      if (e !== LEFT) toast(String(e));
     }
   };
 
@@ -443,6 +454,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     }
   };
   stopRef.current = stop;
+  // another idea opened: a rehearsal over the one left stops (the interface would go on playing it, and the transport stay locked)
+  useEffect(() => {
+    if (phaseRef.current === "rehearsing") void stopRef.current();
+  }, [idea]);
 
   /**
    * The driver was reset in the middle of a recording, and the interface closed under it: the
