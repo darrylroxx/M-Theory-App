@@ -7,8 +7,9 @@ import { reviveProgression, type ProgChord, type Progression } from "../ui/state
 import { fingerprint, mergeIdeas, reviveIdea, sameMusic, snapshot } from "./library";
 import { SOUND_V, migrateSectionClip, migrateSong } from "./migrate";
 import { pasteDrums, pasteMelody, pasteRhythm, pasteSection, reviveClips } from "./clip";
-import { drumsIn, sections, type Section } from "./structure";
-import { PLAIN_KIT, allTracks, focusTrack, normalize } from "./tracks";
+import { drumsIn, sections, selectBlock, type Section } from "./structure";
+import { PLAIN_KIT, allTracks, focusTrack, insteadIn, normalize } from "./tracks";
+import { rewriteHarmony } from "./harmony";
 
 const C = { tonic: "C", scaleId: "ionian" };
 const ch = (id: string, root: string, beats = 4): ProgChord => ({ id, ref: { root, typeId: "maj" }, beats });
@@ -264,5 +265,104 @@ describe("clipboards from before", () => {
     expect([r.pattern, r.tones?.chords]).toEqual(["strum", { inst: "piano" }]);
     expect(pasteMelody(p, old.melody!, C).tuneSound).toEqual(p.tuneSound);
     expect(pasteDrums(p, old.drums!).beat?.kit).toBe("909");
+  });
+});
+
+describe("review fixes for older songs", () => {
+  /** A v2 song: Darker written into A and B in place of the chords; `muted` = the chords muted in the mixer as it left them. */
+  function darker(muted: boolean, v: number | undefined = 2): Record<string, unknown> {
+    const A = { id: "A", bars: 2, chords: [ch("a1", "C"), ch("a2", "F")], layers: { h1: { chords: [ch("h1", "C"), { ...ch("h2", "F"), ref: { root: "F", typeId: "min" } }] } } };
+    const B = { id: "B", bars: 2, chords: [ch("b1", "G"), ch("b2", "C")], layers: { h1: { chords: [ch("h3", "G"), ch("h4", "C")] } } };
+    const mark = { src: "s", out: "o" };
+    return {
+      ...(v ? { v } : {}), chords: A.chords, layers: A.layers, bpm: 100, pattern: "ring", loop: true, bars: 2, meter: { num: 4, den: 4 },
+      song: { parts: [A, B], blocks: [{ id: "ba", partId: "A" }, { id: "bb", partId: "B" }], current: "ba", ...(v ? {} : { shared: {} }) },
+      tracks: [{ id: "h1", kind: "chords", name: "Darker", role: "harmony", harmony: { from: "chords", option: "borrowed", marks: { A: mark, B: mark } } }],
+      mix: muted ? { chords: { db: 0, mute: true, instead: true } } : { chords: { db: 0 } },
+    };
+  }
+  const heard = (p: Progression, i: number) => {
+    const s = sections(p)[i];
+    return !p.mix?.chords?.mute && !insteadIn(s.partId, s.layers, p.tracks, p.mix).has("chords");
+  };
+  for (const v of [2, undefined]) {
+    it(`${v ? "version 2" : "no version"}: chords unmuted by hand where a harmony played instead of them are still heard with it`, () => {
+      const p = rp(darker(false, v));
+      expect([heard(p, 0), heard(p, 1)]).toEqual([true, true]);
+      // muted as the harmony left them: still not heard anywhere
+      const q = rp(darker(true, v));
+      expect([heard(q, 0), heard(q, 1)]).toEqual([false, false]);
+      // moved over once
+      expect(migrateSong(json(normalize(p)))).toEqual(json(normalize(p)));
+    });
+  }
+  it("written again with a layer in one section: that section hears its chords again, the other still plays Darker in their place", () => {
+    let p = rp(darker(true));
+    p = selectBlock(p, "bb");
+    p = rewriteHarmony(p, C, "h1", "pad");
+    expect(heard(p, 1)).toBe(true);
+    expect(heard(p, 0)).toBe(false);
+    expect(p.mix?.chords?.mute).toBe(false);
+    // where they were heard with it, they still are, and written again it is the same
+    let q = selectBlock(rp(darker(false)), "bb");
+    q = rewriteHarmony(q, C, "h1", "pad");
+    expect([heard(q, 0), heard(q, 1)]).toEqual([true, true]);
+  });
+
+  it("version 2: an added chords track with no style of its own played the song's style (that version moved every song over on every load)", () => {
+    const raw = v2() as { tracks: Record<string, unknown>[] };
+    raw.tracks = raw.tracks.map((t) => (t.id === "c2" ? { id: "c2", kind: "chords", name: "Chords 2" } : t));
+    expect(played(rp(raw)).map((s) => s.added.c2?.style)).toEqual(["strum", "strum", undefined]);
+  });
+
+  it("no version: a section's kit played over the page's, so a setting only the page's kit had, every section had", () => {
+    const KB = { ...kit("808", 0.3), mutes: ["hat"] } as DrumKit;
+    const raw = {
+      chords: [ch("b1", "G", 8)], bpm: 100, loop: true, bars: 2, meter: { num: 4, den: 4 }, play: "song", pattern: "ring",
+      beat: { ...DEFAULT_BEAT, ...KB, ...groove },
+      song: { parts: [{ id: "A", bars: 2, chords: [ch("a1", "C", 8)] }, { id: "B", bars: 2, chords: [ch("b1", "G", 8)], kit: KB }], blocks: [{ id: "bA", partId: "A" }, { id: "bB", partId: "B" }], current: "bB", shared: { style: "ring", groove, kit: K } },
+    };
+    const [a, b] = sections(rp(raw));
+    expect(a.kit?.kit).toBe("909");
+    expect(a.kit?.mutes).toEqual(["hat"]);
+    expect(b.kit?.mutes).toEqual(["hat"]);
+    // with a version, a section's kit was its own (version 2: the page's)
+    expect(sections(rp({ ...raw, v: 2 }))[0].kit?.mutes).toEqual(["hat"]);
+  });
+
+  it("an old section clipboard is moved over once: loaded again and again, it stays as it was", () => {
+    const g = { ...groove };
+    const old = {
+      from: "A", key: C, block: "bA", part: "A", idea: null, meter: { num: 4, den: 4 }, bars: 2, chords: [ch("a1", "C", 8)], settings: { groove: g },
+      layers: { c2: { chords: [ch("x1", "E", 8)] }, m2: { melody: mel([[0, 60]]) } },
+      tracks: [{ id: "c2", kind: "chords", name: "Chords 2", style: "eighths", sound: { voice: "koto", space: 0.3 } }, { id: "m2", kind: "melody", name: "Melody 2", sound: { voice: "kora" } }],
+    };
+    for (const clip of [old, { ...old, settings: { style: "block", sound: { voice: "wire" }, groove: g } }]) {
+      const once = reviveClips({ section: json(clip) });
+      const twice = reviveClips(json(once));
+      const thrice = reviveClips(json(twice));
+      expect(once.section!.layers?.c2.pattern).toBe("eighths");
+      expect(reviveSound(once.section!.layers?.c2.sound).voice).toBe("koto");
+      expect(reviveSound(once.section!.layers?.m2.tuneSound).voice).toBe("kora");
+      expect(json(twice)).toEqual(json(once));
+      expect(json(thrice)).toEqual(json(once));
+    }
+  });
+
+  it("Arrange was one for the whole song: every chords track in every section gets a copy (version 3 too), once", () => {
+    const SEVEN = { zone: 3, strings: "any", inversions: false };
+    // (version 3: every section with its own tracks and settings, Arrange still the song's)
+    const v3 = { ...json(normalize(rp(v2()))), v: 3, arrange: SEVEN };
+    for (const raw of [{ ...v1(), arrange: SEVEN }, { ...v2(), arrange: SEVEN }, v3]) {
+      const p = rp(raw);
+      for (const s of sections(p)) {
+        expect(s.arrange, s.label).toEqual(SEVEN);
+        for (const t of allTracks(p).filter((x) => x.kind === "chords" && s.layers?.[x.id])) expect(s.layers![t.id].arrange, `${s.label} ${t.id}`).toEqual(SEVEN);
+      }
+      expect(migrateSong(json(normalize(p)))).toEqual(json(normalize(p)));
+      expect(fp(idea(raw).progression)).toBe(fp(p));
+    }
+    // none set: none anywhere
+    expect(sections(rp(v2())).map((s) => s.arrange)).toEqual([undefined, undefined, undefined]);
   });
 });

@@ -24,7 +24,7 @@ import { reidea } from "./openidea";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, prune, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -71,7 +71,7 @@ export interface Progression {
   bpm: number;
   pattern: PatternId;
   loop: boolean;
-  /** When set, shapes are arranged together in one area of the neck. null = each chord uses your own shape. */
+  /** The chords track on screen in the section on screen, on the guitar: when set, its shapes are arranged together in one area of the neck. null = each chord uses your own shape. (Every chords track in every section has its own.) */
   arrange?: ArrangeSettings | null;
   /** The first drums track of the section on screen: its rhythm and on/off, and its kit there (undefined = never touched). */
   beat?: Beat;
@@ -97,6 +97,8 @@ export interface Progression {
   layers?: Layers;
   /** Which track each page is editing, when it is not the first of its kind */
   focus?: Focus;
+  /** Which track each page was editing in each section, the last time it was on screen (by part id): going back there brings them forward again */
+  focusIn?: Record<string, Focus>;
   /** The song's time signature, set on the Frame page: how long every bar is, on every page, in every section that has no signature of its own */
   meter?: TimeSig;
   /** What plays each chords and melody track in the section on screen (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
@@ -235,7 +237,8 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     pattern: hasStyle(raw?.pattern) ? raw.pattern : "ring",
     chords: (raw?.chords ?? []).map(reviveChord),
     beat: reviveBeat(raw?.beat), song: reviveSong(raw?.song, tracks),
-    tracks, layers, focus: undefined,
+    tracks, layers, focus: undefined, focusIn: undefined,
+    arrange: reviveArrange(raw?.arrange) ?? null,
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),

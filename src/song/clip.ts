@@ -31,12 +31,12 @@ import { reviveSound, type HarpSound } from "../audio/rack";
 import { transposeRef, type Key } from "../theory/keys";
 import { pc } from "../theory/notes";
 import { TICKS, melodyBase, reviveMelody, transposeMelody, type Melody } from "./melody";
-import type { ProgChord, Progression } from "../ui/state";
+import type { ArrangeSettings, ProgChord, Progression } from "../ui/state";
 import { fitChordBeats, fitMelody, isCompound, reviveSig, sigBeats, type TimeSig } from "./meter";
 import { conform, sectionSig, sigOf } from "./unity";
 import { barsOr } from "./frame";
 import { commit, ensureSong, replaceSection, reviveSettings, sections, settingsOf, soloSection, type Settings } from "./structure";
-import { forget, hasMusic, isFirst, normalize, prune, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
+import { forget, hasMusic, isFirst, normalize, prune, reviveArrange, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
 import { reviveTone, reviveTones, toneOf, type Tone, type Tones } from "../audio/tone";
 import { groupsOf } from "./takes";
 import { migrateSectionClip } from "./migrate";
@@ -58,6 +58,8 @@ interface ClipSound {
 }
 export interface RhythmClip extends ClipBase, ClipSound {
   chords: ProgChord[];
+  /** on the guitar, where on the neck its chords were arranged (none: each chord's own shape) */
+  arrange?: ArrangeSettings;
   /** its playing style, feel, harp and effects */
   pattern?: PatternId;
   feel?: Partial<Feel>;
@@ -95,6 +97,8 @@ export interface SectionClip extends ClipBase {
   tones?: Tones;
   /** it holds everything about how the section sounds (an older copy does not) */
   whole?: boolean;
+  /** an older copy, moved over: its added tracks' parts say how they sounded (see song/migrate) */
+  v?: number;
 }
 export interface Clips {
   rhythm?: RhythmClip;
@@ -118,7 +122,7 @@ const onScreen = (p: Progression, kind: "chords" | "melody" | "drums") => p.focu
 const withToneOn = (p: Progression, kind: "chords" | "melody", tone: Tone): Progression => ({ ...p, tones: { ...p.tones, [onScreen(p, kind)]: clone(tone) } });
 
 export function copyRhythm(p: Progression, key: Key, from: string): RhythmClip {
-  return clone(tidy({ from, key, bar: sigBeats(sectionSig(p)), chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound, tone: toneOf(p, onScreen(p, "chords")) }));
+  return clone(tidy({ from, key, bar: sigBeats(sectionSig(p)), chords: p.chords, arrange: p.arrange ?? undefined, pattern: p.pattern, feel: p.feel, sound: p.sound, tone: toneOf(p, onScreen(p, "chords")) }));
 }
 export function copyMelody(p: Progression, key: Key, from: string): MelodyClip {
   return clone(tidy({ from, key, bar: sigBeats(sectionSig(p)), melody: p.melody ?? null, tuneSound: p.tuneSound, tone: toneOf(p, onScreen(p, "melody")) }));
@@ -134,7 +138,7 @@ export function pasteRhythm(p: Progression, c: RhythmClip, key: Key, id: () => s
   const to = sigBeats(sectionSig(p));
   const chords = clone(c.chords).map((x) => ({ ...x, beats: fitChordBeats(x.beats, c.bar ?? to, to) })).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
   if (!c.tone) return { ...p, chords };
-  return withToneOn({ ...p, chords, pattern: c.pattern ?? p.pattern, feel: clone(c.feel), sound: clone(c.sound) }, "chords", c.tone);
+  return withToneOn({ ...p, chords, arrange: clone(c.arrange) ?? null, pattern: c.pattern ?? p.pattern, feel: clone(c.feel), sound: clone(c.sound) }, "chords", c.tone);
 }
 /**
  * How far to move a melody into another key: by as much as the home note moves, up or down,
@@ -249,10 +253,12 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
   const by = n && tunes.length ? melodyShift({ div: 2, bars: 1, notes: tunes.flatMap((m) => m.notes) }, c.key, key) : 0;
   const tuneOf = (m: Melody | undefined) => (m ? (by ? transposeMelody(clone(m), by) : clone(m)) : undefined);
   const layers: Layers = {};
+  // (a copy from before every chords track had its own Arrange: its added chords were arranged as the whole song was, as the section's are)
+  const arr = c.whole ? undefined : (sectionAt(p, target)?.arrange ?? undefined);
   for (const [tid, l] of Object.entries(c.layers ?? {})) {
     const into = to.get(tid);
     if (!into) continue;
-    layers[into] = tidy<Layer>({ ...clone(l), chords: l.chords && chordsOf(l.chords), melody: tuneOf(l.melody) });
+    layers[into] = tidy<Layer>({ ...clone(l), chords: l.chords && chordsOf(l.chords), melody: tuneOf(l.melody), ...(arr && l.chords && !l.arrange ? { arrange: clone(arr) } : {}) });
   }
   // the instruments, on the tracks as they are called here
   const tones = Object.fromEntries(Object.entries(c.tones ?? {}).flatMap(([tid, t]) => (isFirst(tid) ? [[tid, clone(t)]] : to.has(tid) ? [[to.get(tid)!, clone(t)]] : [])));
@@ -297,15 +303,23 @@ function pasteSectionN(p0: Progression, blockId: string, c: SectionClip, key: Ke
  */
 function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, made: Set<string>, part: string, tracks: Track[]): Track {
   const ct = c.tracks.find((x) => to.get(x.id) === t.id);
+  if (ct && !t.harmony && t.replaces) {
+    // one that lost its source plays instead of the same chords here as it did there (where they are the same track)
+    const yes = !!ct.replacesIn?.includes(c.part ?? "") && (isFirst(ct.replaces!) ? ct.replaces : to.get(ct.replaces!)) === t.replaces;
+    const rest = (made.has(t.id) ? [] : t.replacesIn ?? []).filter((x) => x !== part);
+    const replacesIn = yes ? [...rest, part] : rest;
+    return t.replacesIn || made.has(t.id) || yes ? { ...t, replacesIn } : t;
+  }
   if (!t.harmony || !ct) return t;
   /** the copy's source, as it is called here */
   const here = (id: string | undefined) => (id === undefined ? undefined : isFirst(id) ? id : to.get(id) ?? (tracks.some((x) => x.id === id) ? id : undefined));
   const fresh = made.has(t.id);
   const from = fresh ? here(t.harmony.from) : t.harmony.from;
   if (!from || (!isFirst(from) && !tracks.some((x) => x.id === from))) return forget(t, tracks);
-  const same = !!ct.harmony && ct.harmony.option === t.harmony.option && here(ct.harmony.from) === from;
-  // (a copy of a page with no sections yet: its record is the page's)
-  const mark = same ? ct.harmony?.marks?.[c.part ?? ""] : undefined;
+  const same = !!ct.harmony && here(ct.harmony.from) === from;
+  // (a copy of a page with no sections yet: its record is the page's; it says which option it was written with there)
+  const m = same ? ct.harmony?.marks?.[c.part ?? ""] : undefined;
+  const mark = m && { ...m, option: m.option ?? ct.harmony!.option };
   const { [part]: _, ...others } = fresh ? {} : t.harmony.marks ?? {};
   const marks = mark ? { ...others, [part]: mark } : others;
   return { ...t, harmony: { from, option: t.harmony.option, ...(Object.keys(marks).length ? { marks } : {}) } };
@@ -314,7 +328,7 @@ export const pasteSection = settled(pasteSectionN);
 
 /** The fields of the page that a paste replaces: the track's music there and how it sounds there. */
 export function pastePart(p: Progression, kind: ClipKind): Partial<Progression> {
-  if (kind === "rhythm") return { chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound, tones: p.tones };
+  if (kind === "rhythm") return { chords: p.chords, arrange: p.arrange, pattern: p.pattern, feel: p.feel, sound: p.sound, tones: p.tones };
   if (kind === "melody") return { melody: p.melody, tuneSound: p.tuneSound, tones: p.tones };
   return { beat: p.beat };
 }
@@ -380,7 +394,7 @@ export function reviveClips(raw: unknown): Clips {
   const rh = r.rhythm;
   const rb = base(rh);
   if (rb && Array.isArray(rh!.chords))
-    out.rhythm = { ...rb, chords: chordsOf(rh!.chords), ...tone(rh!), ...(rh!.tone ? tidy({ pattern: hasStyle(rh!.pattern) ? rh!.pattern : undefined, feel: rh!.feel ? reviveFeel(rh!.feel) : undefined, sound: rh!.sound ? reviveSound(rh!.sound) : undefined }) : {}) };
+    out.rhythm = { ...rb, chords: chordsOf(rh!.chords), ...tone(rh!), ...(rh!.tone ? tidy({ arrange: reviveArrange(rh!.arrange), pattern: hasStyle(rh!.pattern) ? rh!.pattern : undefined, feel: rh!.feel ? reviveFeel(rh!.feel) : undefined, sound: rh!.sound ? reviveSound(rh!.sound) : undefined }) : {}) };
   // a whole section: its tracks first, so only parts of tracks it has are kept (one from before: its tracks keep the sound they played there)
   const se = migrateSectionClip(r.section);
   const sb = base(se);
@@ -389,7 +403,7 @@ export function reviveClips(raw: unknown): Clips {
     const tracks = reviveTracks(se.tracks) ?? [];
     out.section = tidy({
       ...sb, block: se.block, part: typeof se.part === "string" ? se.part : undefined, idea: typeof se.idea === "string" ? se.idea : null, meter, bars: barsOr(se.bars), chords: chordsOf(se.chords), melody: reviveMelody(se.melody),
-      settings: reviveSettings(se.settings as Settings | undefined), layers: reviveLayers(se.layers, tracks), tracks, tones: reviveTones(se.tones, ["chords", "melody", ...tracks.map((t) => t.id)]), whole: se.whole === true ? true : undefined,
+      settings: reviveSettings(se.settings as Settings | undefined), layers: reviveLayers(se.layers, tracks), tracks, tones: reviveTones(se.tones, ["chords", "melody", ...tracks.map((t) => t.id)]), whole: se.whole === true ? true : undefined, v: typeof se.v === "number" ? se.v : undefined,
     });
   }
   const me = r.melody;

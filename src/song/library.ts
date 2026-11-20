@@ -6,7 +6,7 @@
 import { reviveSig, sigName } from "./meter";
 import { conform, sigOf } from "./unity";
 import { reviveMix } from "../audio/mix";
-import { PLAIN_KIT, PLAIN_STYLE, normalize, prune, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
+import { PLAIN_KIT, PLAIN_STYLE, normalize, prune, reviveArrange, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
 import { reviveTones } from "../audio/tone";
 import { grooveOf, kitOfBeat, kitSig, reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
@@ -29,7 +29,9 @@ export interface Snapshot {
 }
 
 export function snapshot(key: Key, progression: Progression, capo: number, tuningId: string): Snapshot {
-  return { key, progression: commit(normalize(progression)), capo, tuningId };
+  // (which track each page was editing in each section is not part of the idea)
+  const { focusIn: _, ...p } = commit(normalize(progression));
+  return { key, progression: p, capo, tuningId };
 }
 
 /**
@@ -44,18 +46,18 @@ const inOrder = (x: unknown) => JSON.stringify(x, (_, v) => (v && typeof v === "
  */
 const layerSound = (x: Layer) =>
   x.beat ? { ...x, beat: { ...grooveOf(x.beat), kit: kitSig(kitOfBeat(x.beat)) } }
-  : x.chords ? { ...x, pattern: x.pattern ?? PLAIN_STYLE, feel: reviveFeel(x.feel), sound: reviveSound(x.sound) }
+  : x.chords ? { ...x, arrange: x.arrange ?? null, pattern: x.pattern ?? PLAIN_STYLE, feel: reviveFeel(x.feel), sound: reviveSound(x.sound) }
   : { ...x, tuneSound: reviveSound(x.tuneSound) };
 const soundsOf = (l: Layers | undefined) => l && Object.fromEntries(Object.entries(l).map(([k, x]) => [k, layerSound(x)]));
-const partSound = (x: SongPart) => ({ ...x, style: x.style ?? PLAIN_STYLE, feel: reviveFeel(x.feel), sound: reviveSound(x.sound), tuneSound: reviveSound(x.tuneSound), kit: kitSig(x.kit ?? PLAIN_KIT), groove: x.groove ?? null, layers: soundsOf(x.layers) ?? null, tones: x.tones ?? null });
+const partSound = (x: SongPart) => ({ ...x, arrange: x.arrange ?? null, style: x.style ?? PLAIN_STYLE, feel: reviveFeel(x.feel), sound: reviveSound(x.sound), tuneSound: reviveSound(x.tuneSound), kit: kitSig(x.kit ?? PLAIN_KIT), groove: x.groove ?? null, layers: soundsOf(x.layers) ?? null, tones: x.tones ?? null });
 
 /** Two snapshots are the same idea when their fingerprints match. Which section happens to be selected does not count. */
 export function fingerprint(s: Snapshot): string {
   const p = commit(normalize(s.progression));
-  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, arrange: p.arrange ?? null, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}) };
+  const base = { key: s.key, capo: s.capo, tuningId: s.tuningId, meter: sigName(sigOf(p)), bpm: p.bpm, play: p.play ?? "section", ...(p.mix ? { mix: p.mix } : {}), ...(p.tracks ? { tracks: p.tracks } : {}) };
   // with a song, the page is a copy of one section: the song itself is what counts (every section with how its tracks sound)
   if (p.song) return inOrder({ ...base, parts: p.song.parts.map(partSound), blocks: p.song.blocks });
-  return inOrder({ ...base, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: soundsOf(p.layers) } : {}), ...(p.tones ? { tones: p.tones } : {}) });
+  return inOrder({ ...base, arrange: p.arrange ?? null, pattern: p.pattern, feel: reviveFeel(p.feel), melody: p.melody?.notes.length ? p.melody : null, bars: p.bars ?? null, beat: p.beat ?? null, sound: reviveSound(p.sound), tuneSound: reviveSound(p.tuneSound), chords: p.chords, ...(p.layers ? { layers: soundsOf(p.layers) } : {}), ...(p.tones ? { tones: p.tones } : {}) });
 }
 
 /**
@@ -99,7 +101,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const tones = reviveTones(p.tones, toneIdsIn(layers, tracks));
   // (an added track that is in no section is not part of the song)
   const progression: Progression = settle(prune(loadCurrent({
-    chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
+    chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: reviveArrange(p.arrange) ?? null, beat: reviveBeat(p.beat), song,
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
     ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : {}),
     ...(p.feel ? { feel: reviveFeel(p.feel) } : {}), ...(melody ? { melody } : {}), ...(fitBars(p.bars) ? { bars: fitBars(p.bars) } : {}),

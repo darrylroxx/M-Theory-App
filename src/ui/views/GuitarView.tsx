@@ -34,7 +34,7 @@ import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
 import { MixMark } from "../components/MixMark";
 import { AuditionCtx, HarmonizeButton, HarmonyAgain, HarmonyPicker, type Audition, type Preview } from "../components/HarmonyPicker";
-import { harmonizeSources, previewHarmony, writtenAs } from "../../song/harmony";
+import { harmonizeSources, partHere, previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
 import { PLAIN_STYLE, addTrackHere, allTracks, drumsOf, firstLayer, focusTrack, hasMusic, insteadIn, isFirst, normalize, removeHere, tracksHere, type EditKind, type Layers, type Track } from "../../song/tracks";
@@ -87,27 +87,30 @@ export function GuitarView() {
 
   // Shapes in the tray: either each chord's own shape, or (when Arrange is on) a set
   // chosen together so they sit in one area of the neck. Shapes you set by hand stay put.
+  // (Every chords track in every section has its own Arrange: the page shows the one on screen.)
   const arr = prog.arrange ?? null;
   const { capo, avoidBarre } = state.settings;
-  const arrOpts: ArrangeOptions = useMemo(
-    () => ({ tuning, capo, avoidBarre, preferOpen: arr?.zone === 0, targetFret: null, allowInversions: arr?.inversions ?? false, zone: arr?.zone ?? null, strings: arr?.strings ?? "any" }),
-    [tuning, capo, avoidBarre, arr],
+  const optsOf = useCallback(
+    (a: ArrangeSettings | null | undefined): ArrangeOptions => ({ tuning, capo, avoidBarre, preferOpen: a?.zone === 0, targetFret: null, allowInversions: a?.inversions ?? false, zone: a?.zone ?? null, strings: a?.strings ?? "any" }),
+    [tuning, capo, avoidBarre],
   );
+  const arrOpts: ArrangeOptions = useMemo(() => optsOf(arr), [optsOf, arr]);
   const chordsKey = JSON.stringify(prog.chords.map((c) => [c.ref, c.voicingId, !!c.rest]));
+  /** The shapes a track's chords play on the guitar, arranged as that track is in its section. */
   const voicingsOf = useCallback(
-    (all: ProgChord[]): (Voicing | undefined)[] => {
+    (all: ProgChord[], a: ArrangeSettings | null | undefined): (Voicing | undefined)[] => {
       // a rest has no shape, and the chords either side of it are arranged as neighbours
       const chords = all.filter((c) => !c.rest);
       const own = chords.map((c) => shapeOf(c.ref, c.voicingId));
       // (a shape set by hand that no longer makes its chord, after the capo or tuning changed, is free to move like the rest)
-      const vs = arr ? arrangeProgression(chords.map((c) => c.ref), { ...arrOpts, pinned: chords.map((c, i) => (c.voicingId && own[i]?.id === c.voicingId ? own[i] : undefined)) }) : own;
+      const vs = a ? arrangeProgression(chords.map((c) => c.ref), { ...optsOf(a), pinned: chords.map((c, i) => (c.voicingId && own[i]?.id === c.voicingId ? own[i] : undefined)) }) : own;
       let k = 0;
       return all.map((c) => (c.rest ? undefined : vs[k++]));
     },
-    [arr, arrOpts, shapeOf],
+    [optsOf, shapeOf],
   );
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  const voicings = useMemo(() => voicingsOf(prog.chords), [chordsKey, voicingsOf]);
+  const voicings = useMemo(() => voicingsOf(prog.chords, arr), [chordsKey, voicingsOf, arr]);
   // the chords track on the page may play the keys (a piano or the synth): its chords are then
   // keyboard shapes, laid out together so the hands move least, and those are the notes it plays
   const chordsId = prog.focus?.chords ?? "chords";
@@ -218,7 +221,7 @@ export function GuitarView() {
       return shared.get(k) as T;
     };
     /** What the tracks added in a section play there. */
-    const extrasOf = (sec: Section, len: number, secBar: number, swing: number, quiet: Set<string>): ExtraPlay | undefined => {
+    const extrasOf = (sec: Section, len: number, secBar: number, swing: number, quiet: ReadonlyMap<string, string>): ExtraPlay | undefined => {
       const ex: ExtraPlay = { chords: [], tunes: [], drums: [] };
       for (const t of np.tracks ?? []) {
         const l = sec.layers?.[t.id];
@@ -227,7 +230,7 @@ export function GuitarView() {
           const tone = one(toneOf(sec, t.id));
           const sound = one(reviveSound(l.sound));
           const feel = l.feel && one(l.feel);
-          const vs = voicingsOf(l.chords);
+          const vs = voicingsOf(l.chords, l.arrange);
           const kv = onKeys(tone) ? keysVoicings(l.chords, tone) : null;
           let at = 0;
           for (const { item: c, index: i } of inFrame(l.chords, len)) {
@@ -253,8 +256,8 @@ export function GuitarView() {
       const harp = one(reviveSound(sec.sound));
       const tuneHarp = one(reviveSound(sec.tuneSound));
       // (a chords track a harmony plays instead of, in this section, is not heard here)
-      const quiet = insteadIn(sec.layers, np.tracks, np.mix);
-      const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords);
+      const quiet = insteadIn(sec.partId, sec.layers, np.tracks, np.mix);
+      const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords, sec.arrange);
       const kv = onKeys(firstTone) ? keysVoicings(sec.chords, firstTone) : null;
       // the first drums track: its kit and rhythm in this section
       const drums: Beat = one(drumsIn(sec));
@@ -446,7 +449,7 @@ export function GuitarView() {
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
     const still = (s: AppState) => sameMusic(s.progression, after);
     const name = allTracks(normalize(before)).find((t) => t.id === id)?.name ?? "";
-    toast(`${name} sounds like this in every section`, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: before } : s)) });
+    toast(`${name} sounds like this in every section${isFirst(id) ? "" : " that has it"}`, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: before } : s)) });
   }, [set, toast]);
   // (only when another section has the track; the same button from one render to the next, so the pages are not drawn again for nothing)
   const others = (kind: EditKind) => sectionsWith(prog, prog.focus?.[kind] ?? kind) > 0;
@@ -734,9 +737,13 @@ export function GuitarView() {
   const trackSecs = useMemo((): TrackSection[] => {
     const np = normalize(prog);
     const row: Section[] = secs.length ? secs : [soloSection(np)];
+    const names = new Map(allTracks(np).map((t) => [t.id, t.name]));
     return row.map((sec, i) => {
       const per = plan.per[i];
-      return { block: sec.blockId, label: sec.label, color: sec.color, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, layers: sec.layers, tones: sec.tones, drums: drumsIn(sec) };
+      // the chords tracks a harmony plays instead of here: drawn as not heard, with the one that is
+      const by = insteadIn(sec.partId, sec.layers, np.tracks, np.mix);
+      const instead = by.size ? Object.fromEntries([...by].map(([target, h]) => [target, names.get(h) ?? ""])) : undefined;
+      return { block: sec.blockId, label: sec.label, color: sec.color, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, layers: sec.layers, tones: sec.tones, drums: drumsIn(sec), ...(instead ? { instead } : {}) };
     });
   }, [secs, plan.per, prog, firstBeat, bar]);
   // the mixer: every track's volume, mute and solo, for the whole song
@@ -1271,6 +1278,13 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
   };
   // the tracks of this kind in the section on screen (every section has its own)
   const list = tracksHere(state.progression, ek);
+  // the chords on screen are not heard here when a harmony here plays instead of them: it says so, and a tap shows that one
+  const instead = useMemo(() => {
+    if (ek !== "chords") return null;
+    const p = normalize(state.progression);
+    const by = insteadIn(partHere(p), p.layers, p.tracks, p.mix).get(on);
+    return by ? { id: by, name: list.find((t) => t.id === by)?.name ?? "" } : null;
+  }, [ek, state.progression, on, list]);
   /** Another track of this kind in this section only (a second set of chords, another melody, more drums): plain, empty, ready to write in. */
   const add = () => {
     const id = newId();
@@ -1296,6 +1310,11 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
         <button className="clip-add" aria-label={`Add a ${what} track`} title={`Add a ${what} track`} onClick={add}>+</button>
       </span>
       <MixMark id={on} name={list.find((t) => t.id === on)?.name ?? on} />
+      {instead && (
+        <button className="hz-instead" aria-label={`${list.find((t) => t.id === on)?.name ?? ""} is not heard in ${label}: ${instead.name} plays instead. Show ${instead.name}`} title={`Not heard in ${label}: ${instead.name} plays instead`} onClick={() => set((s) => ({ ...s, progression: focusTrack(s.progression, "chords", instead.id) }))}>
+          {instead.name} plays instead
+        </button>
+      )}
       <span className="spacer" />
       <BarsControl />
       <button className="icon-btn" title="Copy" aria-label={`Copy the ${what} of ${label}`} onClick={copy}><CopyIcon /></button>
@@ -1424,7 +1443,7 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
   lengths: Lengths;
   here: Len;
   voicings: (Voicing | undefined)[];
-  voicingsOf: (chords: ProgChord[]) => (Voicing | undefined)[];
+  voicingsOf: (chords: ProgChord[], arrange: ArrangeSettings | null | undefined) => (Voicing | undefined)[];
   /** the whole song as it plays (every track), and whether there is anything in it */
   song: PlayItem[];
   any: boolean;
@@ -1474,9 +1493,9 @@ function FramePage({ secs, lengths, here, voicings, voicingsOf, song: all, any, 
     /** the added chords tracks in a section, each under its name */
     const added = (layers: Layers | undefined, where: { tones?: Tones } = np) => chordTracks.flatMap((t) => {
       const cs = layers?.[t.id]?.chords ?? [];
-      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs), keysOf(t.id, cs, where))] : [];
+      return cs.length ? [`${t.name}:`, ...block(cs, voicingsOf(cs, layers?.[t.id]?.arrange), keysOf(t.id, cs, where))] : [];
     });
-    if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords), keysOf("chords", np.chords)), ...added(np.layers)].join("\n");
+    if (!plan) return [head, "", ...block(np.chords, np === prog ? voicings : voicingsOf(np.chords, np.arrange), keysOf("chords", np.chords)), ...added(np.layers)].join("\n");
     // a song: the running order, then each different section once
     const out = [head, "", plan.parts.map((x) => x.sec.label).join(" "), ""];
     const done = new Set<string>();

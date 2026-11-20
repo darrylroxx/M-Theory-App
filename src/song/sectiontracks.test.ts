@@ -20,7 +20,7 @@ const drums = (kit: string, space = 0.3): Beat => ({ ...DEFAULT_BEAT, kit: kit a
 
 /** A song of two sections, A and B, each with chords and a melody, the page on A. */
 function song(): Progression {
-  let p: Progression = { chords: [chord("C"), chord("G")], melody: mel([[0, 64], [24, 67]]), bpm: 100, pattern: "ring", loop: true, bars: 2, meter: { num: 4, den: 4 }, beat: drums("909"), v: 3 };
+  let p: Progression = { chords: [chord("C"), chord("G")], melody: mel([[0, 64], [24, 67]]), bpm: 100, pattern: "ring", loop: true, bars: 2, meter: { num: 4, den: 4 }, beat: drums("909"), v: 4 };
   p = ensureSong(p, id);
   p = addNewSection(p, id);
   p = { ...p, chords: [chord("A"), chord("F")], melody: mel([[0, 69]]) };
@@ -375,10 +375,10 @@ describe("Harmonize works in the section on screen", () => {
     expect(r.track).toBeDefined();
     expect(r.p.mix).toBeUndefined();
     const [a, b] = sections(r.p);
-    expect(insteadIn(a.layers, r.p.tracks, r.p.mix).has("chords")).toBe(true);
-    expect(insteadIn(b.layers, r.p.tracks, r.p.mix).has("chords")).toBe(false);
+    expect(insteadIn(a.partId, a.layers, r.p.tracks, r.p.mix).has("chords")).toBe(true);
+    expect(insteadIn(b.partId, b.layers, r.p.tracks, r.p.mix).has("chords")).toBe(false);
     // muted by hand, the chords it replaces are heard again
-    expect(insteadIn(a.layers, r.p.tracks, { h1: { mute: true } }).has("chords")).toBe(false);
+    expect(insteadIn(a.partId, a.layers, r.p.tracks, { h1: { mute: true } }).has("chords")).toBe(false);
   });
 });
 
@@ -393,5 +393,181 @@ describe("the page keeps one track of a kind in front", () => {
     let p = go(song(), 1);
     p = { ...p, beat: { ...p.beat!, kit: "lofi" } };
     expect(kitSig(sections(p)[0].kit!)).toBe(kitSig(kitOfBeat(drums("909"))));
+  });
+});
+
+describe("Arrange is each chords track's own, in each section", () => {
+  const SEVEN = { zone: 3, strings: "any" as const, inversions: false };
+  it("set on Chords 1 in A: not B's, not Chords 3's in A; it plays with A's Chords 1 only", () => {
+    let p = song();
+    p = { ...p, arrange: SEVEN };
+    p = addTrackHere(p, "chords", "c3").p;
+    p = { ...p, chords: [chord("D")] };
+    // the page shows the track on screen: Chords 3 is on its own shapes
+    expect(p.arrange ?? null).toBeNull();
+    p = focusTrack(p, "chords", "chords");
+    expect(p.arrange).toEqual(SEVEN);
+    const b = go(p, 1);
+    expect(b.arrange ?? null).toBeNull();
+    const [sa, sb] = sections(p);
+    expect(sa.arrange).toEqual(SEVEN);
+    expect(sa.layers?.c3.arrange).toBeUndefined();
+    expect(sb.arrange).toBeUndefined();
+    // changed in B, A keeps its own
+    const q = go({ ...b, arrange: { zone: 0, strings: 4, inversions: true } }, 0);
+    expect(q.arrange).toEqual(SEVEN);
+    expect(sections(q)[1].arrange).toEqual({ zone: 0, strings: 4, inversions: true });
+    // which section is on screen is not a change to the idea
+    expect(sameMusic(go(q, 1), q)).toBe(true);
+  });
+  it("on an added chords track, kept with its part of the section while another is in front", () => {
+    let p = addTrackHere(song(), "chords", "c2").p;
+    p = { ...p, chords: [chord("E")], arrange: SEVEN };
+    p = focusTrack(p, "chords", "chords");
+    expect(p.arrange ?? null).toBeNull();
+    expect(normalize(p).layers?.c2.arrange).toEqual(SEVEN);
+    expect(focusTrack(p, "chords", "c2").arrange).toEqual(SEVEN);
+  });
+  it("a new section starts with Chords 1's Arrange; All sections, copy and paste and a reload carry it", () => {
+    let p: Progression = { ...song(), arrange: SEVEN };
+    p = addNewSection(p, id);
+    expect(p.arrange).toEqual(SEVEN);
+    // All sections: the same track in every other section gets it, music left alone
+    let q = go(song(), 1);
+    q = soundToAll({ ...q, arrange: SEVEN }, "chords", "chords");
+    expect(sections(q)[0].arrange).toEqual(SEVEN);
+    expect(roots(sections(q)[0].chords)).toEqual(["C", "G"]);
+    // copy on A's Chords 1, paste into B's
+    const clip = copyRhythm({ ...song(), arrange: SEVEN }, C, "A");
+    expect(clip.arrange).toEqual(SEVEN);
+    const pasted = pasteRhythm(go(song(), 1), { ...clip, tone: { inst: "guitar" } }, C, id);
+    expect(pasted.arrange).toEqual(SEVEN);
+    expect(pastePart(pasted, "rhythm").arrange).toEqual(SEVEN);
+    // saved and opened again
+    const back = reviveProgression(JSON.parse(JSON.stringify(normalize(go(q, 1)))));
+    expect(sections(back).map((s) => s.arrange)).toEqual([SEVEN, SEVEN]);
+  });
+});
+
+describe("each section remembers the track a page was editing there", () => {
+  it("Chords 2 in A, over to B (which has none) and back: Chords 2 again", () => {
+    let p = addTrackHere(song(), "chords", "c2").p;
+    p = addTrackHere(p, "melody", "m2").p;
+    expect(p.focus).toEqual({ chords: "c2", melody: "m2" });
+    p = go(p, 1);
+    expect(p.focus).toBeUndefined();
+    p = go(p, 0);
+    expect(p.focus).toEqual({ chords: "c2", melody: "m2" });
+    // what was chosen in A by hand comes back, Chords 1 included
+    p = focusTrack(p, "chords", "chords");
+    p = go(go(p, 1), 0);
+    expect(p.focus).toEqual({ melody: "m2" });
+  });
+  it("a section not seen yet keeps the track in front where it has it; a track gone from a section is not brought back", () => {
+    let p = addTrackHere(song(), "chords", "c2").p;
+    // C: made from A, then given Chords 2 by hand; opened again (nothing remembered), Chords 2 in front in A
+    p = addNewSection(p, id);
+    p = addTrackTo(p, blockOf(p, 2), "c2");
+    p = { ...focusTrack(go(p, 0), "chords", "c2"), focusIn: undefined };
+    const c = selectBlock(p, blockOf(p, 2));
+    expect(c.focus).toEqual({ chords: "c2" });
+    // seen in this session, C shows what was last edited there: Chords 1
+    let seen = addNewSection(addTrackHere(song(), "chords", "c2").p, id);
+    seen = addTrackTo(seen, blockOf(seen, 2), "c2");
+    expect(go(go(seen, 0), 2).focus).toBeUndefined();
+    // Chords 2 taken out of A while away: A shows Chords 1
+    let q = go(p, 1);
+    q = { ...q, song: { ...q.song!, parts: q.song!.parts.map((x, i) => (i === 0 ? { ...x, layers: undefined } : x)) } };
+    expect(go(q, 0).focus).toBeUndefined();
+  });
+  it("is not part of the idea", () => {
+    let p = addTrackHere(song(), "chords", "c2").p;
+    p = go(go(p, 1), 0);
+    expect(p.focusIn).toBeDefined();
+    expect(snapshot(C, p, 0, "standard").progression.focusIn).toBeUndefined();
+    expect(sameMusic(p, song())).toBe(false);
+    expect(fingerprint(snapshot(C, go(p, 1), 0, "standard"))).toBe(fingerprint(snapshot(C, p, 0, "standard")));
+  });
+});
+
+describe("a harmony that plays instead of chords does so in the sections it was written to", () => {
+  /** A played twice (one section), then B */
+  const twice = () => {
+    let p = song();
+    p = repeatSection(p, p.song!.blocks[0].partId, id);
+    return go(p, 0);
+  };
+  const heardIn = (p: Progression, i: number, tid = "chords") => {
+    const s = sections(p)[i];
+    return !insteadIn(s.partId, s.layers, normalize(p).tracks, normalize(p).mix).has(tid);
+  };
+  it("written again with a layer in a copy of the section, the original still plays instead of its chords", () => {
+    let p = addHarmony(normalize(twice()), C, { kind: "chords", from: "chords", option: "borrowed" }, "h1").p;
+    expect([heardIn(p, 0), heardIn(p, 1)]).toEqual([false, false]);
+    // the repeat gets a section of its own (h1 with it), and there Darker is written again as a Pad
+    const rep = p.song!.blocks.findIndex((b, i) => i > 0 && b.partId === p.song!.blocks[0].partId);
+    p = unlinkBlock(p, p.song!.blocks[rep].id, id);
+    p = selectBlock(p, p.song!.blocks[rep].id);
+    p = rewriteHarmony(p, C, "h1", "pad");
+    const order = sections(p);
+    const a = order.findIndex((s) => s.partId === p.song!.blocks[0].partId);
+    expect(heardIn(p, a)).toBe(false);
+    expect(heardIn(p, rep)).toBe(true);
+    expect(p.mix).toBeUndefined();
+    // each section says what it was written with
+    const h = p.tracks!.find((t) => t.id === "h1")!.harmony!;
+    expect(h.marks?.[order[a].partId]?.option).toBe("borrowed");
+    expect(h.marks?.[order[rep].partId]?.option).toBe("pad");
+    // written again in A with nothing said, it keeps A's own option
+    const again = rewriteHarmony(go(p, 0), C, "h1");
+    expect(again.tracks!.find((t) => t.id === "h1")!.harmony!.marks?.[order[a].partId]?.option).toBe("borrowed");
+    expect(heardIn(again, a)).toBe(false);
+  });
+  it("says which track plays instead", () => {
+    const p = addHarmony(normalize(song()), C, { kind: "chords", from: "chords", option: "relative" }, "h1").p;
+    const s = sections(p)[0];
+    expect(insteadIn(s.partId, s.layers, p.tracks, p.mix).get("chords")).toBe("h1");
+  });
+  it("its source gone, it still plays instead of the song's chords in the same sections only", () => {
+    let p = addTrackHere(song(), "melody", "m2").p;
+    p = { ...p, melody: mel([[0, 72], [12, 74]]) };
+    p = addHarmony(normalize(p), C, { kind: "chords", from: "m2", option: "relative" }, "h1").p;
+    expect(heardIn(p, 0)).toBe(false);
+    p = removeTrack(p, "m2");
+    const t = p.tracks!.find((x) => x.id === "h1")!;
+    expect(t.harmony).toBeUndefined();
+    expect(t.replaces).toBe("chords");
+    expect(t.replacesIn).toEqual([sections(p)[0].partId]);
+    expect(heardIn(p, 0)).toBe(false);
+    // B has no part of it: its chords are heard; put there by hand and written in, they still are
+    let q = addTrackTo(p, blockOf(p, 1), "h1");
+    q = go(q, 1);
+    q = focusTrack(q, "chords", "h1");
+    q = { ...q, chords: [chord("D")] };
+    expect(heardIn(q, 1)).toBe(true);
+    // a copy of A plays instead of them too
+    const twiceA = repeatSection(p, p.song!.blocks[0].partId, id);
+    const r = unlinkBlock(twiceA, blockOf(twiceA, 1), id);
+    expect(sections(r).length).toBe(3);
+    expect(sections(r).map((_, i) => heardIn(r, i))).toEqual([false, false, true]);
+  });
+});
+
+describe("All sections on an added drums track", () => {
+  it("copies the whole kit: what the other section's kit had of its own (mutes, echo, a drum's sound) goes", () => {
+    let p = addTrackHere(song(), "drums", "d2").p;
+    p = { ...p, beat: { ...drums("909"), on: true } };
+    p = go(p, 1);
+    p = addTrackHere(p, "drums", "x").p;
+    expect(p.focus?.drums).toBe("d2");
+    p = { ...p, beat: { ...drums("808", 0.6), mutes: ["hat"], echo: 0.5, voices: { snare: "lofi" } } as Beat };
+    p = go(p, 0);
+    p = focusTrack(p, "drums", "d2");
+    p = soundToAll(p, "drums", "d2");
+    const b = sections(p)[1].layers!.d2.beat!;
+    expect(kitSig(kitOfBeat(b))).toBe(kitSig(kitOfBeat(drums("909"))));
+    expect([b.mutes, b.echo, b.voices]).toEqual([undefined, undefined, undefined]);
+    // its rhythm and on/off stay B's
+    expect([b.on, b.rows.kick]).toEqual([true, ROWS.kick]);
   });
 });

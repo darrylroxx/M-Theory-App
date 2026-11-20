@@ -47,7 +47,7 @@ const inKey = (midi: number, key: Key) => scalePcs(pc(key.tonic), keyScale(key))
 /** the section a part plays first in, on screen */
 const at = (p: Progression, part: string) => selectBlock(p, p.song!.blocks.find((b) => b.partId === part)!.id);
 /** is a chords track heard in a section, or does a harmony there play instead of it? */
-const replaced = (p: Progression, part: string, tid = "chords") => insteadIn(layer(p, part, "_") ? undefined : parts(p).find((x) => x.id === part)?.layers, normalize(p).tracks, normalize(p).mix).has(tid);
+const replaced = (p: Progression, part: string, tid = "chords") => insteadIn(part, parts(p).find((x) => x.id === part)?.layers, normalize(p).tracks, normalize(p).mix).has(tid);
 
 describe("a harmony track in the section on screen", () => {
   for (const key of [C, Em]) {

@@ -36,6 +36,8 @@ export interface TrackSection {
   layers?: Layers;
   /** what plays its chords and melody tracks */
   tones?: Tones;
+  /** the chords tracks not heard here because a harmony plays instead of them: by track id, the name of the one that does */
+  instead?: Record<string, string>;
 }
 
 /** The page that edits each kind of track. */
@@ -313,9 +315,11 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                       </span>
                     );
                   const s = content(t, s0);
+                  // (a harmony plays instead of it here: it is drawn as not heard)
+                  const by = s0.instead?.[t.id];
                   return (
-                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}`} style={{ width: s.bars * bw }}
-                      aria-label={`${t.name} of section ${s.label}: open`} onClick={() => open(s.block, t)}>
+                    <button key={s.block || "a"} className={`tv-block ${letterClass(s.color)}${s.block === current ? " on" : ""}${by !== undefined ? " quiet" : ""}`} style={{ width: s.bars * bw }}
+                      aria-label={`${t.name} of section ${s.label}${by !== undefined ? `, not heard: ${by} plays instead` : ""}: open`} title={by !== undefined ? `Not heard in ${s.label}: ${by} plays instead` : undefined} onClick={() => open(s.block, t)}>
                       {t.kind === "chords" ? <ChordBlock s={s} bw={bw} /> : t.kind === "melody" ? <MelodyBlock s={s} bw={bw} range={range} /> : t.kind === "drums" ? <DrumBlock s={s} bw={bw} /> : <TakeBlock t={t} s={s} bw={bw} laid={laid} />}
                     </button>
                   );

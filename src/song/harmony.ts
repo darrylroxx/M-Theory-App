@@ -20,7 +20,7 @@ import { barsOr } from "./frame";
 import { isCompound, sigBeats, type TimeSig } from "./meter";
 import { sigOf } from "./unity";
 import { commit, letters, type SongPart } from "./structure";
-import { allTracks, insteadIn, insteadTarget, normalize, plainLayer, refocus, unmuteInstead, type HarmonyMark, type Layer, type Layers, type Track } from "./tracks";
+import { allTracks, insteadIn, insteadTarget, normalize, optionIn, plainLayer, refocus, unmuteInstead, type HarmonyMark, type Layer, type Layers, type Track } from "./tracks";
 import { chordPrint, fnv, outPrint, tunePrint } from "./prints";
 
 /** What a harmony track is written from and how. */
@@ -66,6 +66,11 @@ interface Spot {
   layers?: Layers;
   bars?: number;
   meter: TimeSig;
+}
+/** The section on screen, by part id ("" with no sections yet): where a harmony is written, and written again. */
+export function partHere(p: Pick<Progression, "song">): string {
+  const song = p.song;
+  return (song && song.parts.find((x) => x.id === song.blocks.find((b) => b.id === song.current)?.partId)?.id) ?? "";
 }
 /** The section on screen, where a harmony is written (a section played twice is the same music). `p` has every track in its place. */
 function spots(p: Progression): Spot[] {
@@ -118,9 +123,12 @@ function insteadOf(p: Progression, kind: HarmonyKind, option: string, from: stri
  */
 function heardChords(p: Progression, s: Spot, self: string): ProgChord[] {
   const others = (p.tracks ?? []).filter((t) => t.id !== self);
-  if (!p.mix?.chords?.mute && !insteadIn(s.layers, others, p.mix).has("chords")) return s.chords;
-  for (const t of p.tracks ?? []) {
-    if (t.id === self || p.mix?.[t.id]?.mute || insteadTarget(t, p.tracks ?? []) !== "chords") continue;
+  const by = insteadIn(s.part, s.layers, others, p.mix).get("chords");
+  if (by) return s.layers![by].chords!;
+  if (!p.mix?.chords?.mute) return s.chords;
+  // (an older song muted the chords for the whole song while a track played instead of them)
+  for (const t of others) {
+    if (p.mix?.[t.id]?.mute || insteadTarget(t, p.tracks ?? []) !== "chords") continue;
     const cs = s.layers?.[t.id]?.chords;
     if (sounds(cs)) return cs!;
   }
@@ -233,7 +241,7 @@ function writeAll(p: Progression, key: Key, kind: HarmonyKind, from: string, src
     const input = inputIn(p, s, key, kind, from, srcKind, option, track);
     const l = input ? layerOf(harmonize(input), kind, input) : undefined;
     layers.set(s.part, l);
-    marks[s.part] = { src: srcPrint(input), out: outPrint(l) };
+    marks[s.part] = { src: srcPrint(input), out: outPrint(l), option };
   }
   return { layers, marks };
 }
@@ -245,7 +253,7 @@ function writeAll(p: Progression, key: Key, kind: HarmonyKind, from: string, src
 function put(p: Progression, id: string, kind: HarmonyKind, by: Map<string, Layer | undefined>): Progression {
   const swap = (ls: Layers | undefined, l: Layer | undefined): Layers => {
     const was = ls?.[id];
-    const sound: Layer = was ? (kind === "chords" ? { pattern: was.pattern, feel: was.feel, sound: was.sound } : { tuneSound: was.tuneSound }) : {};
+    const sound: Layer = was ? (kind === "chords" ? { arrange: was.arrange, pattern: was.pattern, feel: was.feel, sound: was.sound } : { tuneSound: was.tuneSound }) : {};
     const music = l ?? plainLayer(kind);
     return { ...ls, [id]: Object.fromEntries(Object.entries({ ...sound, ...music }).filter(([, v]) => v !== undefined)) };
   };
@@ -294,22 +302,26 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
   const h = t?.harmony;
   if (!t || !h || (t.kind !== "chords" && t.kind !== "melody")) return p0;
   const kind: HarmonyKind = t.kind;
-  const next = option ?? h.option;
+  const here = partHere(p);
+  const now = optionIn(h, here);
+  const next = option ?? now;
   const opt = optionOf(kind, next);
-  const was = optionOf(kind, h.option);
+  const was = optionOf(kind, now);
   const srcKind = kindOf(p, h.from);
   if (!opt || !srcKind || !opt.from.includes(srcKind)) return p0;
   const w = writeAll(p, key, kind, h.from, srcKind, next, id);
   const wasName = was && labelFor(was, key);
-  const renamed = wasName && next !== h.option && (t.name === wasName || t.name.startsWith(`${wasName} `)) ? freeName(p, labelFor(opt, key), id) : t.name;
-  const tracks = (p.tracks ?? []).map((x) => (x.id === id ? { ...x, name: renamed, role: "harmony" as const, harmony: { from: h.from, option: next, marks: { ...h.marks, ...w.marks } } } : x));
-  // (a song from before kept chords another track played instead of muted for the whole song: going
-  // back to a layer lets them play again, unless another still plays instead of them)
+  const renamed = wasName && next !== now && (t.name === wasName || t.name.startsWith(`${wasName} `)) ? freeName(p, labelFor(opt, key), id) : t.name;
+  // every other section keeps the option it was written with (a record from before had the track's)
+  const kept = Object.fromEntries(Object.entries(h.marks ?? {}).map(([k, m]) => [k, m.option ? m : { ...m, option: h.option }]));
+  const tracks = (p.tracks ?? []).map((x) => (x.id === id ? { ...x, name: renamed, role: "harmony" as const, harmony: { from: h.from, option: next, marks: { ...kept, ...w.marks } } } : x));
+  // an older song muted the chords a track played instead of, for the whole song; from now on each
+  // section it was written in says whether it plays instead of them there (the others as they were),
+  // so that mute goes (unless a track from before, that only did so through the mixer, still does)
   const before = insteadTarget(t, p.tracks ?? []);
-  const after = insteadOf(p, kind, next, h.from, srcKind);
-  const others = (p.tracks ?? []).filter((x) => x.id !== id);
-  const freed = before && !after && !others.some((x) => insteadTarget(x, p.tracks ?? []) === before);
-  const mix = freed ? unmuteInstead(p.mix, before) : p.mix;
+  const old = !!before && !!p.mix?.[before]?.mute && !!p.mix[before].instead;
+  const held = old && (p.tracks ?? []).some((x) => x.id !== id && x.replaces === before && !x.replacesIn);
+  const mix = old && !held ? unmuteInstead(p.mix, before!) : p.mix;
   const q: Progression = { ...put(p, id, kind, w.layers), tracks, ...(mix ? { mix } : {}) };
   return refocus(q, p0.focus);
 }
@@ -400,7 +412,7 @@ export function harmonyState(p0: Progression, key: Key, id: string): HarmonyStat
     const l = s.layers?.[id];
     const m = markOf(s.part);
     const now = outPrint(l);
-    const input = inputIn(p, s, key, t.kind, h.from, srcKind, h.option, id);
+    const input = inputIn(p, s, key, t.kind, h.from, srcKind, optionIn(h, s.part), id);
     const sameOut = m ? m.out === now : emptyLayer(l);
     const sameSrc = m ? m.src === srcPrint(input) : !input;
     if (sameOut && sameSrc) continue;

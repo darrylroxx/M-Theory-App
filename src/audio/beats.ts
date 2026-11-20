@@ -396,6 +396,11 @@ export function kitOfBeat(b: Beat): DrumKit {
   const { patternId: _p, name: _n, edited: _e, steps: _s, div: _d, bars: _b, swing: _w, rows: _r, on: _o, ...kit } = b;
   return kit;
 }
+/** A beat's rhythm and on/off played on another kit: all of the kit is that one's (nothing of its own kit is kept). */
+export function onKit(b: Beat, kit: DrumKit): Beat {
+  const rhythm = Object.fromEntries(Object.entries(b).filter(([k]) => k === "on" || (GROOVE_KEYS as readonly string[]).includes(k)));
+  return { ...kit, ...rhythm } as Beat;
+}
 /** A drum sound as one string, the same for the same sound (a missing effect setting is its default). */
 export const kitSig = (k: DrumKit): string => {
   const full = { ...kitOfBeat(DEFAULT_KIT_BEAT()), ...k, ...fxOf(k), voices: k.voices ?? {}, mutes: [...(k.mutes ?? [])].sort(), userKit: k.userKit ?? null };

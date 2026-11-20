@@ -15,18 +15,24 @@
  *    drums on with a hit), and leaves the sections where it was empty; a track empty everywhere
  *    stays in the section the song was on.
  *  - A melody from before the melody had a harp of its own played the chords' harp: it keeps
- *    that sound (only for data with no version).
+ *    that sound (only for data with no version). With no version, a section's drum kit also
+ *    played over the page's: a setting only the page's kit had, every section had too.
+ *  - A harmony that played instead of chords did so through the mixer (they were muted for the
+ *    whole song). Where they had been unmuted by hand both were heard: its sections say it plays
+ *    along there, so both still are.
+ *  - Up to version 3, where on the neck the guitar's chords are arranged was one setting for the
+ *    whole song: every chords track in every section gets a copy of it.
  *
- * Everything else (the mixer, harmonies, vocal tracks) is left as it is. Running it again
- * changes nothing.
+ * Everything else (the mixer, vocal tracks) is left as it is. Running it again changes nothing.
  */
 import { DEFAULT_BEAT, emptyRows, grooveOf, kitOfBeat, reviveBeat, reviveGroove, reviveKit, type Beat, type DrumKit, type Groove } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { fitRhythm, isCompound, reviveSig, sameSig, sigBeats, type TimeSig } from "./meter";
+import { replacing, reviveArrange } from "./tracks";
 
-/** The version of the stored song this app writes: 3 = every section has its own tracks and settings. */
-export const SOUND_V = 3;
+/** The version of the stored song this app writes: 3 = every section has its own tracks and settings; 4 = Arrange too. */
+export const SOUND_V = 4;
 
 type Obj = Record<string, unknown>;
 const isObj = (x: unknown): x is Obj => !!x && typeof x === "object" && !Array.isArray(x);
@@ -81,6 +87,26 @@ export function migrateSong<T>(raw0: T): T {
   if (!isObj(raw0)) return raw0;
   const v = typeof raw0.v === "number" ? raw0.v : undefined;
   if (v !== undefined && v >= SOUND_V) return raw0;
+  const raw = v !== undefined && v >= 3 ? { ...raw0 } : toSections(raw0, v);
+  return tidy({ ...arrangeEverywhere(raw), v: SOUND_V }) as T;
+}
+
+/**
+ * Where on the neck the guitar's chords are arranged was one setting for the whole song (version
+ * 3 and before): every section's chords, and every added chords track in it, get a copy of it.
+ */
+function arrangeEverywhere(raw: Obj): Obj {
+  const arr = reviveArrange(raw.arrange);
+  if (!arr) return raw;
+  const chordsIds = new Set(Array.isArray(raw.tracks) ? (raw.tracks as unknown[]).filter((t): t is Obj => isObj(t) && t.kind === "chords" && typeof t.id === "string").map((t) => t.id as string) : []);
+  const inLayers = (ls: unknown) => (isObj(ls) ? Object.fromEntries(Object.entries(ls).map(([id, l]) => [id, chordsIds.has(id) && isObj(l) && l.arrange === undefined ? { ...l, arrange: clone(arr) } : l])) : ls);
+  const song = isObj(raw.song) ? raw.song : undefined;
+  const parts = song && Array.isArray(song.parts) ? (song.parts as unknown[]).map((x) => (isObj(x) ? tidy({ ...x, arrange: x.arrange === undefined ? clone(arr) : x.arrange, layers: inLayers(x.layers) }) : x)) : undefined;
+  return tidy({ ...raw, layers: inLayers(raw.layers), ...(parts ? { song: { ...song, parts } } : {}) });
+}
+
+/** A song stored before every section had its own tracks and settings (no version, or version 2), moved over to that. */
+function toSections(raw0: Obj, v: number | undefined): Obj {
   const raw: Obj = { ...raw0 };
   const song = isObj(raw.song) ? raw.song : undefined;
   const allParts = song && Array.isArray(song.parts) ? (song.parts as unknown[]).filter((x): x is Obj => isObj(x) && typeof x.id === "string" && Array.isArray(x.chords)) : [];
@@ -124,6 +150,8 @@ export function migrateSong<T>(raw0: T): T {
         const mine = !groups.includes(g) ? live : i === 0 ? theirs : x === cur ? (owns(g, live) && !same(g, live, theirs) ? live : theirs) : owns(g, own.get(x)!) ? own.get(x)! : theirs;
         out = { ...out, ...pick(g, mine) };
       }
+      // (with no version, a section played its kit over the page's drums: a setting only the page's kit had, it had too)
+      if (v === undefined && out.kit) out = { ...out, kit: { ...live.kit!, ...out.kit } };
       played.set(x.id as string, tidy(out));
     });
   }
@@ -137,7 +165,8 @@ export function migrateSong<T>(raw0: T): T {
   /** a track's part of a section, with how it sounds there */
   const partFor = (t: Obj, l: unknown, style: PatternId | undefined): Obj => {
     const layer: Obj = isObj(l) ? { ...l } : t.kind === "chords" ? { chords: [] } : {};
-    if (t.kind === "chords") return tidy({ ...layer, pattern: hasStyle(t.style) ? t.style : v === undefined ? style ?? "ring" : "ring", feel: isObj(t.feel) ? clone(t.feel) : undefined, sound: isObj(t.sound) ? clone(t.sound) : undefined });
+    // (with no style of its own it played the section's style; in version 2, which moved every song over on every load, the song's)
+    if (t.kind === "chords") return tidy({ ...layer, pattern: hasStyle(t.style) ? t.style : v === undefined ? style ?? "ring" : live.style ?? "ring", feel: isObj(t.feel) ? clone(t.feel) : undefined, sound: isObj(t.sound) ? clone(t.sound) : undefined });
     if (t.kind === "melody") return tidy({ ...layer, tuneSound: isObj(t.sound) ? clone(t.sound) : undefined });
     // drums: its beat there, on the kit it played (version 2: the track's one kit; before: the beat's own)
     const b = isObj(layer.beat) ? layer.beat : { ...DEFAULT_BEAT, on: false, patternId: null, name: "Empty", edited: false, bars: 1, rows: emptyRows(DEFAULT_BEAT.steps) };
@@ -152,11 +181,22 @@ export function migrateSong<T>(raw0: T): T {
     const keep = withMusic.length ? withMusic : [hasSong ? cur : undefined];
     for (const x of keep) newLayers.get(x)![id] = partFor(t, layersOf(x)[id], x ? played.get(x.id as string)?.style : live.style);
   }
+  // a harmony that played instead of chords did so through the mixer (they were muted for the whole
+  // song); where they had been unmuted by hand both were heard, and still are: its sections say so
+  const mix = isObj(raw.mix) ? raw.mix : {};
+  const heard = (id: string) => !(isObj(mix[id]) && (mix[id] as Obj).mute === true);
+  const along = (t: Obj): Obj => {
+    const h = isObj(t.harmony) ? t.harmony : undefined;
+    if (t.kind !== "chords" || !h || !isObj(h.marks) || !replacing(h.option as string)) return t;
+    const target = h.from === "chords" || tracks.some((x) => x.id === h.from && x.kind === "chords") ? (h.from as string) : "chords";
+    if (!heard(target)) return t;
+    return { ...t, harmony: { ...h, marks: Object.fromEntries(Object.entries(h.marks).map(([k, m]) => [k, isObj(m) ? { ...m, along: true } : m])) } };
+  };
   // (the tracks are rows only from now on: how they sound is in each section)
   raw.tracks = (raw.tracks as unknown[] | undefined)?.map((t) => {
     if (!isObj(t)) return t;
     const { style: _s, feel: _f, sound: _o, kit: _k, ...rest } = t;
-    return t.kind === "vocals" ? t : rest;
+    return t.kind === "vocals" ? t : along(rest);
   });
 
   // ── the instruments: one per track before, now a copy in every section that has the track ──
@@ -191,16 +231,17 @@ export function migrateSong<T>(raw0: T): T {
   const ls = newLayers.get(hasSong ? cur : undefined)!;
   raw.layers = Object.keys(ls).length ? ls : undefined;
   raw.tones = tonesFor(ls);
-  return tidy({ ...raw, v: SOUND_V }) as T;
+  return raw;
 }
 
 /**
  * A copied section (a clipboard) from an older version: its added tracks get the sound they
  * played there, in their parts of it (a chords track the section's style when it had none of its
- * own, a melody its track's harp, a drums track the kit of its beat there).
+ * own, a melody its track's harp, a drums track the kit of its beat there). It is marked moved
+ * over (`v`), as its tracks no longer say how they sounded: moved over again, it would lose that.
  */
 export function migrateSectionClip<T>(raw: T): T {
-  if (!isObj(raw) || !Array.isArray(raw.tracks) || raw.whole === true) return raw;
+  if (!isObj(raw) || !Array.isArray(raw.tracks) || raw.whole === true || typeof raw.v === "number") return raw;
   const style = isObj(raw.settings) && hasStyle(raw.settings.style) ? raw.settings.style : "ring";
   const layers = isObj(raw.layers) ? { ...raw.layers } : {};
   for (const t of raw.tracks as unknown[]) {
@@ -210,5 +251,5 @@ export function migrateSectionClip<T>(raw: T): T {
     else if (t.kind === "melody") layers[t.id] = tidy({ ...l, tuneSound: isObj(t.sound) ? t.sound : undefined });
     else if (t.kind === "drums" && isObj(l.beat) && reviveKit(t.kit)) layers[t.id] = { ...l, beat: { ...l.beat, ...reviveKit(t.kit) } };
   }
-  return { ...raw, layers } as T;
+  return { ...raw, layers, v: SOUND_V } as T;
 }

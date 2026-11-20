@@ -820,9 +820,9 @@ export class ProgressionPlayer {
   }
 
   /**
-   * A drums track reaches a chord whose section has other drums (another rhythm, or none): its desk
-   * and its noise bed follow from where the section starts. The kit is the track's, the same in every
-   * section. (Only when the beat changed, so it is cheap.)
+   * A drums track reaches a chord whose section has other drums (another rhythm, another kit, or
+   * none): its desk and its noise bed follow from where the section starts, as every section has
+   * its own kit. (Only when the beat changed, so it is cheap.)
    */
   private syncLane(track: string, lane: Lane, a: Anchor) {
     const b = this.beatOf(track, a);
