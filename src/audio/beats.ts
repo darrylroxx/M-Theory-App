@@ -401,7 +401,6 @@ export const kitSig = (k: DrumKit): string => {
   const full = { ...kitOfBeat(DEFAULT_KIT_BEAT()), ...k, ...fxOf(k), voices: k.voices ?? {}, mutes: [...(k.mutes ?? [])].sort(), userKit: k.userKit ?? null };
   return JSON.stringify(Object.entries(full).sort(([a], [b]) => (a < b ? -1 : 1)));
 };
-export const sameKit = (a: DrumKit | undefined, b: DrumKit | undefined): boolean => !!a && !!b && kitSig(a) === kitSig(b);
 
 /**
  * Make the pattern longer or shorter. New bars start as a copy of the last bar, so the beat carries

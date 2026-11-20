@@ -82,12 +82,6 @@ function sourceIn(s: Spot, from: string, kind: SourceKind): { chords?: ProgChord
 const sounds = (cs: ProgChord[] | undefined) => !!cs?.some((c) => !c.rest && c.beats > 0);
 const plays = (src: { chords?: ProgChord[]; melody?: Melody }, kind: SourceKind) => (kind === "chords" ? sounds(src.chords) : hasTune(src.melody));
 
-/** Does a chords or melody track play somewhere in the song (chords that sound, or a tune)? */
-export function hasMusic(p0: Progression, id: string): boolean {
-  const p = flat(p0);
-  const kind = kindOf(p, id);
-  return !!kind && spots(p).some((s) => plays(sourceIn(s, id, kind), kind));
-}
 /**
  * What Harmonize can go with: every chords and melody track that has music somewhere in the song
  * (harmony tracks too), in the song's order, with `first` (the track on screen) first.

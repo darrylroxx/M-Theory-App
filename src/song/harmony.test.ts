@@ -8,7 +8,7 @@ import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
 import { addTrack, allTracks, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
-import { MELODY_RANGE, addHarmony, harmonizeSources, harmonyMenu, harmonyState, harmonySources, hasMusic, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
+import { MELODY_RANGE, addHarmony, harmonizeSources, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { HARMONY_MENU, HARMONY_OPTIONS, labelFor } from "../theory/harmonize";
 import { reviveIdea, sameMusic } from "./library";
 import { copySection, pasteSection, reviveClips, undoFits } from "./clip";
@@ -612,9 +612,6 @@ describe("what Harmonize can go with", () => {
     // an empty chords track and an empty melody track are not offered
     p = addTrack(p, "chords", "c2").p;
     p = addTrack(p, "melody", "m2").p;
-    expect(hasMusic(p, "h")).toBe(true);
-    expect(hasMusic(p, "c2")).toBe(false);
-    expect(hasMusic(p, "drums")).toBe(false);
     expect(harmonizeSources(p).map((t) => t.id)).toEqual(["chords", "melody", "h"]);
     expect(harmonizeSources(p, "melody").map((t) => t.id)).toEqual(["melody", "chords", "h"]);
     expect(harmonizeSources(p, "h").map((t) => t.id)).toEqual(["h", "chords", "melody"]);
@@ -623,8 +620,7 @@ describe("what Harmonize can go with", () => {
     // music in only one section counts (C holds Melody 2's notes, on the page there)
     let q = selectBlock(focusTrack(p, "melody", "m2"), "c");
     q = { ...q, melody: tune([60, 62]) };
-    expect(hasMusic(q, "m2")).toBe(true);
-    expect(harmonizeSources(q, "m2")[0].id).toBe("m2");
+    expect(harmonizeSources(q, "m2").map((t) => t.id)).toEqual(["m2", "chords", "melody", "h"]);
   });
   it("a harmony written from a chosen track is written from it, whatever the page has brought forward", () => {
     // a harmony track on the page: the new one is still written from the lead melody when that is the one chosen

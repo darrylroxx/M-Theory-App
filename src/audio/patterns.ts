@@ -58,7 +58,6 @@ export function reviveFeel(raw: unknown): Feel {
   const r = (raw ?? {}) as Partial<Feel>;
   return { speed: r.speed === 0.5 || r.speed === 2 ? r.speed : 1, swing: unit(r.swing, 0), touch: unit(r.touch, 0.5), spread: unit(r.spread, 0.5), octave: r.octave === -1 || r.octave === 1 ? r.octave : 0 };
 }
-export const sameFeel = (a: Partial<Feel> | undefined, b: Partial<Feel> | undefined) => JSON.stringify(reviveFeel(a)) === JSON.stringify(reviveFeel(b));
 
 export interface NoteEvent {
   /** beats after the start of the chord */
@@ -247,7 +246,7 @@ export interface PlayItem {
   jump?: boolean;
   /** the melody over this chord's section (missing = the player's own) */
   tune?: PlayTune | null;
-  /** the harp this chord is played on, when its section has a sound of its own (missing = the harp as it is set) */
+  /** the harp this chord is played on: its track's sound (missing = the harp as it is set) */
   sound?: HarpSound;
   /** the instrument the track plays (missing = as it is set) */
   tone?: Tone;

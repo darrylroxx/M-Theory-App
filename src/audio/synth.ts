@@ -68,20 +68,19 @@ export function getAudio(): AudioContext {
 }
 
 /**
- * Change a track's sound and effects. Safe to call before any sound has been made. The effects
- * follow at once; new strings wait until the knob has stopped moving. With `now` false (the page
- * shows a section other than the one playing) it is only noted: the voice keeps the playing
- * section's sound, and takes this one when the music stops.
+ * Change a track's sound and effects (one for the whole song: heard at once, whatever is playing).
+ * Safe to call before any sound has been made. The effects follow at once; new strings wait until
+ * the knob has stopped moving.
  */
-export function setTrackSound(id: string, s: HarpSound, bpm: number, now = true) {
+export function setTrackSound(id: string, s: HarpSound, bpm: number) {
   liveSound.set(id, s);
   tempo = bpm;
-  if (now) voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
+  voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
 }
 /** The first chords track. */
-export const setHarpSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("chords", s, bpm, now);
+export const setHarpSound = (s: HarpSound, bpm: number) => setTrackSound("chords", s, bpm);
 /** The first melody track: a separate instrument with separate effects. */
-export const setTuneSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("melody", s, bpm, now);
+export const setTuneSound = (s: HarpSound, bpm: number) => setTrackSound("melody", s, bpm);
 
 /** What every track plays (its instrument and that instrument's settings). The voices that exist change at once. */
 export function setTones(t: Tones | undefined) {
@@ -123,7 +122,7 @@ export function keepTracks(ids: string[]) {
   keepDrums(ids);
 }
 
-/** A note to get ready: for the chords or the melody, on that track's own strings or a given section's. */
+/** A note to get ready: for the chords or the melody, on that track's own strings or on those of the sound it is played with. */
 export interface Prep {
   midi: number;
   tune?: boolean;
@@ -209,7 +208,7 @@ export function playSequence(midis: number[], noteSec = 0.28) {
   midis.forEach((m, i) => v.note(m, t0 + i * noteSec, 0.75, noteSec * 1.6, { slot: v.instrument ? undefined : 0 }));
 }
 
-/** Every note a run of chords and its melodies will need, each with the sound of its own section. */
+/** Every note a run of chords and its melodies will need, each on the sound it is played with. */
 export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null = null, tune: PlayTune | null = null): Prep[] {
   const out: Prep[] = itemNotes(items, pattern, beat).map((n) => ({ midi: n.e.midi, as: items[n.item].sound }));
   let at = 0;
@@ -677,8 +676,9 @@ export class ProgressionPlayer {
   }
 
   /**
-   * A drums track reaches a chord whose section has a drum sound of its own: its desk takes that
-   * sound when the section starts. (Only when the beat changed, so it is cheap.)
+   * A drums track reaches a chord whose section has other drums (another rhythm, or none): its desk
+   * and its noise bed follow from where the section starts. The kit is the track's, the same in every
+   * section. (Only when the beat changed, so it is cheap.)
    */
   private syncLane(track: string, lane: Lane, a: Anchor) {
     const b = this.beatOf(track, a);
@@ -724,8 +724,8 @@ export class ProgressionPlayer {
     for (const [id, v] of voices) {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
-      // the sections' own sounds were played on each track's voice: it goes back to the one its page is set to
-      // (an added track sounds the same in every section: one the page is not editing keeps its own, so the next ▶ starts on it)
+      // the sound the music carried was played on each track's voice: it goes back to the one the track is set to
+      // (an added track the page is not editing has none set: it keeps its own, so the next ▶ starts on it)
       if (!v.track || liveSound.has(id)) v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     }
     stopAll();
@@ -757,8 +757,8 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
     const voice = (id: string, kind: VoiceKind, sound?: HarpSound) => {
       let v = made.get(id);
       if (!v) {
-        // each track starts on the sound it first plays with (none given: as the page has it), so its first note
-        // does not glide in from another; a later section with a sound of its own changes it where it starts
+        // each track starts on the sound it plays with (none given: as the page has it), so its first note
+        // does not glide in from another
         v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm);
         v.setTone(liveTones[id] ?? GUITAR);
         made.set(id, v);
@@ -830,7 +830,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
             t0,
             chords: run.filter((x) => x.track === ch.track),
           }));
-      // every drums track on its own desk, each section's drum sound from where the section starts
+      // every drums track on its own desk, each section's rhythm from where the section starts
       const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
       // an added track with no drums here goes quiet, its noise bed too, as it does live
       for (const track of [...synced.keys()])

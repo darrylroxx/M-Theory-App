@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BEAT, kitOfBeat, sameKit, type DrumKit } from "../audio/beats";
+import { DEFAULT_BEAT, kitOfBeat, kitSig, type DrumKit } from "../audio/beats";
 import { reviveFeel } from "../audio/patterns";
 import { reviveSound } from "../audio/rack";
 import { reviveProgression, type ProgChord, type Progression } from "../ui/state";
@@ -64,7 +64,7 @@ describe("songs from before one sound per track", () => {
     expect(reviveFeel(p.feel)).toMatchObject({ swing: 0.3, touch: 0.7 });
     expect(reviveSound(p.sound)).toEqual(reviveSound(X));
     expect(reviveSound(p.tuneSound)).toEqual(reviveSound(Y));
-    expect(sameKit(kitOfBeat(p.beat!), K)).toBe(true);
+    expect(kitSig(kitOfBeat(p.beat!))).toBe(kitSig(K));
     for (const x of [p.song!.shared!, ...p.song!.parts]) for (const k of SOUND_KEYS) expect(k in x, k).toBe(false);
     expect(Object.keys(p.song!.shared!)).toEqual(["groove"]);
     // B is on the page (its notes), playing the song's sound

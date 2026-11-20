@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DEFAULT_BEAT, kitOfBeat, sameKit } from "../audio/beats";
+import { DEFAULT_BEAT, kitOfBeat, kitSig } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { addNewSection, commit, ensureSong, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
 import { PLAIN_KIT, PLAIN_STYLE, addTrack, allTracks, drumsOf, focusTrack, nextName, normalize, refocus, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
@@ -194,7 +194,7 @@ describe("tracks", () => {
     expect(drumsOf(t, b.layers?.d2)!.rows.snare).toBe("0000100000001000");
     expect(drumsOf(t, undefined)).toBeUndefined();
     // kept through saving and loading
-    expect(sameKit(reviveTracks(JSON.parse(JSON.stringify(q.tracks)))!.find((x) => x.id === "d2")!.kit, t.kit)).toBe(true);
+    expect(kitSig(reviveTracks(JSON.parse(JSON.stringify(q.tracks)))!.find((x) => x.id === "d2")!.kit!)).toBe(kitSig(t.kit!));
   });
 
   it("a new chords track is plain: nothing is copied from the first one", () => {
