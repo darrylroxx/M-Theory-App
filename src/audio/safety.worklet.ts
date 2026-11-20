@@ -2,7 +2,7 @@
  * The master's safety limiter on the audio thread (see safety.ts): a stereo pair in, the same
  * pair out, untouched unless it goes over −1 dBFS. No lookahead, so no delay.
  */
-import { SAFETY_PROCESSOR, SafetyLimiter } from "./safety";
+import { SAFETY_PROCESSOR, SafetyLimiter } from "./safetycore";
 
 declare const sampleRate: number;
 declare class AudioWorkletProcessor {
