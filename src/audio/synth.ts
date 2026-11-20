@@ -136,6 +136,11 @@ export function getAudio(): AudioContext {
   return audioContext();
 }
 
+/** The song's tempo: a voice made or retuned on the page keeps its echo in time with it. */
+export function setTempo(bpm: number) {
+  tempo = bpm;
+}
+
 /**
  * Get a track ready on the instrument just chosen for it in the section on screen, before the
  * song says so: its voice takes the tone straight away and starts loading. Resolves when it can sound.
@@ -466,6 +471,7 @@ export class ProgressionPlayer {
   start(items: PlayItem[], bpm: number, pattern: PatternId, loop: boolean, beat: Beat | null = null, fromIndex = 0, tune: PlayTune | null = null) {
     this.stop();
     this.gen++;
+    tempo = bpm;
     this.beat = beat;
     this.tune = tune;
     const list = this.fill(items);
@@ -517,6 +523,7 @@ export class ProgressionPlayer {
     // a new tempo: every drums track's desk (its echo) follows at once, not only when its beat changes
     if (bpm !== this.bpm) for (const [track, lane] of this.lanes) if (lane.synced) syncDrums(lane.synced, bpm, track);
     this.bpm = bpm;
+    tempo = bpm;
     this.pattern = pattern;
     this.loop = loop || !items.length;
     // the first track's noise bed follows the section that is playing, not the one on the page

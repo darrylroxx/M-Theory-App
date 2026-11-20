@@ -23,7 +23,7 @@ import { reviveClips, type Clips } from "../song/clip";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
-import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
+import { normalize, prune, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
 import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
 import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
@@ -245,9 +245,10 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
     v: SOUND_V,
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
+  // An added track that is in no section is not part of the song.
   // Songs from before sections had lengths get them here.
   // Songs from before the time signature could be chosen get the one their first section played in.
-  return conform(settle(commit(p)));
+  return conform(settle(prune(commit(p))));
 }
 
 /** After any change, the whole song is in the bars of its time signature (see song/unity). */

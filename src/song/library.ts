@@ -6,7 +6,7 @@
 import { reviveSig, sigName } from "./meter";
 import { conform, sigOf } from "./unity";
 import { reviveMix } from "../audio/mix";
-import { PLAIN_KIT, PLAIN_STYLE, normalize, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
+import { PLAIN_KIT, PLAIN_STYLE, normalize, prune, reviveLayers, reviveTracks, type Layer, type Layers } from "./tracks";
 import { reviveTones } from "../audio/tone";
 import { grooveOf, kitOfBeat, kitSig, reviveBeat } from "../audio/beats";
 import { hasStyle, reviveFeel } from "../audio/patterns";
@@ -97,7 +97,8 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
   const melody = reviveMelody(p.melody);
   const layers = reviveLayers(p.layers, tracks);
   const tones = reviveTones(p.tones, toneIdsIn(layers, tracks));
-  const progression: Progression = settle(loadCurrent({
+  // (an added track that is in no section is not part of the song)
+  const progression: Progression = settle(prune(loadCurrent({
     chords: p.chords, bpm: Number(p.bpm) || 84, pattern: hasStyle(p.pattern) ? p.pattern : "ring", loop: p.loop ?? true, arrange: p.arrange ?? null, beat: reviveBeat(p.beat), song,
     ...(p.sound ? { sound: reviveSound(p.sound) } : {}),
     ...(p.tuneSound ? { tuneSound: reviveSound(p.tuneSound) } : {}),
@@ -108,7 +109,7 @@ export function reviveIdea(raw: unknown): SavedProgression | null {
     ...(tracks ? { tracks } : {}), ...(layers ? { layers } : {}),
     ...(tones ? { tones } : {}),
     v: SOUND_V,
-  }));
+  })));
   return { id: i.id, name: String(i.name ?? "Idea"), key: i.key, progression: conform(progression), savedAt: Number(i.savedAt) || Date.now(), updatedAt: Number(i.updatedAt ?? i.savedAt) || Date.now(), capo: i.capo, tuningId: i.tuningId };
 }
 

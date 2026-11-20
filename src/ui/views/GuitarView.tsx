@@ -3,7 +3,7 @@ import { DEFAULT_BEAT, applyPattern, type Beat, type BeatPattern } from "../../a
 import { progressionToMidi, saveFile } from "../../audio/midi";
 import { reviveFeel, type ExtraPlay, type Feel, type PatternId, type PlayItem, type PlayTune } from "../../audio/patterns";
 import { reviveSound, type HarpSound } from "../../audio/rack";
-import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepSlots, playNote, playSequence, prepFor, prepareNotes, readySlots, renderSong, slotsOf, strum, warmSlot } from "../../audio/synth";
+import { ProgressionPlayer, getAudio, hearOn, heardTrack, keepSlots, playNote, playSequence, prepFor, prepareNotes, readySlots, renderSong, setTempo, slotsOf, strum, warmSlot } from "../../audio/synth";
 import { VOICINGS, keysVoicing, keysVoicings, onKeys, synthOf, toneOf, voicingOf, withTone, type Tone, type Tones } from "../../audio/tone";
 import { KeyboardDiagram } from "../components/KeyboardDiagram";
 import { midiToName } from "../../theory/notes";
@@ -357,6 +357,7 @@ export function GuitarView() {
   // slots), made ready ahead; a track that is removed lets go of its voices and its drum desk (they fade out)
   const trackIds = (heard.tracks ?? []).map((t) => t.id).join("|");
   const slots = useMemo(() => slotsOf(plan.items), [plan.items]);
+  useEffect(() => setTempo(prog.bpm), [prog.bpm]);
   useEffect(() => keepSlots(slots, trackIds ? trackIds.split("|") : []), [slots, trackIds]);
   // what a page plays to be heard goes to the track it shows, as the section on screen has it: a change is
   // heard there at once (and in the song when this section plays: each section keeps its own)
