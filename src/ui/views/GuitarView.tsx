@@ -12,7 +12,7 @@ import { arrangeProgression, capoSuggestions, fitAlternatives, fretSpan, type Ar
 import { POSITIONS } from "../../guitar/shapeMap";
 import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
-import { barsOr, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
+import { barsOr, chordAt, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
 import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
 import { drumsIn, mapAllChords, mapAllMelodies, sections, sectionsWith, selectBlock, soloSection, soundToAll, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
@@ -349,9 +349,6 @@ export function GuitarView() {
   const curBlock = prog.song?.current ?? "";
   const curRef = useRef(curBlock);
   curRef.current = curBlock;
-  // the chord lit in the tray: worked out against the section on screen as it is now, so it is lit at
-  // once when the page turns to the section playing (Follow turning it as that section starts, or by hand)
-  const nowIdx = now && now.block === curBlock ? now.idx : -1;
   const planRef = useRef(plan);
   planRef.current = plan;
 
@@ -491,6 +488,16 @@ export function GuitarView() {
     const at = playBlock.current;
     if (follow && playingRef.current && at && at !== curRef.current) set((s) => (s.progression.song && s.progression.song.current !== at ? { ...s, progression: selectBlock(s.progression, at) } : s));
   }, [follow, set]);
+
+  // another idea opened (or a new one started) while the song plays: the song stops, so nothing of the
+  // idea left (its takes, drums, chords) sounds on over the one on screen. (before the loop is looked
+  // at below: the new idea's song is not a loop change of the old one's)
+  const openedNow = useRef(opened);
+  useEffect(() => {
+    if (openedNow.current === opened) return;
+    openedNow.current = opened;
+    stopPlay();
+  }, [opened]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the loop changed while playing: the new one takes over where the section playing ends, in time
   const loopKey = runs.map((r) => `${r.from.block}:${r.from.bar}-${r.to.block}:${r.to.bar}`).join(",");
@@ -699,6 +706,28 @@ export function GuitarView() {
     const pos = player.current?.position();
     return pos && mapOf(pos.gen)[pos.index]?.block === curRef.current ? pos.beat : null;
   }, []);
+  // the chord lit in the tray: worked out against the section on screen as it is now, so it is lit at
+  // once when the page turns to the section playing (Follow turning it as that section starts, or by hand).
+  // The player steps through the first chords track's chords; another chords track on the page changes
+  // chord at times of its own, so its lit chord is read from how far into the section the music is.
+  const firstOnPage = chordsId === "chords";
+  const [otherNow, setOtherNow] = useState(-1);
+  const trayChords = useRef(prog.chords);
+  trayChords.current = prog.chords;
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
+  useEffect(() => {
+    if (!playing || firstOnPage) return setOtherNow(-1);
+    let raf = 0;
+    const tick = () => {
+      const b = getPos();
+      setOtherNow(b === null ? -1 : chordAt(trayChords.current, b, frameRef.current));
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [playing, firstOnPage, getPos]);
+  const nowIdx = !firstOnPage ? otherNow : now && now.block === curBlock ? now.idx : -1;
   /** Where the music is, for the canvas: which section, and how far into it. */
   const bpmRef = useRef(prog.bpm);
   bpmRef.current = prog.bpm;

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern, barHasHits, barsOf, clearBeat, levelAt, patternBar, setStep, spreadBeat } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { itemTune, sectionStart, type PlayItem } from "../audio/patterns";
-import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barAt, barIndex, barsOr, barsText, fitBars, fitLoop, frameBeats, frameItems, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type LoopSpan } from "./frame";
+import { DEFAULT_BARS, MAX_SECTION_BARS, autoBeats, barAt, chordAt, barIndex, barsOr, barsText, fitBars, fitLoop, frameBeats, frameItems, inFrame, inLoop, loopSection, sliceItems, stepBars, tapLoop, type LoopSpan } from "./frame";
 import { fingerprint, reviveIdea, snapshot } from "./library";
 import { EMPTY_MELODY, TICKS, barHasNotes, inBars, tileMelody, tuneBetween, type Melody } from "./melody";
 import { addNewSection, commit, ensureSong, repeatSection, reviveSong, sections, selectBlock, setSectionBars, settle, unlinkBlock } from "./structure";
@@ -20,6 +20,18 @@ describe("the frame of a section", () => {
     expect(frameBeats(undefined, 4)).toBe(DEFAULT_BARS * 4);
     expect(barsOr(12)).toBe(12);
     expect(barsOr(undefined)).toBe(DEFAULT_BARS);
+  });
+
+  it("the chord sounding at a beat of the section: an added chords track's own, not the first track's", () => {
+    // Chords 2 (Am Dm F G, half a bar each) under Chords 1 (C G, a bar each): at beat 4.5 F sounds, not Dm
+    const two = [{ beats: 2 }, { beats: 2 }, { beats: 2 }, { beats: 2 }];
+    expect([0, 1.9, 2, 4.5, 7.9].map((b) => chordAt(two, b, 8))).toEqual([0, 0, 1, 2, 3]);
+    // past the last chord, past the end of the section, before it starts: none
+    expect(chordAt([{ beats: 8 }, { beats: 8 }], 9, 32)).toBe(1);
+    expect(chordAt([{ beats: 8 }, { beats: 8 }], 17, 32)).toBe(-1);
+    expect(chordAt([{ beats: 8 }, { beats: 8 }], 12, 12)).toBe(-1);
+    expect(chordAt([{ beats: 8 }], -0.1, 12)).toBe(-1);
+    expect(chordAt([], 0, 12)).toBe(-1);
   });
 
   it("only whole bars from 1 to 32 can be set", () => {

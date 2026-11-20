@@ -49,6 +49,17 @@ export function inFrame<T extends { beats: number }>(chords: T[], length: number
   return out;
 }
 
+/** Which of a section's chords is sounding `beat` beats into it (as inFrame plays them): -1 for none (past the last, or out of the section). */
+export function chordAt(chords: { beats: number }[], beat: number, length: number): number {
+  if (!(beat >= 0) || beat >= length - 1e-6) return -1;
+  let at = 0;
+  for (let i = 0; i < chords.length; i++) {
+    at += chords[i].beats;
+    if (beat < at - 1e-6) return i;
+  }
+  return -1;
+}
+
 /**
  * Chords coming round again until a length is filled, the last one cut short. This is how
  * sections played before they had lengths; it is used to write those repeats out in full.

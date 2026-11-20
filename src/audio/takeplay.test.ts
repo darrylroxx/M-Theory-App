@@ -56,4 +56,28 @@ describe("a take heard alone", () => {
     expect(await d).toBeNull();
     expect(sources).toHaveLength(2);
   });
+  it("stopped (▶, the page left) or another asked for while the interface closes first: it is never heard, the last one asked for is", async () => {
+    let closed!: () => void;
+    const closing = new Promise<void>((r) => (closed = r));
+    const first = () => closing;
+    const e = hearAlone(take(0), "v1", undefined, first);
+    stopAlone();
+    closed();
+    expect(await e).toBeNull();
+    expect(pending).toHaveLength(4);
+    let closed2!: () => void;
+    const closing2 = new Promise<void>((r) => (closed2 = r));
+    const f = hearAlone(take(0), "v1", undefined, () => closing2);
+    const g = hearAlone(take(48000), "v1", undefined, () => closing2);
+    closed2();
+    expect(await f).toBeNull();
+    await Promise.resolve();
+    await Promise.resolve();
+    // only the second is read, and heard
+    expect(pending).toHaveLength(5);
+    pending[4]("G");
+    expect(await g).toBe(true);
+    expect(sources.map((s) => s.buffer)).toEqual(["B", "C", "G"]);
+    stopAlone();
+  });
 });
