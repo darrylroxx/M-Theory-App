@@ -53,7 +53,7 @@ export class SafetyLimiter {
   gain = 1;
   /** times the gain started to move from rest */
   events = 0;
-  /** samples rounded off (for measuring) */
+  /** samples rounded off, left and right counted apart (for measuring) */
   rounded = 0;
   /** how long it has been over the knee lately (frames, leaking away over about 50 ms) */
   private over = 0;
@@ -139,6 +139,7 @@ export class SafetyLimiter {
         if (y > K || y < -K) {
           const s = y < 0 ? -1 : 1;
           y = s * (K + span * Math.tanh((s * y - K) / span));
+          rounded++;
         }
         r[i] = y;
       }

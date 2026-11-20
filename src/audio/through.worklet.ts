@@ -1,24 +1,29 @@
 /**
  * The app's own sound, tapped on the audio thread for the recording engine (see through.ts): the
  * whole mix as it leaves the master, in blocks of about 21 ms, left and right interleaved, handed
- * to the page as each fills (its buffer moved, not copied).
+ * to the page as each fills (its buffer moved, not copied); while the page is held up and has not
+ * said it has the last ones, they wait and go together (see Outbox).
  */
-import { CHUNK, Chunker, THROUGH_PROCESSOR } from "./throughcore";
+import { CHUNK, Chunker, Outbox, THROUGH_PROCESSOR } from "./throughcore";
 
 declare class AudioWorkletProcessor {
   readonly port: MessagePort;
 }
+declare const sampleRate: number;
 declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { chunk?: number } }) => AudioWorkletProcessor): void;
 
 class ThroughProcessor extends AudioWorkletProcessor {
   private on = true;
   private chunks: Chunker;
+  private box: Outbox;
 
   constructor(opts: { processorOptions?: { chunk?: number } }) {
     super();
-    this.chunks = new Chunker((b) => this.port.postMessage(b, [b.buffer]), opts.processorOptions?.chunk ?? CHUNK);
+    this.box = new Outbox((b) => this.port.postMessage(b, [b.buffer]), sampleRate);
+    this.chunks = new Chunker((b) => this.box.add(b), opts.processorOptions?.chunk ?? CHUNK);
     this.port.onmessage = (e: MessageEvent) => {
       if (e.data === "stop") this.on = false;
+      else if (e.data === "ack") this.box.ack();
     };
   }
 

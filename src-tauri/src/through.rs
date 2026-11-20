@@ -59,10 +59,15 @@ impl AppFeed {
     }
 }
 
-/// How long the queue may hold (seconds of the page's sound).
-pub const QUEUE_SECS: f64 = 1.5;
+/// How long the queue may hold (seconds of the page's sound): more than a page catching up can
+/// hand over at once (the page keeps no more than three quarters of a second back, and has at
+/// most two blocks on the way besides: see src/audio/throughcore.ts Outbox), on top of what is
+/// queued, so nothing it sends is ever left out; the backlog is then skipped over, with fades.
+pub const QUEUE_SECS: f64 = 4.0;
 /// How much is kept queued at first (seconds), the most it grows to after the page has been late, and by how much each time.
-pub const START_SECS: f64 = 0.12;
+/// (A page switch holds the page up for a tenth of a second or so now and then: measured, at most 120 ms on the
+/// lighter pages, with the page's blocks coming every 21 ms; a sixth of a second rides that out.)
+pub const START_SECS: f64 = 0.16;
 pub const MOST_SECS: f64 = 0.4;
 pub const GROW_SECS: f64 = 0.04;
 /// More than this over what should be queued is skipped (seconds).
@@ -339,6 +344,33 @@ mod tests {
         let out = run(&mut feed, &mut app, 800, &mut sent, |b| b % 4 == 0 || (300..328).contains(&b));
         assert!(worst_step(&out) < 0.035, "no click: {}", worst_step(&out));
         assert!((app.queued() as f64) < (app.target + SKIP_OVER_SECS * 48000.0 + 2048.0), "queued {}", app.queued());
+    }
+
+    #[test]
+    fn a_page_catching_up_hands_over_seconds_at_once_and_none_of_it_is_left_out() {
+        // steady, then the page held up: nothing for a second, then 2.5 s at once (what it had kept, and the
+        // blocks that were on the way), then steady again. Nothing is left out of the queue (a sound left out
+        // part-way would jump: a click), and the backlog is skipped over with fades
+        let (mut feed, mut app) = queue(48000, SR);
+        let mut sent = 0usize;
+        let mut out = vec![];
+        for b in 0..1200 {
+            if b == 500 {
+                let n = 2 * 48000 + 24000;
+                let frames = feed.push(&tone(sent, n, 48000.0));
+                assert!(frames >= n, "all of it queued: {frames}");
+                sent += n;
+            } else if b % 4 == 0 && !(312..500).contains(&b) {
+                feed.push(&tone(sent, 1024, 48000.0));
+                sent += 1024;
+            }
+            app.block(256, SR);
+            for _ in 0..256 {
+                out.push(app.next().0);
+            }
+        }
+        assert!(worst_step(&out) < 0.035, "no click: {}", worst_step(&out));
+        assert!((app.queued() as f64) < (app.target + SKIP_OVER_SECS * 48000.0 + 2048.0), "caught up: queued {}", app.queued());
     }
 
     #[test]

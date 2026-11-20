@@ -80,8 +80,8 @@ describe("the master's safety stage", () => {
     const tail = l.subarray(SR / 4);
     expect(peakOf(tail)).toBeLessThanOrEqual(SAFETY_KNEE * 1.005);
     expect(peakOf(tail)).toBeGreaterThan(SAFETY_KNEE - 0.01);
-    // the rounding was a small part of the note
-    expect(lim.rounded).toBeLessThan(0.1 * l.length);
+    // the rounding was a small part of the note (its samples, left and right)
+    expect(lim.rounded).toBeLessThan(0.1 * (l.length + r.length));
     // and once it has passed, the level comes back to exactly 1
     lim.process(new Float32Array(SR * 4), new Float32Array(SR * 4));
     expect(lim.gain).toBe(1);

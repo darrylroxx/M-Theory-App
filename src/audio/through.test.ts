@@ -4,7 +4,8 @@
  * which the computer's sound is let go of and taken back.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { Chunker, GapWatch, Sender } from "./throughcore";
+import { Chunker, GapWatch, Outbox, Sender } from "./throughcore";
+import type { FakeParam } from "../keys/fakeaudio";
 
 describe("the tap on the audio thread", () => {
   it("hands over blocks of whole frames, left and right interleaved, each in a buffer of its own", () => {
@@ -37,6 +38,62 @@ describe("the tap on the audio thread", () => {
   });
 });
 
+describe("handing the blocks to the page (on the audio thread)", () => {
+  const N = 1024;
+  const tone = (k: number) => {
+    const b = new Float32Array(2 * N);
+    for (let i = 0; i < N; i++) {
+      const v = 0.8 * Math.sin((2 * Math.PI * 440 * (k * N + i)) / 48000);
+      b[2 * i] = v;
+      b[2 * i + 1] = v;
+    }
+    return b;
+  };
+  const left = (bs: Float32Array[]) => bs.flatMap((b) => Array.from(b.filter((_, i) => i % 2 === 0)));
+  const worstStep = (x: number[]) => x.reduce((m, v, i) => (i ? Math.max(m, Math.abs(v - x[i - 1])) : m), 0);
+
+  it("a page keeping up gets every block as it fills; a page held up gets all it missed in one message when it catches up", () => {
+    const got: Float32Array[] = [];
+    const box = new Outbox((b) => got.push(b), 48000);
+    // the page says it has each one: one message a block
+    for (let k = 0; k < 5; k++) {
+      box.add(tone(k));
+      box.ack();
+    }
+    expect(got.length).toBe(5);
+    // the page held up for half a second (24 blocks) without saying it has anything: two go, the rest wait
+    for (let k = 5; k < 29; k++) box.add(tone(k));
+    expect(got.length).toBe(7);
+    // it catches up: the first ack brings everything since, in one message, in order, with nothing left out
+    box.ack();
+    expect(got.length).toBe(8);
+    expect(got[7].length).toBe(2 * N * 22);
+    const all = left(got);
+    expect(all.length).toBe(29 * N);
+    expect(worstStep(all)).toBeLessThan(0.05);
+    expect(all[28 * N + 7]).toBeCloseTo(left([tone(28)])[7], 9);
+    expect(box.dropped).toBe(0);
+  });
+
+  it("held up for longer than it keeps, the oldest it has go (faded, never a jump) and it stays the same size", () => {
+    const got: Float32Array[] = [];
+    const box = new Outbox((b) => got.push(b), 48000, 2, 1);
+    box.add(tone(0));
+    box.add(tone(1));
+    // five seconds without a word from the page
+    for (let k = 2; k < 236; k++) box.add(tone(k));
+    box.ack();
+    const last = got[got.length - 1];
+    // no more than a second (and a block) kept
+    expect(last.length / 2).toBeLessThanOrEqual(48000 + N);
+    expect(box.dropped).toBeGreaterThan(3.5 * 48000);
+    // what came, joined up: never a step bigger than the tone's own, and it ends on the newest
+    const all = left(got);
+    expect(worstStep(all)).toBeLessThan(0.05);
+    expect(all[all.length - 1]).toBeCloseTo(left([tone(235)])[N - 1], 9);
+  });
+});
+
 describe("sending the blocks to the engine", () => {
   const block = (v: number) => Float32Array.from({ length: 8 }, () => v);
 
@@ -65,27 +122,100 @@ describe("sending the blocks to the engine", () => {
     expect(s.delay).toBeCloseTo(0.1, 9);
   });
 
-  it("a backlog (the page held up, the engine slow) never grows past `most`: the oldest, being stale, go first", async () => {
+  it("a backlog (the page held up, the engine slow) never grows past `most`; where blocks are left out the sound dips for a moment, it never jumps", async () => {
+    // the page's sound: a loud 440 Hz tone, cut into blocks of 1024 frames as the audio thread hands them over
+    const N = 1024;
+    const tone = (k: number) => {
+      const b = new Float32Array(2 * N);
+      for (let i = 0; i < N; i++) {
+        const v = 0.8 * Math.sin((2 * Math.PI * 440 * (k * N + i)) / 48000);
+        b[2 * i] = v;
+        b[2 * i + 1] = -v;
+      }
+      return b;
+    };
     let release!: () => void;
-    const sent: number[] = [];
+    const sent: Float32Array[] = [];
     const s = new Sender(
       (b) =>
         new Promise<number>((r) => {
-          sent.push(new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4)[0]);
+          sent.push(new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice());
           release = () => r(0);
         }),
       48000,
       () => {},
-      3,
+      (3 * N) / 48000,
     );
-    for (let k = 1; k <= 8; k++) s.send(block(k));
-    expect(sent).toEqual([1]);
+    const blocks = Array.from({ length: 8 }, (_, k) => tone(k));
+    const middle = (b: Float32Array) => b[2 * (N / 2)];
+    for (const b of blocks) s.send(b);
+    expect(sent.length).toBe(1);
     for (let i = 0; i < 3; i++) {
       release();
       for (let j = 0; j < 5; j++) await Promise.resolve();
     }
-    expect(sent).toEqual([1, 6, 7, 8]);
-    expect(s.dropped).toBe(4);
+    // the one being sent, the first still waiting (it follows on from it), then the newest
+    expect(sent.map(middle)).toEqual([0, 1, 6, 7].map((k) => middle(tone(k))));
+    expect(s.dropped).toBe(4 * N);
+    // joined up as the engine queues them: never a step bigger than the tone's own (0.8 × 2π × 440 / 48000 ≈ 0.046)
+    const joined = sent.flatMap((b) => Array.from(b.filter((_, i) => i % 2 === 0)));
+    let worst = 0;
+    for (let i = 1; i < joined.length; i++) worst = Math.max(worst, Math.abs(joined[i] - joined[i - 1]));
+    expect(worst).toBeLessThan(0.05);
+    // and where nothing was left out, the sound is exactly as it came
+    expect([...sent[0]]).toEqual([...tone(0)]);
+    // (left and right faded together)
+    expect(sent[1][2 * (N - 1)]).toBeCloseTo(-sent[1][2 * (N - 1) + 1], 12);
+
+    // a backlog let through as the engine takes each block, more arriving in between (the page catching up): still no jump
+    sent.length = 0;
+    const s2 = new Sender(
+      (b) =>
+        new Promise<number>((r) => {
+          sent.push(new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice());
+          release = () => r(0);
+        }),
+      48000,
+      () => {},
+      (3 * N) / 48000,
+    );
+    for (let k = 0; k < 60; k++) {
+      s2.send(tone(k));
+      if (k % 7 === 6) {
+        release();
+        for (let j = 0; j < 5; j++) await Promise.resolve();
+      }
+    }
+    for (let i = 0; i < 6; i++) {
+      release();
+      for (let j = 0; j < 5; j++) await Promise.resolve();
+    }
+    expect(s2.dropped).toBeGreaterThan(20 * N);
+    const joined2 = sent.flatMap((b) => Array.from(b.filter((_, i) => i % 2 === 0)));
+    let worst2 = 0;
+    for (let i = 1; i < joined2.length; i++) worst2 = Math.max(worst2, Math.abs(joined2[i] - joined2[i - 1]));
+    expect(worst2).toBeLessThan(0.05);
+    // the newest is always the last sent
+    expect(middle(sent[sent.length - 1])).toBe(middle(tone(59)));
+  });
+
+  it("one block on its own goes whole, however long (what went before it is gone: the engine skips ahead over it, with fades of its own)", async () => {
+    const sent: Float32Array[] = [];
+    const s = new Sender(
+      async (b) => {
+        sent.push(new Float32Array(b.buffer, b.byteOffset, b.byteLength / 4).slice());
+        return 0;
+      },
+      48000,
+      () => {},
+      0.5,
+    );
+    const big = Float32Array.from({ length: 2 * 48000 }, (_, i) => Math.sin(i / 50));
+    s.send(big);
+    for (let i = 0; i < 5; i++) await Promise.resolve();
+    expect(sent.length).toBe(1);
+    expect([...sent[0]]).toEqual([...big]);
+    expect(s.dropped).toBe(0);
   });
 
   it("stops at the first block the engine will not take (it has closed), and says so once", async () => {
@@ -142,6 +272,9 @@ describe("the app's sound going through the engine, and coming back", () => {
     nodes = [];
     const { FakeAudio } = await import("./fakectx");
     const c = new FakeAudio(48000);
+    // (its clock keeps time, as a real one does: a fade is waited for on it)
+    const born = Date.now();
+    Object.defineProperty(c, "currentTime", { get: () => (Date.now() - born) / 1000, configurable: true });
     Object.assign(c, {
       sampleRate: 44100,
       // (the master's safety stage loads its own module as the sound opens: only the tap's is noted)
@@ -228,9 +361,14 @@ describe("the app's sound going through the engine, and coming back", () => {
         if (refuse-- > 0) throw new Error("NotFoundError");
         ctx.sinkId = id;
       };
-      expect(await T.goThrough(engine())).toBe(true);
+      // (the fades around the hand-over take a moment on the clock)
+      const going = T.goThrough(engine());
+      await vi.advanceTimersByTimeAsync(100);
+      expect(await going).toBe(true);
       calls = [];
-      await T.comeBack();
+      const back = T.comeBack();
+      await vi.advanceTimersByTimeAsync(100);
+      await back;
       // the device it was on, then the computer's default: both refused just now
       expect(calls.slice(0, 2)).toEqual(['sink "speakers"', 'sink ""']);
       expect(ctx.sinkId).toEqual({ type: "none" });
@@ -241,6 +379,81 @@ describe("the app's sound going through the engine, and coming back", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+
+  it("the hand-over is never heard twice and never clicks: the mix fades out, the computer's sound is let go of, and only then does anything go to the engine", async () => {
+    const T = await import("./through");
+    const { masterOut } = await import("./mix");
+    const gain = (masterOut(ctx as never) as unknown as { gain: FakeParam }).gain;
+    let release!: () => void;
+    let gainAtSwitch = -1;
+    ctx.setSinkId = (id: unknown) => {
+      calls.push(`sink ${JSON.stringify(id)}`);
+      // the computer's sound is let go of only once the mix has faded all the way out
+      gainAtSwitch = gain.at(ctx.currentTime as number);
+      return new Promise<void>((r) => (release = r));
+    };
+    const going = T.goThrough(engine());
+    while (!calls.includes('sink {"type":"none"}')) await new Promise((r) => setTimeout(r, 1));
+    expect(gainAtSwitch).toBe(0);
+    // a block from the audio thread while the computer's sound still plays it: not sent (it would be heard twice)
+    nodes[0].port.onmessage!({ data: new Float32Array(2048) } as MessageEvent);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(calls.some((c) => c.startsWith("feed"))).toBe(false);
+    release();
+    expect(await going).toBe(true);
+    // let go of: the mix comes back up, for the engine alone, and what the audio thread hands over from now on goes to it
+    expect(gain.at(10)).toBe(1);
+    nodes[0].port.onmessage!({ data: new Float32Array(2048) } as MessageEvent);
+    for (let i = 0; i < 10; i++) await Promise.resolve();
+    expect(calls.filter((c) => c.startsWith("feed")).length).toBe(1);
+
+    // coming back: faded out before the computer's sound is taken back, the engine let go of after, faded back in;
+    // and done only once the engine has had a moment to fade out what it holds (it may be closed then)
+    calls = [];
+    let gainAtBack = -1;
+    ctx.setSinkId = async (id: unknown) => {
+      calls.push(`sink ${JSON.stringify(id)}`);
+      gainAtBack = gain.at(ctx.currentTime as number);
+    };
+    const t0 = Date.now();
+    await T.comeBack();
+    expect(gainAtBack).toBe(0);
+    expect(calls).toEqual(['sink ""', "stop"]);
+    expect(Date.now() - t0).toBeGreaterThanOrEqual(T.LET_GO_MS - 2);
+    expect(gain.at(20)).toBe(1);
+  });
+
+  it("a busy audio thread whose clock falls behind: the computer's sound is let go of only once the fade is over on that clock", async () => {
+    const T = await import("./through");
+    const { masterOut } = await import("./mix");
+    const gain = (masterOut(ctx as never) as unknown as { gain: FakeParam }).gain;
+    // the audio clock at a third of the speed of the page's
+    const born = Date.now();
+    Object.defineProperty(ctx, "currentTime", { get: () => (Date.now() - born) / 3000, configurable: true });
+    let gainAtSwitch = -1;
+    ctx.setSinkId = async (id: unknown) => {
+      calls.push(`sink ${JSON.stringify(id)}`);
+      gainAtSwitch = gain.at(ctx.currentTime as number);
+    };
+    expect(await T.goThrough(engine())).toBe(true);
+    expect(gainAtSwitch).toBe(0);
+    await T.comeBack();
+  });
+
+  it("if the computer's sound cannot be let go of, it is left as it was, faded back in, and the engine is let go of (no waiting on itself)", async () => {
+    const T = await import("./through");
+    const { masterOut } = await import("./mix");
+    const gain = (masterOut(ctx as never) as unknown as { gain: FakeParam }).gain;
+    ctx.setSinkId = async (id: unknown) => {
+      calls.push(`sink ${JSON.stringify(id)}`);
+      if (typeof id !== "string") throw new Error("NotAllowedError");
+    };
+    expect(await T.goThrough(engine())).toBe(false);
+    expect(T.goingThrough()).toBe(false);
+    expect(calls).toContain("stop");
+    expect(calls).toContain('sink ""');
+    expect(gain.at(10)).toBe(1);
   });
 
   it("asked twice at once, it goes through once", async () => {
@@ -269,6 +482,8 @@ describe("the app's sound going through the engine, and coming back", () => {
     for (let k = 1; k <= 6; k++) T.noteGaps(k, k);
     for (let i = 0; i < 10; i++) await Promise.resolve();
     expect(T.goingThrough()).toBe(false);
+    // (after the mix has faded out)
+    await new Promise((r) => setTimeout(r, 60));
     expect(calls).toContain('sink ""');
     expect(await T.goThrough(engine())).toBe(false);
   });

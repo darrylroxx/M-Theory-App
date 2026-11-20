@@ -296,9 +296,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     // closing: a recording still going (the driver was reset mid-session) comes back, and its takes are kept
     return () => {
       live = false;
-      // (the app's own sound goes back to the computer's sound as the engine closes, not after: see through.ts)
-      void comeBack();
-      void engineClose()
+      // the app's own sound, if it came through the engine, goes back to the computer's sound first, faded out of the
+      // engine, and then the engine closes: never cut off mid-sound (see through.ts; at once when it did not come through)
+      void comeBack()
+        .then(() => engineClose())
         .then((r) => r && salvageRef.current(r), () => {})
         .then(() => closers.current.splice(0).forEach((f) => f()));
       setOpened(null);

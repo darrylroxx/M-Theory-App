@@ -8,15 +8,20 @@
  * with no device) and the whole mix, taken after the master's safety stage, goes to the engine in
  * blocks of about 21 ms (through.worklet.ts), which plays it alongside your voice (see the
  * engine's through.rs): one program on the interface, never two. It comes a little later than it
- * would have (the engine keeps about a tenth of a second queued, to ride out a busy page), and
+ * would have (the engine keeps about a sixth of a second queued, to ride out a busy page), and
  * the canvas, which paints what is heard, allows for that (outdelay.ts).
+ *
+ * The hand-over is never heard twice and never clicks: the mix fades out (a hundredth of a
+ * second), the computer's sound is let go of, and only then does anything go to the engine, which
+ * fades it in once it has enough queued. Coming back is the other way round: the mix fades out,
+ * the computer's sound is taken back, the engine fades out what it still holds, the mix fades in.
  *
  * If this browser cannot send its sound nowhere, or the engine cannot keep up with the page on
  * this computer (it ran dry again and again), the app's sound goes back to the computer's sound,
  * as it was before.
  */
 import throughUrl from "./through.worklet.ts?worker&url";
-import { audioContext } from "./context";
+import { audioContext, soonest } from "./context";
 import { masterOut } from "./mix";
 import { setExtraDelay } from "./outdelay";
 import { CHUNK, GapWatch, Sender, THROUGH_PROCESSOR } from "./throughcore";
@@ -44,6 +49,33 @@ let gaveUp = false;
 let wasSink = "";
 let retry: ReturnType<typeof setTimeout> | undefined;
 
+/** How long the mix fades out and back in around a hand-over (seconds): the switch is never heard as a click. */
+export const SWITCH_FADE = 0.012;
+/** How long the engine is given to fade out what it holds before it may be closed (milliseconds). */
+export const LET_GO_MS = 30;
+
+const pause = (ms: number) => new Promise<void>((r) => setTimeout(r, ms));
+
+/** The longest a fade is waited for (milliseconds): an audio thread held up does not hold up the hand-over for long. */
+const FADE_WAIT_MS = 250;
+
+/**
+ * The very end of the mix fades to `to` (0: silent, 1: as it is) from the soonest moment the
+ * audio thread has not yet worked out; resolves once the fade is over on the audio clock (which,
+ * on a busy computer, can fall behind the page's).
+ */
+async function fadeEnd(c: BaseAudioContext, to: 0 | 1): Promise<void> {
+  const g = masterOut(c).gain;
+  const at = soonest(c);
+  g.cancelScheduledValues(at);
+  g.setValueAtTime(Number.isFinite(g.value) ? g.value : 1 - to, at);
+  g.linearRampToValueAtTime(to, at + SWITCH_FADE);
+  const until = at + SWITCH_FADE;
+  const t0 = Date.now();
+  await pause(Math.max(0, until - c.currentTime) * 1000 + 2);
+  while (c.currentTime < until && Date.now() - t0 < FADE_WAIT_MS) await pause(4);
+}
+
 /** Is the app's sound going through the engine now? */
 export const goingThrough = () => live !== null;
 
@@ -63,6 +95,7 @@ async function start(engine: ThroughEngine): Promise<boolean> {
   const c = audioContext() as Sinkable;
   if (!canGoThrough(c)) return false;
   let node: AudioWorkletNode | null = null;
+  let faded = false;
   try {
     let ready = loaded.get(c);
     if (!ready) {
@@ -75,44 +108,70 @@ async function start(engine: ThroughEngine): Promise<boolean> {
     node = new AudioWorkletNode(c, THROUGH_PROCESSOR, { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: "explicit", processorOptions: { chunk: CHUNK } });
     const sender = new Sender((b) => engine.feed(b), c.sampleRate, () => void comeBack());
     sender.onDelay = setExtraDelay;
-    node.port.onmessage = (e: MessageEvent) => sender.send(e.data as Float32Array);
+    // (nothing goes to the engine while the computer's sound still plays it: it would be heard twice)
+    let held = true;
+    node.port.onmessage = (e: MessageEvent) => {
+      // (the tap waits for this before it sends more than a couple: see Outbox)
+      node!.port.postMessage("ack");
+      if (!held) sender.send(e.data as Float32Array);
+    };
     masterOut(c).connect(node);
     live = { c, node, sender, engine, watch: new GapWatch() };
-    // the computer's sound is let go of last: until the engine has the first blocks, it still plays there
     clearTimeout(retry);
     if (typeof c.sinkId === "string") wasSink = c.sinkId;
+    // the mix fades out, the computer's sound is let go of in silence, and the mix comes back up for the engine alone
+    faded = true;
+    await fadeEnd(c, 0);
     await c.setSinkId!({ type: "none" });
+    held = false;
+    faded = false;
+    void fadeEnd(c, 1);
     return true;
   } catch {
-    // (it could not: the computer's sound as before)
-    if (live) await comeBack();
+    // (it could not: the computer's sound as before. Not by way of comeBack, which would wait for this very start)
+    if (live) await letGo();
     else {
       node?.port.postMessage("stop");
       await engine.stop().catch(() => {});
+      if (faded) void fadeEnd(c, 1);
     }
     return false;
   }
 }
 
-/** The app's sound goes back to the computer's sound (the engine closing, or hearing yourself through the effects turned off). */
+/**
+ * The app's sound goes back to the computer's sound (the engine closing, or hearing yourself
+ * through the effects turned off): the mix fades out, the computer's sound is taken back, the
+ * engine fades out what it still holds, and the mix fades back in. Resolves once the engine has
+ * let go, so it may be closed.
+ */
 export async function comeBack(): Promise<void> {
   if (starting) await starting.catch(() => false);
+  return letGo();
+}
+async function letGo(): Promise<void> {
   const l = live;
   live = null;
   if (!l) return;
-  // the computer's sound first, so the song is heard again as soon as it can be; then the engine lets go (fading out)
-  await backToComputer(l.c);
-  l.node.port.onmessage = null;
-  l.sender.onDelay = null;
-  l.node.port.postMessage("stop");
+  await fadeEnd(l.c, 0);
   try {
-    masterOut(l.c).disconnect(l.node);
-  } catch {
-    /* already let go */
+    await backToComputer(l.c);
+  } finally {
+    l.node.port.onmessage = null;
+    l.sender.onDelay = null;
+    l.node.port.postMessage("stop");
+    try {
+      masterOut(l.c).disconnect(l.node);
+    } catch {
+      /* already let go */
+    }
+    l.sender.close();
+    setExtraDelay(0);
+    await l.engine.stop().catch(() => {});
+    void fadeEnd(l.c, 1);
+    // (the engine fades out on its own audio thread: a moment for it before anything closes it)
+    await pause(LET_GO_MS);
   }
-  l.sender.close();
-  setExtraDelay(0);
-  await l.engine.stop().catch(() => {});
 }
 
 /**
