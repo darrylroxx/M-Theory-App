@@ -13,6 +13,7 @@ import { itemNotes, sectionStart, type PatternId, type PlayItem, type PlayTune }
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
 import { fader } from "./mix";
+import { loadSafety } from "./safety";
 import { TakeRuns, type PlayTake, type TakeSpan } from "./takeplay";
 export type { PlayItem } from "./patterns";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
@@ -752,6 +753,8 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
   const length = Math.max(1, Math.round(beats * spb * o.rate));
   const tail = Math.round((o.tail ?? 3) * o.rate);
   const off = new OfflineAudioContext(2, length + tail, o.rate);
+  // the master's safety limiter, loaded before anything is made, so the render goes through it from its first sample as playing does
+  await loadSafety(off);
   const made = new Map<string, TrackVoice>();
   withContext(off, () => {
     const voice = (id: string, kind: VoiceKind, sound?: HarpSound) => {

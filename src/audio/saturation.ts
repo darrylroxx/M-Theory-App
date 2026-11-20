@@ -21,8 +21,11 @@
  *       └─ (minus those lows) ─ shape in ─ bend ─ shape out ─ top ──┴─ out
  *
  * The bend runs four times oversampled, which in a browser delays it by a few milliseconds. The
- * other two paths go through the same (unbent) stage, so all three stay exactly in step.
+ * other two paths go through the same (unbent) stage, so all three stay exactly in step. With the
+ * knob at zero only the straight path runs (it is what sets the timing, so it always does): the
+ * bend and the lows round it are not fed, and cost nothing.
  */
+import { gate } from "./gate";
 
 export type SatType = "tape" | "tube" | "console" | "crunch" | "fuzz" | "clip";
 export const SAT_TYPES: { id: SatType; name: string; hint: string }[] = [
@@ -114,6 +117,9 @@ const TONE: Record<SatType, Tone> = {
 /** With chords, the bass goes round every colour: at least this low (Hz). */
 const CHORD_SPLIT: Record<SatType, number> = { tape: 140, tube: 200, console: 110, crunch: 320, fuzz: 260, clip: 140 };
 
+/** How long the colour takes to glide out (τ 30 ms) before the bend stops being fed (seconds). */
+const BEND_SETTLE = 0.35;
+
 /** A straight line for the paths that are not bent: the same stage, so the same delay. */
 const straight = new Float32Array([-1, 0, 1]);
 
@@ -162,12 +168,14 @@ export function createSaturator(c: BaseAudioContext, ref: number, chords = false
   // the lows that go round the bend
   const aroundLp = filter("lowpass", 200, 0.5);
   const around = gain(0);
-  down.connect(aroundLp).connect(gain(0.25)).connect(shaper(straight)).connect(gain(4)).connect(around).connect(up);
+  aroundLp.connect(gain(0.25)).connect(shaper(straight)).connect(gain(4)).connect(around).connect(up);
   // the bend gets everything, minus those lows: the two halves add back up to exactly the original
   const bendIn = gain();
   const minus = gain(0);
-  down.connect(bendIn);
   aroundLp.connect(minus).connect(bendIn);
+  // with the knob at zero, the bend and the lows round it add nothing: they are not fed at all
+  // (see gate.ts), and the straight path, which sets the timing, runs on alone
+  const feed = gate(c, [[down, bendIn], [down, aroundLp]], BEND_SETTLE);
   const lowIn = filter("lowshelf", 120);
   const highIn = filter("highshelf", 3000);
   const bender = shaper(satCurve("tape", 0));
@@ -205,6 +213,9 @@ export function createSaturator(c: BaseAudioContext, ref: number, chords = false
       }
       // the first eighth of the knob fades the colour in; from there on it only deepens
       const w = Math.min(1, Math.max(0, mix)) * Math.min(1, a * 8);
+      // fed before its level glides up from nothing; let go once it has glided down to it
+      if (w > 0) feed.on();
+      else feed.off();
       const trim = Math.pow(10, trimDb / 20);
       to(wet.gain, w * trim);
       to(around.gain, split ? w * trim : 0);

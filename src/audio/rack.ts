@@ -14,6 +14,7 @@
  */
 import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
 import { atRenderTime } from "./context";
+import { gate } from "./gate";
 import { renderSpace, drumRng } from "./drums";
 import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
 import { SAT_TYPES, createSaturator, type SatType } from "./saturation";
@@ -147,6 +148,16 @@ const table = (xs: number[], ys: number[], x: number) => {
 };
 const db = (v: number) => Math.pow(10, v / 20);
 
+/**
+ * How long after an effect is turned to 0 its connections are let go (seconds; see gate.ts):
+ * once its level has glided down (τ 30 ms) to far under hearing; the echo once its longest
+ * repeat (1.9 s) has gone by too; the wobble once its sweep is so small that letting go of it
+ * moves nothing by a measurable fraction of a sample.
+ */
+const SETTLE = 0.3;
+const WOBBLE_SETTLE = 0.5;
+const ECHO_SETTLE = 2.2;
+
 export function createRack(c: BaseAudioContext, out: AudioNode = c.destination): Rack {
   const gain = (v = 1) => {
     const g = c.createGain();
@@ -200,19 +211,22 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const stages = [0, 1, 2, 3].map(() => filter("allpass", 870, 0.6));
   const phaseLfo = lfo(0.33);
   const phaseDepth = gain(1500); // cents either side of 870 Hz: about 360 Hz to 2.1 kHz
-  phaseLfo.connect(phaseDepth);
   stages.forEach((s) => phaseDepth.connect(s.detune));
   highShelf.connect(phased);
-  stages.reduce<AudioNode>((a, s) => a.connect(s), highShelf).connect(phaseWet).connect(phased);
+  stages.slice(1).reduce<AudioNode>((a, s) => a.connect(s), stages[0]).connect(phaseWet).connect(phased);
+  // (each effect at 0 rests: its way in and its sweep are let go, see gate.ts)
+  const phaserFeed = gate(c, [[highShelf, stages[0]], [phaseLfo, phaseDepth]], SETTLE);
 
   // ── wobble: a short delay whose length drifts, as a worn tape does ──
   const tape = c.createDelay(0.05);
   tape.delayTime.value = 0.006;
   const wow = gain(0);
   const flutter = gain(0);
-  lfo(0.55).connect(wow).connect(tape.delayTime);
-  lfo(6.3).connect(flutter).connect(tape.delayTime);
+  lfo(0.55).connect(wow);
+  lfo(6.3).connect(flutter);
   phased.connect(tape);
+  // (at 0 the delay's length is left steady, which the browser works out far more cheaply)
+  const wobbleFeed = gate(c, [[wow, tape.delayTime], [flutter, tape.delayTime]], WOBBLE_SETTLE);
 
   // ── chorus: two delayed copies, drifting opposite ways, one in each speaker ──
   const chorused = gain();
@@ -220,6 +234,7 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const merge = c.createChannelMerger(2);
   const chorusLfo = lfo(0.62, "triangle");
   const slowLfo = lfo(0.17);
+  const chorusEdges: [AudioNode, AudioNode][] = [];
   [0.013, 0.0175].forEach((base, ch) => {
     const d = c.createDelay(0.05);
     d.delayTime.value = base;
@@ -227,10 +242,12 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
     d.channelCountMode = "explicit";
     const depth = gain(ch ? -0.0026 : 0.0026);
     const slow = gain(ch ? 0.0011 : -0.0011);
-    chorusLfo.connect(depth).connect(d.delayTime);
-    slowLfo.connect(slow).connect(d.delayTime);
-    tape.connect(d).connect(merge, 0, ch);
+    depth.connect(d.delayTime);
+    slow.connect(d.delayTime);
+    d.connect(merge, 0, ch);
+    chorusEdges.push([tape, d], [chorusLfo, depth], [slowLfo, slow]);
   });
+  const chorusFeed = gate(c, chorusEdges, SETTLE);
   tape.connect(chorused);
   merge.connect(chorusWet).connect(chorused);
 
@@ -238,8 +255,9 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const trem = gain(1);
   const tremLfo = lfo(4);
   const tremDepth = gain(0);
-  tremLfo.connect(tremDepth).connect(trem.gain);
+  tremLfo.connect(tremDepth);
   chorused.connect(trem);
+  const tremFeed = gate(c, [[tremDepth, trem.gain]], SETTLE);
 
   // ── echo: two delays feeding each other, so the repeats bounce from side to side; each repeat is duller and thinner ──
   const mix = gain();
@@ -254,8 +272,8 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   const echoWet = gain(1);
   left.channelCount = right.channelCount = 1;
   left.channelCountMode = right.channelCountMode = "explicit";
-  trem.connect(echoSend).connect(left);
-  left.connect(right).connect(echoHp).connect(echoLp).connect(feedback).connect(left);
+  trem.connect(echoSend);
+  left.connect(right).connect(echoHp).connect(echoLp).connect(feedback);
   left.connect(echoOut, 0, 0);
   right.connect(echoOut, 0, 1);
   echoOut.connect(echoWet).connect(mix);
@@ -270,7 +288,10 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
   verb.normalize = false; // the room is already scaled to return exactly the energy it is sent
   const verbWet = gain(1);
   trem.connect(verbSend).connect(pre);
-  echoWet.connect(gain(0.35)).connect(verbSend);
+  const echoToVerb = gain(0.35);
+  echoToVerb.connect(verbSend);
+  // (an echo at 0 is let go once its repeats have died away: it no longer feeds the room either)
+  const echoFeed = gate(c, [[echoSend, left], [feedback, left], [echoWet, echoToVerb]], ECHO_SETTLE);
   halo.connect(pre);
   pre.connect(verbHp).connect(verb).connect(verbWet).connect(mix);
 
@@ -317,25 +338,35 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination):
       }
       if (s.tone !== was.tone) to(driven.gain, db(s.tone < 0 ? 1.2 * s.tone : 1.5 * s.tone));
       if (s.phaser !== was.phaser) {
+        if (s.phaser > 0) phaserFeed.on();
+        else phaserFeed.off(when);
         to(phaseWet.gain, s.phaser);
         to(phased.gain, 1 - 0.26 * s.phaser);
       }
       if (s.wobble !== was.wobble) {
+        if (s.wobble > 0) wobbleFeed.on();
+        else wobbleFeed.off(when);
         // up to about ±12 cents of slow drift and ±3 cents of flutter
         to(wow.gain, 0.002 * s.wobble * s.wobble);
         to(flutter.gain, 0.00005 * s.wobble);
       }
       if (s.chorus !== was.chorus) {
+        if (s.chorus > 0) chorusFeed.on();
+        else chorusFeed.off(when);
         to(chorusWet.gain, 0.75 * s.chorus);
         to(chorused.gain, 1 - 0.2 * s.chorus);
       }
       if (s.trem !== was.trem) {
+        if (s.trem > 0) tremFeed.on();
+        else tremFeed.off(when);
         // at full the volume swings from almost nothing to well above where it was
         to(tremDepth.gain, 0.62 * s.trem);
         to(trem.gain, 1 - 0.2 * s.trem);
       }
       if (s.tremSpeed !== was.tremSpeed || bpm !== was.bpm) to(tremLfo.frequency, ((TREM_SPEEDS.find((x) => x.id === s.tremSpeed)?.perBeat ?? 2) * bpm) / 60);
       if (s.echo !== was.echo) {
+        if (s.echo > 0) echoFeed.on();
+        else echoFeed.off(when);
         to(echoSend.gain, Math.pow(s.echo, 1.2) * 0.75);
         to(feedback.gain, s.echo > 0 ? 0.22 + 0.3 * s.echo : 0);
       }

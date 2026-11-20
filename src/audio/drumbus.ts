@@ -19,6 +19,7 @@
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
 import { atRenderTime, audioContext, audioIfStarted, isRendering } from "./context";
+import { gate, type Gate } from "./gate";
 import { listening, pulse } from "./pulse";
 import { describe, type Sound } from "./describe";
 import { tapStem, untapStem } from "./stems";
@@ -55,6 +56,10 @@ interface Bus {
   wow: GainNode;
   flutter: GainNode;
   tape: DelayNode;
+  /** the echo's way in (and round, and on to the room), let go while Echo is at 0 (see gate.ts) */
+  echoFeed: Gate;
+  /** the tape's wobble, let go while Tape is at 0 */
+  tapeFeed: Gate;
   low: BiquadFilterNode;
   high: BiquadFilterNode;
   air: BiquadFilterNode;
@@ -108,6 +113,8 @@ interface Desk {
   pump: number;
   sizeTimer?: number;
   bedSrc: AudioBufferSourceNode | null;
+  /** the playing bed's own level, faded out when it stops */
+  bedFade: GainNode | null;
   bedType: NoiseBed;
   bedOn: boolean;
 }
@@ -183,10 +190,12 @@ function getBus(track = FIRST_DRUMS): Bus {
   const echoWet = c.createGain();
   const echoToVerb = c.createGain();
   echoToVerb.gain.value = 0.3;
-  echoIn.connect(echo).connect(echoLp).connect(echoHp);
-  echoHp.connect(echoFb).connect(echo);
+  echo.connect(echoLp).connect(echoHp);
+  echoHp.connect(echoFb);
   echoHp.connect(echoWet).connect(mix);
-  echoWet.connect(echoToVerb).connect(verbIn);
+  echoToVerb.connect(verbIn);
+  // (at 0 the echo rests once its repeats have died away, and so does the room it fed)
+  const echoFeed = gate(c, [[echoIn, echo], [echoFb, echo], [echoWet, echoToVerb]], 2.2);
 
   // tape: a very short delay whose length drifts (slow "wow") and shivers (fast "flutter")
   const tape = c.createDelay(0.05);
@@ -198,12 +207,14 @@ function getBus(track = FIRST_DRUMS): Bus {
     osc.frequency.value = freq;
     const depth = c.createGain();
     depth.gain.value = 0;
-    osc.connect(depth).connect(tape.delayTime);
+    osc.connect(depth);
     osc.start();
     return depth;
   };
   const wow = lfo(0.55);
   const flutter = lfo(6.3);
+  // (at 0 the tape's length is left steady, which the browser works out far more cheaply)
+  const tapeFeed = gate(c, [[wow, tape.delayTime], [flutter, tape.delayTime]], 0.5);
 
   const low = c.createBiquadFilter();
   low.type = "lowshelf";
@@ -245,8 +256,8 @@ function getBus(track = FIRST_DRUMS): Bus {
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  const bus: Bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, low, high, air, comp, makeup, bed, channels };
-  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, bedSrc: null, bedType: "off", bedOn: false });
+  const bus: Bus = { dry, sat, verb, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
+  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, bedSrc: null, bedFade: null, bedType: "off", bedOn: false });
   return bus;
 }
 
@@ -315,6 +326,8 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   }
   desk.pump = fx.pump;
   if (fx.echo !== was.echo) {
+    if (fx.echo > 0) b.echoFeed.on();
+    else b.echoFeed.off(t);
     to(b.echoWet.gain, fx.echo * 1.8);
     to(b.echoFb.gain, fx.echo > 0 ? 0.25 + 0.4 * fx.echo : 0);
   }
@@ -324,6 +337,8 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   }
   if (fx.grit !== was.grit || fx.color !== was.color || fx.blend !== was.blend) b.sat.set(fx.color, fx.grit, fx.blend, quarter(SAT_DB[fx.color], fx.grit));
   if (fx.tape !== was.tape) {
+    if (fx.tape > 0) b.tapeFeed.on();
+    else b.tapeFeed.off(t);
     // at full, the pitch drifts by about a quarter of a semitone and shivers a little on top
     const depth = fx.tape * fx.tape * 0.004;
     to(b.tape.delayTime, depth + fx.tape * 0.0001, 0.05);
@@ -420,15 +435,26 @@ const beds = new Map<NoiseBed, AudioBuffer>();
 /** (`at`: from when, on the audio clock; a render's beds change where their sections start) */
 function stopBed(d: Desk, at = 0) {
   if (d.bedSrc) {
+    // faded out over 20 ms rather than cut off where it is
+    const t = Math.max(at, d.bedSrc.context.currentTime);
+    if (d.bedFade) {
+      const g = d.bedFade.gain;
+      g.cancelScheduledValues(t);
+      g.setValueAtTime(1, t);
+      g.linearRampToValueAtTime(0, t + BED_FADE);
+    }
     try {
-      d.bedSrc.stop(at);
+      d.bedSrc.stop(d.bedFade ? t + BED_FADE + 0.001 : t);
     } catch {
       /* stopped */
     }
     d.bedSrc = null;
+    d.bedFade = null;
   }
   d.bedType = "off";
 }
+/** how long a noise bed takes to fade out when it stops (seconds) */
+const BED_FADE = 0.02;
 function startBed(d: Desk, type: NoiseBed, at = 0) {
   const c = audioContext();
   stopBed(d, at);
@@ -445,7 +471,8 @@ function startBed(d: Desk, type: NoiseBed, at = 0) {
   d.bedSrc = c.createBufferSource();
   d.bedSrc.buffer = buf;
   d.bedSrc.loop = true;
-  d.bedSrc.connect(d.bus.bed);
+  d.bedFade = c.createGain();
+  d.bedSrc.connect(d.bedFade).connect(d.bus.bed);
   d.bedSrc.start(at);
 }
 /**

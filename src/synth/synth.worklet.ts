@@ -29,6 +29,20 @@ export interface SynthProcessorOptions {
   voices?: number;
   /** seed for drift, oscillator phases and noise */
   seed?: number;
+  /** live: say when it has gone quiet (see SynthReport), so the track behind it can rest */
+  report?: boolean;
+}
+
+/**
+ * What the processor tells the page: it has gone quiet (every note over, every echo died away,
+ * nothing waiting) having had `got` messages. The page lets go of its output then, so the track's
+ * effects behind it rest (a processor's output is never silent to the browser, so they would run
+ * on for ever); the next note connects it again first. `got` tells a quiet reported just before a
+ * note arrived from a real one.
+ */
+export interface SynthReport {
+  idle: true;
+  got: number;
 }
 
 /** What the port accepts: one event, a list of them, or "dispose" (the processor stops for good). */
@@ -39,6 +53,9 @@ class SynthProcessor extends AudioWorkletProcessor {
   private dead = false;
   /** the right channel when the output has only one (made once, not per block) */
   private spare = new Float32Array(128);
+  private report: boolean;
+  private got = 0;
+  private quiet = false;
 
   constructor(options: { processorOptions?: SynthProcessorOptions }) {
     super(options);
@@ -47,11 +64,15 @@ class SynthProcessor extends AudioWorkletProcessor {
     this.k.setParams(o.params ?? DEFAULT_PARAMS);
     this.k.snapSmoothing();
     for (const e of o.events ?? []) feed(this.k, e);
+    this.report = !!o.report;
     this.port.onmessage = (m: MessageEvent<SynthMessage>) => {
       const d = m.data;
       if (d === "dispose") this.dead = true;
-      else if (Array.isArray(d)) for (const e of d) feed(this.k, e);
-      else if (d && typeof d === "object") feed(this.k, d);
+      else {
+        this.got++;
+        if (Array.isArray(d)) for (const e of d) feed(this.k, e);
+        else if (d && typeof d === "object") feed(this.k, d);
+      }
     };
   }
 
@@ -70,6 +91,11 @@ class SynthProcessor extends AudioWorkletProcessor {
       this.k.render(L, r, L.length);
       for (let i = 0; i < L.length; i++) L[i] = 0.5 * (L[i] + r[i]);
     } else this.k.render(L, R, L.length);
+    if (this.report) {
+      const quiet = this.k.isIdle() && !this.k.hasEvents();
+      if (quiet && !this.quiet) this.port.postMessage({ idle: true, got: this.got } satisfies SynthReport);
+      this.quiet = quiet;
+    }
     return true;
   }
 }

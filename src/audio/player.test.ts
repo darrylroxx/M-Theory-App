@@ -4,7 +4,7 @@
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
-import type { FakeSource } from "../keys/fakeaudio";
+import type { FakeParam, FakeSource } from "../keys/fakeaudio";
 import { DEFAULT_BEAT, ECHO_TIMES, fxOf, type Beat } from "./beats";
 import { SOUND_DEFAULT, type HarpSound } from "./rack";
 import { TrackVoice } from "./trackvoice";
@@ -64,6 +64,8 @@ afterEach(() => {
 });
 
 const S = await import("./synth");
+/** a noise bed fades out over 20 ms when it stops, and its source stops just after */
+const BED_STOP = 0.021;
 
 /** Every note a track's voice is asked for (nothing is really played: the strings are not made). */
 function notes() {
@@ -238,7 +240,12 @@ describe("the drum desks", () => {
     const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
     expect(beds.length).toBe(1);
     // and stops where the song ends, as live: not on through a file's tail or round over the loop's start
-    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
+    // (faded out from there over 20 ms, so it is not cut off with a click)
+    expect(beds[0].src.stopsAt).toBeCloseTo(2 + BED_STOP, 6);
+    const fade = (beds[0].src.outputs[0] as unknown as { gain: FakeParam }).gain;
+    expect(fade.at(2)).toBe(1);
+    expect(fade.at(2.01)).toBeCloseTo(0.5, 6);
+    expect(fade.at(2.02)).toBe(0);
   });
   it("in a render, an added drums track's noise bed stops where a section without it starts, and comes back with it", async () => {
     notes();
@@ -254,8 +261,8 @@ describe("the drum desks", () => {
     await S.renderSong(items, { bpm: 120, pattern: "ring", beat: null, rate: 8000 });
     const beds = starts.filter((s) => s.ctx === renders[0] && s.loop);
     expect(beds.map((s) => s.when)).toEqual([0, 4]);
-    expect(beds[0].src.stopsAt).toBeCloseTo(2, 6);
-    expect(beds[1].src.stopsAt).toBeCloseTo(6, 6);
+    expect(beds[0].src.stopsAt).toBeCloseTo(2 + BED_STOP, 6);
+    expect(beds[1].src.stopsAt).toBeCloseTo(6 + BED_STOP, 6);
   });
   describe("live, the first track's noise bed follows the section that is playing, as a render has it", () => {
     // two one-bar sections at 120 (two seconds each); the page shows the first
@@ -300,7 +307,9 @@ describe("the drum desks", () => {
       run(p, 2.5);
       p.update(items, 120, "ring", false, vinyl);
       expect(beds().length).toBe(1);
-      expect(beds()[0].src.stopsAt).toBeCloseTo(t0 + 2, 6);
+      // (booked late, the page having been busy until 2.5 s: it fades out from then, as a stop booked in the past would have been heard)
+      expect(t0 + 2).toBeLessThan(2.5);
+      expect(beds()[0].src.stopsAt).toBeCloseTo(2.5 + BED_STOP, 6);
       p.stop();
     });
     it("showing another section's page while one plays leaves the playing one's bed alone", () => {

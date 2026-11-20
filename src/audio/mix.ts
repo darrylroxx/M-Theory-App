@@ -4,6 +4,8 @@
  * Each fader sits between its instrument and the speakers, so a track's volume, mute and solo
  * apply in every section at once.
  */
+import { canRunSafety, createSafety, loadSafety, safetyReady } from "./safety";
+
 export type TrackId = string;
 export const TRACK_IDS: TrackId[] = ["chords", "melody", "drums"];
 
@@ -60,16 +62,50 @@ let liveFaders: Record<TrackId, GainNode> = {};
 /**
  * The point every sound of the song passes on its way to the speakers (one per audio context).
  * Anything that wants to hear the whole mix as it is (the canvas does) listens here.
+ *
+ * From here the sum goes through the safety limiter (safety.ts) to the speakers: on a context
+ * where it is already loaded (an offline render loads it before anything is made) straight
+ * away; on the live context, which loads it as it opens, the master goes straight out until it
+ * is ready and then crosses over to it in 20 ms. The two ways out are the same sample for
+ * sample until something goes over, and neither delays anything, so the swap is never heard.
  */
 const masters = new WeakMap<BaseAudioContext, GainNode>();
 export function master(c: BaseAudioContext): GainNode {
   let m = masters.get(c);
   if (!m) {
     m = c.createGain();
-    m.connect(c.destination);
     masters.set(c, m);
+    if (safetyReady(c)) m.connect(createSafety(c)).connect(c.destination);
+    // (a context that cannot run it: straight out, as before)
+    else if (!canRunSafety(c)) m.connect(c.destination);
+    else {
+      const direct = c.createGain();
+      m.connect(direct).connect(c.destination);
+      const out = m;
+      void loadSafety(c).then((ok) => {
+        if (ok) crossToSafety(c, out, direct);
+      });
+    }
   }
   return m;
+}
+
+/** The master's way out goes over from straight to the speakers to through the limiter, without a sound. */
+function crossToSafety(c: BaseAudioContext, m: GainNode, direct: GainNode) {
+  const safety = createSafety(c);
+  const wet = c.createGain();
+  wet.gain.value = 0;
+  m.connect(safety).connect(wet).connect(c.destination);
+  const t = c.currentTime + 0.05;
+  direct.gain.setValueAtTime(1, t);
+  direct.gain.linearRampToValueAtTime(0, t + 0.02);
+  wet.gain.setValueAtTime(0, t);
+  wet.gain.linearRampToValueAtTime(1, t + 0.02);
+  // (live only: an offline render's master is made after its limiter is loaded)
+  setTimeout(() => {
+    m.disconnect(direct);
+    direct.disconnect();
+  }, 200);
 }
 
 /** The fader for a track: its instrument connects into it, and it goes on to the speakers. */

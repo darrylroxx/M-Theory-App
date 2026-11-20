@@ -1,5 +1,6 @@
-import { describe, expect, it } from "vitest";
-import { SAT_REF, SAT_TYPES, bend, isSatType, satCurve, type SatType } from "./saturation";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import { SAT_REF, SAT_TYPES, bend, createSaturator, isSatType, satCurve, type SatType } from "./saturation";
+import { FakeAudio, FakeOffline, type FakeAny } from "./fakectx";
 
 /** Put a sine of the usual size through a curve and measure its overtones, relative to the note itself. */
 function overtones(type: SatType, amount: number, size = SAT_REF): number[] {
@@ -110,5 +111,54 @@ describe("saturation", () => {
         expect(gain(0.05)).toBeGreaterThanOrEqual(gain(SAT_REF) - 0.02);
         expect(gain(0.9)).toBeLessThanOrEqual(gain(SAT_REF) + 0.02);
       }
+  });
+});
+
+describe("a saturator turned all the way down rests", () => {
+  afterEach(() => vi.useRealTimers());
+  /** the oversampled shapers a sound passes on its way through, and whether the bend is one of them */
+  const shapers = (c: FakeAudio, from: object) => (c.nodes as FakeAny[]).filter((n) => n.oversample === "4x" && c.reaches(from, n));
+  const isBend = (n: FakeAny) => (n.curve as Float32Array).length === 4097;
+
+  it("live: at zero only the straight path runs; turned up, the bend is fed before it glides in; turned down, let go once it has", () => {
+    vi.useFakeTimers();
+    const c = new FakeAudio(48000);
+    const sat = createSaturator(c as never, 0.2, true);
+    sat.set("tape", 0, 1);
+    // the straight path (which sets the timing) always runs, and alone
+    expect(shapers(c, sat.input).length).toBe(1);
+    expect(shapers(c, sat.input).some(isBend)).toBe(false);
+    expect(c.reaches(sat.input, sat.output)).toBe(true);
+    sat.set("tube", 0.5, 1);
+    expect(shapers(c, sat.input).length).toBe(3);
+    expect(shapers(c, sat.input).some(isBend)).toBe(true);
+    sat.set("tube", 0, 1);
+    // still fed while its level glides down
+    vi.advanceTimersByTime(200);
+    expect(shapers(c, sat.input).length).toBe(3);
+    vi.advanceTimersByTime(200);
+    expect(shapers(c, sat.input).length).toBe(1);
+    // turned up and straight back down before it settled: it stays fed, then rests
+    sat.set("tube", 0.3, 1);
+    sat.set("tube", 0, 1);
+    sat.set("tube", 0.3, 1);
+    vi.advanceTimersByTime(1000);
+    expect(shapers(c, sat.input).length).toBe(3);
+    // the mix at zero is the knob at zero too
+    sat.set("tube", 0.3, 0);
+    vi.advanceTimersByTime(1000);
+    expect(shapers(c, sat.input).length).toBe(1);
+  });
+
+  it("offline: unfed while it is never used, fed from where it first is, and never let go", () => {
+    vi.useFakeTimers();
+    const c = new FakeOffline(48000);
+    const sat = createSaturator(c as never, 0.25);
+    sat.set("tape", 0, 1);
+    expect(shapers(c, sat.input).length).toBe(1);
+    sat.set("tape", 0.4, 1);
+    sat.set("tape", 0, 1);
+    vi.advanceTimersByTime(5000);
+    expect(shapers(c, sat.input).length).toBe(3);
   });
 });

@@ -212,9 +212,10 @@ export class Sampler extends Keyboard<Voice> implements Instrument {
   protected dropDamper(v: Voice) {
     if (!v.rel) return;
     const now = this.ctx.currentTime;
-    v.rel.amp.gain.cancelScheduledValues(0);
-    v.rel.amp.gain.setValueAtTime(0, now);
-    stopAt(v.rel.src, now);
+    // (gone in a few milliseconds, not at once: a sound cut at full level clicks)
+    v.rel.amp.gain.cancelScheduledValues(now);
+    v.rel.amp.gain.setTargetAtTime(0, now, 0.005);
+    stopAt(v.rel.src, now + 0.05);
     v.rel = undefined;
   }
 }

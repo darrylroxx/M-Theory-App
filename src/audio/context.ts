@@ -1,3 +1,5 @@
+import { loadSafety } from "./safety";
+
 /** The one Web Audio context shared by the guitar and the drums. */
 let ctx: AudioContext | null = null;
 
@@ -18,7 +20,14 @@ export function audioContext(): AudioContext {
   if (rendering) return rendering as AudioContext;
   if (!ctx) {
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-    ctx = new AC();
+    // the larger of the browser's buffers ('playback': about 20 ms instead of 10): a spike on the
+    // audio thread (a busy moment, the system's own drivers) is then absorbed instead of heard as a
+    // crackle. Nothing needs less: the song is booked a quarter of a second ahead, takes and the
+    // recording engine's backing are on the audio clock, and a sound tapped to be heard comes a
+    // hundredth of a second later, which nobody notices.
+    ctx = new AC({ latencyHint: "playback" });
+    // the master's safety limiter starts loading as the sound opens (see mix.ts master)
+    void loadSafety(ctx);
   }
   if (ctx.state === "suspended") void ctx.resume();
   return ctx;
