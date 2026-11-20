@@ -58,16 +58,16 @@ export function AudioSetup() {
   }, []);
   if (!isDesktop()) return null;
   const asio = hosts?.find((h) => h.name.toUpperCase() === "ASIO");
-  const scarlett = hosts?.flatMap((h) => h.devices.map((d) => ({ host: h.name, d }))).find((x) => /focusrite|scarlett/i.test(x.d.name));
+  // (an interface with its own low-latency driver: the one the Vocals page records through)
+  const found = asio?.devices[0];
   return (
     <section className="audio-setup" aria-label="Audio interface">
       <div className="row"><b>Audio interface</b><span className="spacer" /><button className="btn sm" onClick={look} disabled={!hosts}>Look again</button></div>
       {!hosts && <p className="small muted">Looking…</p>}
       {hosts && (
         <p className="small">
-          {scarlett ? <>Found <b>{scarlett.d.name}</b> ({scarlett.host}): {scarlett.d.input?.channels ?? 0} in, {scarlett.d.output?.channels ?? 0} out.</>
-            : asio && asio.devices.length ? <>No Scarlett found. ASIO drivers: {asio.devices.map((d) => d.name).join(", ")}.</>
-            : <>No Scarlett found. Plug it in, install the Focusrite USB ASIO driver from focusrite.com, then press Look again.</>}
+          {found ? <>Found <b>{found.name}</b>: {found.input?.channels ?? 0} in, {found.output?.channels ?? 0} out.</>
+            : <>No audio interface found. Plug it in, install its driver from its maker, then press Look again.</>}
         </p>
       )}
       {hosts && (

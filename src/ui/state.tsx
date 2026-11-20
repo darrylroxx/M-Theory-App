@@ -530,7 +530,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     if (recRef.current) return toast("Stop recording first");
     stopAlone();
     setOpened((n) => n + 1);
-    setState((s) => ({ ...s, ideaId: null, draft: newId(), progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
+    setState((s) => ({ ...s, ideaId: null, draft: newId(), progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm } }));
     openSheet(null);
   }, [toast]);
   const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
