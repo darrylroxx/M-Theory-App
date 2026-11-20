@@ -29,6 +29,12 @@ import { soundFor } from "../synth/render";
 
 /** How long an instrument takes to fade out when it is swapped, or its track is removed. */
 export const FADE = 0.06;
+/**
+ * How long after ■ a track rests (seconds): its fade is over long before (its room's tail is in
+ * the shared room, which fades on its own); with its echo on, once the repeats have died away.
+ */
+const REST = 2;
+const REST_ECHO = 12;
 const TAU = FADE / 4;
 
 /**
@@ -168,6 +174,10 @@ export class TrackVoice {
   private shape: KeysShape | null = null;
   /** ■ faded the track out (its room and echoes with it): the next note brings it back */
   private hushed = false;
+  /** a while after ■ it is let go of its fader (and its room), so nothing of it is worked out until its next note */
+  private restTimer: ReturnType<typeof setTimeout> | undefined;
+  private resting = false;
+  private dest: AudioNode;
   /** the tempo the rack was last set for (its echo keeps time with it) */
   private bpm = 90;
 
@@ -185,6 +195,7 @@ export class TrackVoice {
   ) {
     this.offline = "startRendering" in c;
     this.out = c.createGain();
+    this.dest = dest;
     this.out.connect(dest);
     this.rack = createRack(c, this.out, sendTo);
     this.rack.set(start, bpm);
@@ -398,6 +409,16 @@ export class TrackVoice {
       g.setTargetAtTime(0, at, STOP_FADE / 4.6);
     }
     this.rack.hush(at, STOP_FADE / 4.6);
+    // once it is silent (its own fade over, and any echo it was still repeating died away), it rests:
+    // let go of its fader and its room, it costs the audio thread nothing until the next note wakes it
+    clearTimeout(this.restTimer);
+    const after = Math.max(0, at - this.c.currentTime) + (this.sound.echo > 0 ? REST_ECHO : REST);
+    this.restTimer = setTimeout(() => {
+      if (!this.hushed || this.gone || this.resting) return;
+      this.resting = true;
+      this.out.disconnect();
+      this.rack.unplug();
+    }, after * 1000);
   }
 
   /** The track's own fade, on its sound and on what it sends to its room. */
@@ -409,6 +430,12 @@ export class TrackVoice {
   private wake(when: number) {
     if (!this.hushed || this.offline) return;
     this.hushed = false;
+    clearTimeout(this.restTimer);
+    if (this.resting) {
+      this.resting = false;
+      this.out.connect(this.dest);
+      this.rack.plug();
+    }
     const t = Math.max(this.c.currentTime, when - 0.03);
     for (const g of this.fades()) {
       g.cancelScheduledValues(t);
@@ -432,6 +459,7 @@ export class TrackVoice {
     if (this.gone) return;
     this.gone = true;
     clearTimeout(this.settle);
+    clearTimeout(this.restTimer);
     const inst = this.inst;
     const end = () => {
       inst?.dispose();

@@ -28,6 +28,30 @@ const pad: Tone = { inst: "synth", synth: presetById("warm-pad")!.params };
 const C = [48, 52, 55, 60];
 
 describe("a track's voice", () => {
+  it("rests a while after ■ (let go of its fader and its room: nothing of it is worked out), and the next note brings it back first", () => {
+    const c = new FakeAudio();
+    const { v, dest } = voice(c);
+    const out = v.out as unknown as FakeAny;
+    const send = v.rack.send as unknown as FakeAny;
+    v.note(60, 0.1, 0.8, 1, { slot: 0 });
+    c.currentTime = 1;
+    v.stopAll();
+    vi.advanceTimersByTime(1000);
+    // still fading: connected
+    expect(out.outputs).toContain(dest);
+    vi.advanceTimersByTime(1100);
+    expect(out.outputs.length).toBe(0);
+    expect(send.outputs.length).toBe(0);
+    // a note: connected again before it sounds
+    c.currentTime = 5;
+    v.note(62, 5.2, 0.8, 1, { slot: 0 });
+    expect(out.outputs).toContain(dest);
+    expect(send.outputs.length).toBe(1);
+    expect(c.reaches(c.started[c.started.length - 1], dest)).toBe(true);
+    // played on, it never rests
+    vi.advanceTimersByTime(20000);
+    expect(out.outputs).toContain(dest);
+  });
   it("plays into its own rack and out through its own fader", () => {
     const c = new FakeAudio();
     const a = voice(c);

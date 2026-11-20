@@ -132,6 +132,9 @@ export interface Rack {
   hush(at: number, tau: number): void;
   /** A note is coming: the room it sends to comes back from `at`. */
   wake(at: number): void;
+  /** Resting after ■ (see TrackVoice): its send lets go of its room, and takes hold again. */
+  unplug(): void;
+  plug(): void;
   /** Stop its oscillators and let go of everything (the track is gone). */
   dispose(): void;
 }
@@ -387,6 +390,16 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination, 
         h.cancelScheduledValues(at);
         h.setTargetAtTime(0, at, tau);
       }
+    },
+    unplug() {
+      try {
+        send.disconnect(sendEnd);
+      } catch {
+        /* not connected */
+      }
+    },
+    plug() {
+      send.connect(sendEnd);
     },
     wake(at) {
       hushed = false;
