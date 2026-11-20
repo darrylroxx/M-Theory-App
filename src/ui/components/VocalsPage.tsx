@@ -95,7 +95,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   /** a take is about to be heard alone: the song stops */
   onAlone: () => void;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, setRecordingTo } = useApp();
   const studio = state.studio ?? {};
   const setStudio = (patch: Partial<Studio>) => set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
   const vocals = tracksOf(state.progression, "vocals");
@@ -253,6 +253,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     return () => { live = false; void engineClose().then((r) => r && salvageRef.current(r)); setOpened(null); };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // the takes are on their track (or there were none): the idea can be left again
+  useEffect(() => {
+    if (phase === "idle") setRecordingTo(null);
+  }, [phase, setRecordingTo]);
+  useEffect(() => () => setRecordingTo(null), [setRecordingTo]);
   useEffect(() => setLive(!!opened && monitor), [opened, monitor]);
   useEffect(() => () => setLive(false), []);
 
@@ -282,6 +287,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const plan = recordPlan();
     if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
     const t = record ? ensureTrack() : track;
+    // until its takes are on the track, the idea stays open and the track stays (see recordingTo)
+    if (record && t) setRecordingTo(t.id);
     planRef.current = plan;
     trackRef.current = t ?? null;
     fullRef.current = false;
@@ -338,7 +345,11 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     if (!takes.length) return toast("Stopped before the first take");
     // the take that plays (the last ★, else the last full pass) is laid whole where it was sung
     // (sung again over the same bars, it plays there instead of what played: the earlier takes are a Use away)
-    set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((x) => (x.id === c.track.id ? { ...x, ...addRecording(x, takes, newId) } : x)) } }));
+    set((s) => {
+      // (the track is there: it cannot be removed while it is recorded on; if it went all the same, it comes back with its takes, never lost)
+      const p = (s.progression.tracks ?? []).some((x) => x.id === c.track.id) ? s.progression : addTrack(s.progression, "vocals", c.track.id).p;
+      return { ...s, progression: { ...p, tracks: (p.tracks ?? []).map((x) => (x.id === c.track.id ? { ...x, ...addRecording(x, takes, newId) } : x)) } };
+    });
     const full = takes.filter((x) => !x.short).length || takes.length;
     const stars = takes.filter((x) => x.keep).length;
     const filled = (r.padded ?? 0) / r.rate;

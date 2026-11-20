@@ -14,7 +14,7 @@ import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { showSection, shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
-import { newId, useApp, type Pane, type ProgChord } from "../state";
+import { newId, useApp, type AppState, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
 import { InstIcon } from "./HarpPanel";
 import { toneOf } from "../../audio/tone";
@@ -39,6 +39,16 @@ export interface TrackSection {
 /** The page that edits each kind of track. */
 const PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drums: "drums", vocals: "vocals" };
 const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
+
+/**
+ * A plain track of `kind` added as `id`. You stay where you are; it is the one its page shows
+ * next time (brought forward there), and a vocal track is the one the Vocals page shows (and records onto).
+ */
+export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track } {
+  const r = addTrack(s.progression, kind, id);
+  const studio = kind === "vocals" ? { studio: { ...s.studio, vocal: id } } : {};
+  return { s: { ...s, progression: r.p, ...studio }, track: r.track };
+}
 
 /** What one track holds in one section. */
 function content(t: Track, s: TrackSection): TrackSection {
@@ -80,7 +90,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set } = useApp();
+  const { state, set, toast, recordingTo } = useApp();
   const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
@@ -218,10 +228,12 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** A plain new track of a kind, at once: its row lights up here, and its page opens on it next time. */
   const add = (kind: TrackKind) => {
     const tid = newId();
-    set((s) => ({ ...s, progression: addTrack(s.progression, kind, tid).p, ...(kind === "vocals" ? { studio: { ...s.studio, vocal: tid } } : {}) }));
+    set((s) => trackAdded(s, kind, tid).s);
     setAdding(false);
   };
   const remove = (t: Track) => {
+    // (a recording going onto it would have nowhere to go)
+    if (t.id === recordingTo) return toast("Stop recording first");
     if (!window.confirm(`Remove ${t.name} and everything on it, in every section?`)) return;
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };

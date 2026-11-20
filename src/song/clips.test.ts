@@ -225,6 +225,23 @@ describe("clips: what a vocal track plays of its takes", () => {
     expect(late.b.map((x) => [x.x, x.w])).toEqual([[expect.closeTo(0.8, 9), expect.closeTo(1.2, 9)]]);
   });
 
+  it("a take whose bar is cut off (its section made shorter) is left out, not moved into the next section", () => {
+    // sung from B's second bar; B is then made a bar shorter, with C after it
+    const t = take("t", 1, { at: { block: "b", bar: 1 } });
+    const c: Clip = { id: "c", take: "t", from: 0, to: LOOP };
+    const before = [{ block: "a", bar: 4, beats: 8 }, { block: "b", bar: 4, beats: 8 }, { block: "c", bar: 4, beats: 8 }];
+    expect(layClips(before, [{ clip: c, take: t }], 120).b.map((x) => x.at)).toEqual([4]);
+    const after = [{ block: "a", bar: 4, beats: 8 }, { block: "b", bar: 4, beats: 4 }, { block: "c", bar: 4, beats: 8 }];
+    const laid = layClips(after, [{ clip: c, take: t }], 120);
+    // not heard over C (nor drawn there on the Track page): the Vocals lane, which has no such bar, leaves it out too
+    expect([laid.a, laid.b, laid.c]).toEqual([[], [], []]);
+    expect(clipBars(after, [{ clip: c, take: t }], 120).c).toEqual([]);
+    // B made longer again: back in its place
+    expect(layClips(before, [{ clip: c, take: t }], 120).c.map((x) => x.at)).toEqual([-4]);
+    // a bar in the middle of a section of bars of another length is still there
+    expect(layClips([{ block: "b", bar: 3, beats: 6 }], [{ clip: c, take: t }], 120).b.map((x) => x.at)).toEqual([3]);
+  });
+
   it("the lane: every bar drawn the same width, whatever its beats", () => {
     const bars = [{ beats: 4 }, { beats: 4 }, { beats: 3 }];
     expect(laneBeats(bars, 2.5)).toBe(9.5);

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { allBars, allLoop, entryAfter, entryOf, fitBars, loopKeys, loopRuns, placesOf, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "./loops";
+import { allBars, allLoop, entryAfter, entryOf, fitBars, loopKeys, loopRuns, placeAfter, placesOf, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "./loops";
 
 // A B A C: A has 4 bars, B 2, A again 4, C 3 (the two A's are different places in the song)
 const layout = [{ block: "a1", bars: 4 }, { block: "b", bars: 2 }, { block: "a2", bars: 4 }, { block: "c", bars: 3 }];
@@ -159,5 +159,59 @@ describe("where a changed loop goes on", () => {
     // the first two bars of A looping, B added: B follows A's bar 2, but A goes on to bar 4: a jump
     const part = { items: [{ beats: 4, from: 0 }, { beats: 4, from: 4 }], map: [{ block: "a1" }, { block: "a1" }] };
     expect(entryOf(part, 2, list("b"), order, lens)).toEqual({ at: 0, on: false });
+  });
+});
+
+describe("the song changed shape while it plays straight through: where it goes on", () => {
+  /** sections of bars (4 beats each), the song straight through */
+  const song = (...secs: [string, number][]) => {
+    const items: { beats: number }[] = [];
+    const map: { block: string }[] = [];
+    for (const [block, bars] of secs) for (let k = 0; k < bars; k++) (items.push({ beats: 4 }), map.push({ block }));
+    return { items, map, loop: false };
+  };
+  const all = song(["a", 2], ["b", 2], ["c", 2]);
+
+  it("a list with the same items in the same places is the same shape; one with a section gone or shorter is not", () => {
+    expect(sameShape(all, song(["a", 2], ["b", 2], ["c", 2]))).toBe(true);
+    expect(sameShape(all, song(["b", 2], ["c", 2]))).toBe(false);
+    expect(sameShape(all, song(["a", 1], ["b", 2], ["c", 2]))).toBe(false);
+    // the same lengths, but another section in the same place
+    expect(sameShape(all, song(["a", 2], ["d", 2], ["c", 2]))).toBe(false);
+  });
+
+  it("a section before the one playing removed: the same place in the section playing, not an item further on", () => {
+    // B's second bar was next (item 3); without A it is item 1
+    expect(placeAfter(all, 3, song(["b", 2], ["c", 2]))).toBe(1);
+    // C was next: C's first bar
+    expect(placeAfter(all, 4, song(["b", 2], ["c", 2]))).toBe(2);
+  });
+
+  it("the section playing made shorter: the next section from its first bar", () => {
+    // A's second bar sounding, B next
+    expect(placeAfter(all, 2, song(["a", 1], ["b", 2], ["c", 2]))).toBe(1);
+    // A's first bar sounding, its second next, and gone: on to B
+    expect(placeAfter(all, 1, song(["a", 1], ["b", 2], ["c", 2]))).toBe(1);
+  });
+
+  it("the section playing made longer: on into its new bar, then the next section", () => {
+    // A's second bar sounding, B next: A's third bar comes first now
+    expect(placeAfter(all, 2, song(["a", 3], ["b", 2], ["c", 2]))).toBe(2);
+    // the last section made longer while its last bar plays: its new bar, not the end of the song
+    expect(placeAfter(all, 6, song(["a", 2], ["b", 2], ["c", 3]))).toBe(6);
+  });
+
+  it("the section playing removed: on to the next section there still is", () => {
+    expect(placeAfter(all, 3, song(["a", 2], ["c", 2]))).toBe(2);
+    // the last section removed while it plays: the song ends there (a list that goes round starts again)
+    expect(placeAfter(all, 5, song(["a", 2], ["b", 2]))).toBe(4);
+    expect(placeAfter(all, 5, { ...song(["a", 2], ["b", 2]), loop: true })).toBe(0);
+  });
+
+  it("a chord made shorter before the one coming: the first item of that section after that place", () => {
+    const old = { items: [{ beats: 4 }, { beats: 4 }, { beats: 4 }], map: [{ block: "a" }, { block: "a" }, { block: "b" }], loop: false };
+    const neu = { items: [{ beats: 2 }, { beats: 4 }, { beats: 2 }, { beats: 4 }], map: [{ block: "a" }, { block: "a" }, { block: "a" }, { block: "b" }], loop: false };
+    // A's second chord was next, at beat 4: the new list has the pad there (beat 6 is the first after it)
+    expect(placeAfter(old, 1, neu)).toBe(2);
   });
 });

@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { playNote } from "../../audio/synth";
 import { EMPTY_MELODY, GRIDS, TICKS, cellTick, clearMelody, copyMelodyBar, melodyBars, melodyRows, notesInCell, toggleNote, type Melody, type MelodyRow } from "../../song/melody";
 import { barAtBeat, barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
@@ -24,7 +24,7 @@ const HOLD_MS = 1500;
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  * As many bars as are chosen sit side by side, each with its own steps, its number and its line.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing }: {
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing }: {
   /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
   /** the melody track's instrument */
@@ -72,6 +72,21 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
   const paged = win.count < bars;
   // undo only goes back through this section's own edits
   useEffect(() => setPast([]), [fresh]);
+  // ... and only while the melody is as they left it: changed on another page (moved to another key,
+  // fitted to another time signature), it is let go, so an undo never puts back notes from before that
+  /** the notes this page's own edits wrote (whichever of them React keeps) */
+  const mine = useRef(new WeakSet<object>());
+  const setMelody = useCallback((fn: (m: Melody) => Melody) => write((m) => {
+    const r = fn(m);
+    if (r.notes !== m.notes) mine.current.add(r.notes);
+    return r;
+  }), [write]);
+  const seen = useRef(melody.notes);
+  useEffect(() => {
+    if (melody.notes === seen.current) return;
+    seen.current = melody.notes;
+    if (!mine.current.has(melody.notes)) setPast([]);
+  }, [melody.notes]);
   // another section, another idea: back to bar 1
   useEffect(() => {
     setStart(0);

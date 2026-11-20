@@ -5,14 +5,21 @@ import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LAB
 import { SAT_TYPES } from "../../audio/saturation";
 import { RECIPES, getRecipe } from "../../audio/voices";
 import { barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
+import { sigName } from "../../song/meter";
+import { sectionSig } from "../../song/unity";
 import { newId, useApp } from "../state";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
 
 type GroupId = BeatGroupId | "mine";
-/** What a grid edit can change, and so what Undo and Cancel put back. */
-type Snap = Pick<Beat, "rows" | "edited" | "patternId" | "name" | "on" | "bars">;
-const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
+/**
+ * What a grid edit can change, and so what Undo and Cancel put back: the whole grid, its size with
+ * its rows (rows put back on a grid of another size would be read with the wrong number of steps to a bar).
+ */
+export type Snap = Pick<Beat, "rows" | "steps" | "div" | "edited" | "patternId" | "name" | "on" | "bars">;
+export const snapOf = (b: Beat): Snap => ({ rows: b.rows, steps: b.steps, div: b.div, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
+/** A beat with a grid put back (by Undo or Cancel): its sound and effects stay as they are now. */
+export const putBack = (b: Beat, s: Snap): Beat => ({ ...b, ...s });
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
 /** A drum's sound by name: a library sound ("Felt"), or the machine's ("808"). */
@@ -212,19 +219,27 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     if (current) setGroup(current.group);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // another idea, section or drums track: the edit so far is let go (its Undo and Cancel belong to
-  // the beat it started on, never to another track's), and the grid starts at bar 1
+  // the beat it started on, never to another track's), and the grid starts at bar 1. So is it when the
+  // section's time signature changes (on the Frame page): the beat was fitted to the new bars, edit
+  // and all, and the other sections that went along with it have it too, so it is kept as it is now
   const section = state.progression.song?.current;
+  const meter = sigName(sectionSig(state.progression));
   useEffect(() => {
     setEdit(null);
     setBar(0);
     setStart(0);
-  }, [state.ideaId, section, fresh, track]);
-  // a drum soloed in one track's kit is not carried into the next track's
+  }, [state.ideaId, section, fresh, track, meter]);
+  // a drum soloed in one track's kit is not carried into the next track's, nor off this page: it is for
+  // listening while working here, and no other page shows it (the Track page would play one drum while
+  // drawing them all)
   useEffect(() => setSolo(null), [track]);
   useEffect(() => {
-    setDrumSolo(solo, track);
+    if (!active) setSolo(null);
+  }, [active]);
+  useEffect(() => {
+    setDrumSolo(active ? solo : null, track);
     return () => setDrumSolo(null, track);
-  }, [solo, track]);
+  }, [solo, track, active]);
 
   const sync = (b: Beat) => {
     if (deskFollowsPage(playing, getPos())) syncDrums(b, bpm, track);
@@ -258,11 +273,11 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const undo = () => {
     const last = edit?.past[edit.past.length - 1];
     if (!edit || !last) return;
-    setBeat((b) => ({ ...b, ...last }));
+    setBeat((b) => putBack(b, last));
     setEdit({ ...edit, past: edit.past.slice(0, -1) });
   };
   const cancel = () => {
-    if (edit) setBeat((b) => ({ ...b, ...edit.start }));
+    if (edit) setBeat((b) => putBack(b, edit.start));
     setEdit(null);
   };
   /** Keep the changes and lock the grid. A changed rhythm also goes into "Mine", so it can be used again. */
