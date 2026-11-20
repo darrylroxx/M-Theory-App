@@ -154,6 +154,11 @@ describe("the worklet tells the page when it has gone quiet", () => {
     run(p, SR * 3, (f) => (g.currentFrame = SR * 5.4 + f));
     expect(said.length).toBe(2);
     expect(said[1].d).toEqual({ idle: true, got: 3 });
+    // a change of sound while it is quiet: said again, with the new count (the page only acts on a quiet that has heard everything)
+    p.port.onmessage!({ data: { type: "params", params: short } });
+    run(p, SR, (f) => (g.currentFrame = SR * 8.4 + f));
+    expect(said.length).toBe(3);
+    expect(said[2].d).toEqual({ idle: true, got: 4 });
   });
   it("says nothing unless asked (an offline render)", () => {
     const p = new Processor({ processorOptions: { params: short, events: [on(0.05, 60, 1), off(0.3, 1)] } });

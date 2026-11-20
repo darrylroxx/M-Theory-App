@@ -55,7 +55,8 @@ class SynthProcessor extends AudioWorkletProcessor {
   private spare = new Float32Array(128);
   private report: boolean;
   private got = 0;
-  private quiet = false;
+  /** the message count it last said it was quiet at (-1: it has not said so since it last sounded) */
+  private said = -1;
 
   constructor(options: { processorOptions?: SynthProcessorOptions }) {
     super(options);
@@ -92,9 +93,13 @@ class SynthProcessor extends AudioWorkletProcessor {
       for (let i = 0; i < L.length; i++) L[i] = 0.5 * (L[i] + r[i]);
     } else this.k.render(L, R, L.length);
     if (this.report) {
-      const quiet = this.k.isIdle() && !this.k.hasEvents();
-      if (quiet && !this.quiet) this.port.postMessage({ idle: true, got: this.got } satisfies SynthReport);
-      this.quiet = quiet;
+      // said again when a message (a change of sound, say) came in after it was said: the page only
+      // acts on a quiet that has heard everything it sent
+      if (!this.k.isIdle() || this.k.hasEvents()) this.said = -1;
+      else if (this.said !== this.got) {
+        this.said = this.got;
+        this.port.postMessage({ idle: true, got: this.got } satisfies SynthReport);
+      }
     }
     return true;
   }

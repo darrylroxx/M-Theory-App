@@ -1141,20 +1141,28 @@ export class SynthKernel {
       this.evHead = 0;
       return;
     }
-    const cap = Math.max(256, 1 << Math.ceil(Math.log2(live + n + 1)));
-    const grow = <T extends Float64Array | Int8Array>(a: T, make: (n: number) => T) => {
-      const b = make(cap);
-      b.set(a.subarray(this.evHead, this.evTail));
+    this.growQueue(Math.max(256, 1 << Math.ceil(Math.log2(live + n + 1))));
+  }
+
+  /** (apart from ensure: a closure in it would make every call allocate, even the ones that grow nothing) */
+  private growQueue(cap: number) {
+    const h = this.evHead;
+    const t = this.evTail;
+    const f64 = (a: Float64Array) => {
+      const b = new Float64Array(cap);
+      b.set(a.subarray(h, t));
       return b;
     };
-    this.evFrame = grow(this.evFrame, (k) => new Float64Array(k));
-    this.evType = grow(this.evType, (k) => new Int8Array(k));
-    this.evA = grow(this.evA, (k) => new Float64Array(k));
-    this.evB = grow(this.evB, (k) => new Float64Array(k));
-    this.evC = grow(this.evC, (k) => new Float64Array(k));
-    this.evD = grow(this.evD, (k) => new Float64Array(k));
-    this.evE = grow(this.evE, (k) => new Float64Array(k));
-    this.evTail = live;
+    this.evFrame = f64(this.evFrame);
+    const ty = new Int8Array(cap);
+    ty.set(this.evType.subarray(h, t));
+    this.evType = ty;
+    this.evA = f64(this.evA);
+    this.evB = f64(this.evB);
+    this.evC = f64(this.evC);
+    this.evD = f64(this.evD);
+    this.evE = f64(this.evE);
+    this.evTail = t - h;
     this.evHead = 0;
   }
 
@@ -1243,7 +1251,10 @@ export class SynthKernel {
   panic() {
     this.wake();
     this.clearEvents();
-    for (const v of this.voices) if (v.active) v.kill = true;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) v.kill = true;
+    }
     this.stackN = 0;
     this.mono = null;
     this.hushMode = 0;
@@ -1252,7 +1263,10 @@ export class SynthKernel {
   /** How many voices are sounding. */
   activeVoices() {
     let n = 0;
-    for (const v of this.voices) if (v.active) n++;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) n++;
+    }
     return n;
   }
 
@@ -1321,9 +1335,13 @@ export class SynthKernel {
   private on(midi: number, vel: number, id: number, slot: number, step = 0) {
     vel = vel < 0 ? 0 : vel > 1 ? 1 : vel;
     if (this.p.voice !== "poly" && !(step > 0)) return this.monoOn(midi, vel, id);
-    if (slot >= 0) for (const v of this.voices) if (v.active && v.held && !v.kill && v.slot === slot) this.release(v);
+    if (slot >= 0) for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held && !v.kill && v.slot === slot) this.release(v);
+    }
     // the same key struck again while it rings: strike that voice again, as a piano would
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       if (v.active && !v.held && !v.kill && v.midi === midi && v !== this.mono) {
         this.retrigger(v, midi, vel, id, slot);
         this.stepOf(v, step);
@@ -1344,12 +1362,18 @@ export class SynthKernel {
 
   private off(id: number) {
     // (an arp's steps on a mono sound have voices of their own, outside the mono line)
-    for (const v of this.voices) if (v.active && v.held && v.id === id && v !== this.mono && (this.p.voice === "poly" || v.step > 0)) this.release(v);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held && v.id === id && v !== this.mono && (this.p.voice === "poly" || v.step > 0)) this.release(v);
+    }
     if (this.p.voice !== "poly") this.monoOff(id);
   }
 
   private releaseAll() {
-    for (const v of this.voices) if (v.active && v.held) this.release(v);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && v.held) this.release(v);
+    }
     this.stackN = 0;
   }
 
@@ -1359,14 +1383,18 @@ export class SynthKernel {
    * so the new note is heard in full.
    */
   private unhush() {
-    for (const v of this.voices) if (v.active) v.kill = true;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) v.kill = true;
+    }
     this.mono = null;
     this.hushMode = 2;
   }
 
   /** A stop has faded to silence: nothing of what was playing is left, not a voice, not an echo. */
   private hushed() {
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       v.active = false;
       v.held = false;
       v.kill = false;
@@ -1387,19 +1415,37 @@ export class SynthKernel {
   /** A free voice; when all are busy the oldest released (else the oldest held) note fades out quickly to make room. */
   private allocate(): Voice {
     let busy = 0;
-    for (const v of this.voices) if (v.active && !v.kill) busy++;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active && !v.kill) busy++;
+    }
     if (busy >= this.poly) {
       let victim: Voice | null = null;
-      for (const v of this.voices) if (v.active && !v.kill && !v.held && (!victim || v.order < victim.order)) victim = v;
-      if (!victim) for (const v of this.voices) if (v.active && !v.kill && (!victim || v.order < victim.order)) victim = v;
+      for (let vi = 0; vi < this.voices.length; vi++) {
+        const v = this.voices[vi];
+        if (v.active && !v.kill && !v.held && (!victim || v.order < victim.order)) victim = v;
+      }
+      if (!victim) for (let vi = 0; vi < this.voices.length; vi++) {
+        const v = this.voices[vi];
+        if (v.active && !v.kill && (!victim || v.order < victim.order)) victim = v;
+      }
       if (victim) victim.kill = true;
     }
-    for (const v of this.voices) if (!v.active) return v;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (!v.active) return v;
+    }
     // more notes stolen within a few milliseconds than there are spares: cut the quietest of the
     // notes already fading out (never one that is still meant to sound)
     let q: Voice | null = null;
-    for (const v of this.voices) if (v.kill && (!q || v.killGain < q.killGain)) q = v;
-    if (!q) for (const v of this.voices) if (!q || v.order < q.order) q = v;
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.kill && (!q || v.killGain < q.killGain)) q = v;
+    }
+    if (!q) for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (!q || v.order < q.order) q = v;
+    }
     q = q as Voice;
     q.active = false;
     return q;
@@ -1624,7 +1670,8 @@ export class SynthKernel {
       if (this.og < 0.002) {
         this.osc = this.pendingOsc;
         this.pendingOsc = null;
-        for (const v of this.voices) {
+        for (let vi = 0; vi < this.voices.length; vi++) {
+          const v = this.voices[vi];
           v.nm2 = v.nm1 = v.cm2 = v.cm1 = v.c0 = 0;
           v.hb.fill(0);
           v.eq1 = v.eq2 = 0;
@@ -1695,7 +1742,10 @@ export class SynthKernel {
     this.lfoVal += (this.lfoRaw - this.lfoVal) * this.lfoC;
 
     this.shared();
-    for (const v of this.voices) if (v.active) this.voiceControl(v, false);
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
+      if (v.active) this.voiceControl(v, false);
+    }
   }
 
   /** What every voice uses this control block (worked out once, not once per voice). */
@@ -1904,7 +1954,8 @@ export class SynthKernel {
     for (let i = 0; i < len; i++) mixL[i] = mixR[i] = 0;
     const osc = this.osc;
     const buf = this.oscBuf;
-    for (const v of this.voices) {
+    for (let vi = 0; vi < this.voices.length; vi++) {
+      const v = this.voices[vi];
       if (!v.active) continue;
       // a key held on a sound that dies away to nothing: its envelope creeps toward 0 for ever and, once
       // far below hearing, into numbers the processor works with many times more slowly; 0 it is
