@@ -4,24 +4,25 @@
  * Each page has a clipboard of its own, so a rhythm can only be pasted as a rhythm, a melody as a
  * melody and drums as drums, and copying on one page never wipes what was copied on another.
  *
- * - Rhythm: the chords (their lengths, rests and chosen shapes), how they are played (style, speed,
- *   swing, touch …) and the sound of the chord harp.
- * - Melody: the notes, the grid, on/off, and the sound of the melody harp.
- * - Drums: the drum rhythm, on/off, and the drum sound (machine, each drum's sound, mix and effects).
+ * Copying and pasting moves music, never sound: the track pasted into keeps its own instrument,
+ * style, harp, effects and kit (see ./tracks).
+ *
+ * - Rhythm: the chords (their lengths, rests and chosen shapes).
+ * - Melody: the notes, the grid and on/off.
+ * - Drums: the drum rhythm and on/off.
  *
  * A paste replaces that page of the section on screen and nothing else: the section keeps its
  * length (the Frame decides it) and its other two pages. The clipboards are kept with the app, so
  * a part can also be pasted into another idea; a song in another key gets the chords and melody
  * moved to its key.
  *
- * - Section (on the Frame page): everything in it. Every track's chords, melody and drums, how it
- *   sounds (style, harps, rhythm and kit), its length and time signature, and the vocal takes
- *   recorded in it. A paste puts all of that in place of what the section had; the recordings
- *   come as new takes of the same audio files (nothing is copied on disk, nothing deleted).
+ * - Section (on the Frame page): everything in it. Every track's chords, melody and drums, its
+ *   drum rhythm, its length and time signature, and the vocal takes recorded in it. A paste puts
+ *   all of that in place of what the section had; the recordings come as new takes of the same
+ *   audio files (nothing is copied on disk, nothing deleted). A track the paste has to make (into
+ *   another idea) comes with its own sound and instrument; the tracks already there keep theirs.
  */
-import { DEFAULT_BEAT, reviveBeat, type Beat } from "../audio/beats";
-import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
-import { reviveSound, type HarpSound } from "../audio/rack";
+import { DEFAULT_BEAT, grooveOf, reviveBeat, type Beat } from "../audio/beats";
 import { transposeRef, type Key } from "../theory/keys";
 import { pc } from "../theory/notes";
 import { TICKS, melodyBase, reviveMelody, transposeMelody, type Melody } from "./melody";
@@ -33,6 +34,7 @@ import { commit, ensureSong, replaceSection, reviveSettings, sections, soloSecti
 import { forget, insteadTarget, isFirst, muteInstead, normalize, reviveLayers, reviveTracks, settled, type Layer, type Layers, type Track } from "./tracks";
 import { reviveTones, type Tones } from "../audio/tone";
 import { groupsOf } from "./takes";
+import { migrateSectionClip } from "./migrate";
 import { clipsOf } from "./clips";
 
 export type ClipKind = "rhythm" | "melody" | "drums";
@@ -47,15 +49,12 @@ interface ClipBase {
 }
 export interface RhythmClip extends ClipBase {
   chords: ProgChord[];
-  pattern: PatternId;
-  feel?: Partial<Feel>;
-  sound?: Partial<HarpSound>;
 }
 export interface MelodyClip extends ClipBase {
   melody: Melody | null;
-  tuneSound?: Partial<HarpSound>;
 }
 export interface DrumClip extends ClipBase {
+  /** its rhythm and on/off are what is pasted (the kit stays the pasted track's) */
   beat: Beat;
 }
 /** A whole section. */
@@ -70,11 +69,11 @@ export interface SectionClip extends ClipBase {
   /** the first chords and melody tracks' parts */
   chords: ProgChord[];
   melody?: Melody;
-  /** how it sounds, as it played: style and feel, both harps, the drum rhythm (in its own bars) and the kit */
+  /** the first drums track's rhythm, as it played (in its own bars) */
   settings: Settings;
   /** what the added tracks hold in it, by track id */
   layers?: Layers;
-  /** the added tracks it has something on, so they can be found (or made) in another idea; vocal tracks carry only the takes recorded in it */
+  /** the added tracks it has something on, so they can be found (or made, with their own sound) in another idea; vocal tracks carry only the takes recorded in it */
   tracks: Track[];
   /** the instruments those tracks play, by track id (a track the paste makes plays the same one) */
   tones?: Tones;
@@ -96,22 +95,22 @@ export function keyShift(from: Key, to: Key): number {
 }
 
 export function copyRhythm(p: Progression, key: Key, from: string): RhythmClip {
-  return clone({ from, key, bar: sigBeats(sectionSig(p)), chords: p.chords, pattern: p.pattern, feel: p.feel, sound: p.sound });
+  return clone({ from, key, bar: sigBeats(sectionSig(p)), chords: p.chords });
 }
 export function copyMelody(p: Progression, key: Key, from: string): MelodyClip {
-  return clone({ from, key, bar: sigBeats(sectionSig(p)), melody: p.melody ?? null, tuneSound: p.tuneSound });
+  return clone({ from, key, bar: sigBeats(sectionSig(p)), melody: p.melody ?? null });
 }
 export function copyDrums(p: Progression, key: Key, from: string): DrumClip {
   return clone({ from, key, bar: sigBeats(sectionSig(p)), beat: p.beat ?? DEFAULT_BEAT });
 }
 
-/** The section on screen gets the copied rhythm: chords (each a new slot), style, feel and harp sound. */
+/** The section on screen gets the copied chords (each a new slot). The track keeps its own style and sound. */
 export function pasteRhythm(p: Progression, c: RhythmClip, key: Key, id: () => string = uid): Progression {
   const n = keyShift(c.key, key);
   // copied in another time signature: chords that lasted whole bars there last whole bars here
   const to = sigBeats(sectionSig(p));
   const chords = clone(c.chords).map((x) => ({ ...x, beats: fitChordBeats(x.beats, c.bar ?? to, to) })).map((x) => (n ? { ...x, id: id(), ref: transposeRef(x.ref, n, key), voicingId: undefined } : { ...x, id: id() }));
-  return { ...p, chords, pattern: c.pattern, feel: clone(c.feel), sound: clone(c.sound) };
+  return { ...p, chords };
 }
 /**
  * How far to move a melody into another key: by as much as the home note moves, up or down,
@@ -124,18 +123,18 @@ export function melodyShift(m: Melody, from: Key, to: Key): number {
   const inside = (by: number) => m.notes.filter((x) => x.midi + by >= lo && x.midi + by <= lo + 24).length;
   return [n, n - 12, n + 12].reduce((best, by) => (inside(by) > inside(best) ? by : best));
 }
-/** The section on screen gets the copied melody and the melody harp's sound. */
+/** The section on screen gets the copied melody. The track keeps its own sound. */
 export function pasteMelody(p: Progression, c: MelodyClip, key: Key): Progression {
   const sig = sectionSig(p);
   const to = sigBeats(sig);
   // copied in another time signature: every note stays in its bar
   const m = c.melody ? fitMelody(clone(c.melody), c.bar ?? to, to, isCompound(sig)) : undefined;
   const by = m ? melodyShift(m, c.key, key) : 0;
-  return { ...p, melody: m && by ? transposeMelody(m, by) : m, tuneSound: clone(c.tuneSound) };
+  return { ...p, melody: m && by ? transposeMelody(m, by) : m };
 }
-/** The section on screen gets the copied drums: rhythm, on/off and sound. (A rhythm from other bars is fitted to the section's: see song/unity.) */
+/** The section on screen gets the copied drum rhythm and on/off; the track keeps its kit. (A rhythm from other bars is fitted to the section's: see song/unity.) */
 export function pasteDrums(p: Progression, c: DrumClip): Progression {
-  return { ...p, beat: clone(c.beat) };
+  return { ...p, beat: { ...(p.beat ?? DEFAULT_BEAT), ...clone(grooveOf(c.beat)) } };
 }
 
 // ── A whole section ──────────────────────────────────────────
@@ -160,7 +159,7 @@ export function copySection(p0: Progression, blockId: string, key: Key, idea: st
     const clips = clipsOf(t).filter((c) => takes.some((k) => k.id === c.take));
     return [{ ...t, takes, active, clips }];
   });
-  const settings: Settings = tidy({ style: sec.style, feel: sec.feel, sound: sec.sound, tuneSound: sec.tuneSound, groove: sec.groove, kit: sec.kit });
+  const settings: Settings = tidy({ groove: sec.groove });
   const tones: Tones = Object.fromEntries(tracks.filter((t) => p.tones?.[t.id]).map((t) => [t.id, p.tones![t.id]]));
   return clone({ from: sec.label, key, block: sec.blockId, part: sec.partId || undefined, idea, meter: sec.meter ?? sigOf(p), bars: barsOr(sec.bars), chords: sec.chords, melody: sec.melody, settings, layers: sec.layers, tracks, ...(Object.keys(tones).length ? { tones } : {}) });
 }
@@ -293,6 +292,15 @@ function harmonyAfterPaste(t: Track, c: SectionClip, to: Map<string, string>, ma
 }
 export const pasteSection = settled(pasteSectionN);
 
+/** The fields of the page that a paste replaces: music only (each track keeps its own sound). */
+export function pastePart(p: Progression, kind: ClipKind): Partial<Progression> {
+  return kind === "rhythm" ? { chords: p.chords } : kind === "melody" ? { melody: p.melody } : { beat: p.beat };
+}
+/** What taking a paste back puts on the page: the music from before (drums: only the rhythm and on/off; the kit stays as it is now). */
+export function unpastePart(now: Progression, before: Partial<Progression>): Partial<Progression> {
+  return before.beat ? { beat: { ...(now.beat ?? DEFAULT_BEAT), ...grooveOf(before.beat) } } : before;
+}
+
 /** What a page held before a paste, for the section and the track it was pasted into, while it can be taken back. */
 export interface PasteUndo {
   block: string;
@@ -343,11 +351,10 @@ export function reviveClips(raw: unknown): Clips {
   const chordsOf = (raw: unknown) => (raw as ProgChord[]).filter((c) => !!c && typeof c.id === "string" && !!c.ref && typeof c.ref.root === "string" && typeof c.ref.typeId === "string" && Number.isFinite(c.beats) && c.beats > 0);
   const rh = r.rhythm;
   const rb = base(rh);
-  if (rb && Array.isArray(rh!.chords) && hasStyle(rh!.pattern)) {
-    out.rhythm = { ...rb, chords: chordsOf(rh!.chords), pattern: rh!.pattern as PatternId, feel: rh!.feel ? reviveFeel(rh!.feel) : undefined, sound: rh!.sound ? reviveSound(rh!.sound) : undefined };
-  }
-  // a whole section: its tracks first, so only parts of tracks it has are kept
-  const se = r.section;
+  // (a clipboard from before held the sound too: it is let go)
+  if (rb && Array.isArray(rh!.chords)) out.rhythm = { ...rb, chords: chordsOf(rh!.chords) };
+  // a whole section: its tracks first, so only parts of tracks it has are kept (one from before: its tracks keep the sound they played there)
+  const se = migrateSectionClip(r.section);
   const sb = base(se);
   const meter = reviveSig(se?.meter);
   if (sb && se && meter && typeof se.block === "string" && Array.isArray(se.chords)) {
@@ -359,7 +366,7 @@ export function reviveClips(raw: unknown): Clips {
   }
   const me = r.melody;
   const mb = base(me);
-  if (mb && me) out.melody = { ...mb, melody: reviveMelody(me.melody) ?? null, tuneSound: me.tuneSound ? reviveSound(me.tuneSound) : undefined };
+  if (mb && me) out.melody = { ...mb, melody: reviveMelody(me.melody) ?? null };
   const dr = r.drums;
   const db = base(dr);
   const beat = db ? reviveBeat(dr!.beat) : undefined;

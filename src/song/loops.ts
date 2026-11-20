@@ -149,3 +149,47 @@ export function entryOf(old: { items: Item[]; map: Where[] }, next: number, neu:
 
 /** Where a changed loop goes on (see `entryOf`): just the place in the new list. */
 export const entryAfter = (old: { items: Item[]; map: Where[] }, next: number, neu: { items: Item[]; map: Where[]; loop?: boolean }, order: string[]): number => entryOf(old, next, neu, order).at;
+
+/**
+ * Do two play lists have the same items in the same places (each as long, in the same section, from
+ * the same beat)? Then one can stand in for the other while it plays, index for index: only what
+ * the items play has changed.
+ */
+export function sameShape(a: { items: Item[]; map: Where[] }, b: { items: Item[]; map: Where[] }): boolean {
+  if (a.items.length !== b.items.length || a.map.length !== b.map.length) return false;
+  return a.items.every((x, i) => Math.abs(x.beats - b.items[i].beats) < 1e-9 && x.from === b.items[i].from && a.map[i]?.block === b.map[i]?.block);
+}
+
+/**
+ * The list playing changed shape while the music plays on (a section removed, made shorter or longer,
+ * a chord added or taken out): where the music goes on in the new list, given the item the old one
+ * would have played next. From where the item before it (the last one under way) ends, in its
+ * section: the item of the new list that starts there; else the next item of that section after
+ * that place; else (the section ends there, or was made shorter) the start of the section after it;
+ * else, its section gone, the next section of the old list that the new list still has; else the
+ * new list's end, where a list that does not go round stops (one that goes round starts again).
+ */
+export function placeAfter(old: { items: Item[]; map: Where[] }, next: number, neu: { items: Item[]; map: Where[]; loop?: boolean }): number {
+  const end = neu.loop === false ? neu.items.length : 0;
+  if (!neu.items.length || !old.items.length || next <= 0) return 0;
+  const was = placesOf(old.items, old.map, []);
+  const now = placesOf(neu.items, neu.map, []);
+  const k = Math.min(next, old.items.length) - 1;
+  const block = old.map[k]?.block;
+  const at = was[k].at + old.items[k].beats;
+  const inIt = (j: number) => neu.map[j]?.block === block;
+  const same = now.findIndex((p, j) => inIt(j) && Math.abs(p.at - at) < 1e-6);
+  if (same >= 0) return same;
+  const later = now.findIndex((p, j) => inIt(j) && p.at > at);
+  if (later >= 0) return later;
+  let last = -1;
+  neu.map.forEach((m, j) => m.block === block && (last = j));
+  if (last >= 0) return last + 1 < neu.items.length ? last + 1 : end;
+  for (let i = k + 1; i < old.items.length; i++) {
+    const b = old.map[i]?.block;
+    if (b === block) continue;
+    const j = neu.map.findIndex((m) => m.block === b);
+    if (j >= 0) return j;
+  }
+  return end;
+}

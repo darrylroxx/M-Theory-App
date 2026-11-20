@@ -37,7 +37,7 @@ export interface Tone {
   synth?: SynthParams;
   /** how chords are laid out on the keys (piano and synth) */
   voicing?: KeyStyle;
-  /** where its chords sit on the keys: a pad above the comping band, or low under it (not set = the comping band, C3–C5); a harmony layer sets it */
+  /** where its chords sit on the keys: above the comping band, or low under it (not set = the comping band, C3–C5); kept from songs where a harmony set it */
   register?: Exclude<Register, "mid">;
 }
 export type Tones = Record<string, Tone>;

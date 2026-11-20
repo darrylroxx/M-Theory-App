@@ -20,6 +20,7 @@ import type { ChordRef } from "../theory/chords";
 import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
 import { commit, leadFirst, reviveSong, settle, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
+import { SOUND_V, migrateSound } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { normalize, reviveLayers, reviveTracks, type Focus, type Layers, type Track } from "../song/tracks";
@@ -73,15 +74,15 @@ export interface Progression {
   arrange?: ArrangeSettings | null;
   /** The drum beat under the chords (undefined = never touched). */
   beat?: Beat;
-  /** How the style is played in the section on screen: speed, swing, touch … */
+  /** How the first chords track's style is played, in every section: speed, swing, touch … */
   feel?: Partial<Feel>;
   /** The melody of the section on screen. */
   melody?: Melody;
   /** How long the section on screen lasts, in bars. */
   bars?: number;
-  /** The sound and effects of the harp that plays the chords (missing knobs are at their defaults). */
+  /** The sound and effects of the harp that plays the first chords track, the same in every section (missing knobs are at their defaults). */
   sound?: Partial<HarpSound>;
-  /** The same for the harp that plays the melody: a separate instrument on a separate effects channel. */
+  /** The same for the harp that plays the first melody track: a separate instrument on a separate effects channel. */
   tuneSound?: Partial<HarpSound>;
   /** What ▶ does: go round the section on screen, or play on through every section of the song. */
   play?: "section" | "song";
@@ -99,6 +100,8 @@ export interface Progression {
   meter?: TimeSig;
   /** What plays each chords and melody track (Guitar, Piano or Synth) and how it is set, by track id; a track with none plays Guitar */
   tones?: Tones;
+  /** How it is stored: 2 = every track has one sound for the whole song (older songs are moved over: see song/migrate) */
+  v?: number;
 }
 
 export interface ArrangeSettings {
@@ -209,6 +212,7 @@ export const DEFAULT_STATE: AppState = {
     pattern: "ring",
     loop: true,
     bars: DEFAULT_BARS,
+    v: SOUND_V,
   },
   saved: [],
   shapes: {},
@@ -217,11 +221,9 @@ export const DEFAULT_STATE: AppState = {
   mySounds: [],
 };
 
-/** Does any section of a stored song have a melody? */
-const anyTune = (song: unknown): boolean => !!(song as { parts?: { melody?: { notes?: unknown[] } }[] } | null)?.parts?.some((x) => !!x?.melody?.notes?.length);
-
-/** The idea on the page, loaded from storage and made whole. */
-function reviveProgression(raw: Partial<Progression> | undefined): Progression {
+/** The idea on the page, loaded from storage and made whole (a song from before one sound per track is moved over first). */
+export function reviveProgression(raw0: Partial<Progression> | undefined): Progression {
+  const raw = migrateSound(raw0);
   const melody = reviveMelody(raw?.melody);
   const tracks = reviveTracks(raw?.tracks);
   const p: Progression = {
@@ -233,12 +235,13 @@ function reviveProgression(raw: Partial<Progression> | undefined): Progression {
     feel: raw?.feel ? reviveFeel(raw.feel) : undefined,
     melody,
     bars: fitBars(raw?.bars),
-    // the melody used to share the chords' harp: one written back then keeps the sound it had
-    tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : (melody?.notes.length || anyTune(raw?.song)) && raw?.sound ? reviveSound(raw.sound) : undefined,
+    sound: raw?.sound ? reviveSound(raw.sound) : undefined,
+    tuneSound: raw?.tuneSound ? reviveSound(raw.tuneSound) : undefined,
     play: raw?.play === "song" ? "song" : "section",
     mix: reviveMix(raw?.mix),
     meter: reviveSig(raw?.meter),
     tones: reviveTones(raw?.tones, toneIds(tracks)),
+    v: SOUND_V,
   };
   // what was on screen is the newest there is: it goes back into its section, never the other way round.
   // Songs where a section other than the first one led (moved before that changed) are led by the first.
@@ -319,6 +322,12 @@ interface Ctx {
   cloud: CloudStatus;
   /** Connect the library to the Claude account (asks once) */
   syncNow: () => void;
+  /**
+   * The vocal track a recording is going onto, from ● until its takes are on it (null: none). Until
+   * then the idea cannot be left, nor that track removed: its takes would have nowhere to go.
+   */
+  recordingTo: string | null;
+  setRecordingTo: (id: string | null) => void;
 }
 
 /** What a message's button does, and what it says ("↶"), for how long it is offered. */
@@ -457,18 +466,23 @@ export function AppProvider({ children }: { children: ReactNode }) {
     },
     [state.saved, state.ideaId, state.progression],
   );
+  const [recordingTo, setRecordingTo] = useState<string | null>(null);
+  const recRef = useRef(recordingTo);
+  recRef.current = recordingTo;
   const openIdea = useCallback((id: string) => {
+    if (recRef.current) return toast("Stop recording first");
     setState((s) => {
       const it = reviveIdea(s.saved.find((i) => i.id === id));
       if (!it) return s;
       return { ...s, ideaId: id, key: it.key, progression: { ...DEFAULT_STATE.progression, ...it.progression }, settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
     });
     openSheet(null);
-  }, []);
+  }, [toast]);
   const newIdea = useCallback(() => {
+    if (recRef.current) return toast("Stop recording first");
     setState((s) => ({ ...s, ideaId: null, progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm, beat: s.progression.beat ? { ...s.progression.beat, on: false } : undefined } }));
     openSheet(null);
-  }, []);
+  }, [toast]);
   const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
   const deleteIdea = useCallback(
     (id: string) => setState((s) => ({ ...s, ideaId: s.ideaId === id ? null : s.ideaId, saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
@@ -543,7 +557,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     return () => window.clearTimeout(t);
   }, [state.saved, state.tombs, cloud]);
 
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow };
+  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   return (
     <AppCtx.Provider value={value}>

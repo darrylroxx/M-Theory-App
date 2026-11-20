@@ -173,8 +173,8 @@ describe("a melody on a synth's drone, in a loop of a section's second bar", () 
   });
 });
 
-describe("a section's own sound", () => {
-  it("is let go when the music stops: the page's own sound is heard again", () => {
+describe("the sound the music carries", () => {
+  it("is let go when the music stops: the sound the track is set to is heard again", () => {
     const log = notes();
     const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
     const chorus: HarpSound = { ...SOUND_DEFAULT, verb: "plate", space: 0.2, echo: 0.5 };
@@ -186,19 +186,19 @@ describe("a section's own sound", () => {
     p.stop();
     expect(v.sound).toEqual(verse);
   });
-  it("another section's page shown while one plays leaves the playing chord's sound alone until the music stops", () => {
+  it("a track's sound turned while it plays is heard at once, and kept when the music stops", () => {
     const log = notes();
-    const verse: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
-    const chorus: HarpSound = { ...SOUND_DEFAULT, level: 0.4, echo: 0.5 };
-    S.setHarpSound(verse, 120);
+    const before: HarpSound = { ...SOUND_DEFAULT, verb: "hall", space: 0.6 };
+    const after: HarpSound = { ...SOUND_DEFAULT, level: 0.4, echo: 0.5 };
+    S.setHarpSound(before, 120);
     const p = new S.ProgressionPlayer();
-    p.start([{ midi: CHORD, beats: 4, section: true, sound: verse }], 120, "ring", false);
+    p.start([{ midi: CHORD, beats: 4, section: true, sound: before }], 120, "ring", false);
     const v = log.find((n) => n.track === "chord")!.v as unknown as { sound: HarpSound };
-    // the chorus's page is shown: its sound is noted for the page, not put on the ringing verse chord
-    S.setHarpSound(chorus, 120, false);
-    expect(v.sound).toEqual(verse);
+    // one sound for the whole song: whichever section is on the page, the ringing chord takes it
+    S.setHarpSound(after, 120);
+    expect(v.sound).toEqual(after);
     p.stop();
-    expect(v.sound).toEqual(chorus);
+    expect(v.sound).toEqual(after);
   });
   it("an added track's first chord is on the track's own sound from its start, in a render and on every ▶", async () => {
     const log = notes();

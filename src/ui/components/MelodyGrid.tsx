@@ -1,4 +1,4 @@
-import { memo, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { playNote } from "../../audio/synth";
 import { EMPTY_MELODY, GRIDS, TICKS, cellTick, clearMelody, copyMelodyBar, melodyBars, melodyRows, notesInCell, toggleNote, type Melody, type MelodyRow } from "../../song/melody";
 import { barAtBeat, barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
@@ -6,7 +6,7 @@ import { chordSymbol, refPcs } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
 import { displayNote, mod12 } from "../../theory/notes";
 import type { HarpSound } from "../../audio/rack";
-import { SoundControls, type Link, type ToneProps } from "./HarpPanel";
+import { SoundControls, type ToneProps } from "./HarpPanel";
 import type { ProgChord } from "../state";
 import { Seg } from "./common";
 import { HarmonizeButton } from "./HarmonyPicker";
@@ -24,7 +24,7 @@ const HOLD_MS = 1500;
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  * As many bars as are chosen sit side by side, each with its own steps, its number and its line.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, link, shown, follow, active, inst, onHarmonize, harmonizing }: {
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing }: {
   /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
   /** the melody track's instrument */
@@ -46,15 +46,15 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   onHear: () => void;
-  link?: Link;
   /** bars on screen (0 = all of them) */
   shown: BarsShown;
   /** the view turns a page when the music runs off it */
   follow: boolean;
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
-  /** open (or close) the sheet that writes a new track to go with this melody */
+  /** open (or close) the sheet that writes a new track to go with a track of the song (shown when some track has music) */
   onHarmonize?: (el: HTMLElement | null) => void;
+  canHarmonize?: boolean;
   harmonizing?: boolean;
 }) {
   /** the first bar on screen, as last set; and the bar the bar tools act on */
@@ -72,6 +72,21 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
   const paged = win.count < bars;
   // undo only goes back through this section's own edits
   useEffect(() => setPast([]), [fresh]);
+  // ... and only while the melody is as they left it: changed on another page (moved to another key,
+  // fitted to another time signature), it is let go, so an undo never puts back notes from before that
+  /** the notes this page's own edits wrote (whichever of them React keeps) */
+  const mine = useRef(new WeakSet<object>());
+  const setMelody = useCallback((fn: (m: Melody) => Melody) => write((m) => {
+    const r = fn(m);
+    if (r.notes !== m.notes) mine.current.add(r.notes);
+    return r;
+  }), [write]);
+  const seen = useRef(melody.notes);
+  useEffect(() => {
+    if (melody.notes === seen.current) return;
+    seen.current = melody.notes;
+    if (!mine.current.has(melody.notes)) setPast([]);
+  }, [melody.notes]);
   // another section, another idea: back to bar 1
   useEffect(() => {
     setStart(0);
@@ -294,7 +309,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     <section className="card melody" aria-label="Melody">
       <div className="dm-head">
         {count > 0 && <button className={`chip${on ? " on" : ""}`} role="switch" aria-checked={on} title="Play the melody with the chords" onClick={() => setMelody((m) => ({ ...m, on: !on }))}>{on ? "On" : "Off"}</button>}
-        {count > 0 && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} title="A new track that goes with this melody" />}
+        {canHarmonize && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} />}
         <span className="spacer" />
         <span className="dm-grid">
           <span className="kb-label" title="How many steps there are to a beat">Grid</span>
@@ -332,7 +347,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
           {shownBars.map((b) => <MelodyBar key={b} b={b} rows={rows} steps={steps} div={melody.div} lit={lit[b] ?? ""} fits={fits?.[b] ?? null} head={many} sel={many && b === at} named={bars > 1} />)}
         </div>
       </div>
-      <SoundControls sound={sound} setSound={setSound} onHear={onHear} link={link} inst={inst} />
+      <SoundControls sound={sound} setSound={setSound} onHear={onHear} inst={inst} />
     </section>
   );
 });

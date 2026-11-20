@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { BEAT_LIBRARY, DEFAULT_BEAT, applyPattern } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
-import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pasteRhythm, pastFrame, reviveClips, undoFits } from "./clip";
+import { copyDrums, copyMelody, copyRhythm, hasPart, keyShift, pasteDrums, pasteMelody, pastePart, pasteRhythm, pastFrame, reviveClips, undoFits, unpastePart } from "./clip";
 import { addNewSection, ensureSong, sections, selectBlock } from "./structure";
 import { TICKS } from "./melody";
 
@@ -22,15 +22,18 @@ function song(): Progression {
 }
 
 describe("copy and paste between sections", () => {
-  it("rhythm: chords, style, feel and sound go to the section on screen, as new slots", () => {
+  it("rhythm: only the chords go to the section on screen, as new slots; the track keeps its own style, feel and sound", () => {
     const p0 = ensureSong({ ...base(["G", "C"]), pattern: "pinch", feel: { swing: 0.4 }, sound: { space: 0.7 } }, id);
     const clip = copyRhythm(p0, G, "A");
-    const p = pasteRhythm(addNewSection(p0, id), clip, G, id);
+    expect(Object.keys(clip).sort()).toEqual(["bar", "chords", "from", "key"]);
+    // the track pasted into plays another way
+    const into = { ...addNewSection(p0, id), pattern: "block" as const, feel: { swing: 0.1 }, sound: { space: 0.2 } };
+    const p = pasteRhythm(into, clip, G, id);
     expect(p.chords.map((c) => c.ref.root)).toEqual(["G", "C"]);
     expect(p.chords.map((c) => c.id)).not.toEqual(p0.chords.map((c) => c.id));
-    expect(p.pattern).toBe("pinch");
-    expect(p.feel).toEqual({ swing: 0.4 });
-    expect(p.sound).toEqual({ space: 0.7 });
+    expect(p.pattern).toBe("block");
+    expect(p.feel).toBe(into.feel);
+    expect(p.sound).toBe(into.sound);
   });
 
   it("a copy is a copy: changing the section afterwards leaves the clipboard alone", () => {
@@ -47,13 +50,19 @@ describe("copy and paste between sections", () => {
     expect(r.melody).toBe(p.melody);
     expect(r.beat).toBe(p.beat);
     expect(r.bars).toBe(p.bars);
-    const m = pasteMelody(p, copyMelody(a, G, "A"), G);
+    const m = pasteMelody({ ...p, tuneSound: { space: 0.9 } }, copyMelody(a, G, "A"), G);
     expect(m.melody?.notes).toEqual(tune.notes);
-    expect(m.tuneSound).toEqual({ space: 0.2 });
+    // the melody track keeps its own harp
+    expect(m.tuneSound).toEqual({ space: 0.9 });
     expect(m.chords).toBe(p.chords);
     expect(m.beat).toBe(p.beat);
-    const d = pasteDrums(p, copyDrums(a, G, "A"));
-    expect(d.beat).toEqual(a.beat);
+    // drums: the rhythm and on/off; the kit stays the one the track pasted into has
+    const into = { ...p, beat: { ...p.beat!, kit: "808" as const, space: 0.9, verb: "plate" as const } };
+    const d = pasteDrums(into, copyDrums(a, G, "A"));
+    expect(d.beat!.rows).toEqual(a.beat!.rows);
+    expect(d.beat!.on).toBe(true);
+    expect(d.beat!.patternId).toBe(a.beat!.patternId);
+    expect([d.beat!.kit, d.beat!.space, d.beat!.verb]).toEqual(["808", 0.9, "plate"]);
     expect(d.chords).toBe(p.chords);
     expect(d.melody).toBe(p.melody);
   });
@@ -66,7 +75,8 @@ describe("copy and paste between sections", () => {
     expect(sb.chords.map((c) => c.ref.root)).toEqual(sa.chords.map((c) => c.ref.root));
     expect(sb.melody?.notes).toEqual(sa.melody?.notes);
     expect(sb.groove).toEqual(sa.groove);
-    expect(sb.style).toBe(sa.style);
+    // the first chords track plays one way in every section
+    expect(p.pattern).toBe("pinch");
   });
 
   it("into a song in another key, the chords and the melody move to that key", () => {
@@ -105,16 +115,49 @@ describe("copy and paste between sections", () => {
     const a = selectBlock(p, sections(p)[0].blockId);
     const kept = reviveClips(JSON.parse(JSON.stringify({ rhythm: copyRhythm(a, G, "A"), melody: copyMelody(a, G, "A"), drums: copyDrums(a, G, "A") })));
     expect(kept.rhythm?.chords).toHaveLength(4);
-    expect(kept.rhythm?.pattern).toBe("pinch");
     expect(kept.melody?.melody?.notes).toEqual(tune.notes);
     expect(kept.drums?.beat.on).toBe(true);
     expect(kept.drums?.from).toBe("A");
     expect(reviveClips(undefined)).toEqual({});
-    expect(reviveClips({ rhythm: { from: "A", key: G, chords: [], pattern: "no-such-style" }, drums: { from: "A", key: G, beat: 7 }, melody: { from: 3 } })).toEqual({});
+    expect(reviveClips({ rhythm: { from: "A", key: G, chords: "x" }, drums: { from: "A", key: G, beat: 7 }, melody: { from: 3 } })).toEqual({});
+  });
+
+  it("an old clipboard that held a sound too is still pasted, as music only", () => {
+    const old = reviveClips({
+      rhythm: { from: "A", key: G, chords: [chord("G"), chord("D")], pattern: "pinch", feel: { swing: 0.5 }, sound: { space: 0.9 } },
+      melody: { from: "A", key: G, melody: tune, tuneSound: { space: 0.8 } },
+    });
+    expect(old.rhythm && Object.keys(old.rhythm).sort()).toEqual(["chords", "from", "key"]);
+    expect(old.melody && "tuneSound" in old.melody).toBe(false);
+    const into = { ...base(), pattern: "block" as const, sound: { space: 0.1 }, tuneSound: { space: 0.3 } };
+    const r = pasteRhythm(into, old.rhythm!, G, id);
+    expect(r.chords.map((c) => c.ref.root)).toEqual(["G", "D"]);
+    expect([r.pattern, r.feel, r.sound]).toEqual(["block", undefined, { space: 0.1 }]);
+    const m = pasteMelody(into, old.melody!, G);
+    expect(m.melody?.notes).toEqual(tune.notes);
+    expect(m.tuneSound).toEqual({ space: 0.3 });
   });
 });
 
 describe("taking a paste back", () => {
+  it("puts back the music from before: a drums paste only its rhythm and on/off, never the kit", () => {
+    const before = { ...base(), beat: { ...DEFAULT_BEAT, kit: "707" as const, on: false, name: "Before", rows: { ...DEFAULT_BEAT.rows, kick: "1000000000000000" } } };
+    const copied = { ...base(), beat: { ...applyPattern(DEFAULT_BEAT, BEAT_LIBRARY[3]), on: true, kit: "box" as const } };
+    const pasted = { ...before, ...pastePart(pasteDrums(before, copyDrums(copied, G, "A")), "drums") };
+    expect(pasted.beat.kit).toBe("707");
+    expect(pasted.beat.rows).toEqual(copied.beat.rows);
+    // the kit changed after the paste: the undo keeps the new kit and puts back the old rhythm
+    const now = { ...pasted, beat: { ...pasted.beat, kit: "lofi" as const, space: 0.8 } };
+    const undone = { ...now, ...unpastePart(now, pastePart(before, "drums")) };
+    expect(undone.beat.rows).toEqual(before.beat.rows);
+    expect(undone.beat.on).toBe(false);
+    expect(undone.beat.name).toBe("Before");
+    expect([undone.beat.kit, undone.beat.space]).toEqual(["lofi", 0.8]);
+    // chords and melody: what was there before
+    expect(unpastePart(now, pastePart({ ...base(["C"]) }, "rhythm"))).toEqual({ chords: base(["C"]).chords });
+    expect(Object.keys(pastePart(now, "melody"))).toEqual(["melody"]);
+  });
+
   it("only in the section and on the track it was pasted into", () => {
     const u = { block: "a", track: "chords", before: { chords: [] } };
     expect(undoFits(u, "a", "chords")).toBe(true);

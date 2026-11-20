@@ -14,7 +14,7 @@ import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { showSection, shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
-import { newId, useApp, type Pane, type ProgChord } from "../state";
+import { newId, useApp, type AppState, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
 import { InstIcon } from "./HarpPanel";
 import { toneOf } from "../../audio/tone";
@@ -39,6 +39,16 @@ export interface TrackSection {
 /** The page that edits each kind of track. */
 const PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drums: "drums", vocals: "vocals" };
 const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
+
+/**
+ * A plain track of `kind` added as `id`. You stay where you are; it is the one its page shows
+ * next time (brought forward there), and a vocal track is the one the Vocals page shows (and records onto).
+ */
+export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track } {
+  const r = addTrack(s.progression, kind, id);
+  const studio = kind === "vocals" ? { studio: { ...s.studio, vocal: id } } : {};
+  return { s: { ...s, progression: r.p, ...studio }, track: r.track };
+}
 
 /** What one track holds in one section. */
 function content(t: Track, s: TrackSection): TrackSection {
@@ -80,15 +90,15 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
 }) {
-  const { state, set, toast } = useApp();
+  const { state, set, toast, recordingTo } = useApp();
   const looped = useMemo(() => loopKeys(layout, loop), [layout, loop]);
   const mix = state.progression.mix;
   const tracks = useMemo(() => allTracks(normalize(state.progression)), [state.progression]);
   const [adding, setAdding] = useState(false);
-  // a new chords or melody track: empty, or written to go with another track; or a harmony track written again
-  const [sheet, setSheet] = useState<{ kind: "chords" | "melody"; track?: Track } | null>(null);
+  // a harmony track written again (its ⟳)
+  const [again, setAgain] = useState<Track | null>(null);
   // it belongs to this page and this idea
-  useEffect(() => setSheet(null), [state.ideaId, active]);
+  useEffect(() => setAgain(null), [state.ideaId, active]);
   const lineRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   // the lanes' width, measured: the bars on screen share it out
@@ -215,18 +225,15 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
       if (t.kind === "vocals") return { ...s, pane: "vocals", progression: p, studio: { ...s.studio, vocal: t.id } };
       return { ...s, pane: PAGE[t.kind], progression: focusTrack(p, t.kind, t.id) };
     });
+  /** A plain new track of a kind, at once: its row lights up here, and its page opens on it next time. */
   const add = (kind: TrackKind) => {
     const tid = newId();
-    let name = "";
-    set((s) => {
-      const r = addTrack(s.progression, kind, tid);
-      name = r.track.name;
-      return { ...s, pane: PAGE[kind], progression: r.p };
-    });
+    set((s) => trackAdded(s, kind, tid).s);
     setAdding(false);
-    queueMicrotask(() => name && toast(`${name} added`));
   };
   const remove = (t: Track) => {
+    // (a recording going onto it would have nowhere to go)
+    if (t.id === recordingTo) return toast("Stop recording first");
     if (!window.confirm(`Remove ${t.name} and everything on it, in every section?`)) return;
     set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
   };
@@ -257,7 +264,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
                   {!isFirst(t.id) && <span className="tv-x" role="button" aria-label={`Remove ${t.name}`} title="Remove this track" onClick={(e) => { e.stopPropagation(); remove(t); }}>✕</span>}
                 </button>
                 {/* ⟳ beside the volume, so the name keeps the room */}
-                {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setSheet({ kind: t.kind as "chords" | "melody", track: t })} />}
+                {t.harmony && (t.kind === "chords" || t.kind === "melody") && <HarmonyAgain track={t} className="tv-hz" onOpen={() => setAgain(t)} />}
                 <span className="tv-btns">
                   <button className={`tv-ms${m?.mute ? " on" : ""}`} aria-pressed={!!m?.mute} aria-label={`Mute ${t.name}`} title="Mute in every section" onClick={() => setTrack(t.id, { mute: !m?.mute })}>M</button>
                   <button className={`tv-ms solo${m?.solo ? " on" : ""}`} aria-pressed={!!m?.solo} aria-label={`Solo ${t.name}`} title="Hear only the soloed tracks" onClick={() => setTrack(t.id, { solo: !m?.solo })}>S</button>
@@ -270,7 +277,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
           <div className="tv-add">
             {adding ? (
               <span className="tv-kinds" role="group" aria-label="What kind of track">
-                {KINDS.map((k) => <button key={k} className="chip" onClick={() => (k === "chords" || k === "melody" ? (setAdding(false), setSheet({ kind: k })) : add(k))}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
+                {KINDS.map((k) => <button key={k} className="chip" onClick={() => add(k)}>{k === "vocals" ? "Vocals" : KIND_NAME[k]}</button>)}
                 <button className="chip" aria-label="Cancel" onClick={() => setAdding(false)}>✕</button>
               </span>
             ) : <button className="btn sm tv-plus" aria-label="Add a track" title="Add a track" onClick={() => setAdding(true)}>+</button>}
@@ -310,7 +317,7 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
           </div>
         </div>
       </div>
-      {sheet && <HarmonyPicker key={sheet.track?.id ?? sheet.kind} kind={sheet.kind} track={sheet.track} onEmpty={() => add(sheet.kind)} onClose={() => setSheet(null)} />}
+      {again && <HarmonyPicker key={again.id} kind={again.kind === "melody" ? "melody" : "chords"} track={again} onClose={() => setAgain(null)} />}
     </section>
   );
 });

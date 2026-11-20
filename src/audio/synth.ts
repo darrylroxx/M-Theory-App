@@ -69,20 +69,19 @@ export function getAudio(): AudioContext {
 }
 
 /**
- * Change a track's sound and effects. Safe to call before any sound has been made. The effects
- * follow at once; new strings wait until the knob has stopped moving. With `now` false (the page
- * shows a section other than the one playing) it is only noted: the voice keeps the playing
- * section's sound, and takes this one when the music stops.
+ * Change a track's sound and effects (one for the whole song: heard at once, whatever is playing).
+ * Safe to call before any sound has been made. The effects follow at once; new strings wait until
+ * the knob has stopped moving.
  */
-export function setTrackSound(id: string, s: HarpSound, bpm: number, now = true) {
+export function setTrackSound(id: string, s: HarpSound, bpm: number) {
   liveSound.set(id, s);
   tempo = bpm;
-  if (now) voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
+  voices.get(id)?.turn(s, bpm, () => prepareNotes(queue));
 }
 /** The first chords track. */
-export const setHarpSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("chords", s, bpm, now);
+export const setHarpSound = (s: HarpSound, bpm: number) => setTrackSound("chords", s, bpm);
 /** The first melody track: a separate instrument with separate effects. */
-export const setTuneSound = (s: HarpSound, bpm: number, now = true) => setTrackSound("melody", s, bpm, now);
+export const setTuneSound = (s: HarpSound, bpm: number) => setTrackSound("melody", s, bpm);
 
 /** What every track plays (its instrument and that instrument's settings). The voices that exist change at once. */
 export function setTones(t: Tones | undefined) {
@@ -124,7 +123,7 @@ export function keepTracks(ids: string[]) {
   keepDrums(ids);
 }
 
-/** A note to get ready: for the chords or the melody, on that track's own strings or a given section's. */
+/** A note to get ready: for the chords or the melody, on that track's own strings or on those of the sound it is played with. */
 export interface Prep {
   midi: number;
   tune?: boolean;
@@ -210,7 +209,7 @@ export function playSequence(midis: number[], noteSec = 0.28) {
   midis.forEach((m, i) => v.note(m, t0 + i * noteSec, 0.75, noteSec * 1.6, { slot: v.instrument ? undefined : 0 }));
 }
 
-/** Every note a run of chords and its melodies will need, each with the sound of its own section. */
+/** Every note a run of chords and its melodies will need, each on the sound it is played with. */
 export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null = null, tune: PlayTune | null = null): Prep[] {
   const out: Prep[] = itemNotes(items, pattern, beat).map((n) => ({ midi: n.e.midi, as: items[n.item].sound }));
   let at = 0;
@@ -322,8 +321,8 @@ export class ProgressionPlayer {
   get queued(): boolean {
     return !!this.pending;
   }
-  /** the list played before the one playing took over (its last chords may still be sounding) */
-  private before: PlayItem[] = [];
+  /** the lists played before the one playing took over, by their `gen` (their last chords may still be sounding) */
+  private past = new Map<number, PlayItem[]>();
   onStep: (index: number, gen: number) => void = () => {};
   /** Called as each drum step sounds (step index inside the bar), or with −1 when playback stops. */
   onDrumStep: (step: number) => void = () => {};
@@ -339,9 +338,28 @@ export class ProgressionPlayer {
     return beats ? [{ midi: [], beats }] : [];
   }
 
-  /** The item a chord's start is in: in the list playing, or (for the last moments of the one before a list took over) in that one. */
+  /** The item a chord's start is in: in the list playing, or (for the last moments of one before a list took over) in that one. */
   private itemOf(a: Anchor): PlayItem | undefined {
-    return (a.gen === this.gen ? this.items : this.before)[a.index];
+    return (a.gen === this.gen ? this.items : this.past.get(a.gen))?.[a.index];
+  }
+
+  /**
+   * Another list takes over: the one playing is kept by its `gen` while anything booked from it may
+   * still sound (an index always means an item of its own list), and lists nothing points into any
+   * more are let go.
+   */
+  private retire() {
+    this.past.set(this.gen, this.items);
+    const live = new Set<number>();
+    const see = (a: Anchor | null) => a && live.add(a.gen);
+    this.spans.forEach(see);
+    this.tAnchors.forEach(see);
+    see(this.tCur);
+    for (const lane of this.lanes.values()) {
+      see(lane.cur);
+      lane.anchors.forEach(see);
+    }
+    for (const g of [...this.past.keys()]) if (!live.has(g)) this.past.delete(g);
   }
 
   private tuneAt(a: Anchor): PlayTune | null {
@@ -438,6 +456,33 @@ export class ProgressionPlayer {
   }
 
   /**
+   * The list playing changed shape (a section removed, made shorter or longer, a chord added or taken
+   * out): it plays from now on, with no wait and no gap, from where `at` says the item the old list
+   * would have played next is in it. What is already booked plays on as the old list has it (its
+   * anchors keep their own `gen`, so a drum pattern or a mark never reads another section's item).
+   * Use `update` for a list of the same shape. Returns the new list's `gen`.
+   */
+  relist(items: PlayItem[], loop: boolean, at: (next: number) => number): number {
+    const list = this.fill(items);
+    if (!this.playing || this.pending || !list.length) {
+      if (this.pending) this.pending.items = list;
+      else this.setItems(list);
+      return this.pending ? this.gen + 1 : this.gen;
+    }
+    const want = at(this.nextIndex);
+    this.retire();
+    this.gen++;
+    this.setItems(list);
+    this.loop = loop || !items.length;
+    const i = Math.max(0, Math.min(list.length, Math.round(want)));
+    this.nextIndex = i;
+    this.passBeat = list.slice(0, i).reduce((a, x) => a + x.beats, 0);
+    // (it goes on where its section is: the drums and the melody count from that section's start)
+    this.origin = this.secs.origin[i] ?? this.passBeat;
+    return this.gen;
+  }
+
+  /**
    * The recorded takes under what is sounding and what is already booked, looked at again with
    * the items as they are now: whatever changed is heard a moment from now, not only from the
    * next item (which, in a section with no chords, is the whole section away).
@@ -487,8 +532,8 @@ export class ProgressionPlayer {
     const at = Math.max(0, Math.min(p.items.length - (p.loop ? 1 : 0), Math.round(want)));
     // (where the music jumps, a take sung over what came before stops there, and where it goes straight on, one
     // under way carries on: the next item scheduled says which takes lie under it, and where)
+    this.retire();
     this.gen++;
-    this.before = this.items;
     this.setItems(p.items);
     this.loop = p.loop;
     this.nextIndex = at;
@@ -678,8 +723,9 @@ export class ProgressionPlayer {
   }
 
   /**
-   * A drums track reaches a chord whose section has a drum sound of its own: its desk takes that
-   * sound when the section starts. (Only when the beat changed, so it is cheap.)
+   * A drums track reaches a chord whose section has other drums (another rhythm, or none): its desk
+   * and its noise bed follow from where the section starts. The kit is the track's, the same in every
+   * section. (Only when the beat changed, so it is cheap.)
    */
   private syncLane(track: string, lane: Lane, a: Anchor) {
     const b = this.beatOf(track, a);
@@ -707,6 +753,7 @@ export class ProgressionPlayer {
   stop() {
     this.playing = false;
     this.pending = null;
+    this.past.clear();
     if (this.timer !== null) window.clearInterval(this.timer);
     if (this.stepTimer !== null) window.clearInterval(this.stepTimer);
     this.timer = this.stepTimer = null;
@@ -725,8 +772,8 @@ export class ProgressionPlayer {
     for (const [id, v] of voices) {
       v.rack.duck.gain.cancelScheduledValues(0);
       v.rack.duck.gain.setValueAtTime(1, getAudio().currentTime);
-      // the sections' own sounds were played on each track's voice: it goes back to the one its page is set to
-      // (an added track sounds the same in every section: one the page is not editing keeps its own, so the next ▶ starts on it)
+      // the sound the music carried was played on each track's voice: it goes back to the one the track is set to
+      // (an added track the page is not editing has none set: it keeps its own, so the next ▶ starts on it)
       if (!v.track || liveSound.has(id)) v.setSound(liveSound.get(id) ?? SOUND_DEFAULT, tempo);
     }
     stopAll();
@@ -760,8 +807,8 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
     const voice = (id: string, kind: VoiceKind, sound?: HarpSound) => {
       let v = made.get(id);
       if (!v) {
-        // each track starts on the sound it first plays with (none given: as the page has it), so its first note
-        // does not glide in from another; a later section with a sound of its own changes it where it starts
+        // each track starts on the sound it plays with (none given: as the page has it), so its first note
+        // does not glide in from another
         v = new TrackVoice(off, fader(id, off), kind, id === "chords" || id === "melody" ? undefined : id, sound ?? liveSound.get(id) ?? SOUND_DEFAULT, o.bpm);
         v.setTone(liveTones[id] ?? GUITAR);
         made.set(id, v);
@@ -833,7 +880,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
             t0,
             chords: run.filter((x) => x.track === ch.track),
           }));
-      // every drums track on its own desk, each section's drum sound from where the section starts
+      // every drums track on its own desk, each section's rhythm from where the section starts
       const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
       // an added track with no drums here goes quiet, its noise bed too, as it does live
       for (const track of [...synced.keys()])

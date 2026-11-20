@@ -7,7 +7,10 @@ import {
   beatStrength,
   chordSpans,
   harmonize,
-  harmonyChoices,
+  HARMONY_MENU,
+  hintFor,
+  isMinorKey,
+  labelFor,
   harmonyOptions,
   melodyLine,
   parallelPerfect,
@@ -198,27 +201,46 @@ describe("harmony menus", () => {
       expect(o.from.length).toBeGreaterThan(0);
       for (const f of o.from) expect(["chords", "melody"]).toContain(f);
     }
-    for (const l of ["Third above", "Sixth below", "Counter-line", "Chord tones", "Octave", "Drone", "Answer"]) expect(MELODY_HARMONY.map((o) => o.label)).toContain(l);
-    for (const l of ["Pad", "Higher voicing", "Colour", "Sus", "Smooth inversions", "Relative swap", "Borrowed", "Lead-in chords", "Pedal bass"]) expect(CHORD_HARMONY.map((o) => o.label)).toContain(l);
+    for (const l of ["High harmony", "Low harmony", "Counter-melody", "Long notes", "Answer", "Chord notes"]) expect(MELODY_HARMONY.map((o) => o.label)).toContain(l);
+    for (const l of ["Best fit", "Richer", "Sus", "Darker", "Relative", "Pedal bass", "Lead-ins"]) expect(CHORD_HARMONY.map((o) => o.label)).toContain(l);
+    // older options are kept, under the names they had, so the tracks written with them can be written again
+    for (const l of ["Pad", "Higher voicing", "Shell", "Smooth inversions", "Passing dim", "Tritone swap"]) expect(CHORD_HARMONY.map((o) => o.label)).toContain(l);
+    for (const l of ["Sixth below", "Octave", "Drone"]) expect(MELODY_HARMONY.map((o) => o.label)).toContain(l);
   });
 
-  it("lists the options a source can feed", () => {
-    expect(harmonyOptions("melody", "chords").map((o) => o.id)).not.toContain("third-above");
-    expect(harmonyOptions("melody", "melody").map((o) => o.id)).toContain("third-above");
-    expect(harmonyOptions("chords", "melody").map((o) => o.id)).toContain("fit");
+  it("offers, best first, only harmonies a track of that kind can be written from", () => {
+    for (const kind of ["melody", "chords"] as const)
+      for (const from of ["melody", "chords"] as const) {
+        const ids = HARMONY_MENU[kind][from];
+        expect(harmonyOptions(kind, from).map((o) => o.id)).toEqual(ids);
+        for (const id of ids) {
+          const o = HARMONY_OPTIONS.find((x) => x.kind === kind && x.id === id);
+          expect(o, `${kind} ${id}`).toBeDefined();
+          expect(o!.from, `${kind} ${id}`).toContain(from);
+        }
+      }
+    expect(harmonyOptions("melody", "melody").map((o) => o.id)).toEqual(["third-above", "third-below", "counter", "slow-line", "answer"]);
+    expect(harmonyOptions("melody", "chords").map((o) => o.id)).toEqual(["slow-line", "counter", "chord-tones"]);
+    expect(harmonyOptions("chords", "chords").map((o) => o.id)).toEqual(["colour", "sus", "borrowed", "relative", "pedal", "lead-in"]);
+    expect(harmonyOptions("chords", "melody").map((o) => o.id)).toEqual(["fit", "colour", "sus", "borrowed", "relative", "pedal", "lead-in"]);
     expect(harmonyOptions("chords").every((o) => o.kind === "chords")).toBe(true);
   });
 
-  it("marks which options have something to write, and greys out the ones that don't", () => {
-    const c = CASES[0];
-    const melodyChoices = harmonyChoices({ kind: "melody", source: { melody: c.tune }, under: c.chords, key: c.key, bar: c.bar, bars: c.bars });
-    expect(melodyChoices.find((x) => x.option.id === "third-above")!.useful).toBe(true);
-    const empty = harmonyChoices({ kind: "chords", source: {}, key: c.key, bar: 4, bars: 4 });
-    expect(empty.every((x) => !x.useful)).toBe(true);
-    // a progression with no dominant falling a fifth has nothing for the tritone swap to do
-    const noDom = harmonyChoices({ kind: "chords", source: { chords: P("C Am F Em") }, key: C, bar: 4, bars: 4 });
-    expect(noDom.find((x) => x.option.id === "tritone")!.useful).toBe(false);
-    expect(noDom.find((x) => x.option.id === "pad")!.useful).toBe(true);
+  it("the swaps that replace the chords are played instead of them: borrowed chords, relatives, lead-ins", () => {
+    const instead = CHORD_HARMONY.filter((o) => o.instead && HARMONY_MENU.chords.chords.includes(o.id)).map((o) => o.id);
+    expect(instead).toEqual(["borrowed", "relative", "lead-in"]);
+    expect(CHORD_HARMONY.find((o) => o.id === "relative")!.instead).toBe(true);
+  });
+
+  it("names the borrowed chords by the key: darker in major, brighter in minor", () => {
+    const b = CHORD_HARMONY.find((o) => o.id === "borrowed")!;
+    expect([labelFor(b, C), hintFor(b, C)]).toEqual(["Darker", "Some chords from the minor key"]);
+    expect([labelFor(b, { tonic: "A", scaleId: "aeolian" }), hintFor(b, { tonic: "A", scaleId: "aeolian" })]).toEqual(["Brighter", "Some chords from the major key"]);
+    expect(labelFor(b, { tonic: "D", scaleId: "dorian" })).toBe("Brighter");
+    expect(labelFor(b, { tonic: "G", scaleId: "mixolydian" })).toBe("Darker");
+    expect(isMinorKey({ tonic: "E", scaleId: "phrygian" })).toBe(true);
+    const sus = CHORD_HARMONY.find((o) => o.id === "sus")!;
+    expect(labelFor(sus, { tonic: "A", scaleId: "aeolian" })).toBe("Sus");
   });
 });
 
@@ -371,7 +393,6 @@ describe("melody harmony from a melody", () => {
         const pcs = new Set(out.notes.map((n) => mod12(n.midi)));
         expect(pcs.size).toBe(1);
         expect([pc(c.key.tonic), mod12(pc(c.key.tonic) + 7)]).toContain([...pcs][0]);
-        expect(res.register).toBe("low");
       });
 
       it("slow-line: a guide tone of each chord, moving little", () => {
@@ -515,10 +536,6 @@ describe("chord harmony from chords", () => {
             at += ch.beats;
           }
         }
-        const pad = harmonize(input(c, "chords", "pad", "chords"));
-        expect(pad.register).toBe("high");
-        expect(harmonize(input(c, "chords", "shell", "chords")).voicing).toBe("shell");
-        expect(harmonize(input(c, "chords", "higher", "chords")).register).toBe("high");
       });
 
       it("colour adds a tone that fits the key and the chord's job, never an avoid note", () => {

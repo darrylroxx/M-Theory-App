@@ -604,7 +604,3 @@ export function totalMovement(voicings: number[][]): number {
   return s;
 }
 
-/** The keyboard style for a harmony layer's voicing word. */
-export function keyStyleOf(voicing: "close" | "open" | "spread" | "shell" | undefined): KeyStyle {
-  return voicing ?? "close";
-}

@@ -382,7 +382,7 @@ export const barsOf = (b: { bars?: number }) => Math.max(1, Math.min(MAX_BARS, M
 export const lenOf = (b: { steps: number; bars?: number }) => b.steps * barsOf(b);
 export const MAX_BARS = 32;
 
-/** The rhythm on its own: what each song section keeps for itself. Kit, sounds and effects are shared by the whole song. */
+/** The rhythm on its own: what each song section keeps for itself. The kit, its sounds and effects belong to the track (one for the whole song). */
 export const GROOVE_KEYS = ["patternId", "name", "edited", "steps", "div", "bars", "swing", "rows"] as const;
 /** A section's drum rhythm: the pattern, and whether the drums play at all there. */
 export type Groove = Pick<Beat, (typeof GROOVE_KEYS)[number]> & { on?: boolean };
@@ -396,12 +396,11 @@ export function kitOfBeat(b: Beat): DrumKit {
   const { patternId: _p, name: _n, edited: _e, steps: _s, div: _d, bars: _b, swing: _w, rows: _r, on: _o, ...kit } = b;
   return kit;
 }
-/** Two drum sounds are the same when every setting matches (a missing effect setting is its default). */
-const kitSig = (k: DrumKit): string => {
+/** A drum sound as one string, the same for the same sound (a missing effect setting is its default). */
+export const kitSig = (k: DrumKit): string => {
   const full = { ...kitOfBeat(DEFAULT_KIT_BEAT()), ...k, ...fxOf(k), voices: k.voices ?? {}, mutes: [...(k.mutes ?? [])].sort(), userKit: k.userKit ?? null };
   return JSON.stringify(Object.entries(full).sort(([a], [b]) => (a < b ? -1 : 1)));
 };
-export const sameKit = (a: DrumKit | undefined, b: DrumKit | undefined): boolean => !!a && !!b && kitSig(a) === kitSig(b);
 
 /**
  * Make the pattern longer or shorter. New bars start as a copy of the last bar, so the beat carries

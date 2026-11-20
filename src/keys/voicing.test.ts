@@ -8,7 +8,6 @@ import {
   arrangeKeys,
   chordTones,
   keyCandidates,
-  keyStyleOf,
   lowIntervalOk,
   matchVoices,
   moveCost,
@@ -285,10 +284,4 @@ describe("hands", () => {
     }
   });
 
-  it("maps a harmony layer's voicing word to a keyboard style", () => {
-    expect(keyStyleOf("shell")).toBe("shell");
-    expect(keyStyleOf(undefined)).toBe("close");
-    expect(keyStyleOf("open")).toBe("open");
-    expect(keyStyleOf("spread")).toBe("spread");
-  });
 });

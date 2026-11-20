@@ -1,21 +1,26 @@
 /**
  * Tracks. A song has one chords track, one melody track and one drums track to begin with (the
- * "first" of each kind), and any number of extra tracks of any kind added on the Track page,
- * vocals among them.
+ * "first" of each kind), and any number of extra tracks of any kind added with a + (vocals among
+ * them). A new track is plain: nothing is copied from another track.
  *
  * Every track has something in every section: an extra chords track its own chords, an extra
- * melody its own notes, an extra drums track its own beat. Those live in each section as
- * `layers`, keyed by the track's id. How an extra track sounds (its playing style and harp) is
- * the same in every section and lives on the track itself.
+ * melody its own notes, an extra drums track its own drum rhythm. Those live in each section as
+ * `layers`, keyed by the track's id.
+ *
+ * Every track has one sound of its own, the same in every section, and changing it never changes
+ * another track's. The first tracks keep theirs on the page (`pattern`, `feel`, `sound` for the
+ * chords; `tuneSound` for the melody; the kit part of `beat` for the drums); an extra track keeps
+ * it on the track itself (`style`, `feel`, `sound`; `kit` for drums; `fx` for vocals). What plays
+ * a chords or melody track (Guitar, Piano or Synth) is in `tones`, by track id. Anything missing
+ * is the plain default.
  *
  * The pages edit one track of their kind at a time. The track being edited sits in the same
- * place the first track always does (`chords`, `pattern`, `feel`, `sound` for chords; `melody`,
- * `tuneSound` for the melody; `beat` for the drums), so every page works the same for any
- * track. While another track of a kind is being edited, the first track's things are kept
- * aside in `layers` under the kind's own name. `normalize` puts everything back where it
- * belongs; `refocus` brings a chosen track forward again.
+ * place the first track always does, so every page works the same for any track. While another
+ * track of a kind is being edited, the first track's things (its notes and its sound) are kept
+ * aside in `layers` under the kind's own name. `normalize` puts everything back where it belongs;
+ * `refocus` brings a chosen track forward again.
  */
-import { DEFAULT_BEAT, emptyRows, reviveBeat, type Beat } from "../audio/beats";
+import { DEFAULT_BEAT, emptyRows, kitOfBeat, reviveBeat, reviveKit, type Beat, type DrumKit } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSound, type HarpSound } from "../audio/rack";
 import { reviveMelody, type Melody } from "./melody";
@@ -42,6 +47,8 @@ export interface Track {
   feel?: Partial<Feel>;
   /** an extra chords or melody track: its harp's sound and effects */
   sound?: Partial<HarpSound>;
+  /** an extra drums track: its kit (the machine, each drum's sound, the mix and the effects), the same in every section */
+  kit?: DrumKit;
   /** a vocal track: which input it records (1 = the mic input, 2 = the instrument/line jack) */
   input?: 1 | 2;
   /** a vocal track: its live sound (the vocal chain), its recorded takes, and which take plays from each recording */
@@ -74,7 +81,10 @@ export interface HarmonyMark {
   out: string;
 }
 
-/** What one track holds in one section (and, for the first track kept aside, its settings too). */
+/**
+ * What one track holds in one section (and, for the first track kept aside, its sound too). An
+ * added drums track's `beat` is its rhythm there: its kit is the track's (`Track.kit`).
+ */
 export interface Layer {
   chords?: ProgChord[];
   pattern?: PatternId;
@@ -110,6 +120,13 @@ export function nextName(p: Pick<Progression, "tracks">, kind: TrackKind): strin
 
 /** A drum track that has nothing in it yet: the grid is empty and it is off until a step is set. */
 export const emptyBeat = (like: Beat = DEFAULT_BEAT): Beat => ({ ...like, on: false, patternId: null, name: "Empty", edited: false, bars: 1, rows: emptyRows(like.steps) });
+
+/** How a new chords track is played: let ring. */
+export const PLAIN_STYLE: PatternId = "ring";
+/** The kit a new drums track starts on. */
+export const PLAIN_KIT: DrumKit = kitOfBeat(DEFAULT_BEAT);
+/** What an added drums track plays in a section: its rhythm there, on its own kit. */
+export const drumsOf = (t: Pick<Track, "kit">, l: Layer | undefined): Beat | undefined => l?.beat && { ...l.beat, ...(t.kit ?? PLAIN_KIT) };
 
 /** What the page shows for a kind, taken off the page. */
 function takeLive(p: Progression, kind: EditKind): Layer {
@@ -147,24 +164,17 @@ export function normalize(p: Progression): Progression {
     // the extra track's notes go back into its layer, and its sound back onto the track
     const content: Layer = kind === "chords" ? { chords: live.chords } : kind === "melody" ? { melody: live.melody } : { beat: live.beat };
     const tracks = (q.tracks ?? []).map((t) =>
-      t.id !== id ? t : kind === "chords" ? { ...t, style: live.pattern, feel: live.feel, sound: live.sound } : kind === "melody" ? { ...t, sound: live.tuneSound } : t,
+      t.id !== id ? t : kind === "chords" ? { ...t, style: live.pattern, feel: live.feel, sound: live.sound } : kind === "melody" ? { ...t, sound: live.tuneSound } : live.beat ? { ...t, kit: kitOfBeat(live.beat) } : t,
     );
     q = putLive({ ...q, tracks, layers: { ...without(q.layers, kind), [id]: content } }, kind, first);
   }
   return q;
 }
 
-/** An added drums track's own kit, from a section that has a beat on it (none yet: undefined). */
-function ownBeat(p: Progression, id: string): Beat | undefined {
-  const all = [...(p.song?.parts ?? []).map((x) => x.layers?.[id]?.beat), p.layers?.[id]?.beat].filter((b): b is Beat => !!b);
-  // a section where the track was only looked at holds an empty beat on whatever kit was showing: one that plays comes first
-  return all.find((b) => b.on) ?? all[0];
-}
-
 /**
  * Bring tracks forward for editing (one per kind): `focus` says which. A track that does not
- * exist is left alone; the first track needs nothing. An added drums track with nothing yet in
- * this section starts on its own kit (from another section), not on the first drums' one.
+ * exist is left alone; the first track needs nothing. Each comes with its own sound (a plain one
+ * if it has none yet); an added drums track with nothing yet in this section starts empty, on its own kit.
  */
 export function refocus(q0: Progression, focus: Focus | undefined): Progression {
   const q1 = normalize(q0);
@@ -180,9 +190,9 @@ export function refocus(q0: Progression, focus: Focus | undefined): Progression 
     const first = takeLive(q, kind);
     const mine = q.layers?.[id] ?? {};
     const layer: Layer =
-      kind === "chords" ? { chords: mine.chords ?? [], pattern: t.style ?? first.pattern, feel: t.feel, sound: t.sound }
+      kind === "chords" ? { chords: mine.chords ?? [], pattern: t.style ?? PLAIN_STYLE, feel: t.feel, sound: t.sound }
       : kind === "melody" ? { melody: mine.melody, tuneSound: t.sound }
-      : { beat: mine.beat ?? emptyBeat(ownBeat(q, id) ?? first.beat ?? DEFAULT_BEAT) };
+      : { beat: { ...(mine.beat ?? emptyBeat(DEFAULT_BEAT)), ...(t.kit ?? PLAIN_KIT) } };
     q = putLive({ ...q, layers: { ...without(q.layers, id), [kind]: first } }, kind, layer);
   }
   return Object.keys(keep).length ? { ...q, focus: keep } : q;
@@ -201,7 +211,7 @@ export function settled<T extends unknown[]>(fn: (p: Progression, ...a: T) => Pr
   };
 }
 
-/** Add a track of a kind; it is brought forward when its kind is one a page edits. */
+/** Add a plain track of a kind (nothing copied from another); it is brought forward when its kind is one a page edits. */
 export function addTrack(p0: Progression, kind: TrackKind, id: string): { p: Progression; track: Track } {
   const p = normalize(p0);
   const track: Track = { id, kind, name: nextName(p, kind), ...(kind === "vocals" ? { input: 1 as const } : {}) };
@@ -312,6 +322,7 @@ export function reviveTracks(raw: unknown): Track[] | undefined {
     out.push({
       id: r.id, kind: r.kind as TrackKind, name: typeof r.name === "string" && r.name.trim() ? r.name.trim().slice(0, 32) : KIND_NAME[r.kind as TrackKind],
       ...(hasStyle(r.style) ? { style: r.style } : {}), ...(r.feel ? { feel: reviveFeel(r.feel) } : {}), ...(r.sound ? { sound: reviveSound(r.sound) } : {}),
+      ...(r.kind === "drums" && reviveKit(r.kit) ? { kit: reviveKit(r.kit) } : {}),
       ...(r.kind === "vocals" ? { input: r.input === 2 ? 2 : 1 } : {}),
       ...(r.kind === "vocals" && reviveFx(r.fx) ? { fx: reviveFx(r.fx) } : {}),
       ...(r.kind === "vocals" ? reviveVocal(r) : {}),

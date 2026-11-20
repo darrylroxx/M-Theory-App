@@ -5,15 +5,21 @@ import { DRUM_IDS, DRUM_LABEL, KITS, PUNCH_LABEL, SAMPLERS, SHAPE_KEYS, TONE_LAB
 import { SAT_TYPES } from "../../audio/saturation";
 import { RECIPES, getRecipe } from "../../audio/voices";
 import { barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
+import { sigName } from "../../song/meter";
+import { sectionSig } from "../../song/unity";
 import { newId, useApp } from "../state";
-import { LinkChip, type Link } from "./HarpPanel";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
 
 type GroupId = BeatGroupId | "mine";
-/** What a grid edit can change, and so what Undo and Cancel put back. */
-type Snap = Pick<Beat, "rows" | "edited" | "patternId" | "name" | "on" | "bars">;
-const snapOf = (b: Beat): Snap => ({ rows: b.rows, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
+/**
+ * What a grid edit can change, and so what Undo and Cancel put back: the whole grid, its size with
+ * its rows (rows put back on a grid of another size would be read with the wrong number of steps to a bar).
+ */
+export type Snap = Pick<Beat, "rows" | "steps" | "div" | "edited" | "patternId" | "name" | "on" | "bars">;
+export const snapOf = (b: Beat): Snap => ({ rows: b.rows, steps: b.steps, div: b.div, edited: b.edited, patternId: b.patternId, name: b.name, on: b.on, bars: barsOf(b) });
+/** A beat with a grid put back (by Undo or Cancel): its sound and effects stay as they are now. */
+export const putBack = (b: Beat, s: Snap): Beat => ({ ...b, ...s });
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
 /** A drum's sound by name: a library sound ("Felt"), or the machine's ("808"). */
@@ -26,18 +32,38 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
 /** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
 const HOLD_MS = 1500;
 /**
- * Whether the page's drums go onto the track's desk at once: not while another section plays (its
- * own kit stays on until the music stops; this section's is heard when it comes round), as the harp does.
+ * Whether the page's drums go onto the track's desk at once: not while another section plays, as
+ * the harp does (the kit is the track's own, the same in every section: the desk takes a change
+ * when this section comes round, or when the music stops).
  * `pos`: how far into the page's section the music is (null: stopped, or another section sounding).
  */
 export const deskFollowsPage = (playing: boolean, pos: number | null) => !playing || pos !== null;
+
+/** Whether the section on screen plays the drum rhythm of the first section or one of its own. */
+export interface Link {
+  /** the section the others follow (the first one) */
+  source: string;
+  /** this is that section: nothing to show */
+  first: boolean;
+  own: boolean;
+  /** follow the first section again */
+  onReset: () => void;
+}
+
+/** "= A" while a section plays the first section's drum rhythm; "Own ↺" once it has its own (tap to follow again). */
+export function LinkChip({ link }: { link?: Link }) {
+  if (!link || link.first) return null;
+  return link.own
+    ? <button className="link-chip own" title={`This section has its own drum rhythm. Tap to use section ${link.source}'s again.`} onClick={link.onReset}>Own ↺</button>
+    : <span className="link-chip" title={`Same drum rhythm as section ${link.source}. Change it here and this section keeps its own.`}>= {link.source}</span>;
+}
 
 /**
  * The drum machine, always on the page under the chords.
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
  */
-export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, kitLink, grooveLink, frame, getPos, shown, follow, active }: {
+export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, grooveLink, frame, getPos, shown, follow, active }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
@@ -46,8 +72,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   frame: number;
   /** how many beats into the section the music is (null = stopped, or another section is sounding) */
   getPos: () => number | null;
-  /** whether this section's drum sound and drum rhythm are the song's or its own */
-  kitLink?: Link;
+  /** whether this section plays the first section's drum rhythm or its own (the first drums track only; its kit is one for the whole song) */
   grooveLink?: Link;
   /** changes when something is pasted: an edit in progress is let go */
   fresh?: number;
@@ -194,19 +219,27 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     if (current) setGroup(current.group);
   }, [current?.id]); // eslint-disable-line react-hooks/exhaustive-deps
   // another idea, section or drums track: the edit so far is let go (its Undo and Cancel belong to
-  // the beat it started on, never to another track's), and the grid starts at bar 1
+  // the beat it started on, never to another track's), and the grid starts at bar 1. So is it when the
+  // section's time signature changes (on the Frame page): the beat was fitted to the new bars, edit
+  // and all, and the other sections that went along with it have it too, so it is kept as it is now
   const section = state.progression.song?.current;
+  const meter = sigName(sectionSig(state.progression));
   useEffect(() => {
     setEdit(null);
     setBar(0);
     setStart(0);
-  }, [state.ideaId, section, fresh, track]);
-  // a drum soloed in one track's kit is not carried into the next track's
+  }, [state.ideaId, section, fresh, track, meter]);
+  // a drum soloed in one track's kit is not carried into the next track's, nor off this page: it is for
+  // listening while working here, and no other page shows it (the Track page would play one drum while
+  // drawing them all)
   useEffect(() => setSolo(null), [track]);
   useEffect(() => {
-    setDrumSolo(solo, track);
+    if (!active) setSolo(null);
+  }, [active]);
+  useEffect(() => {
+    setDrumSolo(active ? solo : null, track);
     return () => setDrumSolo(null, track);
-  }, [solo, track]);
+  }, [solo, track, active]);
 
   const sync = (b: Beat) => {
     if (deskFollowsPage(playing, getPos())) syncDrums(b, bpm, track);
@@ -240,11 +273,11 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const undo = () => {
     const last = edit?.past[edit.past.length - 1];
     if (!edit || !last) return;
-    setBeat((b) => ({ ...b, ...last }));
+    setBeat((b) => putBack(b, last));
     setEdit({ ...edit, past: edit.past.slice(0, -1) });
   };
   const cancel = () => {
-    if (edit) setBeat((b) => ({ ...b, ...edit.start }));
+    if (edit) setBeat((b) => putBack(b, edit.start));
     setEdit(null);
   };
   /** Keep the changes and lock the grid. A changed rhythm also goes into "Mine", so it can be used again. */
@@ -421,11 +454,10 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
         <span className="pick-wrap">
           <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
           onStep={(d) => pickKit(kits[(kitAt + d + kits.length) % kits.length])} />
-          <LinkChip link={kitLink} what="drum sound" />
         </span>
         <span className="pick-wrap">
           <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
-          <LinkChip link={grooveLink} what="drum rhythm" />
+          <LinkChip link={grooveLink} />
         </span>
       </div>
 
