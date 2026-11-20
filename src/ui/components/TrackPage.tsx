@@ -14,7 +14,7 @@ import { chordSymbol } from "../../theory/chords";
 import { analyzeChord } from "../../theory/keys";
 import { showSection, shownCount, type BarsShown } from "../../song/window";
 import { letterClass } from "../letters";
-import { newId, useApp, type Pane, type ProgChord } from "../state";
+import { newId, useApp, type AppState, type Pane, type ProgChord } from "../state";
 import { BarsControl } from "./BarsControl";
 import { InstIcon } from "./HarpPanel";
 import { toneOf } from "../../audio/tone";
@@ -39,6 +39,16 @@ export interface TrackSection {
 /** The page that edits each kind of track. */
 const PAGE: Record<TrackKind, Pane> = { chords: "rhythm", melody: "melody", drums: "drums", vocals: "vocals" };
 const KINDS: TrackKind[] = ["chords", "melody", "drums", "vocals"];
+
+/**
+ * A track of `kind` added as `id`, with its page open on it, ready to edit: the others are
+ * brought forward on their pages, and a vocal track is the one the Vocals page shows (and records onto).
+ */
+export function trackAdded(s: AppState, kind: TrackKind, id: string): { s: AppState; track: Track } {
+  const r = addTrack(s.progression, kind, id);
+  const studio = kind === "vocals" ? { studio: { ...s.studio, vocal: id } } : {};
+  return { s: { ...s, pane: PAGE[kind], progression: r.p, ...studio }, track: r.track };
+}
 
 /** What one track holds in one section. */
 function content(t: Track, s: TrackSection): TrackSection {
@@ -219,9 +229,9 @@ export const TrackPage = memo(function TrackPage({ sections, current, loop, layo
     const tid = newId();
     let name = "";
     set((s) => {
-      const r = addTrack(s.progression, kind, tid);
+      const r = trackAdded(s, kind, tid);
       name = r.track.name;
-      return { ...s, pane: PAGE[kind], progression: r.p };
+      return r.s;
     });
     setAdding(false);
     queueMicrotask(() => name && toast(`${name} added`));

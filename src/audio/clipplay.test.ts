@@ -171,4 +171,31 @@ describe("edited clips as they play", () => {
     expect(out).toHaveLength(2);
     expect(out[1].stops).toEqual([]);
   });
+
+  it("looked at again just before the loop comes round (the page drawn again): each pass heard once", () => {
+    const a: Clip[] = [{ id: "a", take: "t1", from: 0, to: R * 4 }];
+    // a loop of one 8-beat section at 120 (4 s), the take over the whole of it
+    const pass = (t: number, now: number) => ({ t, s0: 0, s1: 8, spb: 0.5, now, until: t + 4 });
+    for (const now of [13.8, 13.88, 13.99]) {
+      const { c, out } = ctx();
+      const runs = new TakeRuns();
+      runs.item(c as unknown as BaseAudioContext, list(a), pass(10, 9.9));
+      // the next time round is booked a little before the turn
+      runs.item(c as unknown as BaseAudioContext, list(a), pass(14, 13.77));
+      expect(out).toHaveLength(2);
+      // then the page is drawn again (another tab chosen): the stretch sounding and the one booked, as they are
+      runs.again(c as unknown as BaseAudioContext, [{ takes: list(a), o: pass(10, now) }, { takes: list(a), o: pass(14, now) }]);
+      // nothing changed, so nothing is started again or stopped
+      expect(out).toHaveLength(2);
+      expect(out[0].stops).toEqual([]);
+      expect(out[1].stops).toEqual([]);
+      oneSound(out, 10 + EDGE_FADE, 14 - EDGE_FADE, (t) => t - 10);
+      oneSound(out, 14 + EDGE_FADE, 18 - EDGE_FADE, (t) => t - 14);
+      // trimmed to 3.5 s then: this pass (already past 3.5 s) stops a moment later, the next plays as it is now, once
+      runs.again(c as unknown as BaseAudioContext, [{ takes: list([{ ...a[0], to: R * 3.5 }]), o: pass(10, now) }, { takes: list([{ ...a[0], to: R * 3.5 }]), o: pass(14, now) }]);
+      if (now + 0.03 < 14) expect(heard(out, now + 0.03).gain).toBe(0);
+      oneSound(out, 14 + EDGE_FADE, 17.5 - EDGE_FADE, (t) => t - 14);
+      expect(heard(out, 17.6).gain).toBe(0);
+    }
+  });
 });

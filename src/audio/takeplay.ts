@@ -11,6 +11,9 @@
  * clip started again as edited, the music going straight on, the second piece of a split) the
  * two cross over for a few milliseconds, so it is heard as one sound, with no dip. Clips edited
  * while the music plays are looked at again at once (see `again`), not only at the next item.
+ * Each time round a loop, a take is another run of it (one in another place in time): the end of
+ * one pass and the start of the next, both booked near the loop's turn, are two runs, and neither
+ * is ever taken for the other.
  *
  * Alone, one take at a time is heard: hearing another, playing the song, recording, or leaving
  * the page stops it, and a take still loading when that happens is never heard at all.
@@ -52,6 +55,8 @@ function level(env: Env, t: number): number {
 }
 
 interface Run {
+  /** the clip (or take) it plays */
+  key: string | AudioBuffer;
   src: AudioBufferSourceNode;
   /** its fades */
   gain: GainNode;
@@ -83,8 +88,16 @@ export interface TakeSpan {
 /** Where something changing in a stretch changes: where it starts, or (scheduled late, or looked at again while it plays) a moment from now. */
 const cutOf = (o: TakeSpan) => (o.now > o.t ? o.now + LATE : o.t);
 
+/**
+ * Where in time the take's first frame lies, for a clip of it whose start lies at `t0` and is
+ * `offset` into it: the same for every clip of it, trimmed or split, in one pass; another pass
+ * (the loop came round) or a move puts it somewhere else.
+ */
+const zeroOf = (t0: number, offset: number) => t0 - offset;
+
 export class TakeRuns {
-  private runs = new Map<string | AudioBuffer, Run>();
+  /** every run sounding or booked: one per clip and pass (see `lay`) */
+  private runs = new Set<Run>();
   /** every source not yet ended, so ■ can stop them all at once */
   private live = new Set<AudioBufferSourceNode>();
 
@@ -106,35 +119,45 @@ export class TakeRuns {
    */
   again(c: BaseAudioContext, spans: readonly { takes: readonly PlayTake[] | undefined; o: TakeSpan }[]): void {
     if (!spans.length) return;
-    const here = new Set<string | AudioBuffer>();
-    for (const x of spans) for (const k of this.lay(c, x.takes, x.o, cutOf(x.o))) here.add(k);
+    const here = new Set<Run>();
+    for (const x of spans) for (const r of this.lay(c, x.takes, x.o, cutOf(x.o))) here.add(r);
     this.leave(here, cutOf(spans[0].o), spans[0].o.now);
   }
 
-  /** Start what lies under a stretch and is not sounding there yet; returns the takes it has. */
-  private lay(c: BaseAudioContext, takes: readonly PlayTake[] | undefined, o: TakeSpan, cut: number): Set<string | AudioBuffer> {
+  /**
+   * Start what lies under a stretch and is not sounding there yet; returns the runs it has. A
+   * clip's run is the one of it in this place in time: near the loop's turn the end of this pass
+   * and the start of the next are both under way or booked, and each stretch finds its own.
+   */
+  private lay(c: BaseAudioContext, takes: readonly PlayTake[] | undefined, o: TakeSpan, cut: number): Set<Run> {
     const { t, s0, s1, spb, now } = o;
     const until = o.until ?? Infinity;
-    const here = new Set<string | AudioBuffer>();
+    const here = new Set<Run>();
+    const seen = new Set<string | AudioBuffer>();
     for (const tk of takes ?? []) {
       if (tk.track === o.skip || !(tk.dur > 0)) continue;
       // does it lie under this stretch?
       if (!(tk.at < s1 - 1e-6 && tk.at + tk.dur / spb > s0 + 1e-6)) continue;
       const key = tk.id ?? tk.buffer;
-      if (here.has(key)) continue;
-      here.add(key);
+      if (seen.has(key)) continue;
+      seen.add(key);
       const t0 = t + (tk.at - s0) * spb;
-      const run = this.runs.get(key);
+      const zero = zeroOf(t0, tk.offset);
+      let run: Run | undefined;
+      for (const r of this.runs) if (r.key === key && Math.abs(zeroOf(r.t0, r.offset) - zero) < 1e-4) run = r;
       // already sounding from exactly here: it carries on
-      if (run && run.buffer === tk.buffer && Math.abs(run.t0 - t0) < 1e-4 && run.offset === tk.offset && run.dur === tk.dur && run.until > t + 1e-4) continue;
-      if (run) this.end(run, cut, now);
+      if (run && run.buffer === tk.buffer && Math.abs(run.t0 - t0) < 1e-4 && run.offset === tk.offset && run.dur === tk.dur && run.until > t + 1e-4) {
+        here.add(run);
+        continue;
+      }
+      if (run) {
+        this.end(run, cut, now);
+        this.runs.delete(run);
+      }
       const when = Math.max(t0, cut);
       const into = when - t0;
       const dur = Math.min(tk.dur - into, until - when);
-      if (dur < 0.005) {
-        this.runs.delete(key);
-        continue;
-      }
+      if (dur < 0.005) continue;
       // the same sound going on from where it stops (the clip started again as edited, or the music
       // going straight on where it would have gone round), or a piece starting where the piece before
       // it ends: the two cross over, so it is heard as one sound, with no dip
@@ -154,17 +177,25 @@ export class TakeRuns {
         this.live.delete(src);
         gain.disconnect();
       };
-      this.runs.set(key, { src, gain, buffer: tk.buffer, offset: tk.offset, dur: tk.dur, t0, when: when - pre, until: when + dur, env });
+      const next: Run = { key, src, gain, buffer: tk.buffer, offset: tk.offset, dur: tk.dur, t0, when: when - pre, until: when + dur, env };
+      this.runs.add(next);
+      here.add(next);
     }
     return here;
   }
 
-  /** A take sounding that the music does not have any more: it has left it. */
-  private leave(here: Set<string | AudioBuffer>, cut: number, now: number) {
-    for (const [key, run] of this.runs) {
-      if (here.has(key)) continue;
-      if (run.until > cut + 1e-4) this.end(run, cut, now);
-      this.runs.delete(key);
+  /**
+   * A take sounding that the music does not have any more: it has left it, and it stops there.
+   * One that ends by then anyway (the pass before, running to the loop's turn) is left to finish,
+   * and is still known as sounding until it has.
+   */
+  private leave(here: Set<Run>, cut: number, now: number) {
+    for (const run of this.runs) {
+      if (here.has(run)) continue;
+      if (run.until > cut + 1e-4) {
+        this.end(run, cut, now);
+        this.runs.delete(run);
+      } else if (run.until <= now) this.runs.delete(run);
     }
   }
 

@@ -288,15 +288,16 @@ export function clipSpan(c: Clip, t: Pick<Take, "rate">): { start: number; end: 
  * counted from the section's start (beats), how far into its take that is (seconds), and how
  * long it plays (seconds). One that runs across several sections is listed in each it reaches
  * (at a place before the start of those after the first), so wherever the music is, the player
- * knows which part of which clip lies under it. A clip whose section is gone is left out.
- * `joined`: it starts where another clip of the same take ends, in the same place (a split): the
+ * knows which part of which clip lies under it. A clip whose section is gone is left out, and so
+ * is one whose bar is (its section made shorter on the Frame page): it is not moved into the
+ * section after, and comes back in its place if the bar does. `joined`: it starts where another clip of the same take ends, in the same place (a split): the
  * two are one sound.
  */
 export function layClips<T extends Pick<Take, "at" | "frames" | "rate">>(secs: readonly { block: string; bar: number; beats: number }[], clips: readonly { clip: Clip; take: T }[], bpm: number): Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number; joined: boolean }[]> {
-  const start: Record<string, { at: number; bar: number }> = {};
+  const start: Record<string, { at: number; bar: number; beats: number }> = {};
   let pos = 0;
   for (const s of secs) {
-    start[s.block] = { at: pos, bar: s.bar };
+    start[s.block] = { at: pos, bar: s.bar, beats: s.beats };
     pos += s.beats;
   }
   const out: Record<string, { clip: Clip; take: T; at: number; offset: number; dur: number; joined: boolean }[]> = {};
@@ -305,6 +306,8 @@ export function layClips<T extends Pick<Take, "at" | "frames" | "rate">>(secs: r
   for (const { clip, take } of clips) {
     const from = start[take.at.block];
     if (!from || !(take.rate > 0) || !(clip.to > clip.from)) continue;
+    // (the bar it was sung from is no longer in its section)
+    if (!(take.at.bar >= 0 && take.at.bar * from.bar < from.beats - 1e-6)) continue;
     const span = clipSpan(clip, take);
     const begin = from.at + take.at.bar * from.bar + span.start / spb;
     const len = (span.end - span.start) / spb;

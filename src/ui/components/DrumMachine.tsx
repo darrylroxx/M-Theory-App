@@ -211,12 +211,17 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     setBar(0);
     setStart(0);
   }, [state.ideaId, section, fresh, track, meter]);
-  // a drum soloed in one track's kit is not carried into the next track's
+  // a drum soloed in one track's kit is not carried into the next track's, nor off this page: it is for
+  // listening while working here, and no other page shows it (the Track page would play one drum while
+  // drawing them all)
   useEffect(() => setSolo(null), [track]);
   useEffect(() => {
-    setDrumSolo(solo, track);
+    if (!active) setSolo(null);
+  }, [active]);
+  useEffect(() => {
+    setDrumSolo(active ? solo : null, track);
     return () => setDrumSolo(null, track);
-  }, [solo, track]);
+  }, [solo, track, active]);
 
   const sync = (b: Beat) => {
     if (deskFollowsPage(playing, getPos())) syncDrums(b, bpm, track);
