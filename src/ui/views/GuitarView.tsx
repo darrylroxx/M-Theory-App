@@ -1,5 +1,5 @@
 import { createContext, memo, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { playedNotes, withoutNotes } from "../../song/chordnotes";
+import { playedNotes, transposeChord, withoutNotes } from "../../song/chordnotes";
 import { fingerNotes } from "../../guitar/finger";
 import { DEFAULT_BEAT, applyPattern, type Beat, type BeatPattern } from "../../audio/beats";
 import { progressionToMidi, saveFile } from "../../audio/midi";
@@ -19,7 +19,7 @@ import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, s
 import { drumsIn, mapAllChords, mapAllMelodies, sections, sectionsWith, selectBlock, soloSection, soundToAll, undoTo, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, getChordType, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
-import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
+import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, type Key, type KeyChord, type Role } from "../../theory/keys";
 import { displayNote, mod12, pc } from "../../theory/notes";
 import { suggestNext, type SuggestionGroup } from "../../theory/progression";
 import { SCALES, SCALE_FAMILIES, bestTonicSpelling, getScale, isHeptatonic, scaleNotes } from "../../theory/scales";
@@ -1002,7 +1002,8 @@ const KeyBar = memo(function KeyBar() {
       const newKey = { ...s.key, tonic };
       // the melody moves with the key, by as much as its grid does (so it stays on the same rows)
       const by = melodyBase(newKey) - melodyBase(s.key);
-      const p = mapAllChords(s.progression, (c) => ({ ...c, ref: transposeRef(c.ref, n, newKey), voicingId: undefined }));
+      // (a chord's written notes move with it: a harmony written as exact notes stays that harmony)
+      const p = mapAllChords(s.progression, (c) => transposeChord(c, n, newKey));
       // every melody moves too, the added melody tracks' as well
       return { ...s, key: newKey, progression: mapAllMelodies(p, (m) => transposeMelody(m, by)) };
     });

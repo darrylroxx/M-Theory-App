@@ -8,6 +8,7 @@ import type { ProgChord } from "../ui/state";
 import { getChordType, findChordType, type ChordRef } from "../theory/chords";
 import { semitonesOf } from "../theory/intervals";
 import { mod12, pc } from "../theory/notes";
+import { transposeRef, type Key } from "../theory/keys";
 
 const pcsOfRef = (ref: ChordRef): number[] => {
   const t = findChordType(ref.typeId);
@@ -34,8 +35,23 @@ export function reviveNotes(raw: unknown): number[] | undefined {
   return ns.length >= 1 && ns.length <= 6 && ns.length === raw.length ? ns : undefined;
 }
 
-/** A chord with its written notes moved with it (by semitones). */
-export const shiftNotes = (c: ProgChord, n: number): ProgChord => (c.notes && n ? { ...c, notes: c.notes.map((m) => m + n) } : c);
+/** A chord with its written notes moved with it (by semitones), kept inside the range written notes may have (moved by octaves). */
+export const shiftNotes = (c: ProgChord, n: number): ProgChord => {
+  if (!c.notes || !n) return c;
+  let ns = c.notes.map((m) => m + n);
+  while (Math.max(...ns) > 96) ns = ns.map((m) => m - 12);
+  while (Math.min(...ns) < 36) ns = ns.map((m) => m + 12);
+  return { ...c, notes: ns };
+};
+/**
+ * A chord moved by `n` semitones into `key` (the song moved, or chords pasted from another key):
+ * its name re-spelled, its written notes moved with it the nearest way (at most a tritone, so a
+ * layer stays where it sat over the chords under it), and any shape pinned by hand let go.
+ */
+export function transposeChord(c: ProgChord, n: number, key: Key): ProgChord {
+  const d = (((n % 12) + 18) % 12) - 6;
+  return { ...shiftNotes(c, d), ref: transposeRef(c.ref, n, key), voicingId: undefined };
+}
 /** A chord taken over by hand (another chord, another shape): its written notes go. */
 export const withoutNotes = (c: ProgChord): ProgChord => {
   if (!c.notes) return c;

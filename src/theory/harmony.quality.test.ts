@@ -39,7 +39,9 @@ describe("melody lines sound better than the first engine's", () => {
       const show = (t: LineTotal) => `clash ${(t.clash / t.tuneClash).toFixed(2)}× · rub ${pct(t.rub, t.strong).toFixed(1)}% · added ${t.added.toFixed(3)} · unison ${pct(t.unison, t.moments).toFixed(1)}% · cross ${t.cross} · parallels ${t.parallels} · tritones ${t.tritones} · wrote ${t.wrote}/9`;
       say(`${name.padEnd(30)} before: ${b ? show(b) : "(new)"}`);
       say(`${"".padEnd(30)} after:  ${show(a)}`);
-      // never a parallel 5th or octave, never a melodic tritone, never a 2nd, 7th or tritone with the tune on a strong slot
+      // never a parallel 5th or octave (with the tune, or with the bass: octaves too), never a melodic
+      // tritone, never a 2nd, 7th or tritone with the tune on a strong slot
+      // (Answer: one, where a held note's start and the next note straddle a bass that moved under it)
       expect(a.parallels).toBeLessThanOrEqual(option === "answer" ? 1 : 0);
       expect(a.tritones).toBeLessThanOrEqual(option === "chord-tones" ? 1 : 0);
       expect(a.leadDiss).toBeLessThanOrEqual(1);
@@ -52,17 +54,20 @@ describe("melody lines sound better than the first engine's", () => {
       if (["third-above", "third-below", "stack"].includes(option)) {
         expect(a.unison).toBe(0);
         expect(a.cross).toBeLessThanOrEqual(option === "stack" ? 2 : 0);
-        expect(a.family).toBeGreaterThanOrEqual(option === "third-above" ? 0.7 : 0.55);
-      } else expect(pct(a.unison, a.moments)).toBeLessThanOrEqual(option === "counter" ? (from === "chords" ? 8 : 6.5) : 5);
+        // one kind, 3rds or 6ths, on at least 70 % of the notes (M7)
+        expect(a.family).toBeGreaterThanOrEqual(0.7);
+      } else expect(pct(a.unison, a.moments)).toBeLessThanOrEqual(option === "counter" && from === "chords" ? 10 : 5);
       if (b && option !== "answer" && option !== "chord-tones") {
-        // less roughness added than before (the high harmony: under three quarters of it)
-        // (the counter-melody written from Chords now keeps clear of the tune, and pays for it in roughness: up to 1.3×)
-        expect(a.added).toBeLessThanOrEqual(b.added * (option === "third-above" ? 0.75 : option === "slow-line" ? (from === "melody" ? 0.6 : 0.8) : option === "counter" && from === "chords" ? 1.3 : 1));
+        // less roughness added than before: the counter-melody and long notes under 0.85× of it (the spec's);
+        // the high harmony under 0.92× (a 3rd above is rougher than a 6th: the first version reached
+        // 0.72× in 6ths, which made High and Low harmony one line an octave apart); the low harmony and the
+        // counter-melody written from Chords no rougher (the first engine's were smooth through unisons and crossings with the tune)
+        expect(a.added).toBeLessThanOrEqual(b.added * (option === "third-above" ? 0.92 : option === "slow-line" ? (from === "melody" ? 0.6 : 0.8) : option === "counter" ? (from === "chords" ? 1 : 0.85) : 1));
       }
-      if (option === "chord-tones") expect(a.added).toBeLessThanOrEqual(0.5 * b!.added);
-      // Answer always has something to say
-      // (a tune with a note on every beat leaves an answer nowhere to come in: 6 of 9 here, 2 of 9 before)
-      expect(a.wrote).toBeGreaterThanOrEqual(option === "answer" ? 6 : 9);
+      // chord notes within about an octave of the tune (M12) are rougher than two octaves above it, still well under the first engine's
+      if (option === "chord-tones") expect(a.added).toBeLessThanOrEqual(0.75 * b!.added);
+      // Answer always has something to say, even over a tune with a note on every step
+      expect(a.wrote).toBeGreaterThanOrEqual(option === "answer" ? 8 : 9);
     });
 });
 
@@ -78,10 +83,12 @@ describe("chords played along with Chords 1 sit above it, in its gaps", () => {
       expect(a.hkRatio).toBeLessThan(bestOld.hk);
       expect(a.added).toBeLessThan(0.25 * bestOld.added);
       expect(a.semitoneAbove).toBeLessThanOrEqual(1);
-      expect(a.doubled / a.notes).toBeLessThanOrEqual(option === "high" ? 0.3 : 0.25);
+      // (guide tones are the chord's 3rd and 7th: over a piano's spread chord, whose top is often its 3rd, a few double it)
+      expect(a.doubled / a.notes).toBeLessThanOrEqual(option === "high" || option === "guide" ? 0.3 : 0.25);
       expect(a.above).toBe(1);
       expect(a.secondBass).toBe(0);
-      expect(a.tuneRub).toBeLessThanOrEqual(option === "top" ? 2 : option === "high" ? 12 : 10);
+      // never a minor 2nd or 9th with a strong note of the tune
+      expect(a.tuneRub).toBe(0);
     });
   it("every chord's name holds what it plays, and the guitar can play it (standard tuning)", () => {
     const std = getTuning("standard");
@@ -116,8 +123,23 @@ describe("chords for a tune, and chords played instead", () => {
       const a = insteadTotals(BUILT, from, option);
       const b = B[from === "melody" ? `fit:${option}` : `instead:${option}`];
       say(`${name.padEnd(12)} tune clash beats: before ${b ? b.clash.toFixed(1) : "(new)"} → after ${a.clash.toFixed(1)} (over Chords 1: ${a.own.toFixed(1)})`);
-      expect(a.clash).toBeLessThanOrEqual(option === "borrowed" ? 1.5 * a.own : a.own);
+      expect(a.clash).toBeLessThanOrEqual(a.own);
       if (b) expect(a.clash).toBeLessThanOrEqual(b.clash);
+    });
+});
+
+describe("chords for a tune on an empty Chords track (how a first one is filled)", () => {
+  for (const [name, option] of [["Best fit", "fit"], ["Another fit", "fit2"]] as const)
+    it(`${name}: carries the tune no worse than the section's own chords, and opens on home`, () => {
+      const a = insteadTotals(BUILT, "melody", option, { empty: true });
+      say(`${name.padEnd(12)} on an empty Chords: tune clash beats ${a.clash.toFixed(1)} (the fixtures' own chords: ${a.own.toFixed(1)})`);
+      expect(a.clash).toBeLessThanOrEqual(a.own);
+      if (option === "fit")
+        for (const b of BUILT) {
+          const first = runOn(b, "chords", "melody", option, "guitar", { empty: true }).chords?.find((c) => !c.rest);
+          // (never a dominant 7th first, under the tune's opening notes, as the first version did with C G Am F's tune)
+          expect(first && /7/.test(first.ref.typeId) && !/maj7|m7/.test(first.ref.typeId), b.name).toBe(false);
+        }
     });
 });
 

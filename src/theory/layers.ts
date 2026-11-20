@@ -25,7 +25,6 @@ import { lowIntervalOk, moveCost } from "../keys/voicing";
 import { avoids, beatStrength, localScale, pcsOf, usable, type Ctx, type LineNote, type Shape } from "./harmonize";
 import type { Heard } from "./lines";
 
-export const LAYER_IDS = ["high", "airy", "guide", "top"] as const;
 
 type Degree = 1 | 3 | 5 | 7 | 9 | 11 | 13;
 /** A chord's stack: its 3rd, 5th and 7th (from the chord, else the scale under it) and the 9th, 11th and 13th of that scale. A member a semitone above another is left out. */
@@ -146,46 +145,112 @@ export function layerChords(option: string, src: ProgChord[], tune: LineNote[], 
   }
   const live = slots.filter((s): s is LSlot => "ref" in s);
   if (!live.length) return src.map((c) => ({ ...c, id: ctx.id() }));
-  const spanMax = [12, 19, 24][shape.wide];
-  const spanMin = [0, 9, 14][shape.wide];
+  // Closer ↔ Wider: how far the layer's notes spread (close, open, spread over more than an octave), and how high it sits
+  const SPANS: [number, number][] = [[0, 9], [7, 16], [12, 24]];
+  const [spanMin0, spanMax] = SPANS[shape.wide];
+  // (two notes may be a 4th apart and still be open)
+  const spanMin = (n: number) => (n <= 2 && shape.wide === 1 ? 0 : spanMin0);
+  // and how high it sits
+  const centre = [69, 74, 78][shape.wide];
   const top = option === "top";
+  // a pitch class that rubs a strong tune note here (a minor 2nd or 9th either way)
+  const rubsTune = (p: number, T: number[]) => T.some((t) => [1, 11].includes(mod12(p - t)));
   const cands = live.map((s, i) => {
     const topK = s.K.length ? Math.max(...s.K) : 60;
     const chord = pcsOf(s.ref);
+    const root = chord[0];
+    const bassK = s.K.length ? Math.min(...s.K) : null;
+    // never a tritone over the root or Chords 1's bass that the chord does not hold (a #11 over a major chord sounds wrong held)
+    const tritone = (p: number) => !chord.includes(p) && (mod12(p - root) === 6 || (bassK !== null && mod12(p - bassK) === 6));
     const lo = Math.max(55, topK - 2);
     let sets: { pcs: number[]; cost: number }[];
     if (top) {
-      // sol, then mi, then re of the key; none a semitone above a chord tone nor a ♭9 over the root
-      const deg = (n: number) => mod12(ctx.tonic + [0, 0, 2, 4, 5, 7, 9, 11][n]);
-      const list = [deg(5), ...(shape.colour >= 1 ? [deg(3)] : []), ...(shape.colour >= 2 ? [deg(2)] : [])];
-      const ok = list.filter((p) => !avoids(p, chord) && mod12(p - chord[0]) !== 1 && localScale(ctx.seven, s.ref).includes(p));
-      sets = (ok.length ? ok : [stackOf(s.ref, ctx)[3] ?? chord[0]]).map((p, k) => ({ pcs: [p], cost: k * 0.3 + (ok.length ? 0 : 1) }));
+      // one note over Chords 1, by colour: the key's 5th first (steady), its 3rd (warmer), its 2nd (open); none a
+      // semitone above a chord tone, a ♭9 over the root, a tritone over the root, or out of the chord's scale
+      const deg = (n: number) => pc(ctx.seven[n - 1]);
+      const order = [[5, 3, 2], [3, 5, 2], [2, 3, 5]][shape.colour].map(deg);
+      const local = localScale(ctx.seven, s.ref);
+      const ok = order.filter((p) => !avoids(p, chord) && mod12(p - root) !== 1 && !tritone(p) && local.includes(p) && !rubsTune(p, s.T));
+      const st = stackOf(s.ref, ctx);
+      const safe = [st[3], st[5], root].filter((p): p is number => p !== undefined && !rubsTune(p, s.T));
+      sets = ok.length ? ok.map((p, k) => ({ pcs: [p], cost: k * 3 })) : [{ pcs: [safe[0] ?? root], cost: 2 }];
     } else {
-      const own = setOf(option, s.ref, ctx, shape.colour);
+      const own = setOf(option, s.ref, ctx, shape.colour).filter((p) => !tritone(p));
       sets = [{ pcs: own, cost: 0 }];
-      // a plainer set where the tune needs it (a 7th under the tune's root, say)
+      // a plainer set where the colour cannot sit (it rubs a strong tune note, a 7th under the tune's
+      // root say, or Chords 1 leaves it no place): cheap where the tune asks for it, else dear, so the
+      // colour asked for is what is heard wherever it fits
+      const asked = own.some((p) => rubsTune(p, s.T));
       for (let c = shape.colour - 1; c >= 0; c--) {
-        const p = setOf(option, s.ref, ctx, c);
-        if (p.join() !== own.join() && !sets.some((x) => x.pcs.join() === p.join())) sets.push({ pcs: p, cost: 1.5 * (shape.colour - c) });
+        const p = setOf(option, s.ref, ctx, c).filter((x) => !tritone(x));
+        if (p.length && p.join() !== own.join() && !sets.some((x) => x.pcs.join() === p.join())) sets.push({ pcs: p, cost: (asked ? 2 : 7) * (shape.colour - c) });
+      }
+      // Airy without its root (Chords 1 has it): the 5th and the colour, open, where a hand cannot hold all of them up there
+      if (option === "airy" && own.length >= 3) {
+        const rootless = own.filter((p) => p !== root);
+        if (!sets.some((y) => y.pcs.join() === rootless.join())) sets.push({ pcs: rootless, cost: 1.5 });
+      }
+      // and with any note that still rubs the tune left out
+      for (const x of [...sets]) {
+        const kept = x.pcs.filter((p) => !rubsTune(p, s.T));
+        if (kept.length && kept.length < x.pcs.length && !sets.some((y) => y.pcs.join() === kept.join())) sets.push({ pcs: kept, cost: x.cost + 2.5 });
       }
       // (busy 0: the set before, held over this chord when it still fits it)
       if (shape.busy === 0 && i > 0) {
         const prev = setOf(option, live[i - 1].ref, ctx, shape.colour);
         const local = localScale(ctx.seven, s.ref);
-        if (prev.every((p) => chord.includes(p) || (local.includes(p) && !avoids(p, chord)))) sets.push({ pcs: prev, cost: -0.8 });
+        if (prev.every((p) => chord.includes(p) || (local.includes(p) && !avoids(p, chord) && !tritone(p)))) sets.push({ pcs: prev, cost: -0.8 });
       }
     }
     const out: { v: number[]; cost: number; ref: ChordRef }[] = [];
     for (const set of sets) {
       const ref = extend(s.ref, set.pcs);
       if (!ref) continue;
-      const hiTop = top ? [topK + 9, 81, 88][shape.wide] : 84;
-      let vs = layouts(set.pcs, top ? Math.max(lo, [topK + 1, 72, 79][shape.wide]) : lo, hiTop, top ? 0 : spanMax);
-      if (!vs.length) vs = layouts(set.pcs, lo, 88, 24);
-      for (const v of vs) out.push({ v, cost: set.cost + (v[v.length - 1] - v[0] < spanMin ? 0.4 * (spanMin - (v[v.length - 1] - v[0])) : 0), ref });
+      // the top note: strictly over Chords 1's top, higher as it widens
+      const from = top ? topK + [1, 5, 10][shape.wide] : lo;
+      const to = top ? topK + [9, 14, 24][shape.wide] : 84;
+      let vs = layouts(set.pcs, from, to, top ? 0 : spanMax).filter((v) => top || v[v.length - 1] - v[0] >= spanMin(v.length));
+      if (!vs.length) vs = layouts(set.pcs, from, top ? 88 : 86, top ? 0 : 24);
+      for (const v of vs) out.push({ v, cost: set.cost, ref });
     }
-    const fit = playable ? out.filter((c) => playable(c.v)) : out;
-    return fit.length ? fit : out.length ? out : [{ v: [Math.max(lo, 60 + mod12(chord[0]))], cost: 5, ref: s.ref }];
+    if (playable) {
+      const fit = out.filter((c) => playable(c.v));
+      // and, as a way out, the same sets anywhere over Chords 1 a hand can reach (the shape asked for may have no fingering up there)
+      const more: typeof out = [];
+      for (const set of sets) {
+        const ref = extend(s.ref, set.pcs);
+        if (!ref) continue;
+        for (const v of layouts(set.pcs, top ? topK + 1 : Math.max(52, topK - 2), 88, top ? 0 : 24)) if (playable(v) && !fit.some((c) => c.v.join() === v.join())) more.push({ v, cost: set.cost + 8, ref });
+      }
+      if (fit.length || more.length) return [...fit, ...more];
+      // nor there: a plainer set the hand can play (a 4-note colour drops its colour note)
+      for (let c = shape.colour - 1; c >= 0 && !top; c--) {
+        const p = setOf(option, s.ref, ctx, c).filter((x) => !tritone(x));
+        const ref = extend(s.ref, p);
+        if (!ref) continue;
+        for (const v of layouts(p, Math.max(52, topK - 2), 88, 24)) if (playable(v)) more.push({ v, cost: 3 * (shape.colour - c), ref });
+        if (more.length) return more;
+      }
+      // Chords 1 sits so high that a guitar reaches only a note or two over it: fewer notes, still over it
+      for (const set of sets) {
+        for (const drop of set.pcs) {
+          const fewer = set.pcs.filter((p) => p !== drop);
+          if (!fewer.length) continue;
+          const ref = extend(s.ref, fewer);
+          if (!ref) continue;
+          for (const v of layouts(fewer, Math.max(52, topK - 2), 88, 24)) if (playable(v)) more.push({ v, cost: set.cost + 4, ref });
+        }
+      }
+      if (more.length) return more;
+      // nor that: the layer goes in its gaps, as high as a hand can play it
+      for (const set of sets) {
+        const ref = extend(s.ref, set.pcs);
+        if (!ref) continue;
+        for (const v of layouts(set.pcs, 52, 88, top ? 0 : 24)) if (playable(v)) more.push({ v, cost: set.cost + 8, ref });
+      }
+      if (more.length) return more;
+    }
+    return out.length ? out : [{ v: [Math.max(lo, 60 + mod12(chord[0]))], cost: 5, ref: s.ref }];
   });
   const node = (i: number, c: { v: number[]; cost: number }) => {
     const s = live[i];
@@ -193,13 +258,25 @@ export function layerChords(option: string, src: ProgChord[], tune: LineNote[], 
     const V = c.v;
     const kp = K.map(mod12);
     let x = c.cost + 10 * addedSet(V, [...K, ...s.T]);
+    // never a semitone above a note of Chords 1 (C3), nor a minor 2nd or 9th with one either way
     if (V.some((v) => !kp.includes(mod12(v)) && kp.some((k) => mod12(v - k) === 1))) x += 10;
+    if (V.some((v) => K.some((k) => Math.abs(v - k) === 1 || Math.abs(v - k) === 13))) x += 10;
+    // a note a semitone under one of Chords 1's goes over it (a major 7th or 9th), never under it (C3)
+    if (V.some((v) => K.some((k) => k > v && mod12(k - v) === 1))) x += 10;
     if (K.length && Math.min(...V) < Math.max(...K) - 2) x += 4;
-    x += 8 * V.filter((v) => s.T.some((t) => [1, 11].includes(mod12(Math.abs(v - t))))).length;
+    // a note Chords 1 already plays, on the same key, adds nothing to hear
+    x += 3 * V.filter((v) => K.includes(v)).length;
+    x += 50 * V.filter((v) => s.T.some((t) => [1, 11].includes(mod12(Math.abs(v - t))))).length;
+    // a colour note (one Chords 1's chord does not hold) is heard over Chords 1, not inside it
+    const own = pcsOf(s.ref);
+    if (K.length && V.some((v) => !own.includes(mod12(v)) && v <= Math.max(...K))) x += 6;
     if (V.some((v) => s.T.some((t) => [0, 12, 24].includes(Math.abs(v - t))))) x += 2;
     if (s.tuneTop !== null) x += 0.3 * Math.max(0, Math.max(...V) - s.tuneTop);
     if (K.length && Math.max(...V) === Math.max(...K)) x += 1;
-    x += 0.1 * Math.abs((V[0] + V[V.length - 1]) / 2 - 72);
+    // (Guide tones have no closer or wider: they sit where they fit best, around C5)
+    // (the top note: just over Chords 1, a little higher, or high over it)
+    const mid = top ? Math.min(81, (K.length ? Math.max(...K) : 64) + [4, 8, 12][shape.wide]) : centre;
+    x += option === "guide" ? 0.1 * Math.abs((V[0] + V[V.length - 1]) / 2 - 72) : 0.45 * Math.abs((V[0] + V[V.length - 1]) / 2 - mid);
     return x;
   };
   const edge = (i: number, a: { v: number[] }, b: { v: number[] }) => {
@@ -210,7 +287,8 @@ export function layerChords(option: string, src: ProgChord[], tune: LineNote[], 
     const bb = live[i].K[0];
     const ta = a.v[a.v.length - 1];
     const tb = b.v[b.v.length - 1];
-    if (ba !== undefined && bb !== undefined && ba !== bb && ta !== tb && [0, 7].includes(mod12(Math.abs(ta - ba))) && mod12(Math.abs(ta - ba)) === mod12(Math.abs(tb - bb))) c += 6;
+    // the top voice never in parallel 5ths or octaves with the bass
+    if (ba !== undefined && bb !== undefined && ba !== bb && ta !== tb && [0, 7].includes(mod12(Math.abs(ta - ba))) && mod12(Math.abs(ta - ba)) === mod12(Math.abs(tb - bb))) c += 12;
     if (shape.busy >= 2 && live[i].ref === live[i - 1].ref && Math.abs(dTop) <= 2 && a.v.slice(0, -1).join() === b.v.slice(0, -1).join()) c -= 0.5;
     return c;
   };

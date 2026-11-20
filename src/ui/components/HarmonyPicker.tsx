@@ -16,11 +16,12 @@
  * is only written over after a yes.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { harmonizeSources, harmonyMenu, harmonySources, harmonyState, isHarmony, partHere, rewriteHarmony, writeHarmony, type HarmonyPlan } from "../../song/harmony";
+import { harmonizeSources, harmonyMenu, harmonyState, isHarmony, partHere, rewriteHarmony, writeHarmony, writtenFrom, type HarmonyPlan } from "../../song/harmony";
 import { sameMusic } from "../../song/library";
 import { allTracks, fromIn, normalize, optionIn, shapeIn, writeTarget, type Track, type WriteTarget } from "../../song/tracks";
 import { MIDDLE, controlsFor, type Level, type Shape } from "../../theory/harmonize";
 import { undoTo } from "../../song/structure";
+import { onKeys, toneOf } from "../../audio/tone";
 import { newId, useApp, type AppState } from "../state";
 
 /** What is being auditioned: a harmony as it would be written (or written again), and where. */
@@ -108,17 +109,16 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
     const el = sheet.current;
     if (!el) return;
     const root = document.documentElement.style;
-    let firstTime = true;
     const ro = new ResizeObserver(() => {
       const h = Math.ceil(el.getBoundingClientRect().height);
       root.setProperty("--hz-sheet-h", `${h}px`);
-      // the button that opened it stays in sight, just above the sheet
-      if (firstTime && anchor?.isConnected) {
+      // the button that opened it stays in sight, just above the sheet, also when the sheet grows
+      // (the controls of a chosen harmony): the page has room below it to scroll up into (styles.css)
+      if (anchor?.isConnected) {
         anchor.style.scrollMarginBottom = `${h + 24}px`;
         const r = anchor.getBoundingClientRect();
         if (r.bottom > window.innerHeight - h - 16 || r.top < 0) anchor.scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
-      firstTime = false;
     });
     ro.observe(el);
     return () => {
@@ -170,7 +170,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       const r = writeHarmony(before, key, { kind: newKind, from, option, shape }, target);
       if (!r.track) return;
       after = r.p;
-      msg = `${target.isNew ? `${r.track.name} added` : `${r.track.name}: ${item.label}`}${item.instead ? `, in place of ${nameOf(item.instead)} here` : ""}`;
+      msg = keptMessage(target.isNew, r.track.name, item.label, item.instead && nameOf(item.instead));
     }
     hear(null);
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
@@ -180,7 +180,8 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   };
 
   const hint = item ? `${item.hint}.${item.instead ? ` Plays instead of ${nameOf(item.instead)}.` : ""}` : "";
-  const srcName = track ? harmonySources(p).find((t) => t.id === track.harmony?.from)?.name ?? "" : "";
+  // (written from in this section: each section has its own source)
+  const srcName = track ? writtenFrom(p, track.id)?.name ?? "" : "";
   return (
     <div ref={sheet} className="hz-sheet" role="dialog" aria-label={track ? `Write ${track.name} again` : "Harmonize"}>
       <div className="hz-row">
@@ -219,7 +220,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
           ) : (
             <span className="hz-none">Nothing to add to {nameOf(from)} yet</span>
           )}
-          {option && item && <ShapeControls shape={shape} on={controlsFor(newKind, option)} onChange={reshape} />}
+          {option && item && <ShapeControls shape={shape} on={controlsFor(newKind, option, !onKeys(toneOf(normalize(p), id)))} onChange={reshape} />}
           <div className="hz-foot">
             <span className="hz-hint">{hint}</span>
             <button className="icon-btn" disabled={!option} aria-pressed={hearing && playing} aria-label={hearing && playing ? "Stop" : "Hear it"} title={hearing && playing ? "Stop" : "Hear it"} onClick={toggleHear}>{hearing && playing ? "■" : "▶"}</button>
@@ -233,6 +234,16 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       )}
     </div>
   );
+}
+
+/**
+ * What the toast says once a harmony is kept: a new track's name; else the track and the harmony
+ * now in it, said once when the track is called by it (a track Harmonize made takes its option's
+ * name: "Guide tones", never "Guide tones: Guide tones").
+ */
+export function keptMessage(isNew: boolean, name: string, label: string, instead?: string | false): string {
+  const what = isNew ? `${name} added` : name === label || name.startsWith(`${label} `) ? name : `${name}: ${label}`;
+  return `${what}${instead ? `, in place of ${instead} here` : ""}`;
 }
 
 const CONTROLS: { key: keyof Shape; ends: [string, string]; label: string }[] = [

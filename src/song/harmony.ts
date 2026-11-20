@@ -398,9 +398,6 @@ export function writeHarmony(p0: Progression, key: Key, plan: HarmonyPlan, targe
   return { p: refocus(q, opts.focus === false ? p0.focus : { ...p0.focus, [plan.kind]: id }), track };
 }
 
-/** A harmony written into a new track, whatever the section holds (`id`: the new track's). */
-export const addHarmony = (p0: Progression, key: Key, plan: HarmonyPlan, id: string, opts: { focus?: boolean } = {}) => writeHarmony(p0, key, plan, { id, isNew: true, name: "" }, opts);
-
 /**
  * Write a harmony track again, in the section on screen: with another option, or with the same
  * one after its source changed. The section is written over, so the page asks first when it was
@@ -450,6 +447,15 @@ export function rewriteHarmony(p0: Progression, key: Key, id: string, option?: s
 export function writtenAs(p: Progression, id: string): string {
   const h = harmonyOf(p, id);
   return h ? JSON.stringify(h) : "";
+}
+
+/** The track a harmony track was written from in the section on screen (each section has its own: one may be from the tune, another from the chords). */
+export function writtenFrom(p0: Progression, id: string): Track | undefined {
+  const p = normalize(p0);
+  const h = harmonyOf(p, id);
+  if (!h) return undefined;
+  const from = fromIn(h, partHere(p));
+  return allTracks(p).find((t) => t.id === from);
 }
 
 /** Is this still a harmony track of the song, there to be written again? (Removed, or its source removed: no.) */

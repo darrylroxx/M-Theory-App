@@ -12,6 +12,7 @@ import {
   isMinorKey,
   labelFor,
   harmonyOptions,
+  localScale,
   melodyLine,
   parallelPerfect,
   parentScale,
@@ -21,7 +22,7 @@ import {
 import { CHORD_TYPES, refPcs, type ChordRef } from "./chords";
 import { diatonicChords, keyScale, type Key } from "./keys";
 import { mod12, pc } from "./notes";
-import { getScale, scalePcs } from "./scales";
+import { getScale, scaleNotes, scalePcs } from "./scales";
 import { seededRng } from "./progression";
 import { TICKS, type Melody } from "../song/melody";
 import type { ProgChord } from "../ui/state";
@@ -170,12 +171,16 @@ const ic = (a: number, b: number) => mod12(Math.abs(a - b));
 const CONSONANT = [0, 3, 4, 5, 7, 8, 9];
 const strong = (at: number, bar: number) => beatStrength(at, bar) >= 2;
 
-/** Is a note in the key, in the chord under it, or one the tune itself uses (a borrowed note it asks for)? */
+/**
+ * Is a note in the key, in the chord under it, in the scale that chord is borrowed from (over F
+ * minor in C major: C minor's B♭), or one the tune itself uses (a borrowed note it asks for)?
+ */
 function fits(c: Case, at: number, midi: number, chords = c.chords): boolean {
   const p = mod12(midi);
   const ref = chordAt(chords, at);
   if (keyPcs(c.key).includes(p)) return true;
   if (ref && refPcs(ref).map(mod12).includes(p)) return true;
+  if (ref && !refPcs(ref).every((x) => keyPcs(c.key).includes(mod12(x))) && localScale(scaleNotes(c.key.tonic, getScale(parentScale(c.key))), ref).includes(p)) return true;
   return c.tune.notes.some((n) => mod12(n.midi) === p);
 }
 
@@ -380,13 +385,23 @@ describe("melody harmony from a melody", () => {
         for (const h of out.notes) expect(h.midi - tune.find((n) => n.at === h.at)!.midi).toBe(d);
       });
 
-      it("answer: only in the gaps the tune leaves", () => {
+      it("answer: in the gaps the tune leaves; a note it holds moves only to fit a chord that comes in", () => {
         const out = harmonize(input(c, "melody", "answer", "melody")).melody!;
-        // it always answers somewhere, in the key or the chord, never with a strong tune note
+        // it always answers somewhere, in the key or the chord
         expect(out.notes.length).toBeGreaterThan(0);
-        for (const h of out.notes) {
+        for (const [i, h] of out.notes.entries()) {
           expect(fits(c, h.at, h.midi), `${h.at}:${h.midi}`).toBe(true);
-          expect(tune.some((n) => n.at === h.at && strong(h.at, c.bar)), `${h.at}`).toBe(false);
+          // never one note struck twice in a row
+          if (i > 0) expect(h.midi, `${h.at}`).not.toBe(out.notes[i - 1].midi);
+          // with a strong tune note only where the note it held moves on with the chords there (a downbeat
+          // or a chord change): to a note of that chord, consonant with the tune
+          const n = tune.find((x) => x.at === h.at);
+          if (n && strong(h.at, c.bar)) {
+            const ref = chordAt(c.chords, h.at);
+            expect(h.at % (c.bar * TICKS) === 0 || bounds(c.chords).starts.includes(h.at), `${h.at}`).toBe(true);
+            if (ref) expect(refPcs(ref).map(mod12), `${h.at}`).toContain(mod12(h.midi));
+            expect(CONSONANT, `${h.at}`).toContain(ic(h.midi, n.midi));
+          }
         }
       });
 
@@ -444,7 +459,9 @@ describe("melody harmony from a melody", () => {
     const tune = M([[0, 72], [0.5, 74], [1, 76], [1.5, 77], [2, 79]], 1);
     const out = harmonize({ kind: "melody", option: "third-above", source: { melody: tune }, key: C, bar: 4, bars: 1, shape: PAIR }).melody!;
     const d = out.notes.map((n, i) => n.midi - tune.notes[i].midi);
-    expect(d.slice(0, 4)).toEqual([4, 3, 3, 4]); // C→E, D→F, E→G, F→A
+    // C→E, E→G, F→A; over the C chord D→F would sit a minor 9th over its E, so it opens to a 4th (D→G) there
+    expect([d[0], d[2], d[3]]).toEqual([4, 3, 4]);
+    expect([3, 5]).toContain(d[1]);
   });
 
   it("uses a borrowed chord's own notes over it (F minor in C major: A♭, not A)", () => {

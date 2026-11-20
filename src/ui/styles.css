@@ -1371,6 +1371,15 @@ span.cv-better { cursor: default; }
 .hz-opts .chip.now:not(.on) { border-color: var(--accent); }
 /* (not the width the shape finder's .now has on a phone) */
 .hz-opts .chip.now { width: auto; }
+/* while the sheet is open the page can scroll up from under it, so the button that opened it stays in sight */
+body:has(.hz-sheet) { padding-bottom: calc(var(--hz-sheet-h, 0px) + 16px); }
+/* on a phone the controls take less height: a smaller row each, the end words close to the steps */
+@media (pointer: coarse) and (max-width: 520px) {
+  .hz-ctls { gap: 0 10px; }
+  .hz-ctl .hz-step { width: 38px; height: 38px; }
+  .hz-ctl .hz-end { min-height: 38px; font-size: 0.74rem; padding: 2px; }
+  .hz-sheet { gap: 6px; padding: 8px; }
+}
 /* an undo offered while the sheet is open sits just above it, clear of it and of the page tabs */
 body:has(.hz-sheet) .toast.act { bottom: calc(var(--hz-sheet-h, 0px) + 22px + env(safe-area-inset-bottom, 0px)); }
 /* ✕ keeps the top right corner however the chips wrap */

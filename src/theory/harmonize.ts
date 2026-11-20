@@ -140,14 +140,21 @@ export function harmonyOptions(kind: HarmonyKind, from?: SourceKind, lowTune = f
   if (lowTune && kind === "melody" && from === "melody") ids = ["third-above", "third-below", ...ids.filter((x) => x !== "third-above" && x !== "third-below")];
   return ids.map((id) => HARMONY_OPTIONS.find((o) => o.kind === kind && o.id === id)!);
 }
-/** Which controls mean something for an option: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful. */
-export function controlsFor(kind: HarmonyKind, option: string): { busy: boolean; wide: boolean; colour: boolean } {
+/**
+ * Which controls mean something for an option: Simpler ↔ Busier, Closer ↔ Wider, Plain ↔ Colourful.
+ * `onGuitar`: the new chords track plays the guitar, where a hand can play High chords, Airy and
+ * Guide tones over the first track in one place only (there is no closer or wider to choose there).
+ */
+export function controlsFor(kind: HarmonyKind, option: string, onGuitar = true): { busy: boolean; wide: boolean; colour: boolean } {
   if (kind === "chords") {
-    if (["high", "airy", "guide", "top"].includes(option)) return { busy: true, wide: true, colour: true };
+    if (["high", "guide", "airy"].includes(option)) return { busy: true, wide: !onGuitar, colour: true };
+    if (option === "top") return { busy: true, wide: true, colour: true };
     if (option === "fit" || option === "fit2") return { busy: true, wide: false, colour: true };
     return { busy: false, wide: false, colour: false };
   }
-  if (["third-above", "third-below", "stack", "counter", "slow-line", "answer", "chord-tones"].includes(option)) return { busy: true, wide: true, colour: true };
+  // (an answer echoes the tune's own notes: there is no colour of its own to choose)
+  if (option === "answer") return { busy: true, wide: true, colour: false };
+  if (["third-above", "third-below", "stack", "counter", "slow-line", "chord-tones"].includes(option)) return { busy: true, wide: true, colour: true };
   return { busy: false, wide: false, colour: false };
 }
 
@@ -335,10 +342,19 @@ export function parentScale(key: Key): string {
   return best;
 }
 
+// the parallel modes a chord from outside the key is borrowed from, likeliest first: a major key
+// borrows from its minor (iv, ♭VI, ♭VII, ♭III), a minor key from its dorian (IV), harmonic minor (V)
+// and major (I) sides
+const BORROW_MAJOR = ["aeolian", "mixolydian", "dorian", "lydian", "harmonicMinor", "melodicMinor", "phrygian"];
+const BORROW_MINOR = ["dorian", "harmonicMinor", "melodicMinor", "ionian", "mixolydian", "lydian", "phrygian"];
+const borrowedScales = new Map<string, number[][]>();
+
 /**
- * The scale under a chord: the key's seven notes with the chord's own notes put in place of their
- * neighbours (over a borrowed F minor in C major the A becomes A♭; over E7 the G becomes G♯).
- * The swap is made letter by letter, so the scale keeps seven steps.
+ * The scale under a chord. A chord from the key: the key's seven notes. A chord borrowed from the
+ * parallel key or mode: that mode, the likeliest that holds it (over a borrowed F minor in C major:
+ * C minor, so its 7th is E♭, never the major key's E; over a borrowed B♭: B♭7, not B♭maj7). Any
+ * other (a secondary dominant): the key's seven notes with the chord's own notes put in place of
+ * their neighbours, letter by letter (over E7 in C the G becomes G♯), so the scale keeps seven steps.
  */
 export function localScale(seven: string[], ref: ChordRef | null): number[] {
   const out = seven.map(pc);
@@ -347,6 +363,17 @@ export function localScale(seven: string[], ref: ChordRef | null): number[] {
   if (!type) return out;
   const notes = [...chordNotes(ref.root, type), ...(ref.bass ? [ref.bass] : [])];
   const chordSet = new Set(notes.map(pc));
+  if ([...chordSet].every((p) => out.includes(p))) return out;
+  const tonic = out[0];
+  const key = seven.join();
+  let modes = borrowedScales.get(key);
+  if (!modes) {
+    const minor = out.includes(mod12(tonic + 3));
+    modes = (minor ? BORROW_MINOR : BORROW_MAJOR).map((id) => scalePcs(tonic, getScale(id)));
+    borrowedScales.set(key, modes);
+  }
+  const mode = modes.find((m) => [...chordSet].every((p) => m.includes(p)));
+  if (mode) return [...mode];
   const replaced = new Set<number>();
   for (const n of notes) {
     const p = pc(n);
@@ -505,9 +532,10 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
   const pkey: Key = { tonic: ctx.key.tonic, scaleId: parent };
   const PRIOR: Record<number, number> = { 1: -0.4, 2: -0.05, 3: 0.05, 4: -0.25, 5: -0.25, 6: -0.1, 7: 0.6 };
   const out: PoolChord[] = [];
-  for (const c of diatonicChords(pkey, sevenths ? 4 : 3)) {
+  // colourful: the key's 7th chords first, and its triads still there for where a 7th would rub the tune
+  for (const c of [...(sevenths ? diatonicChords(pkey, 4) : []), ...diatonicChords(pkey, 3)]) {
     if (c.type.synthetic) continue;
-    let prior = PRIOR[c.degree ?? 3] ?? 0;
+    let prior = (PRIOR[c.degree ?? 3] ?? 0) + (sevenths && c.type.intervals.length <= 3 ? 0.15 : 0);
     if (c.type.id === "aug" || c.type.id === "maj7#5") prior += 0.8;
     if (c.type.id === "dim" || c.type.id === "m7b5" || c.type.id === "dim7") prior += 0.3;
     out.push({ ref: c.ref, pcs: pcsOf(c.ref), prior });
@@ -518,7 +546,7 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
   const parentPcs = scalePcs(ctx.tonic, getScale(parent));
   if (five) {
     const ref = { root: five.ref.root, typeId: "7" };
-    if (pcsOf(ref).every((p) => parentPcs.includes(p))) out.push({ ref, pcs: pcsOf(ref), prior: five.prior + 0.15 });
+    if (pcsOf(ref).every((p) => parentPcs.includes(p)) && !out.some((c) => sameRef(c.ref, ref))) out.push({ ref, pcs: pcsOf(ref), prior: five.prior + 0.15 });
   }
   // a natural-minor key borrows the major dominant from harmonic minor (it has the leading note);
   // the other minor modes keep their own minor v, which is their sound
@@ -535,9 +563,12 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
       if (holds(ref) && !out.some((c) => sameRef(c.ref, ref))) out.push({ ref, pcs: pcsOf(ref), prior });
     };
     for (const b of borrowedChords(ctx.key)) if (["maj", "min", "dim"].includes(b.type.id)) add(b.ref, 0.35 + 0.15 * (b.outside - 1));
+    // secondary dominants, as 7ths and (for the plain setting, and where the 7th rubs) as triads
     for (const t of diatonicChords(pkey, 3)) {
       if (t.type.id !== "maj" && t.type.id !== "min") continue;
-      add({ root: friendlySpelling(intervalNote(t.ref.root, "5"), ctx.key), typeId: "7" }, 0.45);
+      const root = friendlySpelling(intervalNote(t.ref.root, "5"), ctx.key);
+      add({ root, typeId: "7" }, 0.45);
+      add({ root, typeId: "maj" }, 0.5);
     }
   }
   return out;
@@ -548,8 +579,12 @@ function pool(ctx: Ctx, outside: number[] = [], sevenths = false): PoolChord[] {
  * passes; an avoid note, or a note from outside both the key and the chord, clashes.
  */
 function noteFit(p: number, chord: number[], scale: number[]): number {
+  // the tune a semitone over one of the chord's notes (its root over a maj7: C over Cmaj7's B) rubs as a minor 9th
+  if (underRub(p, chord)) return -1.2;
   if (chord.includes(mod12(p))) return 1;
   if (avoids(p, chord)) return -1.2;
+  // a tritone over the root that the chord does not hold (A over E♭) sounds wrong held
+  if (mod12(p - chord[0]) === 6) return -1;
   return scale.includes(mod12(p)) ? 0.15 : -1;
 }
 
@@ -563,11 +598,8 @@ function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = [], shape: 
   if (!line.length) return [];
   const slots: { start: number; end: number; down: boolean }[] = [];
   const barTicks = Math.round(ctx.bar * TICKS);
-  // simpler: a chord a bar (two bars a chord when the bar is short)
-  if (shape.busy === 0) {
-    const per = ctx.bar <= 2 ? 2 * barTicks : barTicks;
-    for (let s = 0; s < ctx.len; s += per) slots.push({ start: s, end: Math.min(ctx.len, s + per), down: true });
-  }
+  // simpler: a chord a bar (when the bar is short, one held over two bars wherever the tune lets it)
+  if (shape.busy === 0) for (let s = 0; s < ctx.len; s += barTicks) slots.push({ start: s, end: Math.min(ctx.len, s + barTicks), down: ctx.bar > 2 || (s / barTicks) % 2 === 0 });
   for (let b = 0; shape.busy !== 0 && b * barTicks < ctx.len; b++) {
     let at = 0;
     for (const g of beatGroups(ctx.bar)) {
@@ -587,15 +619,22 @@ function chordsForMelody(line: LineNote[], ctx: Ctx, under: Span[] = [], shape: 
   // plainer: triads only (no V7)
   const P = shape.colour === 0 ? P0.filter((c) => getChordType(c.ref.typeId).intervals.length <= 3) : P0;
   const local = P.map((c) => localScale(ctx.seven, c.ref));
+  // a short note off the strong beats, reached and left by step, is a passing or neighbour note: the
+  // chord need not hold it (E–F–G over C), so it counts for little
+  const passing = line.map((n, i) => {
+    const a = line[i - 1];
+    const b = line[i + 1];
+    return beatStrength(n.at, ctx.bar) < 2 && n.end - n.at <= TICKS && !!a && !!b && Math.abs(n.midi - a.midi) <= 2 && Math.abs(b.midi - n.midi) <= 2 && n.midi !== a.midi && n.midi !== b.midi;
+  });
   const emit = slots.map((s) =>
     P.map((c, ci) => {
       let score = 0;
-      for (const n of line) {
+      for (const [ni, n] of line.entries()) {
         const from = Math.max(n.at, s.start);
         const to = Math.min(n.end, s.end, n.at + 2 * TICKS);
         if (to <= from) continue;
         const inside = n.at >= s.start;
-        const w = ((to - from) / TICKS) * (inside ? (beatStrength(n.at, ctx.bar) >= 2 ? 1.5 : 1) : 0.6);
+        const w = ((to - from) / TICKS) * (inside ? (beatStrength(n.at, ctx.bar) >= 2 ? 1.5 : 1) : 0.6) * (passing[ni] ? 0.35 : 1);
         score += w * noteFit(n.midi, c.pcs, local[ci]);
       }
       const u = spanAt(under, s.start)?.ref;
@@ -1106,7 +1145,12 @@ function strongIn(tune: LineNote[], start: number, end: number, bar: number): nu
   return out;
 }
 
-/** Does a chord carry these melody notes: each a chord tone, or a tension of its own scale that doesn't rub? */
+/**
+ * Does a chord carry these melody notes: each a chord tone, or a tension of its own scale that
+ * doesn't rub? A chord tone a semitone under a melody note rubs too (the tune on the root of a
+ * maj7 chord: C over Cmaj7 sits a minor 9th over its B), and so does a note a tritone over the root
+ * that the chord does not hold (A over E♭).
+ */
 function carries(ref: ChordRef, notes: number[], ctx: Ctx): boolean {
   if (!notes.length) return true;
   const chord = pcsOf(ref);
@@ -1114,8 +1158,10 @@ function carries(ref: ChordRef, notes: number[], ctx: Ctx): boolean {
   const r = pc(ref.root);
   // a note a semitone under the chord's major 3rd (a #9) only sits on a dominant
   const sharp9 = (m: number) => chord.includes(mod12(r + 4)) && mod12(m - r) === 3 && !isDominantType(getChordType(ref.typeId));
-  return notes.every((m) => chord.includes(mod12(m)) || (!avoids(m, chord) && scale.includes(mod12(m)) && !sharp9(m)));
+  return notes.every((m) => !underRub(m, chord) && (chord.includes(mod12(m)) || (!avoids(m, chord) && scale.includes(mod12(m)) && !sharp9(m) && mod12(m - r) !== 6)));
 }
+/** A chord tone a semitone under a melody note: the melody rubs it as a minor 9th (the root over a maj7 chord). */
+export const underRub = (m: number, chord: number[]) => chord.includes(mod12(m - 1));
 
 /** Can two chords sound at once: nothing the new one adds sits a semitone above the old one's notes? */
 function blends(next: ChordRef, old: ChordRef): boolean {
@@ -1585,7 +1631,10 @@ export function harmonize(input: HarmonizeInput): HarmonizeOutput {
       return {
         chords: mapChords(src, ctx, (ref, s, i) => {
           const b = borrowedOf(ref, ctx, i === lastLive);
-          return b && carries(b, strongIn(tuneFor, s.start, s.end, ctx.bar), ctx) ? b : { ...ref };
+          // the borrowed chord changes a note of the key: every note the tune sings over it, however
+          // short, must sit with that (an E in the tune under a borrowed C minor clashes with its E♭)
+          const all = tuneFor.filter((n) => n.at < s.end && n.end > s.start).map((n) => n.midi);
+          return b && carries(b, strongIn(tuneFor, s.start, s.end, ctx.bar), ctx) && carries(b, all, ctx) ? b : { ...ref };
         }),
       };
     }

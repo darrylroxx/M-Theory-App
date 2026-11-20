@@ -73,13 +73,17 @@ export function aroundOf(b: Built, how: Voicer, noTune = false): Sounding[] {
   return out;
 }
 
-/** Run one option on a fixture, as the app asks for it (source, the chords under it, everything heard around). */
-export function runOn(b: Built, kind: HarmonyKind, from: SourceKind, option: string, how: Voicer, extra: { shape?: Shape; seed?: number } = {}): HarmonizeOutput {
+/**
+ * Run one option on a fixture, as the app asks for it (source, the chords under it, everything heard
+ * around). `empty`: the section has no chords yet (how a first Chords track is filled from a tune).
+ */
+export function runOn(b: Built, kind: HarmonyKind, from: SourceKind, option: string, how: Voicer, extra: { shape?: Shape; seed?: number; empty?: boolean } = {}): HarmonizeOutput {
   const common = {
     kind, option, key: b.key, bar: b.bar, bars: b.bars, compound: b.compound, seed: extra.seed ?? 1, ...(extra.shape ? { shape: extra.shape } : {}),
     // a new chords track plays the guitar: what it writes must be playable there, as in the app
     ...(kind === "chords" ? { playable: (n: number[]) => !!fingerNotes(n, STANDARD, 0) } : {}),
   };
+  if (from === "melody" && extra.empty) return harmonize({ ...common, source: { melody: b.melody }, under: [], around: [] });
   if (from === "melody") return harmonize({ ...common, source: { melody: b.melody }, under: b.chords, around: aroundOf(b, how, true) });
   return harmonize({ ...common, source: { chords: b.chords, ...(kind === "chords" ? { melody: b.melody } : {}) }, ...(kind === "melody" ? { under: b.chords } : {}), around: aroundOf(b, how) });
 }
@@ -106,7 +110,7 @@ export interface LineScore {
   moments: number;
   /** onsets on the other side of the tune from the line's usual side */
   cross: number;
-  /** parallel 5ths or 8ves with the tune or the bass */
+  /** parallel 5ths or 8ves with the tune or the bass (octaves with the bass included) */
   parallels: number;
   /** a leap of a tritone inside the line */
   tritones: number;
@@ -189,7 +193,8 @@ export function scoreLine(b: Built, how: Voicer, notes: MelodyNote[]): LineScore
         if (l !== null && lp !== null && parallelPerfect(lp, p.midi, l, n.midi)) s.parallels++;
         const bp = kAt(p.at)?.K[0];
         const bn = sp?.K[0];
-        if (bp !== undefined && bn !== undefined && bp !== bn && parallelPerfect(bp, p.midi, bn, n.midi) && mod12(Math.abs(n.midi - bn)) === 7) s.parallels++;
+        // (5ths and octaves with the bass alike)
+        if (bp !== undefined && bn !== undefined && bp !== bn && parallelPerfect(bp, p.midi, bn, n.midi)) s.parallels++;
         if (Math.abs(n.midi - p.midi) === 6) s.tritones++;
       }
     });
@@ -308,7 +313,7 @@ export function layerTotals(fixtures: Built[], option: string, extra: { shape?: 
   return worse(per, ["chords", "notes", "above", "wrote"]) as LayerTotal;
 }
 /** Tune clash beats over an option that plays instead of Chords 1 (or chosen for the tune), and over Chords 1 itself. */
-export function insteadTotals(fixtures: Built[], from: SourceKind, option: string, extra: { shape?: Shape } = {}): { clash: number; own: number } {
+export function insteadTotals(fixtures: Built[], from: SourceKind, option: string, extra: { shape?: Shape; empty?: boolean } = {}): { clash: number; own: number } {
   const per = VOICERS.map((how) => {
     let clash = 0;
     let own = 0;

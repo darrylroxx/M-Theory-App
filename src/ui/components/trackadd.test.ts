@@ -6,6 +6,7 @@ import { DEFAULT_BEAT } from "../../audio/beats";
 import { describe, expect, it } from "vitest";
 import { DEFAULT_STATE, type AppState } from "../state";
 import { trackAdded } from "./TrackPage";
+import { emptyVocal } from "./VocalsPage";
 
 describe("adding a track on the Track page", () => {
   it("a second vocal track: the Vocals page shows it, not the first, and you stay on the Track page", () => {
@@ -38,5 +39,16 @@ describe("adding a track on the Track page", () => {
     expect(d.pane).toBe("track");
     expect(d.studio).toBe(s.studio);
     expect(d.progression.focus?.drums).toBe("d2");
+  });
+});
+
+describe("+ on the Vocals page", () => {
+  it("uses the vocal track on screen when nothing is recorded on it (its tab lights up), else another empty one, else none", () => {
+    const v1 = { id: "v1", kind: "vocals" as const, name: "Vocal 1" };
+    const v2 = { id: "v2", kind: "vocals" as const, name: "Vocal 2" };
+    const took = (t: typeof v1) => ({ ...t, takes: [{ id: "k" } as never] });
+    expect(emptyVocal([v1, v2], v1)?.id).toBe("v1");
+    expect(emptyVocal([took(v1), v2], took(v1))?.id).toBe("v2");
+    expect(emptyVocal([took(v1)], took(v1))).toBeUndefined();
   });
 });

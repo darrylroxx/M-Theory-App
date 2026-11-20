@@ -292,9 +292,7 @@ export function addTrackHere(p0: Progression, kind: EditKind, id: string): { p: 
   const ready = emptyHere(p0, kind)[0];
   if (ready) return { p: (p0.focus?.[kind] ?? kind) === ready.id ? p0 : focusTrack(p0, kind, ready.id), track: ready, reused: true, existing: true };
   const p = normalize(p0);
-  const free = (p.tracks ?? []).map((t, i) => ({ t, i })).filter(({ t }) => t.kind === kind && t.role !== "harmony" && !p.layers?.[t.id]);
-  free.sort((a, b) => numberOf(a.t) - numberOf(b.t) || a.i - b.i);
-  const reuse = free[0]?.t;
+  const reuse = freeRows(p, kind)[0];
   const track: Track = reuse ?? { id, kind, name: nextName(p, kind) };
   const next: Progression = withoutTone({ ...p, tracks: reuse ? p.tracks : [...(p.tracks ?? []), track], layers: { ...p.layers, [track.id]: plainLayer(kind) } }, track.id);
   return { p: refocus(next, { ...p0.focus, [kind]: track.id }), track, reused: !!reuse };
@@ -349,8 +347,9 @@ export interface WriteTarget {
 /**
  * Where an action that makes music for a kind writes, in the section on screen: into the track on
  * screen when it is empty here, or holds a harmony exactly as it was written here (nothing made by
- * hand is lost); else into another track of the kind that is empty here; only with none, a new
- * track (`newId`, `newName`).
+ * hand is lost); else into another track of the kind that is empty here; else, as + does, into the
+ * row of that kind another section has and this one does not (the lowest-numbered plain one), so
+ * the rows line up; only with none, a new track (`newId`, `newName`).
  */
 export function writeTarget(p0: Progression, kind: "chords" | "melody", newId: string, newName: string): WriteTarget {
   const p = normalize(p0);
@@ -362,7 +361,15 @@ export function writeTarget(p0: Progression, kind: "chords" | "melody", newId: s
   }
   const other = emptyHere(p0, kind).find((t) => t.id !== on);
   if (other) return { id: other.id, isNew: false, name: other.name };
+  const free = freeRows(p, kind)[0];
+  if (free) return { id: free.id, isNew: false, name: free.name };
   return { id: newId, isNew: true, name: newName };
+}
+/** The plain rows of a kind other sections have and the section on screen does not, lowest number first (what + brings forward). `p` has every track in its place. */
+function freeRows(p: Progression, kind: EditKind): Track[] {
+  const free = (p.tracks ?? []).map((t, i) => ({ t, i })).filter(({ t }) => t.kind === kind && t.role !== "harmony" && !p.layers?.[t.id]);
+  free.sort((a, b) => numberOf(a.t) - numberOf(b.t) || a.i - b.i);
+  return free.map(({ t }) => t);
 }
 
 /**

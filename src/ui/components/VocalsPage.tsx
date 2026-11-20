@@ -669,11 +669,18 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const name = window.prompt("Name this vocal track", track.name);
     if (name) set((s) => ({ ...s, progression: renameTrack(s.progression, track.id, name) }));
   };
-  /** Another vocal track: one with nothing recorded on it yet is used first (no second empty one). */
+  /** Another vocal track: one with nothing recorded on it yet is used first, and its tab lights up (no second empty one). */
+  const [lit, setLit] = useState<string | null>(null);
+  useEffect(() => {
+    if (!lit) return;
+    const t = window.setTimeout(() => setLit(null), 1200);
+    return () => window.clearTimeout(t);
+  }, [lit]);
   const add = () => {
-    const free = (state.progression.tracks ?? []).find((t) => t.kind === "vocals" && !t.takes?.length && t.id !== track?.id) ?? (track && !track.takes?.length ? track : undefined);
+    const free = emptyVocal(state.progression.tracks, track);
     if (free) {
       setSel(free.id);
+      setLit(free.id);
       return;
     }
     const id = newId();
@@ -797,7 +804,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     <section className="card vocals" aria-label="Vocals">
       <div className="dm-head">
         <span className="seg clip-tracks" role="radiogroup" aria-label="Vocal track">
-          {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={track?.id === t.id ? "on" : ""} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
+          {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={`${track?.id === t.id ? "on" : ""}${lit === t.id ? " flash" : ""}`} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
           <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
         </span>
         {track && <MixMark id={track.id} name={track.name} />}
@@ -805,7 +812,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         {laneBars.length > 0 && <BarsControl />}
       </div>
 
-      {!desktop && <p className="small vc-note">Recording: in the Windows app.</p>}
+      {!desktop && <p className="small vc-note">Recording: in the desktop app.</p>}
       {/* in the browser too: the takes already made, and the line while the song plays */}
       {!desktop && tools}
       {!desktop && lane}
@@ -1057,4 +1064,10 @@ function Pick<T extends string>({ label, value, options, off, onPick }: { label:
       {options.map((o) => <button key={o.id} role="radio" aria-checked={value === o.id} className={value === o.id ? "on" : ""} title={o.hint} disabled={off} onClick={() => onPick(o.id)}>{o.name}</button>)}
     </span>
   );
+}
+
+/** Where + on the Vocals page goes: a vocal track with nothing recorded on it yet (the one on screen first), else nowhere (a new one is made). */
+export function emptyVocal(tracks: Track[] | undefined, current?: Track): Track | undefined {
+  if (current && current.kind === "vocals" && !current.takes?.length) return current;
+  return (tracks ?? []).find((t) => t.kind === "vocals" && !t.takes?.length && t.id !== current?.id);
 }
