@@ -6,7 +6,7 @@ import { pc } from "../theory/notes";
 import { scalePcs } from "../theory/scales";
 import { TICKS, melodyBase, transposeMelody, type Melody } from "./melody";
 import { addNewSection, loadCurrent, mapAllChords, mapAllMelodies, removeBlock, sections, selectBlock, unlinkBlock, type Song } from "./structure";
-import { addTrack, allTracks, focusTrack, normalize, removeTrack, reviveTracks } from "./tracks";
+import { addTrackHere, allTracks, focusTrack, insteadIn, normalize, removeTrack, reviveTracks } from "./tracks";
 import { setSig } from "./unity";
 import { MELODY_RANGE, addHarmony, harmonizeSources, harmonyMenu, harmonyState, harmonySources, isHarmony, previewHarmony, rewriteHarmony, writtenAs } from "./harmony";
 import { HARMONY_MENU, HARMONY_OPTIONS, labelFor } from "../theory/harmonize";
@@ -44,14 +44,18 @@ const len = (p: Progression, part: string) => {
   return x.bars! * bar;
 };
 const inKey = (midi: number, key: Key) => scalePcs(pc(key.tonic), keyScale(key)).includes(((midi % 12) + 12) % 12);
+/** the section a part plays first in, on screen */
+const at = (p: Progression, part: string) => selectBlock(p, p.song!.blocks.find((b) => b.partId === part)!.id);
+/** is a chords track heard in a section, or does a harmony there play instead of it? */
+const replaced = (p: Progression, part: string, tid = "chords") => insteadIn(layer(p, part, "_") ? undefined : parts(p).find((x) => x.id === part)?.layers, normalize(p).tracks, normalize(p).mix).has(tid);
 
-describe("a harmony track across the song", () => {
+describe("a harmony track in the section on screen", () => {
   for (const key of [C, Em]) {
-    it(`third above in ${key.tonic} ${key.scaleId}: every section with a tune gets one, in key, on its grid, in range, nothing lost`, () => {
-      const p0 = song(key);
-      const { p, track } = addHarmony(p0, key, { kind: "melody", from: "melody", option: "third-above" }, "h1");
-      expect(track).toMatchObject({ id: "h1", kind: "melody", role: "harmony", name: "High harmony", harmony: { from: "melody", option: "third-above" } });
+    it(`third above in ${key.tonic} ${key.scaleId}: the section on screen with a tune gets one, in key, on its grid, in range, nothing lost; no other section gets it`, () => {
       for (const part of ["A", "B", "C"]) {
+        const p0 = at(song(key), part);
+        const { p, track } = addHarmony(p0, key, { kind: "melody", from: "melody", option: "third-above" }, "h1");
+        expect(track).toMatchObject({ id: "h1", kind: "melody", role: "harmony", name: "High harmony", harmony: { from: "melody", option: "third-above" } });
         const m = layer(p, part, "h1")?.melody;
         const src = parts(p).find((x) => x.id === part)!.melody!;
         expect(m, part).toBeDefined();
@@ -65,14 +69,16 @@ describe("a harmony track across the song", () => {
           expect(x.at).toBeLessThan(len(p, part) * TICKS);
         }
         expect(m!.bars).toBe(parts(p).find((x) => x.id === part)!.bars);
+        // in this section only
+        for (const other of ["A", "B", "C", "D"].filter((x) => x !== part)) expect(layer(p, other, "h1"), `${part}: ${other}`).toBeUndefined();
+        // the new track comes forward on the Melody page, and the first melody is kept safe
+        expect(p.focus).toEqual({ melody: "h1" });
+        expect(p.melody).toEqual(m);
       }
       // 6/8 stays on the triplet grid
-      expect(layer(p, "B", "h1")!.melody!.div).toBe(3);
-      // D has no tune: nothing is written there
-      expect(layer(p, "D", "h1")).toBeUndefined();
-      // the new track comes forward on the Melody page, and the first melody is kept safe
-      expect(p.focus).toEqual({ melody: "h1" });
-      expect(p.melody).toEqual(layer(p, "A", "h1")!.melody);
+      expect(layer(addHarmony(at(song(key), "B"), key, { kind: "melody", from: "melody", option: "third-above" }, "h1").p, "B", "h1")!.melody!.div).toBe(3);
+      // D has no tune: nothing is written there (the track is there, empty)
+      expect(layer(addHarmony(at(song(key), "D"), key, { kind: "melody", from: "melody", option: "third-above" }, "h1").p, "D", "h1")?.melody).toBeUndefined();
     });
   }
 
@@ -89,13 +95,13 @@ describe("a harmony track across the song", () => {
     }
   });
 
-  it("a pad from the chords (an old track's option): the same changes in every section, never longer than a chord can be", () => {
+  it("a pad from the chords (an old track's option): the same changes, never longer than a chord can be", () => {
     // eight bars of one chord: the pad joins them, and is struck again within the Chords page's 16 beats
     let p0 = song();
     p0 = { ...normalize(p0), song: { ...p0.song!, parts: p0.song!.parts.map((x) => (x.id === "D" ? { ...x, bars: 8, chords: Array.from({ length: 8 }, () => ch("F", 4)) } : x)) } };
     p0 = loadCurrent(p0);
-    const { p } = addHarmony(p0, C, { kind: "chords", from: "chords", option: "pad" }, "pad");
     for (const part of ["A", "B", "C", "D"]) {
+      const { p } = addHarmony(at(p0, part), C, { kind: "chords", from: "chords", option: "pad" }, "pad");
       const cs = layer(p, part, "pad")!.chords!;
       const total = cs.reduce((a, c) => a + c.beats, 0);
       expect(total, part).toBe(len(p, part));
@@ -104,8 +110,9 @@ describe("a harmony track across the song", () => {
         expect(c.beats).toBeLessThanOrEqual(16);
         expect(c.beats * 2).toBe(Math.round(c.beats * 2));
       }
+      if (part === "D") expect(cs.length).toBeGreaterThan(1);
     }
-    expect(layer(p, "D", "pad")!.chords!.length).toBeGreaterThan(1);
+    const { p } = addHarmony(p0, C, { kind: "chords", from: "chords", option: "pad" }, "pad");
     // no sound is chosen for it: it plays the plain default, like any new track
     expect(p.tones?.pad).toBeUndefined();
     // an old pad kept on the synth, held high, still sits above the comping band
@@ -124,40 +131,40 @@ describe("a harmony track across the song", () => {
           const what = `${kind} ${option} from ${from}`;
           expect(track, what).toBeDefined();
           expect(p.tones?.x, what).toBeUndefined();
-          const t = normalize(p).tracks!.find((y) => y.id === "x")!;
+          const l = normalize(p).layers!.x;
           // (brought forward and put back, a chords track keeps the plain style it was shown with, nothing more)
-          expect(t.style === undefined || t.style === "ring", what).toBe(true);
-          expect([t.feel, t.sound, t.kit], what).toEqual([undefined, undefined, undefined]);
-          expect(p.mix?.x, what).toBeUndefined();
-          // only one that plays instead of chords touches the mixer: it mutes them
-          const instead = HARMONY_OPTIONS.find((o) => o.kind === kind && o.id === option)!.instead || (option === "fit" && from === "melody");
-          expect(!!p.mix?.chords?.mute, what).toBe(!!instead);
+          expect(l.pattern === undefined || l.pattern === "ring", what).toBe(true);
+          expect([l.feel, l.sound, l.tuneSound], what).toEqual([undefined, undefined, undefined]);
+          // the mixer is never touched
+          expect(p.mix, what).toBeUndefined();
           // the sources keep their own sound
           expect([p.tones?.chords, p.tones?.melody], what).toEqual([p0.tones.chords, p0.tones.melody]);
         }
   });
 
-  it("one that plays instead of chords mutes them, marked as its doing; taken away, they are heard again", () => {
+  it("one that plays instead of chords is heard in their place in its section; taken away, they are heard again", () => {
     for (const [option, from] of [["borrowed", "chords"], ["relative", "chords"], ["lead-in", "chords"], ["fit", "melody"]] as const) {
       const p = addHarmony(song(), C, { kind: "chords", from, option }, "x").p;
-      expect(p.mix?.chords, option).toEqual({ mute: true, instead: true });
-      expect(removeTrack(p, "x").mix?.chords?.mute, option).toBe(false);
+      expect(replaced(p, "A"), option).toBe(true);
+      expect(replaced(p, "B"), option).toBe(false);
+      expect(p.mix, option).toBeUndefined();
+      expect(replaced(removeTrack(p, "x"), "A"), option).toBe(false);
     }
     // the ones that play with their chords leave them alone
-    for (const option of ["colour", "sus", "pedal"]) expect(addHarmony(song(), C, { kind: "chords", from: "chords", option }, "x").p.mix, option).toBeUndefined();
+    for (const option of ["colour", "sus", "pedal"]) expect(replaced(addHarmony(song(), C, { kind: "chords", from: "chords", option }, "x").p, "A"), option).toBe(false);
   });
 
   it("a chords layer from a melody sits on the section's chords; a melody from chords works where there is no tune", () => {
     const { p } = addHarmony(song(), C, { kind: "chords", from: "melody", option: "colour" }, "col");
     // A's chords keep their roots and changes, with colour added
     expect(layer(p, "A", "col")!.chords!.map((c) => c.ref.root)).toEqual(["C", "G", "A", "F"]);
-    expect(layer(p, "D", "col")).toBeUndefined();
-    const fromChords = addHarmony(song(), C, { kind: "melody", from: "chords", option: "slow-line" }, "sl").p;
+    expect(layer(addHarmony(at(song(), "D"), C, { kind: "chords", from: "melody", option: "colour" }, "col").p, "D", "col")?.chords).toEqual([]);
+    const fromChords = addHarmony(at(song(), "D"), C, { kind: "melody", from: "chords", option: "slow-line" }, "sl").p;
     expect(layer(fromChords, "D", "sl")!.melody!.notes.length).toBeGreaterThan(0);
   });
 
   it("keeps where it came from through saving and loading; old songs and broken data load safely", () => {
-    const { p } = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-below" }, "h1");
+    const { p } = addHarmony(at(song(), "B"), C, { kind: "melody", from: "melody", option: "third-below" }, "h1");
     const saved = JSON.parse(JSON.stringify({ id: "i", name: "x", key: C, progression: normalize(p), savedAt: 1 }));
     const back = reviveIdea(saved)!.progression;
     const t = back.tracks!.find((x) => x.id === "h1")!;
@@ -193,27 +200,26 @@ describe("a harmony track across the song", () => {
     expect(rewriteHarmony(named, C, "h1", "octave").tracks![0].name).toBe("High");
   });
 
-  it("knows which sections were changed by hand, and when its source changed", () => {
+  it("knows when it was changed by hand, and when its source changed", () => {
     const p1 = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
     expect(harmonyState(p1, C, "h1")).toEqual({ edited: [], stale: false, source: true });
     // a note changed by hand in section A (on the page, as the Melody grid does)
     const edited = { ...p1, melody: { ...p1.melody!, notes: [...p1.melody!.notes.slice(1), { at: 1 * TICKS, midi: 84 }] } };
     expect(harmonyState(edited, C, "h1").edited).toEqual(["A"]);
     expect(harmonyState(edited, C, "h1").stale).toBe(false);
-    // the tune in C changed: the harmony is out of date there (and nowhere was it changed by hand)
-    let q = selectBlock(focusTrack(p1, "melody", "melody"), "c");
+    // the tune in A changed: the harmony is out of date there (and was not changed by hand)
+    let q = focusTrack(p1, "melody", "melody");
     q = { ...q, melody: { ...q.melody!, notes: q.melody!.notes.map((x, i) => (i === 0 ? { ...x, midi: 74 } : x)) } };
     expect(harmonyState(q, C, "h1")).toEqual({ edited: [], stale: true, source: true });
     // written again from the new tune: in step again
     const r = rewriteHarmony(q, C, "h1");
     expect(harmonyState(r, C, "h1")).toEqual({ edited: [], stale: false, source: true });
-    expect(layer(r, "C", "h1")).not.toEqual(layer(p1, "C", "h1"));
-    expect(layer(r, "A", "h1")).toEqual(layer(p1, "A", "h1"));
+    expect(layer(r, "A", "h1")).not.toEqual(layer(p1, "A", "h1"));
     // a new key makes it out of date too
     expect(harmonyState(p1, { tonic: "D", scaleId: "ionian" }, "h1").stale).toBe(true);
     // a pad on the chords does not care that the tune changed (only what it would write counts)
     const pad = addHarmony(p1, C, { kind: "chords", from: "chords", option: "pad" }, "pad").p;
-    let q2 = selectBlock(focusTrack(pad, "melody", "melody"), "c");
+    let q2 = focusTrack(pad, "melody", "melody");
     q2 = { ...q2, melody: { ...q2.melody!, notes: q2.melody!.notes.map((x, i) => (i === 0 ? { ...x, midi: 74 } : x)) } };
     expect(harmonyState(q2, C, "pad").stale).toBe(false);
     expect(harmonyState(q2, C, "h1").stale).toBe(true);
@@ -221,16 +227,13 @@ describe("a harmony track across the song", () => {
 
   it("can be undone: the song before it was added is the song after it is taken away", () => {
     const p0 = song();
-    const p1 = addHarmony(p0, C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
-    // the source was muted for the re-harmonisation; taking it away lets the source be heard again
-    expect(p1.mix?.chords?.mute).toBe(true);
-    expect(removeTrack(p1, "b").mix?.chords?.mute).toBe(false);
+    for (const option of ["borrowed", "higher"]) expect(sameMusic(removeTrack(addHarmony(p0, C, { kind: "chords", from: "chords", option }, "b").p, "b"), p0), option).toBe(true);
+    // switching a layer to a swap: the chords are replaced in this section, and back they are heard
     const p2 = addHarmony(p0, C, { kind: "chords", from: "chords", option: "higher" }, "h").p;
-    expect(sameMusic(removeTrack(p2, "h"), p0)).toBe(true);
-    // switching a layer to a swap mutes the source, and back unmutes it
     const swap = rewriteHarmony(p2, C, "h", "tritone");
-    expect(swap.mix?.chords?.mute).toBe(true);
-    expect(rewriteHarmony(swap, C, "h", "higher").mix?.chords?.mute).toBe(false);
+    expect(replaced(swap, "A")).toBe(true);
+    expect(replaced(rewriteHarmony(swap, C, "h", "higher"), "A")).toBe(false);
+    expect(swap.mix).toBeUndefined();
   });
 
   it("an audition hears the track it will add, and leaves the page alone", () => {
@@ -284,7 +287,7 @@ describe("a harmony track across the song", () => {
       expect(menu[0].option.id, option).toBe(option);
       expect(menu.slice(1).map((x) => x.option.id), option).toEqual(harmonyMenu(back, C, kind, from).map((x) => x.option.id));
       const again = rewriteHarmony(back, C, "old");
-      expect(layer(again, "A", "old"), option).toEqual(layer(p, "A", "old"));
+      expect([layer(again, "A", "old")?.chords, layer(again, "A", "old")?.melody], option).toEqual([layer(p, "A", "old")?.chords, layer(p, "A", "old")?.melody]);
       // one still offered stays where it is
       expect(harmonyMenu(song(), C, "chords", "chords", "x", "sus").map((x) => x.option.id)).toEqual(harmonyMenu(song(), C, "chords", "chords").map((x) => x.option.id));
     }
@@ -313,7 +316,7 @@ describe("a harmony track across the song", () => {
   });
 
   it("copy and paste of sections keeps it whole: in the same song, and into another one", () => {
-    const p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
+    const p = addHarmony(at(song(), "C"), C, { kind: "melody", from: "melody", option: "third-above" }, "h1").p;
     const clip = copySection(p, "c", C)!;
     // into D in the same song: D now holds C's harmony as it was written, so nothing counts as changed by hand
     const same = pasteSection(p, "d", clip, C, id);
@@ -346,20 +349,22 @@ describe("a harmony against what is heard", () => {
     return loadCurrent({ chords: [], bpm: 90, pattern: "ring", loop: true, bars: 4, meter: { num: 4, den: 4 }, song: s });
   }
 
-  it("a swap written from the tune mutes the song's chords, not the tune, and carries them where there is no tune", () => {
+  it("a swap written from the tune plays instead of the song's chords, not the tune, and carries them where there is no tune", () => {
     const p = addHarmony(plain(), C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
-    expect(p.mix?.chords?.mute).toBe(true);
-    expect(p.mix?.melody?.mute).toBeFalsy();
-    // D has no tune: with its chords muted it would go silent, so the swap is written there too
-    expect(layer(p, "D", "b")!.chords!.map((c) => c.ref.root)).toEqual(["F", "C"]);
+    expect(replaced(p, "A")).toBe(true);
+    expect(replaced(p, "A", "melody")).toBe(false);
+    // D has no tune: with its chords replaced it would go silent, so the swap is written there too
+    const d = addHarmony(at(plain(), "D"), C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
+    expect(layer(d, "D", "b")!.chords!.map((c) => c.ref.root)).toEqual(["F", "C"]);
     // E's tune leaves room for the borrowed F minor
-    expect(layer(p, "E", "b")!.chords![0].ref).toMatchObject({ root: "F", typeId: "min" });
-    expect(harmonyMenu(plain(), C, "chords", "melody").find((x) => x.option.id === "borrowed")).toMatchObject({ instead: "chords", label: "Darker" });
-    // undone by taking it away: the chords play again; with another swap still in place they stay muted
-    expect(removeTrack(p, "b").mix?.chords?.mute).toBe(false);
+    const e = addHarmony(at(plain(), "E"), C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
+    expect(layer(e, "E", "b")!.chords![0].ref).toMatchObject({ root: "F", typeId: "min" });
+    expect(harmonyMenu(at(plain(), "E"), C, "chords", "melody").find((x) => x.option.id === "borrowed")).toMatchObject({ instead: "chords", label: "Darker" });
+    // taken away, the chords play again; with another swap still there they are still replaced
+    expect(replaced(removeTrack(p, "b"), "A")).toBe(false);
     const two = addHarmony(p, C, { kind: "chords", from: "chords", option: "lead-in" }, "l").p;
-    expect(removeTrack(two, "b").mix?.chords?.mute).toBe(true);
-    expect(removeTrack(removeTrack(two, "b"), "l").mix?.chords?.mute).toBe(false);
+    expect(replaced(removeTrack(two, "b"), "A")).toBe(true);
+    expect(replaced(removeTrack(removeTrack(two, "b"), "l"), "A")).toBe(false);
   });
 
   it("Best fit plays instead of the song's chords when there are some (its own chords would clash with them), and with nothing otherwise", () => {
@@ -367,28 +372,28 @@ describe("a harmony against what is heard", () => {
     expect(menu.find((x) => x.option.id === "fit")!.instead).toBe("chords");
     expect(menu.find((x) => x.option.id === "colour")!.instead).toBeUndefined();
     const p = addHarmony(plain(), C, { kind: "chords", from: "melody", option: "fit" }, "f").p;
-    expect(p.mix?.chords?.mute).toBe(true);
+    expect(replaced(p, "A")).toBe(true);
     // the section without a tune keeps its chords in the new track
-    expect(layer(p, "D", "f")!.chords!.map((c) => `${c.ref.root}${c.ref.typeId}`)).toEqual(["Fmaj", "Cmaj"]);
-    // a tune with no chords anywhere: Best fit is simply added
+    const d = addHarmony(at(plain(), "D"), C, { kind: "chords", from: "melody", option: "fit" }, "f").p;
+    expect(layer(d, "D", "f")!.chords!.map((c) => `${c.ref.root}${c.ref.typeId}`)).toEqual(["Fmaj", "Cmaj"]);
+    // a tune with no chords: Best fit is simply added
     const bare = loadCurrent({ chords: [], bpm: 90, pattern: "ring", loop: true, bars: 2, meter: { num: 4, den: 4 }, song: { parts: [{ id: "X", bars: 2, chords: [], melody: tune([60, 64, 67, 72, 71, 67, 62, 59]) }], blocks: [{ id: "x", partId: "X" }], current: "x" } });
     expect(harmonyMenu(bare, C, "chords", "melody").find((x) => x.option.id === "fit")!.instead).toBeUndefined();
     const q = addHarmony(bare, C, { kind: "chords", from: "melody", option: "fit" }, "f").p;
-    expect(q.mix?.chords?.mute).toBeFalsy();
     expect(layer(q, "X", "f")!.chords!.length).toBeGreaterThan(0);
     // switching to a layer that plays with the chords lets them be heard again
-    expect(rewriteHarmony(p, C, "f", "pad").mix?.chords?.mute).toBe(false);
+    expect(replaced(rewriteHarmony(p, C, "f", "pad"), "A")).toBe(false);
   });
 
   it("a line written to the chords bends to the swapped chords that sound, and an older one says it is out of date", () => {
-    const sw = addHarmony(plain(), C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
+    const sw = addHarmony(at(plain(), "E"), C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
     const after = addHarmony(sw, C, { kind: "melody", from: "melody", option: "third-above" }, "t").p;
     // over F minor the third above F is A flat, never the A natural that rubs against it
     const e = layer(after, "E", "t")!.melody!.notes;
     expect(e.filter((x) => x.at < 4 * TICKS).some((x) => x.midi % 12 === 8)).toBe(true);
     expect(e.filter((x) => x.at < 4 * TICKS).some((x) => x.midi % 12 === 9)).toBe(false);
     // written before the swap: the A natural is there, and ⟳ says it would now come out differently
-    const before = addHarmony(plain(), C, { kind: "melody", from: "melody", option: "third-above" }, "t").p;
+    const before = addHarmony(at(plain(), "E"), C, { kind: "melody", from: "melody", option: "third-above" }, "t").p;
     expect(layer(before, "E", "t")!.melody!.notes.some((x) => x.midi % 12 === 9)).toBe(true);
     const later = addHarmony(before, C, { kind: "chords", from: "melody", option: "borrowed" }, "b").p;
     expect(harmonyState(later, C, "t").stale).toBe(true);
@@ -480,26 +485,26 @@ describe("a harmony as the song around it grows", () => {
   });
 });
 
-describe("the chords a re-harmonisation mutes", () => {
+describe("the chords a re-harmonisation plays instead of", () => {
   it("are heard again when it goes, though its source went first", () => {
     for (const option of ["borrowed", "fit"]) {
       // a tune on Melody 2, chords written from it in place of the song's
-      const base = addTrack(song(), "melody", "m2").p;
+      const base = addTrackHere(song(), "melody", "m2").p;
       const withTune = { ...base, melody: tune([64, 65, 67, 69, 67, 65, 64, 62]) };
       const p = addHarmony(withTune, C, { kind: "chords", from: "m2", option }, "b").p;
-      expect(p.mix?.chords?.mute, option).toBe(true);
+      expect(replaced(p, "A"), option).toBe(true);
       const q = removeTrack(removeTrack(p, "m2"), "b");
-      expect(q.mix?.chords?.mute, option).toBeFalsy();
+      expect(replaced(q, "A"), option).toBe(false);
     }
   });
-  it("stay muted when they were muted by hand before it came", () => {
-    const p0 = { ...song(), mix: { chords: { mute: true } } };
-    const p = addHarmony(p0, C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
-    expect(removeTrack(p, "b").mix?.chords?.mute).toBe(true);
-    expect(rewriteHarmony(p, C, "b", "pad").mix?.chords?.mute).toBe(true);
-    // muted by the harmony itself: heard again when it goes
-    const q = addHarmony(song(), C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
-    expect(removeTrack(q, "b").mix?.chords?.mute).toBe(false);
+  it("a song from before kept them muted for the whole song: going back to a layer, or taking it away, lets them be heard", () => {
+    const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "borrowed" }, "b").p;
+    const old = { ...p, mix: { chords: { mute: true, instead: true } } };
+    expect(rewriteHarmony(old, C, "b", "pad").mix?.chords?.mute).toBe(false);
+    expect(removeTrack(old, "b").mix?.chords?.mute).toBe(false);
+    // muted by hand: stay muted
+    const hand = { ...p, mix: { chords: { mute: true } } };
+    expect(removeTrack(hand, "b").mix?.chords?.mute).toBe(true);
   });
 });
 
@@ -553,17 +558,13 @@ describe("a harmony track as the pages see it", () => {
 });
 
 describe("a re-harmonisation written again", () => {
-  it("leaves the chords it plays instead of heard when the songwriter unmuted them", () => {
+  it("never touches the mixer: the chords it replaces are replaced in its section only", () => {
     const p = addHarmony(song(), C, { kind: "chords", from: "chords", option: "tritone" }, "tt").p;
-    expect(p.mix?.chords).toEqual({ mute: true, instead: true });
-    // unmuted by hand on the Track page: the mute is theirs now
-    const heard = { ...p, mix: { ...p.mix, chords: { mute: false } } };
-    for (const option of ["tritone", "borrowed"]) expect(rewriteHarmony(heard, C, "tt", option).mix?.chords?.mute).toBe(false);
-    // and still theirs once the idea has been saved and opened again
-    const back = reviveIdea(JSON.parse(JSON.stringify({ id: "i", name: "x", key: C, savedAt: 0, progression: heard })))!.progression;
-    expect(rewriteHarmony(back, C, "tt").mix?.chords?.mute).toBe(false);
-    // never muted (pasted into a song whose other sections play those chords): writing it across the song mutes them
-    expect(rewriteHarmony({ ...p, mix: undefined }, C, "tt").mix?.chords).toEqual({ mute: true, instead: true });
+    expect(p.mix).toBeUndefined();
+    for (const option of ["tritone", "borrowed"]) expect(rewriteHarmony(p, C, "tt", option).mix).toBeUndefined();
+    // muted by hand on the Track page: heard as the songwriter set it (a muted swap replaces nothing)
+    const muted = { ...p, mix: { tt: { mute: true } } };
+    expect(replaced(muted, "A")).toBe(false);
   });
 });
 
@@ -578,9 +579,9 @@ describe("a re-harmonisation pasted into another idea", () => {
     const into = pasteSection(other, "x", clip, C, id);
     const t = into.tracks!.find((x) => x.name === "Tritone swap")!;
     expect(into.tones?.[t.id]).toEqual({ inst: "piano" });
-    expect(into.mix?.chords?.mute).toBe(true);
+    expect(replaced(into, "X")).toBe(true);
     // and taking it away lets the chords be heard again
-    expect(removeTrack(into, t.id).mix?.chords?.mute).toBe(false);
+    expect(replaced(removeTrack(into, t.id), "X")).toBe(false);
   });
   it("copied from an idea with no sections yet, keeps its record of what was written, so it is not taken for changed by hand", () => {
     for (const option of ["relative", "colour"]) {
@@ -607,20 +608,22 @@ describe("a re-harmonisation pasted into another idea", () => {
 });
 
 describe("what Harmonize can go with", () => {
-  it("every chords and melody track with music somewhere, harmony tracks too, the one on screen first", () => {
+  it("every chords and melody track with music in the section on screen, harmony tracks too, the one on screen first", () => {
     let p = addHarmony(song(), C, { kind: "melody", from: "melody", option: "third-above" }, "h").p;
     // an empty chords track and an empty melody track are not offered
-    p = addTrack(p, "chords", "c2").p;
-    p = addTrack(p, "melody", "m2").p;
+    p = addTrackHere(p, "chords", "c2").p;
+    p = addTrackHere(p, "melody", "m2").p;
     expect(harmonizeSources(p).map((t) => t.id)).toEqual(["chords", "melody", "h"]);
     expect(harmonizeSources(p, "melody").map((t) => t.id)).toEqual(["melody", "chords", "h"]);
     expect(harmonizeSources(p, "h").map((t) => t.id)).toEqual(["h", "chords", "melody"]);
     // the track on screen with nothing in it: the others in the song's order
     expect(harmonizeSources(p, "m2").map((t) => t.id)).toEqual(["chords", "melody", "h"]);
-    // music in only one section counts (C holds Melody 2's notes, on the page there)
-    let q = selectBlock(focusTrack(p, "melody", "m2"), "c");
+    // music in another section does not count here: C has Melody 2 with notes, A has it empty
+    let q = selectBlock(p, "c");
+    q = addTrackHere(q, "melody", "x").p;
     q = { ...q, melody: tune([60, 62]) };
-    expect(harmonizeSources(q, "m2").map((t) => t.id)).toEqual(["m2", "chords", "melody", "h"]);
+    expect(harmonizeSources(q, "m2").map((t) => t.id)).toEqual(["m2", "chords", "melody"]);
+    expect(harmonizeSources(selectBlock(q, "a"), "m2").map((t) => t.id)).toEqual(["chords", "melody", "h"]);
   });
   it("a harmony written from a chosen track is written from it, whatever the page has brought forward", () => {
     // a harmony track on the page: the new one is still written from the lead melody when that is the one chosen

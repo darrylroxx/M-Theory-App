@@ -14,7 +14,7 @@ const rock = BEAT_LIBRARY.find((p) => p.steps === 16 && p.div === 4 && (p.bars ?
 const waltz = BEAT_LIBRARY.find((p) => p.steps === 12 && p.div === 4)!;
 const on = (p: typeof rock): Beat => applyPattern(DEFAULT_BEAT, p);
 /** every drum rhythm kept anywhere in the song */
-const rhythms = (p: Progression) => [p.beat, ...Object.values(p.layers ?? {}).map((l) => l.beat), p.song?.shared?.groove, ...(p.song?.parts ?? []).flatMap((x) => [x.groove, ...Object.values(x.layers ?? {}).map((l) => l.beat)])].filter((g): g is NonNullable<typeof g> => !!g);
+const rhythms = (p: Progression) => [p.beat, ...Object.values(p.layers ?? {}).map((l) => l.beat), ...(p.song?.parts ?? []).flatMap((x) => [x.groove, ...Object.values(x.layers ?? {}).map((l) => l.beat)])].filter((g): g is NonNullable<typeof g> => !!g);
 
 describe("one time signature for the whole song", () => {
   it("an older song gets the signature its first section played in", () => {

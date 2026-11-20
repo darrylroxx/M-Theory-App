@@ -14,7 +14,7 @@ import type { Voicing } from "../../guitar/voicings";
 import { EMPTY_MELODY, hasTune, inBars, melodyBase, transposeMelody, type Melody } from "../../song/melody";
 import { barsOr, frameBeats, inFrame, sliceItems, type BarRef, type LoopSpan } from "../../song/frame";
 import { allBars, allLoop, entryOf, loopKeys, loopRuns, placeAfter, sameShape, sectionBars, sectionLoops, tapBar, toggleSection, type LoopBars } from "../../song/loops";
-import { linkState, mapAllChords, mapAllMelodies, relink, sections, selectBlock, soloSection, type Section } from "../../song/structure";
+import { drumsIn, mapAllChords, mapAllMelodies, sections, selectBlock, soloSection, type Section } from "../../song/structure";
 import { CHORD_CATEGORIES, chordSymbol, chordSymbolAscii, displaySuffix, type ChordRef } from "../../theory/chords";
 import { intervalName, semitonesOf } from "../../theory/intervals";
 import { CHORD_ROWS, ROLE_INFO, analyzeChord, borrowedChords, chordRow, chordsInScale, diatonicChords, spiceChords, transposeRef, type Key, type KeyChord, type Role } from "../../theory/keys";
@@ -28,7 +28,7 @@ import { BarsControl, useBarsView } from "../components/BarsControl";
 import type { BarsShown } from "../../song/window";
 import { CanvasPage } from "../components/CanvasPage";
 import type { Spot } from "../../canvas/layout";
-import { DrumMachine, type Link } from "../components/DrumMachine";
+import { DrumMachine } from "../components/DrumMachine";
 import { HarpPanel, type ToneProps } from "../components/HarpPanel";
 import { MelodyGrid } from "../components/MelodyGrid";
 import { TrackPage, type TrackSection } from "../components/TrackPage";
@@ -36,7 +36,7 @@ import { AuditionCtx, HarmonizeButton, HarmonyAgain, HarmonyPicker, type Auditio
 import { harmonizeSources, previewHarmony, writtenAs } from "../../song/harmony";
 import { VocalsPage, type RecordPlan } from "../components/VocalsPage";
 import { setMix } from "../../audio/mix";
-import { PLAIN_STYLE, addTrack, allTracks, drumsOf, focusTrack, isFirst, normalize, removeTrack, tracksOf, type EditKind, type Layers, type Track } from "../../song/tracks";
+import { PLAIN_STYLE, addTrackHere, allTracks, drumsOf, focusTrack, hasMusic, insteadIn, isFirst, normalize, removeHere, tracksHere, type EditKind, type Layers, type Track } from "../../song/tracks";
 import { CopyIcon, PasteIcon } from "../icons";
 import { layClips, placedClips, playedTakes as takesPlayed, sixteenths } from "../../song/clips";
 import { encodeWav, safeGain, trimEnd } from "../../audio/wav";
@@ -181,7 +181,7 @@ export function GuitarView() {
   const [preview, setPreview] = useState<Preview | null>(null);
   const heard = useMemo(() => (preview ? previewHarmony(prog, state.key, preview.plan, preview.id) : prog), [prog, preview, state.key]);
   const playSecs = useMemo(() => (heard === prog ? secs : sections(heard)), [heard, prog, secs]);
-  // Each section plays its own music; every track plays with its own sound, the same in every section.
+  // Each section plays its own music, and only its own tracks, each with its sound in that section.
   const plan = useMemo(() => {
     const list: PlayItem[] = [];
     const map: { block: string; idx: number }[] = [];
@@ -193,7 +193,6 @@ export function GuitarView() {
     let any = false;
     // with no song yet, what is on the page is section A (every track in its place: a page may be editing an added track)
     const np = normalize(heard);
-    const nBeat = np.beat ?? DEFAULT_BEAT;
     const row: Section[] = playSecs.length ? playSecs : [soloSection(np)];
     const editingOther = normalize(prog) !== prog && !!prog.focus?.chords;
     // every clip of the vocal tracks (a stretch of a take, as edited on the Vocals lane), laid in the song where it
@@ -207,31 +206,33 @@ export function GuitarView() {
       (np.tracks ?? []).flatMap((t) => (t.kind === "vocals" ? placedClips(t).map(({ clip, take }) => ({ clip, take: { ...take, track: t.id } })) : [])),
       np.bpm,
     );
-    // what plays each track: the item carries it, so the player, the WAV and the backing all play the same instrument
-    const firstTone = toneOf(np, "chords");
-    const tuneTone = toneOf(np, "melody");
-    // the first chords and melody tracks' sound: one for the whole song
-    const style = np.pattern;
-    const feel = np.feel;
-    const harp = reviveSound(np.sound);
-    const tuneHarp = reviveSound(np.tuneSound);
-    /** What the tracks added on the Track page play in a section. */
-    const extrasOf = (sec: Section, len: number, secBar: number, swing: number): ExtraPlay | undefined => {
+    // what plays each track, and how it sounds, in each section: the item carries it, so the player,
+    // the WAV and the backing all play the same. (Sections that sound the same share the same objects.)
+    const shared = new Map<string, unknown>();
+    const one = <T,>(x: T): T => {
+      const k = JSON.stringify(x);
+      if (!shared.has(k)) shared.set(k, x);
+      return shared.get(k) as T;
+    };
+    /** What the tracks added in a section play there. */
+    const extrasOf = (sec: Section, len: number, secBar: number, swing: number, quiet: Set<string>): ExtraPlay | undefined => {
       const ex: ExtraPlay = { chords: [], tunes: [], drums: [] };
       for (const t of np.tracks ?? []) {
         const l = sec.layers?.[t.id];
         if (!l) continue;
-        if (t.kind === "chords" && l.chords?.length) {
-          const tone = toneOf(np, t.id);
+        if (t.kind === "chords" && l.chords?.length && !quiet.has(t.id)) {
+          const tone = one(toneOf(sec, t.id));
+          const sound = one(reviveSound(l.sound));
+          const feel = l.feel && one(l.feel);
           const vs = voicingsOf(l.chords);
           const kv = onKeys(tone) ? keysVoicings(l.chords, tone) : null;
           let at = 0;
           for (const { item: c, index: i } of inFrame(l.chords, len)) {
-            ex.chords.push({ track: t.id, at, beats: c.beats, midi: c.rest ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], style: t.style ?? PLAIN_STYLE, feel: t.feel, sound: reviveSound(t.sound), tone });
+            ex.chords.push({ track: t.id, at, beats: c.beats, midi: c.rest ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], style: l.pattern ?? PLAIN_STYLE, feel, sound, tone });
             at += c.beats;
           }
-        } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: reviveSound(t.sound), tone: toneOf(np, t.id) } });
-        else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: drumsOf(t, l)! });
+        } else if (t.kind === "melody" && hasTune(l.melody)) ex.tunes.push({ track: t.id, tune: { m: inBars(l.melody, barsOr(sec.bars)), bar: secBar, swing, sound: one(reviveSound(l.tuneSound)), tone: one(toneOf(sec, t.id)) } });
+        else if (t.kind === "drums" && l.beat?.on) ex.drums.push({ track: t.id, beat: drumsOf(l)! });
       }
       // the clips that lie under this section (the buffer holds just the take: a clip plays its stretch of it)
       for (const { clip, take: tk, at, offset, dur, joined } of laid[sec.blockId] ?? []) {
@@ -241,10 +242,19 @@ export function GuitarView() {
       return ex.chords.length || ex.tunes.length || ex.drums.length || ex.takes?.length ? ex : undefined;
     };
     for (const sec of row) {
+      // the first tracks' sound in this section
+      const firstTone = one(toneOf(sec, "chords"));
+      const tuneTone = one(toneOf(sec, "melody"));
+      const style = sec.style ?? PLAIN_STYLE;
+      const feel = sec.feel && one(sec.feel);
+      const harp = one(reviveSound(sec.sound));
+      const tuneHarp = one(reviveSound(sec.tuneSound));
+      // (a chords track a harmony plays instead of, in this section, is not heard here)
+      const quiet = insteadIn(sec.layers, np.tracks, np.mix);
       const vs = sec.current && !editingOther ? voicings : voicingsOf(sec.chords);
       const kv = onKeys(firstTone) ? keysVoicings(sec.chords, firstTone) : null;
-      // the first drums track: its own kit, the section's rhythm
-      const drums: Beat = { ...nBeat, ...sec.groove, on: sec.groove?.on ?? nBeat.on };
+      // the first drums track: its kit and rhythm in this section
+      const drums: Beat = one(drumsIn(sec));
       // every section plays in its own time signature (the song's, unless it has one of its own)
       const secSig = sec.meter ?? songSig;
       const secBar = sigBeats(secSig);
@@ -255,11 +265,11 @@ export function GuitarView() {
       const len = frameBeats(sec.bars, secBar);
       lengths[sec.blockId] = { beats: len, bar: secBar };
       const inside = inFrame(sec.chords, len);
-      const extra = extrasOf(sec, len, secBar, drums.on && drums.div === 4 ? drums.swing : 0);
+      const extra = extrasOf(sec, len, secBar, drums.on && drums.div === 4 ? drums.swing : 0, quiet);
       const own: PlayItem[] = [];
       const idx: number[] = [];
       inside.forEach(({ item: c, index: i }, k) => {
-        own.push({ midi: c.rest ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], beats: c.beats, drums, style, feel, sound: harp, tone: firstTone, tune: secTune, section: k === 0, extra, meter: secMeter });
+        own.push({ midi: c.rest || quiet.has("chords") ? [] : (kv ? kv[i] : vs[i]?.midi) ?? [], beats: c.beats, drums, style, feel, sound: harp, tone: firstTone, tune: secTune, section: k === 0, extra, meter: secMeter });
         idx.push(i);
       });
       // after the last chord the section goes on to the end of its last bar: drums and melody carry on, the harp is silent
@@ -416,11 +426,7 @@ export function GuitarView() {
     return i >= 0 && keyVs ? keyVs[i] : keysVoicing(ref, chordTone);
   }, [prog.chords, keyVs, chordTone]);
 
-  // whether the section on screen plays the first section's drum rhythm or its own (the first drums track only)
-  const linked = useMemo(() => linkState(prog), [prog]);
   const editDrums = prog.focus?.drums && prog.focus.drums !== "drums" ? prog.focus.drums : null;
-  // (the same chip from one render to the next, so the drum machine is not drawn again for nothing while the music plays)
-  const grooveLink = useMemo((): Link | undefined => (editDrums ? undefined : { source: linked.source, first: linked.first, own: linked.own, onReset: () => set((s) => ({ ...s, progression: relink(s.progression) })) }), [linked.source, linked.first, linked.own, editDrums, set]);
   /** The first drums track's beat, even while the Drums page edits another one (it sets the drum sound's effects). */
   const firstBeat = editDrums ? prog.layers?.drums?.beat ?? beat : beat;
   const pane: Pane = state.pane ?? "frame";
@@ -517,13 +523,13 @@ export function GuitarView() {
     stopAlone();
     getAudio();
     // the tracks on a piano or the synth are made ready first (the first time, a moment), so the first chord is heard
-    const keys = Object.entries(heard.tones ?? {})
-      .filter(([, t]) => onKeys(t))
-      .map(([id]) => {
-        const t = heard.tracks?.find((x) => x.id === id);
-        // (an added track's voice is made on its own sound, so its first chord does not glide in from another)
-        return { id, kind: (id === "melody" || t?.kind === "melody" ? "melody" : "chord") as "melody" | "chord", sound: t ? reviveSound(t.sound) : undefined };
-      });
+    const keys: { id: string; kind: "melody" | "chord" }[] = [];
+    for (const sec of playSecs.length ? playSecs : [soloSection(normalize(heard))])
+      for (const [id, t] of Object.entries(sec.tones ?? {})) {
+        if (!onKeys(t) || keys.some((k) => k.id === id)) continue;
+        const tr = heard.tracks?.find((x) => x.id === id);
+        keys.push({ id, kind: id === "melody" || tr?.kind === "melody" ? "melody" : "chord" });
+      }
     waiting.current = true;
     const mine = starts.begin();
     // (on the Vocals page the interface's own engine closes first, so the driver settles in silence: see handoff.ts)
@@ -707,7 +713,7 @@ export function GuitarView() {
     const row: Section[] = secs.length ? secs : [soloSection(np)];
     return row.map((sec, i) => {
       const per = plan.per[i];
-      return { block: sec.blockId, label: sec.label, color: sec.color, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, layers: sec.layers, drums: { ...firstBeat, ...sec.groove, on: sec.groove?.on ?? firstBeat.on } };
+      return { block: sec.blockId, label: sec.label, color: sec.color, bars: per?.bars ?? barsOr(sec.bars), bar: per?.bar ?? bar, chords: sec.chords, melody: sec.melody, layers: sec.layers, tones: sec.tones, drums: drumsIn(sec) };
     });
   }, [secs, plan.per, prog, firstBeat, bar]);
   // the mixer: every track's volume, mute and solo, for the whole song
@@ -860,7 +866,7 @@ export function GuitarView() {
         </div>
         <div className="pane" hidden={pane !== "drums"}>
           <ClipBar kind="drums" label={curLabel} color={curColor} frame={frame} onPasted={onPasted} />
-          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} grooveLink={grooveLink} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
+          <DrumMachine fresh={pasted} beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} frame={nBars} getPos={getPos} shown={shown} follow={follow} active={pane === "drums"} />
         </div>
       </div>
       {hz && (pane === "rhythm" || pane === "melody") && (
@@ -1235,20 +1241,22 @@ function ClipBar({ kind, label, color, frame, onPasted, onAgain }: { kind: ClipK
   };
   const takeBack = () => {
     if (!undoFits(undo, block, on, writtenAs(state.progression, on))) return;
-    set((s) => ({ ...s, progression: { ...s.progression, ...unpastePart(s.progression, undo.before) } }));
+    set((s) => ({ ...s, progression: { ...s.progression, ...unpastePart(s.progression, undo.before, undo.track) } }));
     setUndo(null);
     onPasted();
     toast("Paste undone");
   };
-  const list = tracksOf(normalize(state.progression), ek);
-  /** Another track of this kind (a second set of chords, another melody, more drums): plain, empty, ready to write in. */
+  // the tracks of this kind in the section on screen (every section has its own)
+  const list = tracksHere(state.progression, ek);
+  /** Another track of this kind in this section only (a second set of chords, another melody, more drums): plain, empty, ready to write in. */
   const add = () => {
     const id = newId();
-    set((s) => ({ ...s, progression: addTrack(s.progression, ek, id).p }));
+    set((s) => ({ ...s, progression: addTrackHere(s.progression, ek, id).p }));
   };
+  /** Take a track out of this section only (asked first only when it has music here). */
   const drop = (t: Track) => {
-    if (!window.confirm(`Remove ${t.name} from every section?`)) return;
-    set((s) => ({ ...s, progression: removeTrack(s.progression, t.id) }));
+    if (hasMusic(normalize(state.progression).layers?.[t.id]) && !window.confirm(`Remove ${t.name} from ${label}?`)) return;
+    set((s) => ({ ...s, progression: removeHere(s.progression, t.id) }));
   };
   return (
     <>

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { DEFAULT_BEAT, kitOfBeat, kitSig } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { addNewSection, commit, ensureSong, mapAllChords, mapAllMelodies, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
-import { PLAIN_KIT, PLAIN_STYLE, addTrack, allTracks, drumsOf, focusTrack, nextName, normalize, refocus, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
+import { PLAIN_KIT, PLAIN_STYLE, addTrack, addTrackHere, allTracks, drumsOf, focusTrack, nextName, normalize, refocus, removeTrack, renameTrack, reviveLayers, reviveTracks, tracksOf } from "./tracks";
 import { transposeRef } from "../theory/keys";
 import { transposeMelody, type Melody } from "./melody";
 
@@ -35,13 +35,14 @@ describe("tracks", () => {
     expect(roots(focusTrack(back, "chords", "c2").chords)).toEqual(["E", "A"]);
   });
 
-  it("an extra chords track keeps its own style and harp; the first track keeps its own", () => {
+  it("an extra chords track keeps its own style and harp in its part of the section; the first track keeps its own", () => {
     let p = addTrack({ ...base(["G"]), pattern: "pinch", sound: { space: 0.7 } }, "chords", "c2").p;
     p = { ...p, pattern: "strum", sound: { space: 0.1 } };
     const n1 = normalize(p);
     expect(n1.pattern).toBe("pinch");
     expect(n1.sound).toEqual({ space: 0.7 });
-    expect(n1.tracks?.[0]).toMatchObject({ id: "c2", style: "strum", sound: { space: 0.1 } });
+    expect(n1.layers?.c2).toMatchObject({ pattern: "strum", sound: { space: 0.1 } });
+    expect(n1.tracks?.[0]).toEqual({ id: "c2", kind: "chords", name: "Chords 2" });
     const again = focusTrack(n1, "chords", "c2");
     expect(again.pattern).toBe("strum");
   });
@@ -50,9 +51,11 @@ describe("tracks", () => {
     let p = ensureSong(base(["G", "C"]), id);
     p = addTrack(p, "chords", "c2").p;
     p = { ...p, chords: [chord("E")] }; // A: Chords 2 = E
-    p = addNewSection(p, id); // B, still editing Chords 2
-    expect(p.focus).toEqual({ chords: "c2" });
+    p = addNewSection(p, id); // B: no Chords 2 there, the page edits the first chords track
+    expect(p.focus).toBeUndefined();
     expect(p.chords).toEqual([]);
+    p = addTrackHere(p, "chords", "x").p; // Chords 2 in B too: the same row
+    expect(p.focus).toEqual({ chords: "c2" });
     p = { ...p, chords: [chord("D")] }; // B: Chords 2 = D
     const [a, b] = sections(p);
     expect(roots(a.chords)).toEqual(["G", "C"]);
@@ -134,9 +137,15 @@ describe("tracks", () => {
   });
 
   it("tracks and their notes survive a reload; anything broken is dropped", () => {
-    const tracks = reviveTracks([{ id: "c2", kind: "chords", name: "Pad", style: "strum" }, { id: "chords", kind: "chords" }, { id: "x", kind: "kazoo" }, { id: "v", kind: "vocals", input: 2 }]);
-    expect(tracks).toEqual([{ id: "c2", kind: "chords", name: "Pad", style: "strum" }, { id: "v", kind: "vocals", name: "Vocal", input: 2 }]);
-    expect(reviveLayers({ c2: { chords: [chord("E"), { ref: null }] }, ghost: { chords: [] } }, tracks)?.c2.chords).toHaveLength(1);
+    const tracks = reviveTracks([{ id: "c2", kind: "chords", name: "Pad" }, { id: "chords", kind: "chords" }, { id: "x", kind: "kazoo" }, { id: "v", kind: "vocals", input: 2 }]);
+    expect(tracks).toEqual([{ id: "c2", kind: "chords", name: "Pad" }, { id: "v", kind: "vocals", name: "Vocal", input: 2 }]);
+    const ls = reviveLayers({ c2: { chords: [chord("E"), { ref: null }], pattern: "strum", sound: { space: 2 }, feel: "x" }, ghost: { chords: [] } }, tracks);
+    expect(ls?.c2.chords).toHaveLength(1);
+    expect(ls?.c2.pattern).toBe("strum");
+    expect(ls?.c2.feel).toBeUndefined();
+    expect(Object.keys(ls ?? {})).toEqual(["c2"]);
+    // a track in a section with nothing in it yet is still there
+    expect(reviveLayers({ c2: {} }, tracks)).toEqual({ c2: { chords: [] } });
     expect(renameTrack({ ...base(), tracks }, "c2", "  Keys  ").tracks?.[0].name).toBe("Keys");
   });
 
@@ -146,7 +155,8 @@ describe("tracks", () => {
     p = addTrack(p, "melody", "m2").p;
     p = { ...p, melody: tune(67) }; // A: Melody 2
     p = addNewSection(p, id);
-    p = { ...p, melody: tune(64) }; // B: Melody 2 (still on the page)
+    p = addTrackHere(p, "melody", "x").p;
+    p = { ...p, melody: tune(64) }; // B: Melody 2
     const moved = mapAllMelodies(p, (m) => transposeMelody(m, 2));
     expect(moved.focus).toEqual({ melody: "m2" });
     expect(moved.melody?.notes[0].midi).toBe(66);
@@ -156,45 +166,28 @@ describe("tracks", () => {
     expect(b.layers?.m2.melody?.notes[0].midi).toBe(66);
   });
 
-  it("an added drums track has one kit, kept on the track: a new section starts on it, not on the first drums' one", () => {
+  it("an added drums track's kit is its own in each section: a new section has no added tracks", () => {
     let p: Progression = { ...base(["G"]), beat: { ...DEFAULT_BEAT, on: true, kit: "909" } };
     p = addTrack(p, "drums", "d2").p;
     // Drums 2 is given a kit of its own in A
     p = { ...p, beat: { ...p.beat!, kit: "mod", on: true } };
-    p = addNewSection(p, id); // B, still on Drums 2
+    p = addNewSection(p, id); // B: the page edits the first drums, on the kit they had in A
+    expect(p.focus).toBeUndefined();
+    expect(p.beat?.kit).toBe("909");
+    p = addTrackHere(p, "drums", "x").p; // Drums 2 in B: plain
     expect(p.focus?.drums).toBe("d2");
-    expect(p.beat?.kit).toBe("mod");
+    expect(p.beat?.kit).toBe(PLAIN_KIT.kit);
     expect(p.beat?.on).toBe(false);
-    expect(normalize(p).tracks!.find((t) => t.id === "d2")!.kit!.kit).toBe("mod");
+    p = { ...p, beat: { ...p.beat!, kit: "lofi", grit: 0.7, on: true, rows: { ...p.beat!.rows, snare: "0000100000001000" } } };
+    const [a, b] = sections(normalize(p));
+    expect([drumsOf(a.layers?.d2)!.kit, drumsOf(b.layers?.d2)!.kit]).toEqual(["mod", "lofi"]);
+    expect(drumsOf(b.layers?.d2)!.rows.snare).toBe("0000100000001000");
+    expect(drumsOf(undefined)).toBeUndefined();
     // and the first drums keep theirs
     expect(focusTrack(p, "drums", "drums").beat?.kit).toBe("909");
-  });
-
-  it("an added drums track's kit changed in one section is its kit in every section", () => {
-    let p: Progression = { ...base(["G"]), beat: { ...DEFAULT_BEAT, on: true, kit: "909" } };
-    p = addTrack(p, "drums", "d2").p;
-    p = { ...p, beat: { ...p.beat!, on: true, rows: { ...p.beat!.rows, kick: "1000100010001000" } } };
-    p = addNewSection(p, id); // B
-    p = { ...p, beat: { ...p.beat!, on: true, rows: { ...p.beat!.rows, snare: "0000100000001000" } } };
-    // Lo-fi chosen with Drums 2 in A
-    p = selectBlock(p, sections(p)[0].blockId);
-    expect(p.focus?.drums).toBe("d2");
-    p = { ...p, beat: { ...p.beat!, kit: "lofi", grit: 0.7 } };
-    // B again, Drums 2 brought forward again
-    p = focusTrack(selectBlock(focusTrack(p, "drums", "drums"), sections(p)[1].blockId), "drums", "d2");
-    expect([p.beat?.kit, p.beat?.grit]).toEqual(["lofi", 0.7]);
-    expect(p.beat?.rows.snare).toBe("0000100000001000");
-    const q = normalize(p);
-    const t = q.tracks!.find((x) => x.id === "d2")!;
-    expect(t.kit!.kit).toBe("lofi");
-    // what plays: each section's rhythm on the track's one kit
-    const [a, b] = sections(q);
-    expect([drumsOf(t, a.layers?.d2)!.kit, drumsOf(t, b.layers?.d2)!.kit]).toEqual(["lofi", "lofi"]);
-    expect(drumsOf(t, a.layers?.d2)!.rows.kick).toBe("1000100010001000");
-    expect(drumsOf(t, b.layers?.d2)!.rows.snare).toBe("0000100000001000");
-    expect(drumsOf(t, undefined)).toBeUndefined();
     // kept through saving and loading
-    expect(kitSig(reviveTracks(JSON.parse(JSON.stringify(q.tracks)))!.find((x) => x.id === "d2")!.kit!)).toBe(kitSig(t.kit!));
+    const back = reviveLayers(JSON.parse(JSON.stringify(b.layers)), normalize(p).tracks)!;
+    expect(kitSig(kitOfBeat(back.d2.beat!))).toBe(kitSig(kitOfBeat(b.layers!.d2.beat!)));
   });
 
   it("a new chords track is plain: nothing is copied from the first one", () => {
@@ -204,9 +197,9 @@ describe("tracks", () => {
     expect(PLAIN_STYLE).toBe("ring");
     expect(p.tones?.c2).toBeUndefined();
     expect(p.mix).toBeUndefined();
-    const t = normalize(p).tracks!.find((x) => x.id === "c2")!;
-    expect(t.style).toBe("ring");
-    expect([t.feel, t.sound]).toEqual([undefined, undefined]);
+    const l = normalize(p).layers!.c2;
+    expect(l.pattern).toBe("ring");
+    expect([l.feel, l.sound]).toEqual([undefined, undefined]);
     // the first track kept its own
     expect([normalize(p).pattern, normalize(p).feel, normalize(p).sound, p.tones?.chords]).toEqual(["block", { swing: 0.4 }, { space: 0.9 }, { inst: "piano" }]);
     // a new melody track: plain too
@@ -231,7 +224,6 @@ describe("tracks", () => {
   it("every track's sound is its own: changing one never changes another, and a round trip keeps them all", () => {
     let p: Progression = { ...base(["G"]), pattern: "block", feel: { swing: 0.2 }, sound: { space: 0.6 }, tuneSound: { voice: "lyre" }, melody: { div: 2, bars: 1, notes: [{ at: 0, midi: 60 }] }, beat: { ...DEFAULT_BEAT, on: true, kit: "909" } };
     p = ensureSong(p, id);
-    p = addNewSection(p, id);
     for (const [kind, tid] of [["chords", "c2"], ["melody", "m2"], ["drums", "d2"]] as const) p = addTrack(p, kind, tid).p;
     // Chords 2, Melody 2 and Drums 2 are on the pages: give each a sound
     p = { ...p, pattern: "pinch", feel: { speed: 2 }, sound: { voice: "koto" }, tuneSound: { voice: "kora" }, beat: { ...p.beat!, kit: "707", grit: 0.8 }, tones: { c2: { inst: "synth" }, m2: { inst: "piano" } } };
@@ -243,22 +235,24 @@ describe("tracks", () => {
     // the first tracks brought forward again and changed: the added ones keep theirs
     p = focusTrack(focusTrack(focusTrack(p, "chords", "chords"), "melody", "melody"), "drums", "drums");
     p = { ...p, pattern: "strum", sound: { space: 0.1 }, tuneSound: { voice: "folk" }, beat: { ...p.beat!, kit: "linn" }, tones: { ...p.tones, chords: { inst: "piano" } } };
-    const tracks = normalize(p).tracks!;
-    expect(tracks.find((t) => t.id === "c2")).toMatchObject({ style: "pinch", feel: { speed: 2 }, sound: { voice: "koto" } });
-    expect(tracks.find((t) => t.id === "m2")).toMatchObject({ sound: { voice: "kora" } });
-    expect(tracks.find((t) => t.id === "d2")!.kit).toMatchObject({ kit: "707", grit: 0.8 });
+    const ls = normalize(p).layers!;
+    expect(ls.c2).toMatchObject({ pattern: "pinch", feel: { speed: 2 }, sound: { voice: "koto" } });
+    expect(ls.m2).toMatchObject({ tuneSound: { voice: "kora" } });
+    expect(ls.d2.beat).toMatchObject({ kit: "707", grit: 0.8 });
     expect([p.tones?.c2, p.tones?.m2]).toEqual([{ inst: "synth" }, { inst: "piano" }]);
-    // in the other section, every one of them is the same
-    const other = selectBlock(p, sections(p)[0].blockId);
+    // a new section: a copy of the first tracks' sounds, then its own
+    const other = addNewSection(p, id);
     expect(firsts(other)).toEqual(["strum", { swing: 0.2 }, { space: 0.1 }, { voice: "folk" }, "linn", { inst: "piano" }, undefined]);
-    const c2 = focusTrack(other, "chords", "c2");
+    const back = selectBlock({ ...other, pattern: "quarters" }, sections(other)[0].blockId);
+    expect(back.pattern).toBe("strum");
+    const c2 = focusTrack(back, "chords", "c2");
     expect([c2.pattern, c2.feel, c2.sound]).toEqual(["pinch", { speed: 2 }, { voice: "koto" }]);
-    expect(focusTrack(other, "melody", "m2").tuneSound).toEqual({ voice: "kora" });
-    expect(focusTrack(other, "drums", "d2").beat).toMatchObject({ kit: "707", grit: 0.8 });
+    expect(focusTrack(back, "melody", "m2").tuneSound).toEqual({ voice: "kora" });
+    expect(focusTrack(back, "drums", "d2").beat).toMatchObject({ kit: "707", grit: 0.8 });
     // normalize and refocus there and back keep every sound
     const round = refocus(normalize(c2), c2.focus);
     expect([round.pattern, round.feel, round.sound]).toEqual([c2.pattern, c2.feel, c2.sound]);
-    expect(firsts(round)).toEqual(firsts(other));
+    expect(firsts(round)).toEqual(firsts(back));
   });
 
   it("a track removed takes its instrument with it", () => {
