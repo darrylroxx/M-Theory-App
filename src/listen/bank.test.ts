@@ -88,3 +88,34 @@ describe("a bank of ears on the audio thread", () => {
     expect(loud).toBeGreaterThan(-30);
   });
 });
+
+describe("what the ears heard, on its way to the page", () => {
+  it("goes every 50 ms of sound as one message (not one a frame), every frame in it, its arrays moved rather than copied", async () => {
+    const { EarBank, EarPost } = await import("./bank");
+    const sr = 48000;
+    const bank = new EarBank(sr, [{ key: "mix", light: false }, { key: "a", light: true }, { key: "b", light: true }]);
+    const post = new EarPost(sr);
+    const block = new Float32Array(128).map((_, i) => Math.sin(i * 0.3) * 0.3);
+    let sent = 0;
+    let frames = 0;
+    let made = 0;
+    let moved = 0;
+    for (let b = 0; b < Math.round(sr / 128); b++) {
+      const out = bank.process([[block], [block], [block]], 0);
+      for (const o of out) made += o.frames.length;
+      const m = post.add(out, 128);
+      if (m) {
+        sent++;
+        for (const o of m.list) frames += o.frames.length;
+        moved += m.transfer.length;
+      }
+    }
+    // a second of sound: about 20 messages instead of one per frame
+    expect(sent).toBeGreaterThanOrEqual(19);
+    expect(sent).toBeLessThanOrEqual(20);
+    expect(made).toBeGreaterThan(150);
+    // every frame made before the last message is in a message
+    expect(frames).toBeGreaterThan(made - 15);
+    expect(moved).toBeGreaterThan(frames);
+  });
+});

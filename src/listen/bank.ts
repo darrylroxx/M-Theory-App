@@ -111,3 +111,32 @@ export function turns(every: number[]): number[] {
   });
   return out;
 }
+
+/**
+ * What the ears heard, handed to the page every `every` seconds of sound as one message, the
+ * frames' arrays moved rather than copied. A message a frame (a few hundred a second) costs the
+ * audio thread a copy and a send each time; one every 50 ms costs a twentieth of the sends, and
+ * the frames keep their own times, so nothing the page does with them moves.
+ */
+export class EarPost {
+  private pending: BankOut[] = [];
+  private since = 0;
+  private readonly every: number;
+  constructor(sr: number, every = 0.05) {
+    this.every = Math.max(1, Math.round(sr * every));
+  }
+  /** `n` more samples heard, with what came of them: the message to send now (and what it moves), if it is time. */
+  add(out: BankOut[], n: number): { list: BankOut[]; transfer: ArrayBuffer[] } | null {
+    for (const o of out) this.pending.push(o);
+    this.since += n;
+    if (this.since < this.every || !this.pending.length) return null;
+    const list = this.pending;
+    this.pending = [];
+    this.since = 0;
+    const transfer: ArrayBuffer[] = [];
+    for (const o of list)
+      for (const f of o.frames)
+        for (const a of [f.noise, f.chroma, f.shape]) if (a && a.buffer instanceof ArrayBuffer && !transfer.includes(a.buffer)) transfer.push(a.buffer);
+    return { list, transfer };
+  }
+}
