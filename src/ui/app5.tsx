@@ -110,7 +110,7 @@ export function newIn(s: App5State, h: History, draft: string): App5State {
   return { ...s, ideaId: null, draft, song: { ...freshState().song, bpm: s.song.bpm }, session: openSession() };
 }
 /** Is there something on screen the library does not have? (What is open, selected or looped is not part of an idea.) */
-export function dirtyOf(s: Pick<App5State, "key" | "song" | "saved" | "ideaId" | "settings">, savedPrint?: string): boolean {
+export function dirtyOf(s: Pick<App5State, "key" | "song" | "saved" | "ideaId" | "settings"> & Partial<App5State>, savedPrint?: string): boolean {
   const idea = s.saved.find((i) => i.id === s.ideaId && !i.backup);
   if (!idea) return !isBlank5(s.song);
   const { capo, tuningId } = s.settings;
