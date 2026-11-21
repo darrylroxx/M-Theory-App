@@ -199,7 +199,7 @@ function useV4(target: Target | null, pane: Pane, onFrame?: () => void): { ctx: 
  * One clip (or a track with nothing on it yet) as the old pages' whole world. Renders nothing when the clip or its
  * track is gone. `pane`: which old page is shown inside. `onFrame`: a page asked for the old Frame page.
  */
-export function ClipLens({ target, pane = "rhythm", onFrame, children }: { target: Target; pane?: Pane; onFrame?: () => void; children: ReactNode }) {
+export function ClipLens({ target, pane = "rhythm", onFrame, children }: { target: Target; pane?: Pane; onFrame?: () => void; children?: ReactNode }) {
   const made = useV4(target, pane, onFrame);
   if (!made) return null;
   return (
@@ -210,7 +210,7 @@ export function ClipLens({ target, pane = "rhythm", onFrame, children }: { targe
 }
 
 /** The old components that are not composers, given the real settings, view, canvas and studio; a change to the song is dropped. */
-export function V4View({ children }: { children: ReactNode }) {
+export function V4View({ children }: { children?: ReactNode }) {
   const made = useV4(null, "track");
   if (!made) return null;
   return <AppCtx.Provider value={made.ctx}>{children}</AppCtx.Provider>;

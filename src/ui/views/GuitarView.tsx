@@ -82,7 +82,7 @@ export interface EmbedHost {
 }
 
 /** Guitar: key → mode → chords → shapes → your progression. With `embedded`: one of its pages, for a window of the track view. */
-export function GuitarView({ embedded }: { embedded?: EmbedHost } = {}) {
+export function GuitarView({ embedded }: { embedded?: EmbedHost }) {
   return embedded ? <EmbeddedView host={embedded} /> : <FullView />;
 }
 
