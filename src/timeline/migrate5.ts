@@ -357,6 +357,8 @@ export function toTimeline(p: Progression): Converted {
   // ── vocal tracks: takes at their beat, clips where they sound, layers that overlapped as tracks of their own ──
   const spb = 60 / Math.max(1, np.bpm);
   const where = new Map(lay.map((x) => [x.sec.blockId, x]));
+  /** how long the old song was, in beats */
+  const songBeats = Math.max(0, ...lay.map((x) => x.at + x.beats));
   for (const t of rows) {
     if (t.kind !== "vocals") continue;
     const input = t.input === 2 ? { input: { ch: 1 } } : {};
@@ -388,6 +390,9 @@ export function toTimeline(p: Progression): Converted {
         } else mute = true;
         start = 0;
       }
+      // a silent clip does not make the song longer than it was: it is kept as far as the old song's end
+      const over = mute ? (start - songBeats) * spb * take.rate + frames : 0;
+      if (over > 1e-6 && over < frames - 1e-6) frames -= over;
       const id = made.some((m) => m.clip.id === clip.id) || byId.has(clip.id) ? `${t.id}.${clip.id}` : clip.id;
       made.push({ clip: { id, track: t.id, kind: "audio", take: take.id, from: 0, to: take.frames, off, frames, start, ...(mute ? { mute: true } : {}) }, end: start + frames / take.rate / spb });
     }

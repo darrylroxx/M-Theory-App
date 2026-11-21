@@ -20,6 +20,7 @@ import { presetById } from "../synth/presets";
 import type { ChordRef } from "../theory/chords";
 import type { Progression } from "../ui/state";
 import { FIXTURES, fixture } from "./fixtures5";
+import { songEnd } from "./edit";
 import { flatten, type FlattenCtx } from "./flatten";
 import { keepReverb, reverbTimes, toTimeline } from "./migrate5";
 import type { ChordsTrack, TimelineSong, TuneTrack } from "./model";
@@ -152,7 +153,7 @@ describe("a converted song sends what the old song sent", () => {
 describe("a row the old engine ran one voice for converts exactly as it did before", () => {
   // What `toTimeline` gave for each fixture before it kept the reverb, as a short name of the whole result (the song
   // and the ids). Thirteen fixtures have no row on more than one voice: they must give that very result still.
-  const BEFORE = ["81e3fb11696bec89", "a2be006bdce2a4ff", "5345881cbb693de9", "477918b280e25f39", "ea3d20db53c2d0ac", "f0d291fdbaf9c525", "75e9547f8c98e921", "fd69ea06b2a5ce80", "735640cc56056db6", "e1efe1ec17a07582", "fb56ca79bce9e45b", "61c17f582fdef944", "56954d94e418c20f", "25ecc35502016479", "7777e2b5e23a0359", "b077a81f22eaebd4", "ee624d735dd3899d", "25970f6cba4d0eb2"];
+  const BEFORE = ["81e3fb11696bec89", "a2be006bdce2a4ff", "5345881cbb693de9", "477918b280e25f39", "ea3d20db53c2d0ac", "f0d291fdbaf9c525", "75e9547f8c98e921", "6a7ccfbdb25533e8", "735640cc56056db6", "e1efe1ec17a07582", "fb56ca79bce9e45b", "61c17f582fdef944", "56954d94e418c20f", "25ecc35502016479", "7777e2b5e23a0359", "b077a81f22eaebd4", "ee624d735dd3899d", "25970f6cba4d0eb2"];
   const TWICE = { space: 0.5113, level: 0.8658 };
   const FOUR = { space: 0.8715, level: 0.9955 };
   /** the five with such a row: the tracks it became, what their two knobs are now, and the faders that moved */
@@ -163,6 +164,16 @@ describe("a row the old engine ran one voice for converts exactly as it did befo
     15: { sound: { "t-melody": TWICE, "t-melody~2": TWICE } },
     18: { sound: { "t-chords": TWICE, "t-chords~2": TWICE } },
   };
+
+  it("a silent recording left from a bar that is gone does not make the converted song longer than it was", () => {
+    // (fixture 8: such a clip starts in the last bar; uncut it would add a bar of silence at the song's end.
+    // This changed fixture 8's mark below on purpose: the clip is shorter, nothing else moved.)
+    const p = fixture(8).progression;
+    const plan = legacyPlan(p, vctx, (t) => fakeBuffer(t.id, t.frames / t.rate));
+    const { song } = toTimeline(p);
+    expect(songEnd(song)).toBe(plan.items.reduce((a, x) => a + x.beats, 0));
+    expect(song.clips.some((c) => c.kind === "audio" && c.mute)).toBe(true);
+  });
 
   it("the thirteen fixtures with no such row: the very result of before", async () => {
     for (let n = 1; n <= FIXTURES + 1; n++) if (!MORE[n]) expect(await mark(toTimeline(fixture(n).progression)), `fixture ${n}`).toBe(BEFORE[n - 1]);
