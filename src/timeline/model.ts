@@ -1,5 +1,6 @@
 // A song as tracks and clips (stored version 5): the types every part of the track view shares.
-// Only types, two constants and the one drop rule live here. The functions that work on a song are in the files beside this one.
+// Below the types: how long a clip is and how its content comes round again (the window rule).
+// The functions that change a song are in the files beside this one.
 import type { ProgChord, ArrangeSettings } from "../ui/state";
 import type { Melody } from "../song/melody";
 import type { Groove, DrumKit } from "../audio/beats";
@@ -8,7 +9,7 @@ import type { HarpSound } from "../audio/rack";
 import type { Tone } from "../audio/tone";
 import type { VocalFx } from "../audio/vocalfx";
 import type { Mix } from "../audio/mix";
-import type { TimeSig } from "../song/meter";
+import { sigBeats, type TimeSig } from "../song/meter";
 import type { Shape } from "../theory/harmonize";
 import type { Key } from "../theory/keys";
 
@@ -205,3 +206,76 @@ export interface SoundCopy { kind: ClipKind; tone?: Tone; sound?: Partial<HarpSo
 
 /** What a copy holds: clips with starts counted from the first one, and each clip's track (with its sound) so a paste can make the track. */
 export interface Clipboard5 { key: Key; clips: Clip[]; tracks: Track[]; takes: Take5[] }
+
+// ── lengths and the repeat rule ─────────────────────────────
+// The content of a clip repeats without end in both directions; the clip is the stretch of that which is shown.
+// So one rule covers trimming and repeating: an edge drag only moves that edge of the window.
+
+/** A number brought into 0..n (also for a negative one). */
+export const mod = (a: number, n: number): number => ((a % n) + n) % n;
+
+/** The rate a take is read at when its record cannot be found (frames a second). */
+export const DEFAULT_RATE = 48000;
+/** Frames of a take as beats at a tempo, and back. Audio does not stretch, so this is the only place tempo meets frames. */
+export const framesToBeats = (frames: number, rate: number, bpm: number): number => frames / rate / (60 / bpm);
+export const beatsToFrames = (beats: number, rate: number, bpm: number): number => beats * (60 / bpm) * rate;
+
+/** Length of one cycle of a clip's content. Note clips: beats. (A rhythm with no `bars` is one bar long.) */
+export const contentBeats = (c: NoteClip): number => Math.max(1, c.content.bars ?? 1) * sigBeats(c.sig);
+/** Audio clips: frames. */
+export const contentFrames = (c: AudioClip): number => c.to - c.from;
+
+/** The rate of the take an audio clip plays, from its track's take list. */
+export function rateOf(song: Pick<TimelineSong, "tracks">, c: AudioClip): number {
+  const t = song.tracks.find((x) => x.id === c.track);
+  const take = t && (t.kind === "vocals" || t.kind === "audio") ? t.takes.find((k) => k.id === c.take) : undefined;
+  return take && take.rate > 0 ? take.rate : DEFAULT_RATE;
+}
+
+/** A clip's length in beats at a tempo (audio does not stretch, so its length in beats follows the tempo). `rate`: its take's, for an audio clip. */
+export function clipBeats(c: Clip, bpm: number, rate?: number): number {
+  return c.kind === "audio" ? framesToBeats(c.frames, rate && rate > 0 ? rate : DEFAULT_RATE, bpm) : c.len;
+}
+/** The song beat where a clip ends. */
+export const clipEnd = (c: Clip, song: TimelineSong): number => c.start + clipBeats(c, song.bpm, c.kind === "audio" ? rateOf(song, c) : undefined);
+
+/** Which point of the content sounds at song beat x (note clips). */
+export const phase = (c: NoteClip, x: number): number => mod(c.off + (x - c.start), contentBeats(c));
+
+/** The stretches of content a clip plays, in order: clip-relative start, and the content range. */
+export function cycles(c: NoteClip): { at: number; from: number; to: number }[] {
+  return rounds(c.off, c.len, contentBeats(c));
+}
+/** The same for an audio clip, in frames: where in the clip each stretch starts, and the stretch of the take (from `c.from` on). */
+export function frameCycles(c: AudioClip): { at: number; from: number; to: number }[] {
+  return rounds(c.off, c.frames, contentFrames(c)).map((r) => ({ at: r.at, from: c.from + r.from, to: c.from + r.to }));
+}
+function rounds(off: number, len: number, size: number): { at: number; from: number; to: number }[] {
+  const out: { at: number; from: number; to: number }[] = [];
+  if (!(size > 0) || !(len > 0)) return out;
+  let from = mod(off, size);
+  for (let at = 0; at < len - 1e-9; ) {
+    const to = Math.min(size, from + (len - at));
+    out.push({ at, from, to });
+    at += to - from;
+    from = 0;
+  }
+  return out;
+}
+
+/** The song beats inside the clip where the content starts again: where a notch is drawn. */
+export function notches(c: Clip, song: TimelineSong): number[] {
+  if (c.kind !== "audio") return cycles(c).slice(1).map((r) => c.start + r.at);
+  const rate = rateOf(song, c);
+  return frameCycles(c).slice(1).map((r) => c.start + framesToBeats(r.at, rate, song.bpm));
+}
+
+/** How fine `zeroBeat` below is kept: 16 million steps to a beat. */
+const ZERO_GRID = 2 ** 24;
+/**
+ * The song beat on which the first frame of an audio clip's take lies (were the take laid out from there). A tempo
+ * change keeps this beat and moves the clip, so the voice stays where it was sung; two halves of a split share it.
+ * It is kept to a grid far finer than a sample, so the same clip gives exactly the same beat at every tempo.
+ */
+export const zeroBeat = (c: AudioClip, bpm: number, rate: number): number =>
+  Math.round((c.start - framesToBeats(c.from + c.off, rate, bpm)) * ZERO_GRID) / ZERO_GRID;
