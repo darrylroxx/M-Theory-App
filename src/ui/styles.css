@@ -1406,6 +1406,10 @@ body:has(.hz-sheet) .toast.act { bottom: calc(var(--hz-sheet-h, 0px) + 22px + en
 .tlw .mini-tray { left: 8px; right: 8px; bottom: 8px; }
 .tlw .hz-sheet { bottom: 10px; width: min(560px, calc(100% - 16px)); max-height: calc(100% - 20px); }
 .tlw .bottom-layer.open { padding: 8px; }
+/* with the shape finder open in a window the tray shrinks to names (as on a phone), so the shapes get the window */
+.tlw .bottom-layer.open .dock-top, .tlw .bottom-layer.open .dock .arrange, .tlw .bottom-layer.open .ruler-wrap, .tlw .bottom-layer.open .slot svg, .tlw .bottom-layer.open .slot-step, .tlw .bottom-layer.open .dock-tools { display: none; }
+.tlw .bottom-layer.open .dock-inner { min-height: 0; padding: 6px 8px; }
+.tlw .bottom-layer.open .slot { flex: 0 0 auto; min-width: 64px; padding: 8px 4px; }
 /* (the harmony sheet makes room under the old pages by padding the document: the track view fills the screen, and has none to give) */
 body:has(.app5):has(.hz-sheet) { padding-bottom: 0; }
 body:has(.app5):has(.hz-sheet) .toast.act { bottom: calc(20px + env(safe-area-inset-bottom, 0px)); }
@@ -1420,10 +1424,10 @@ body:has(.app5):has(.hz-sheet) .toast.act { bottom: calc(20px + env(safe-area-in
 .tlw-sheet .tlw-tools .bars-ctl .kb-label, .tlw-sheet .tlw-tools .bars-ctl .seg, .tlw-sheet .tlw-tools .bars-follow span { display: none; }
 .tlw-sheet .tlw-tools .bars-pick { display: inline-block; }
 /* the Canvas, over the track view: the whole Canvas card, with room around it to press to close */
-.cv-over { position: fixed; inset: 0; z-index: 64; display: flex; align-items: flex-start; justify-content: center; padding: 56px 24px 24px; background: rgba(0, 0, 0, 0.55); overflow: auto; outline: none; }
+.cv-over { position: fixed; inset: 0; z-index: 64; display: flex; align-items: flex-start; justify-content: center; padding: 52px 24px 16px; background: rgba(0, 0, 0, 0.55); overflow: auto; outline: none; }
 .cv-over[hidden] { display: none; }
 .cv-over > .cv, .cv-over > .guard { width: min(1180px, 100%); margin: 0; box-shadow: var(--shadow); }
-.cv-over .cv-stage { height: clamp(260px, calc(100dvh - 330px), 64vh); }
+.cv-over .cv-stage { height: clamp(220px, calc(100dvh - 440px), 64vh); }
 .cv-over .cv.full .cv-stage { height: 100vh; height: 100dvh; }
 @media (max-width: 760px) { .cv-over { padding: 8px; } }
 /* changes that cannot be saved: said plainly, until a write works again */

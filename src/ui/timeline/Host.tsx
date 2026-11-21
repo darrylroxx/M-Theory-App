@@ -28,7 +28,7 @@ import { CanvasPage } from "../components/CanvasPage";
 import { DraftBadge } from "../components/Desktop";
 import { IdeasPanel } from "../components/IdeasPanel";
 import { SettingsPanel } from "../components/SettingsPanel";
-import { LegacyComposer } from "../plugins/LegacyComposer";
+import { LegacyComposer, type ComposerCtl } from "../plugins/LegacyComposer";
 import { newId, shapeKey, type Progression } from "../state";
 import { V4View, lensIn } from "../windows/ClipLens";
 import { openWins, useWindows, zOf } from "../windows/windows";
@@ -265,8 +265,12 @@ export function Host() {
   }, [setCandidate]);
   const onHearNow = useCallback((target: Target) => {
     if (playerRef.current.playing) return;
-    const lens = lensIn(peek(), target);
-    if (lens) playerRef.current.audition(lens.span);
+    const s = peek();
+    // the clip's own bars go round (all of them: a short rhythm is heard as it comes round inside its clip)
+    const c = target.clip === undefined ? undefined : s.song.clips.find((x) => x.id === target.clip);
+    const lens = lensIn(s, target);
+    if (c && c.kind !== "audio") playerRef.current.audition({ from: c.start, to: c.start + c.len });
+    else if (lens) playerRef.current.audition(lens.span);
   }, [peek]);
   const again = useCallback((track: string, clip: string) => {
     const s = peek();
@@ -527,7 +531,21 @@ export function Host() {
     const { mute: _m, ...on } = c;
     return on as Clip;
   }) })), [edit]);
-  const copyClip = useCallback((id: string) => clipboard.copy([id]), [clipboard]);
+  /** what every composer window asks of the host: one object for all of them, the same from one draw to the next */
+  const does = useRef({ wins, close, onPreview, onHearNow, showKey, muteClip, clipboard, pasteInto, open });
+  does.current = { wins, close, onPreview, onHearNow, showKey, muteClip, clipboard, pasteInto, open };
+  const ctl = useMemo<ComposerCtl>(() => ({
+    focus: (id) => does.current.wins.focus(id),
+    close: (id) => does.current.close(id),
+    move: (id, r) => does.current.wins.move(id, r),
+    preview: (id, target, p) => does.current.onPreview(id, target, p),
+    hearNow: (target) => does.current.onHearNow(target),
+    showKey: () => does.current.showKey(),
+    mute: (id) => does.current.muteClip(id),
+    copy: (id) => does.current.clipboard.copy([id]),
+    paste: (track, target) => does.current.pasteInto(track, target),
+    show: (track, clip) => does.current.open("compose", track, clip),
+  }), []);
 
   return (
     <>
@@ -542,10 +560,7 @@ export function Host() {
         const canPaste = !!clip?.clips.some((c) => c.kind === CLIP_OF[t.kind] && c.kind !== "audio");
         return (
           <Guard key={w.id} what={`the ${t.name} window`} onClose={() => close(w.id)}>
-            <LegacyComposer win={w} track={t} song={song} keyOf={key} target={target} focused={wins.focused === w.id} z={zOf(session, w.id)} toSound={toSound[w.id]} player={playerApi}
-              onFocus={() => wins.focus(w.id)} onClose={() => close(w.id)} onMove={(r) => wins.move(w.id, r)}
-              onPreview={(tg, p) => onPreview(w.id, tg, p)} onHearNow={onHearNow} onKey={showKey} onMute={muteClip} onCopy={copyClip}
-              onPaste={canPaste && target ? () => pasteInto(t.id, target) : null} onShow={(track, c) => open("compose", track, c)} />
+            <LegacyComposer win={w} track={t} song={song} keyOf={key} target={target} focused={wins.focused === w.id} z={zOf(session, w.id)} toSound={toSound[w.id]} player={playerApi} ctl={ctl} canPaste={canPaste} />
           </Guard>
         );
       })}

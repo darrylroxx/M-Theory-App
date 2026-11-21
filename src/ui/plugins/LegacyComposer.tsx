@@ -4,7 +4,7 @@
 // switch, bars on screen, and copy and paste of what is open.
 //
 // A track that records gets a window that says recording is on its way (it arrives with the next step).
-import { useMemo, useRef, type ReactNode } from "react";
+import { memo, useMemo, useRef, type ReactNode } from "react";
 import { melodyBase } from "../../song/melody";
 import type { Key } from "../../theory/keys";
 import type { Target } from "../../timeline/lens";
@@ -33,29 +33,36 @@ export interface ComposerProps {
   /** opened by FX: the sound panels are brought into view (a number that goes up each time it is asked for) */
   toSound?: number;
   player: PlayerApi;
-  onFocus(): void;
-  onClose(): void;
-  onMove(r: Rect): void;
+  /** what the window asks of its host (the same object for every window, always: a window is drawn again only for what changed in it) */
+  ctl: ComposerCtl;
+  /** is there something copied that this track can hold? */
+  canPaste: boolean;
+}
+
+export interface ComposerCtl {
+  focus(win: string): void;
+  close(win: string): void;
+  move(win: string, r: Rect): void;
   /** hear a Harmonize candidate: the lens song with it written in (null ends it) */
-  onPreview(target: Target, heard: Progression | null): void;
+  preview(win: string, target: Target, heard: Progression | null): void;
   /** a rhythm or a style was picked: play the clip's bars now if nothing is playing */
-  onHearNow(target: Target): void;
+  hearNow(target: Target): void;
   /** the page's key chip was pressed */
-  onKey(): void;
+  showKey(): void;
   /** the open clip's switch: heard or not */
-  onMute(clip: string): void;
-  onCopy(clip: string): void;
-  /** paste what was copied into what is open; null: there is nothing to paste that this track can hold */
-  onPaste: (() => void) | null;
+  mute(clip: string): void;
+  copy(clip: string): void;
+  /** paste what was copied into what is open */
+  paste(track: string, target: Target): void;
   /** bring another track's composer forward, on one of its clips */
-  onShow(track: string, clip: string): void;
+  show(track: string, clip: string): void;
 }
 
 const PANE = { chords: "rhythm", melody: "melody", bass: "melody", drums: "drums" } as const;
 
-export function LegacyComposer(p: ComposerProps) {
-  const { win, track, song, target } = p;
-  const frame = { win: p.win, focused: p.focused, z: p.z, onFocus: p.onFocus, onClose: p.onClose, onMove: p.onMove };
+export const LegacyComposer = memo(function LegacyComposer(p: ComposerProps) {
+  const { win, track, song, target, ctl } = p;
+  const frame = { win: p.win, focused: p.focused, z: p.z, onFocus: () => ctl.focus(win.id), onClose: () => ctl.close(win.id), onMove: (r: Rect) => ctl.move(win.id, r) };
   if (track.kind === "vocals" || track.kind === "audio" || !target) {
     return (
       <Window {...frame} title={`${track.name} · recording`}>
@@ -69,18 +76,19 @@ export function LegacyComposer(p: ComposerProps) {
   const clip = target.clip === undefined ? undefined : (song.clips.find((c) => c.id === target.clip && c.kind !== "audio") as NoteClip | undefined);
   const title = `${track.name} · ${clip ? openLabel(song, clip.id) : "new clip"}`;
   return (
-    <ClipLens target={target} pane={PANE[track.kind]} onFrame={p.onKey}>
+    <ClipLens target={target} pane={PANE[track.kind]} onFrame={ctl.showKey}>
       <Window {...frame} title={title} tools={<Tools {...p} clip={clip} />}>
         <div className="lc-scroll">
-          <Body {...p} clip={clip} target={target} key={`${win.id}:${target.clip ?? "new"}`} />
+          {/* (one page for as long as the window is on this clip: opened on another, it starts afresh) */}
+          <Body key={`${win.id}:${win.clip ?? ""}`} win={win.id} kind={track.kind} keyOf={p.keyOf} clip={clip} target={target} player={p.player} toSound={p.toSound} ctl={ctl} />
         </div>
       </Window>
     </ClipLens>
   );
-}
+});
 
 /** What stands in the title bar before ✕. */
-function Tools({ track, song, clip, onMute, onCopy, onPaste, onShow }: ComposerProps & { clip: NoteClip | undefined }): ReactNode {
+function Tools({ track, song, clip, target, canPaste, ctl }: ComposerProps & { clip: NoteClip | undefined }): ReactNode {
   const info = useLens();
   // the chords on screen are not heard here when another track's clip plays instead of them: it says so, and a tap shows that one
   const by = track.kind === "chords" && info
@@ -90,23 +98,25 @@ function Tools({ track, song, clip, onMute, onCopy, onPaste, onShow }: ComposerP
   return (
     <>
       {info && <MixMark id={info.openId} name={track.name} />}
-      {by && <button className="hz-instead" aria-label={`${track.name} is not heard here: ${byName} plays instead. Show ${byName}`} title={`Not heard here: ${byName} plays instead`} onClick={() => onShow(by.track, by.id)}>{byName} plays instead</button>}
-      {clip && <button className={`chip lc-on${clip.mute ? "" : " on"}`} role="switch" aria-checked={!clip.mute} aria-label={`This clip is ${clip.mute ? "off" : "on"}`} title={clip.mute ? "Off: kept, but not heard" : "On: heard with the song"} onClick={() => onMute(clip.id)}>{clip.mute ? "Off" : "On"}</button>}
+      {by && <button className="hz-instead" aria-label={`${track.name} is not heard here: ${byName} plays instead. Show ${byName}`} title={`Not heard here: ${byName} plays instead`} onClick={() => ctl.show(by.track, by.id)}>{byName} plays instead</button>}
+      {clip && <button className={`chip lc-on${clip.mute ? "" : " on"}`} role="switch" aria-checked={!clip.mute} aria-label={`This clip is ${clip.mute ? "off" : "on"}`} title={clip.mute ? "Off: kept, but not heard" : "On: heard with the song"} onClick={() => ctl.mute(clip.id)}>{clip.mute ? "Off" : "On"}</button>}
       <BarsControl />
-      <button className="icon-btn" title="Copy what is open" aria-label={`Copy this clip of ${track.name}`} disabled={!clip} onClick={() => clip && onCopy(clip.id)}><CopyIcon /></button>
-      <button className="icon-btn clip-paste" title="Paste into what is open" aria-label={onPaste ? `Paste into this clip of ${track.name}` : "Paste: copy a clip of this kind first"} disabled={!onPaste} onClick={() => onPaste?.()}><PasteIcon /></button>
+      <button className="icon-btn" title="Copy what is open" aria-label={`Copy this clip of ${track.name}`} disabled={!clip} onClick={() => clip && ctl.copy(clip.id)}><CopyIcon /></button>
+      <button className="icon-btn clip-paste" title="Paste into what is open" aria-label={canPaste ? `Paste into this clip of ${track.name}` : "Paste: copy a clip of this kind first"} disabled={!canPaste || !target} onClick={() => target && ctl.paste(track.id, target)}><PasteIcon /></button>
     </>
   );
 }
 
-/** The old page itself, told what it needs of the music by the track view's player. */
-function Body({ track, keyOf, clip, target, player, toSound, onPreview, onHearNow }: ComposerProps & { clip: NoteClip | undefined; target: Target }) {
-  const live = useRef({ clip, target, player, onPreview, onHearNow });
-  live.current = { clip, target, player, onPreview, onHearNow };
+/** The old page itself, told what it needs of the music by the track view's player. Drawn again only when its own clip, its player or its key changes. */
+const Body = memo(function Body({ win, kind, keyOf, clip, target, player, toSound, ctl }: {
+  win: string; kind: Track["kind"]; keyOf: Key; clip: NoteClip | undefined; target: Target; player: PlayerApi; toSound?: number; ctl: ComposerCtl;
+}) {
+  const live = useRef({ win, clip, target, player, ctl });
+  live.current = { win, clip, target, player, ctl };
   const playing = player.playing;
-  const low = track.kind === "bass" ? melodyBase(keyOf) - 24 : undefined;
+  const low = kind === "bass" ? melodyBase(keyOf) - 24 : undefined;
   const host = useMemo<EmbedHost>(() => ({
-    pane: PANE[track.kind as "chords" | "melody" | "bass" | "drums"],
+    pane: PANE[kind as "chords" | "melody" | "bass" | "drums"],
     playing,
     togglePlay: () => live.current.player.toggle(),
     getPos: () => {
@@ -115,10 +125,10 @@ function Body({ track, keyOf, clip, target, player, toSound, onPreview, onHearNo
       if (!c || b === null || b < c.start - 1e-6 || b >= c.start + c.len - 1e-6) return null;
       return phase(c, b);
     },
-    preview: (heard) => live.current.onPreview(live.current.target, heard),
-    hearNow: () => live.current.onHearNow(live.current.target),
+    preview: (heard) => live.current.ctl.preview(live.current.win, live.current.target, heard),
+    hearNow: () => live.current.ctl.hearNow(live.current.target),
     ...(low !== undefined ? { low } : {}),
     ...(toSound ? { toSound } : {}),
-  }), [track.kind, playing, low, toSound]);
+  }), [kind, playing, low, toSound]);
   return <GuitarView embedded={host} />;
-}
+});
