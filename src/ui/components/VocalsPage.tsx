@@ -295,6 +295,13 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const devices = (hosts ?? []).flatMap((h) => h.devices.filter((d) => (d.input?.channels ?? 0) > 0 && (d.output?.channels ?? 0) > 0).map((d) => ({ host: h.name, name: d.name, channels: d.input!.channels })))
     .sort((a, b) => Number(b.host.toUpperCase() === "ASIO") - Number(a.host.toUpperCase() === "ASIO") || Number(/focusrite|scarlett/i.test(b.name)) - Number(/focusrite|scarlett/i.test(a.name)));
   const chosen = devices.find((d) => d.host === studio.host && d.name === studio.device) ?? devices[0];
+  /** how many interfaces were found (null: still looking) */
+  const found = useRef<number | null>(null);
+  found.current = hosts ? devices.length : null;
+  // (a Record that waits for the interface is told at once when the list comes back with none)
+  useEffect(() => {
+    if (hosts && !devices.length) openers.current.splice(0).forEach((f) => f(null));
+  }, [hosts]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // the interface is open while recording or rehearsing, whenever you hear yourself through the
   // effects (then it stays open on every page), and while this page is on screen once the app's
@@ -461,7 +468,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
       });
       if (!o) onRecording(false);
     }
-    if (!o) return toast("The interface is not open");
+    if (!o) return toast(host && found.current === 0 ? "No interface found" : "The interface is not open");
     const rateNow = o.rate;
     const plan = host ? host.plan() : recordPlan();
     if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
@@ -970,7 +977,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
             <button className="btn sm" disabled={!ready || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
             <span className="vc-state">
               <b ref={countRef} className="vc-count" />
-              <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>… <span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>
+              <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>{host ? (phase === "preparing" ? "Preparing… " : "Saving… ") : "… "}<span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>
             </span>
             {/* always in its place (hidden until recording), so nothing shifts when recording starts */}
             {/* the same as K (on a phone there is no K): a tap a moment after a seam keeps the pass just sung; a pass is let go from the row below */}

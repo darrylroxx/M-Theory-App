@@ -14,7 +14,7 @@ import { FX_DEFAULT, reviveFx, type VocalFx } from "../../../audio/vocalfx";
 import { fxRender, isDesktop } from "../../../desktop";
 import { sigName } from "../../../song/meter";
 import { sameSound, soundTag, type Recorded } from "../../../song/takes";
-import { dropTake5, emptyShelf5, keepTake5, removeRecording5, renudge5, renudgeTakes5, useShelved5, useTake5 } from "../../../timeline/audioclips";
+import { dropTake5, emptyShelf5, keepTake5, removeRecording5, renudge5, renudgeTakes5, stampTakes5, useShelved5, useTake5 } from "../../../timeline/audioclips";
 import { barMap } from "../../../timeline/bars";
 import { addTrack, setTrack } from "../../../timeline/edit";
 import { flatten, type FlattenCtx } from "../../../timeline/flatten";
@@ -243,7 +243,17 @@ export const RecordHost = memo(function RecordHost(p: RecordHostProps) {
         app().set((s) => {
           const was = s.studio?.nudge ?? 0;
           const copied = s.clip ? renudgeTakes5(s.clip.takes, to, was) : undefined;
-          return { ...s, studio: { ...s.studio, nudge: to }, song: renudge5(s.song, to, was), ...(s.clip && copied !== s.clip.takes ? { clip: { ...s.clip, takes: copied! } } : {}) };
+          // the ideas in the library move when they are opened: a take of theirs that does not say its nudge yet is
+          // noted as lying with the one in use until now, so it moves rightly then
+          let noted = false;
+          const saved = s.saved.map((i) => {
+            if (i.backup) return i;
+            const song = stampTakes5(i.song, was);
+            if (song === i.song) return i;
+            noted = true;
+            return { ...i, song };
+          });
+          return { ...s, studio: { ...s.studio, nudge: to }, song: renudge5(s.song, to, was), ...(noted ? { saved } : {}), ...(s.clip && copied !== s.clip.takes ? { clip: { ...s.clip, takes: copied! } } : {}) };
         });
       },
       applySound: async () => {

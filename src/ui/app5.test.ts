@@ -3,14 +3,15 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { exportIdeas } from "../song/library";
 import { backupId, convertAll } from "../timeline/convert";
-import { addTrack, setTempo } from "../timeline/edit";
+import { renudge5, stampTakes5 } from "../timeline/audioclips";
+import { addTrack, moveClips, setTempo } from "../timeline/edit";
 import { fixture, fixtures } from "../timeline/fixtures5";
 import { makeHistory } from "../timeline/history";
 import { exportIdeas5 } from "../timeline/library5";
 import type { AudioTrack, Take5 } from "../timeline/model";
 import { storedText } from "../timeline/store5";
-import { bandSong } from "../timeline/testsongs";
-import { arriveAll, deleteIn, dirtyOf, editIn, editKeyedIn, importIn, mayArrive, newIn, openIn, restoreIn, saveIn, stepIn, type App5State } from "./app5";
+import { audioTrack, bandSong, songOf, take } from "../timeline/testsongs";
+import { afterRestore, arriveAll, onScreen, deleteIn, dirtyOf, editIn, editKeyedIn, importIn, mayArrive, newIn, openIn, restoreIn, saveIn, stepIn, type App5State } from "./app5";
 import { DEFAULT_STATE, loadV4, type SavedProgression } from "./state";
 
 const json = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -234,5 +235,64 @@ describe("backup files and old copies", () => {
     expect(r.keep.map((k) => k.stem)).toEqual(["fixture-2-o", "fixture-1"]);
     expect(r.state.saved.find((i) => i.id === "fixture-2-o")!.name).toBe("Fixture 2 (edited in the old version)");
     expect(r.state.saved.find((i) => i.id === "fixture-1")!.song.bpm).toBe(140);
+  });
+});
+
+describe("the timing nudge and the songs that come back", () => {
+  const takesOf = (s: App5State) => (s.song.tracks.find((t) => t.id === "tv") as AudioTrack).takes;
+  /** the band's song on screen, saved as an idea; its one take does not say which nudge it was cut with */
+  const withIdea = (): App5State => {
+    const s0 = start();
+    return { ...s0, song: bandSong(), ideaId: "band", saved: [{ id: "band", name: "Band", key: s0.key, song: bandSong(), savedAt: 1, updatedAt: 1 }, ...s0.saved] };
+  };
+
+  it("a song that comes on screen has every take at the nudge in use, and each says so", () => {
+    // one take cut with no nudge, one with 10 ms (480 frames), one that does not say
+    const song = songOf([audioTrack("tv", "vocals", "Vocal 1", [take("a", 2, 0, { start: 1000, nudge: 0 }), take("b", 2, 0, { start: 1000, nudge: 480 }), take("c", 2, 0, { start: 1000 })])]);
+    const out = onScreen(song, 10);
+    expect((out.tracks[0] as AudioTrack).takes.map((k) => [k.start, k.nudge])).toEqual([[1480, 480], [1000, 480], [1000, 480]]);
+    // and nothing changes the second time
+    expect(onScreen(out, 10)).toBe(out);
+    expect(afterRestore(out, 10)).toBe(out);
+    expect(afterRestore(out, undefined)).not.toBe(out);
+    // a song brought back by an undo: its takes move, and one that does not say its nudge is left as it is
+    const back = afterRestore(song, 10);
+    expect((back.tracks[0] as AudioTrack).takes.map((k) => [k.start, k.nudge])).toEqual([[1480, 480], [1000, 480], [1000, undefined]]);
+    expect(afterRestore(bandSong(), 10)).toEqual(bandSong());
+  });
+
+  it("an idea opened under another nudge than its takes were cut with plays in time, and does not read as changed", () => {
+    const s0 = withIdea();
+    const cut = { ...s0, saved: s0.saved.map((i) => (i.id === "band" ? { ...i, song: stampTakes5(i.song, 0) } : i)), studio: { nudge: 10 }, ideaId: "fixture-1" };
+    const opened = openIn(cut, makeHistory(), "band");
+    expect(takesOf(opened).map((k) => [k.start, k.nudge])).toEqual([[480, 480]]);
+    expect(dirtyOf(opened)).toBe(false);
+  });
+
+  it("undo after the nudge was changed does not undo the nudge: the takes stay where the nudge puts them", () => {
+    const h = makeHistory();
+    // the idea comes on screen (its take is noted as lying with the nudge in use: none), then a clip is moved
+    const s0 = openIn({ ...withIdea(), ideaId: "fixture-1" }, h, "band");
+    expect(takesOf(s0).map((k) => [k.start, k.nudge])).toEqual([[0, 0]]);
+    const s1 = editIn(s0, h, "Move clip", (song) => moveClips(song, ["m1"], 4));
+    // the nudge is set to 10 ms (a setting: no undo step), and every take moves
+    const s2 = { ...s1, studio: { nudge: 10 }, song: renudge5(s1.song, 10, 0) };
+    expect(takesOf(s2).map((k) => [k.start, k.nudge])).toEqual([[480, 480]]);
+    const back = stepIn(s2, h, true, false);
+    expect(back.song.clips.find((c) => c.id === "m1")?.start).toBe(32);
+    expect(back.studio?.nudge).toBe(10);
+    expect(takesOf(back).map((k) => [k.start, k.nudge])).toEqual([[480, 480]]);
+    // and redo
+    expect(takesOf(stepIn(back, h, false, false)).map((k) => [k.start, k.nudge])).toEqual([[480, 480]]);
+  });
+
+  it("a change of the nudge alone never makes an idea read as changed; a take added or deleted does", () => {
+    const s0 = openIn({ ...withIdea(), ideaId: "fixture-1" }, makeHistory(), "band");
+    expect(dirtyOf(s0)).toBe(false);
+    expect(dirtyOf({ ...s0, studio: { nudge: 25 }, song: renudge5(s0.song, 25, 0) })).toBe(false);
+    const more = { ...s0, song: { ...s0.song, tracks: s0.song.tracks.map((t) => (t.id === "tv" ? { ...(t as AudioTrack), takes: [...(t as AudioTrack).takes, take("new", 1, 4)] } : t)) } };
+    expect(dirtyOf(more)).toBe(true);
+    const fewer = { ...s0, song: { ...s0.song, clips: s0.song.clips.filter((c) => c.id !== "a1"), tracks: s0.song.tracks.map((t) => (t.id === "tv" ? { ...(t as AudioTrack), takes: [] } : t)) } };
+    expect(dirtyOf(fewer)).toBe(true);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dropTake5, emptyShelf5, keepTake5, removeRecording5, renudge5, sameSpot5, useShelved5, useTake5 } from "./audioclips";
+import { dropTake5, emptyShelf5, keepTake5, removeRecording5, renudge5, sameSpot5, stampTakes5, useShelved5, useTake5 } from "./audioclips";
 import { removeTrack, splitClips } from "./edit";
 import type { AudioClip, AudioTrack, Take5, TimelineSong } from "./model";
 import { audioClip, audioTrack, chordsClip, chordsTrack, counter, songOf, take } from "./testsongs";
@@ -215,6 +215,18 @@ describe("the timing nudge", () => {
     expect(vocal(moved).takes.map((k) => [k.start, k.nudge])).toEqual([[50480, 480]]);
     // and there and back leaves it where it was
     expect(vocal(renudge5(moved, 0)).takes[0].start).toBe(50000);
+  });
+
+  it("takes that do not say their nudge can be marked as cut with one, without moving; then they move like the others", () => {
+    const s = songOf([audioTrack("tv", "vocals", "Vocal 1", [cut("old", undefined), cut("new", 480)])], { shelf: [{ track: "gone", name: "Vocal 2", kind: "vocals", takes: [cut("d", undefined, { rate: 96000 })], at: 1, saves: 0 }] });
+    const marked = stampTakes5(s, 5);
+    expect(vocal(marked).takes.map((k) => [k.start, k.nudge])).toEqual([[50000, 240], [50000, 480]]);
+    expect(marked.shelf?.[0].takes.map((k) => [k.start, k.nudge])).toEqual([[50000, 480]]);
+    // one that said so already is the same object, and a second marking changes nothing
+    expect(vocal(marked).takes[1]).toBe(vocal(s).takes[1]);
+    expect(stampTakes5(marked, 99)).toBe(marked);
+    // now the nudge goes from 5 to 10 ms: the old take moves by the 5 ms between
+    expect(vocal(renudge5(marked, 10)).takes.map((k) => [k.start, k.nudge])).toEqual([[50240, 480], [50000, 480]]);
   });
 
   it("a take recorded at another rate moves by the same time", () => {

@@ -13,7 +13,7 @@ import { autoName } from "../song/library";
 import type { ViewPrefs } from "../song/window";
 import type { Key } from "../theory/keys";
 import { arrive, backupId, backupSource, besideId, convertIdea, keepOriginal, newSession, setStores, stemOf } from "../timeline/convert";
-import { renudge5 } from "../timeline/audioclips";
+import { renudge5, stampTakes5 } from "../timeline/audioclips";
 import { keepTakes, makeHistory, type History } from "../timeline/history";
 import { fingerprint5, importIdeas5, isBlank5, mergeIdeas5, reviveIdea5, toPush5, type SavedIdea } from "../timeline/library5";
 import { unplacedTakes } from "../timeline/migrate5";
@@ -74,6 +74,14 @@ export interface Ctx5 {
  */
 export const afterRestore = (song: TimelineSong, nudge: number | undefined): TimelineSong => renudge5(song, nudge ?? 0);
 
+/**
+ * A song as it comes on screen (an idea opened, the idea the app starts with): as `afterRestore` leaves it, and a
+ * take that does not say its nudge yet (from before takes did) is where the nudge in use puts it, and says so from
+ * here on. So every undo step made from now holds takes that know their nudge, and moves rightly after the nudge is
+ * changed. The same song back when nothing changes.
+ */
+export const onScreen = (song: TimelineSong, nudge: number | undefined): TimelineSong => stampTakes5(afterRestore(song, nudge), nudge ?? 0);
+
 /** What an idea's session is when it opens: nothing selected or looped, no track armed, no window open, the whole song across the lanes. */
 export const openSession = (): Session => ({ ...newSession(), pxPerBeat: 0 });
 
@@ -105,7 +113,7 @@ export function openIn(s: App5State, h: History, id: string): App5State {
   const it = found && !found.backup ? reviveIdea5(found) : null;
   if (!it) return s;
   h.clear();
-  return { ...s, ideaId: id, key: it.key, song: afterRestore(it.song, s.studio?.nudge), session: openSession(), settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
+  return { ...s, ideaId: id, key: it.key, song: onScreen(it.song, s.studio?.nudge), session: openSession(), settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
 }
 /** A blank idea started (the key and the tempo stay): the three tracks every idea starts with, and nothing on them. */
 export function newIn(s: App5State, h: History, draft: string): App5State {
@@ -465,6 +473,14 @@ export function App5Provider({ children }: { children: ReactNode }) {
     setToast((t) => (t?.action ? null : t));
   }, [commit, history]);
   const redo = useCallback(() => commit(stepIn(now.current, history, false, !!recRef.current)), [commit, history]);
+
+  // the idea on screen at the start: its takes say which timing nudge they lie with, as those of every idea opened do
+  // (so an undo after the nudge was changed moves them rightly)
+  useEffect(() => {
+    const s = now.current;
+    const song = onScreen(s.song, s.studio?.nudge);
+    if (song !== s.song) commit({ ...s, song });
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   const tuning = useMemo(() => getTuning(state.settings.tuningId), [state.settings.tuningId]);
 

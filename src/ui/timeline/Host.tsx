@@ -278,7 +278,8 @@ export function Host() {
     setup: () => openRecord(),
   }), [inputCount, rec.open, openRecord]);
   const growing = useCallback(() => recApi.current?.growing() ?? null, []);
-  const round = audioTracks.length ? roundLabel(song, session) : "";
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const round = useMemo(() => (audioTracks.length ? roundLabel(song, session) : ""), [audioTracks.length, song, session.loop, session.cursor]);
   const recCtl = useMemo<RecordCtl>(() => ({
     app: () => live.current.app,
     ctx: () => ctxRef.current,

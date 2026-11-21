@@ -162,6 +162,30 @@ export function renudgeTakes5(takes: Take5[], ms: number, was: number = ms): Tak
 }
 
 /**
+ * The song with every take that does not say which nudge it was cut with marked as cut with `ms` milliseconds (takes
+ * from before a take said so). Nothing moves. Done when an idea comes on screen and before the nudge changes, so
+ * that from then on every take can be moved from its own nudge. The same song when every take says it already.
+ */
+export function stampTakes5(song: TimelineSong, ms: number): TimelineSong {
+  let marked = false;
+  const mark = (takes: Take5[]): Take5[] => {
+    if (takes.every((k) => Number.isFinite(k.nudge))) return takes;
+    marked = true;
+    return takes.map((k) => (Number.isFinite(k.nudge) ? k : { ...k, nudge: nudgeFrames(ms, k.rate) }));
+  };
+  const tracks = song.tracks.map((t) => {
+    if (!isAudioTrack(t)) return t;
+    const takes = mark(t.takes);
+    return takes === t.takes ? t : { ...t, takes };
+  });
+  const shelf = song.shelf?.map((s) => {
+    const takes = mark(s.takes);
+    return takes === s.takes ? s : { ...s, takes };
+  });
+  return marked ? { ...song, tracks, ...(shelf ? { shelf } : {}) } : song;
+}
+
+/**
  * The song with the timing nudge at `ms` milliseconds: every take of every track that records, and every take on the
  * shelf, moves from its own nudge to that one (so a take heard early or late is put right by the nudge, not only the
  * next recording). `was`: the nudge before, for takes from before a take said which one it was cut with (left out:
