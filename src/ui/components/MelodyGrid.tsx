@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { playNote } from "../../audio/synth";
-import { EMPTY_MELODY, GRIDS, TICKS, cellTick, clearMelody, copyMelodyBar, melodyBars, melodyRows, notesInCell, toggleNote, type Melody, type MelodyRow } from "../../song/melody";
+import { EMPTY_MELODY, GRIDS, TICKS, cellTick, clearMelody, copyMelodyBar, gridRows, melodyBars, melodyRows, notesInCell, toggleNote, type Melody, type MelodyRow } from "../../song/melody";
 import { barAtBeat, barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
 import { chordSymbol, refPcs } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
@@ -24,7 +24,9 @@ const HOLD_MS = 1500;
  * The grid has every bar of the section: a bar with notes in it plays, an empty bar is silent.
  * As many bars as are chosen sit side by side, each with its own steps, its number and its line.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing, onAll }: {
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing, onAll, low }: {
+  /** the lowest row of the grid (a bass track's is two octaves under a melody's); none: two octaves from the home note */
+  low?: number;
   /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
   /** the melody track's instrument */
@@ -97,16 +99,16 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
 
   // the rows: two octaves from the home note, stretched to hold any note already written outside them
   const extra = useMemo(() => {
-    const have = new Set(melodyRows(keyOf, keyOnly).map((r) => r.midi));
+    const have = new Set((low === undefined ? melodyRows(keyOf, keyOnly) : gridRows(keyOf, low, 2, keyOnly)).map((r) => r.midi));
     return [...new Set(melody.notes.map((n) => n.midi).filter((m) => !have.has(m)))].sort((a, b) => a - b).join();
-  }, [keyOf, keyOnly, melody.notes]);
+  }, [keyOf, keyOnly, melody.notes, low]);
   const rows = useMemo(() => {
-    const base = melodyRows(keyOf, keyOnly);
+    const base = low === undefined ? melodyRows(keyOf, keyOnly) : gridRows(keyOf, low, 2, keyOnly);
     if (!extra) return base;
-    const all = melodyRows(keyOf);
+    const all = low === undefined ? melodyRows(keyOf) : gridRows(keyOf, low, 2);
     const more = extra.split(",").map(Number).map((midi) => all.find((r) => r.midi === midi) ?? { ...all.find((r) => mod12(r.midi) === mod12(midi))!, midi });
     return [...base, ...more].sort((a, b) => b.midi - a.midi);
-  }, [keyOf, keyOnly, extra]);
+  }, [keyOf, keyOnly, extra, low]);
 
   // the notes, bar by bar: what is lit in each bar, as one string, so a bar is only redrawn when its own notes change
   const size = TICKS / melody.div;

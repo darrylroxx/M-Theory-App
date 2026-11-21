@@ -26,6 +26,7 @@
 import { contrast, hexToRgb, luminance, mix as mixRgb, rgbToHsl, type RGB } from "./color";
 import type { Palette } from "./palettes";
 import type { Track } from "../song/tracks";
+import type { Track as Track5 } from "../timeline/model";
 
 export type LayerKind = "drums" | "bass" | "chords" | "melody" | "harmony" | "vocals" | "other";
 /** The layers, lowest first: the order they lie in on the canvas. */
@@ -55,6 +56,16 @@ export const isLayer = (x: unknown): x is LayerKind => typeof x === "string" && 
 export function layerOfTrack(t: Pick<Track, "kind"> & { role?: string }): LayerKind {
   if (t.role === "harmony" && (t.kind === "melody" || t.kind === "chords")) return "harmony";
   if (t.kind === "vocals") return "vocals";
+  return t.kind;
+}
+
+/**
+ * The layer a track of a song of tracks and clips is painted in: a harmony track as a harmony, a bass track in the
+ * bass's own paint, vocals as vocals, a blank audio track as everything else.
+ */
+export function layerOfTrack5(t: Pick<Track5, "kind"> & { role?: string }): LayerKind {
+  if (t.role === "harmony" && (t.kind === "melody" || t.kind === "chords")) return "harmony";
+  if (t.kind === "audio") return "other";
   return t.kind;
 }
 

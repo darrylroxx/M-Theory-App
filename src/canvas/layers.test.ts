@@ -4,7 +4,7 @@ import type { Sound } from "../audio/describe";
 import { reviveTracks } from "../song/tracks";
 import { hexToRgb, luminance } from "./color";
 import { cueOfPulse } from "./cues";
-import { LAYERS, LAYER_INFO, LAYER_ORDER, layerColours, layerOfTrack, type LayerKind } from "./layers";
+import { LAYERS, LAYER_INFO, LAYER_ORDER, layerColours, layerOfTrack, layerOfTrack5, type LayerKind } from "./layers";
 import { MARGIN, hzOfMidi, noteColors, upOfHz, yOfHz } from "./layout";
 import { PALETTES, getPalette } from "./palettes";
 import { yOfUp } from "./place";
@@ -82,6 +82,13 @@ describe("the layers of a song", () => {
     expect(layerOfTrack({ kind: "melody" })).toBe("melody");
     expect(layerOfTrack({ kind: "drums" })).toBe("drums");
     expect(layerOfTrack({ kind: "vocals" })).toBe("vocals");
+    // the track view's tracks: a bass has its own paint, a blank audio track is "everything else"
+    expect(layerOfTrack5({ kind: "bass" })).toBe("bass");
+    expect(layerOfTrack5({ kind: "audio" })).toBe("other");
+    expect(layerOfTrack5({ kind: "vocals" })).toBe("vocals");
+    expect(layerOfTrack5({ kind: "melody", role: "harmony" })).toBe("harmony");
+    expect(layerOfTrack5({ kind: "bass", role: "harmony" })).toBe("bass");
+    for (const kind of ["chords", "melody", "drums"] as const) expect(layerOfTrack5({ kind })).toBe(layerOfTrack({ kind }));
     expect(layerOfTrack({ kind: "melody", role: "harmony" })).toBe("harmony");
     expect(layerOfTrack({ kind: "chords", role: "harmony" })).toBe("harmony");
     expect(layerOfTrack({ kind: "drums", role: "harmony" })).toBe("drums");

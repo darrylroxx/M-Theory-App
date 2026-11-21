@@ -9,6 +9,7 @@ import { chordsInScale } from "../../theory/keys";
 import { displayNote, pc } from "../../theory/notes";
 import { useDraggable } from "../drag";
 import { barOf, fitBeats, useApp, type ProgChord } from "../state";
+import { useWinFocus } from "../windows/windows";
 import { lengthText } from "./BarRuler";
 import { ChordDiagram } from "./ChordDiagram";
 import { ChordNotes, ChordTheory } from "./ChordInfo";
@@ -69,12 +70,14 @@ export function ShapeFinder({ slotShape, onPinSlot, keys }: {
   const has = (t: TabId, id?: string) => tabs[t].some((g) => g.shapes.some((v) => !id || v.id === id));
   // always start from the shapes everybody knows
   useEffect(() => setTab("common"), [refKey]);
+  // (inside a window of the track view: only while that window is where the keys go)
+  const focused = useWinFocus();
   useEffect(() => {
-    if (!sheet) return;
+    if (!sheet || !focused) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && openSheet(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, openSheet]);
+  }, [sheet, openSheet, focused]);
 
   if (!sheet || !ref || !book || gone) return null;
   const keyNotes = keys?.(ref, sheet.slotId);

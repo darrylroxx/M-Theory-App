@@ -23,6 +23,7 @@ import { MIDDLE, controlsFor, type Level, type Shape } from "../../theory/harmon
 import { undoTo } from "../../song/structure";
 import { onKeys, toneOf } from "../../audio/tone";
 import { newId, useApp, type AppState } from "../state";
+import { useWinFocus } from "../windows/windows";
 
 /** What is being auditioned: a harmony as it would be written (or written again), and where. */
 export interface Preview {
@@ -127,11 +128,14 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       if (anchor) anchor.style.scrollMarginBottom = "";
     };
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  // (inside a window of the track view: only while that window is where the keys go)
+  const focused = useWinFocus();
   useEffect(() => {
+    if (!focused) return;
     const esc = (e: KeyboardEvent) => e.key === "Escape" && onClose();
     window.addEventListener("keydown", esc);
     return () => window.removeEventListener("keydown", esc);
-  }, [onClose]);
+  }, [onClose, focused]);
 
   /** Which track to harmonize with: its harmonies are offered, nothing is chosen yet. */
   const toSource = (sid: string) => {

@@ -15,7 +15,7 @@ import { FADES, Painting, STYLES, type EarFrames, type LayerCue } from "../../ca
 import { LAYOUTS, type LayoutId } from "../../canvas/place";
 import { Sim } from "../../canvas/sim";
 import { paintSwatches } from "../../canvas/swatch";
-import { handOf, heardIn, layerOf, planKey, planTaps } from "../../canvas/taps";
+import { handOf, heardIn, layerOf, planKey, planTaps, type TapPlan } from "../../canvas/taps";
 import type { Frame } from "../../listen/ear";
 import { FileLayers } from "../../listen/filelayers";
 import { listenLive, type Listening } from "../../listen/live";
@@ -32,6 +32,8 @@ import { getScale, scalePcs } from "../../theory/scales";
 import { useApp } from "../state";
 import { OpenIcon } from "../icons";
 import { Seg } from "./common";
+import { ESC_OPEN, onEscape } from "../timeline/keys";
+import { useWinFocus } from "../windows/windows";
 
 /** No more real pixels than this, however sharp the screen: paint has to keep up with the music. */
 const MAX_PIXELS = 1_500_000;
@@ -109,7 +111,11 @@ export function playAlone(appPlaying: boolean, stopApp: () => void, play: () => 
  * neighbours, mixes as pigment does and dries. No two paintings come out the same, and music
  * of one kind paints pictures of one kind.
  */
-export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay }: {
+export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canPlay, plans: given, onClose }: {
+  /** what it paints from, when the song is not the old state's (the track view hands it the ears for its tracks) */
+  plans?: TapPlan[];
+  /** it is shown over something else: a button that closes it */
+  onClose?: () => void;
   /** the page is on screen */
   active: boolean;
   playing: boolean;
@@ -135,7 +141,8 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
   const hidePref = prefs.hide;
   const hidden = useMemo(() => new Set<LayerKind>(hidePref ?? []), [hidePref]);
   /** the ears and hands for the song's tracks */
-  const plans = useMemo(() => planTaps(state.progression), [state.progression]);
+  const own = useMemo(() => (given ? [] : planTaps(state.progression)), [given, state.progression]);
+  const plans = given ?? own;
   const plansId = planKey(plans);
   /** the layout the canvas is painting in now (the music's choice when on Auto) */
   const [layoutNow, setLayoutNow] = useState<LayoutId>("river");
@@ -673,13 +680,19 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
     [],
   );
 
-  // Escape leaves the full screen
+  // Escape leaves the full screen (only while this is where the keys go; and before whatever holds the canvas is
+  // asked: one press leaves the full screen, the next one closes what holds it)
+  const focused = useWinFocus();
   useEffect(() => {
-    if (!full) return;
-    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setFull(false);
+    if (!full || !focused) return;
+    const off = onEscape(ESC_OPEN, () => (setFull(false), true));
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && !e.defaultPrevented && setFull(false);
     window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [full]);
+    return () => {
+      off();
+      window.removeEventListener("keydown", onKey);
+    };
+  }, [full, focused]);
 
   const clear = () => {
     painter.current?.clear();
@@ -749,6 +762,7 @@ export function CanvasPage({ active, playing, getSpot, rest, keyOf, onPlay, canP
           {ruler && <button className={`icon-btn cv-hzbtn${guide ? " on" : ""}`} aria-pressed={guide} aria-label="Guide: frequencies, bars, and what the mix covers" title="Guide: frequencies, bars, and what the mix covers" onClick={() => setPrefs({ guide: !guide })}>Hz</button>}
           {full && !song && <button className={`play-btn sm${playing ? " stop" : ""}`} onClick={onPlay} aria-label={playing ? "Stop" : "Play"} disabled={!playing && !canPlay}>{playing ? "■" : "▶"}</button>}
           <button className="icon-btn" aria-label={full ? "Leave the full screen" : "Fill the screen"} title={full ? "Back" : "Fill the screen"} onClick={() => setFull(!full)}>{full ? "✕" : "⤢"}</button>
+          {onClose && !full && <button className="icon-btn cv-close" aria-label="Close the Canvas" title="Close (Esc)" onClick={onClose}>✕</button>}
         </div>
       </div>
       <div className="cv-bar">

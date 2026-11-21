@@ -57,9 +57,36 @@ import { ShapeFinder, ShapesIcon } from "../components/ShapeFinder";
 import { DragCtx, useDraggable, type DragApi, type Payload } from "../drag";
 import { chordBeats, fitBeats, newId, useApp, type AppState, type ArrangeSettings, type Pane, type ProgChord, type Progression } from "../state";
 import { copyDrums, copyMelody, copyRhythm, keyShift, pasteDrums, pasteMelody, pastePart, pasteRhythm, pastFrame, undoFits, unpastePart, type ClipKind, type Clips, type PasteUndo } from "../../song/clip";
+import { ESC_OPEN, onEscape } from "../timeline/keys";
+import { useWinFocus } from "../windows/windows";
 
-/** Guitar: key → mode → chords → shapes → your progression. */
-export function GuitarView() {
+/**
+ * What the track view gives one old page shown in a window (see windows/ClipLens: the page's song is one clip).
+ * With it, the view is that one page and nothing else: it plays nothing itself and keeps no loop.
+ */
+export interface EmbedHost {
+  pane: "rhythm" | "melody" | "drums";
+  playing: boolean; togglePlay(): void;
+  /** beats into the open content while the play line is inside it, else null */
+  getPos(): number | null;
+  /** hear a Harmonize candidate: the lens song with it written in (null ends it) */
+  preview(heard: Progression | null): void;
+  /** a rhythm or a style was picked: play now if nothing is playing */
+  hearNow(): void;
+  /** Harmonize hosted outside the page (when given, the page only asks for it) */
+  onHarmonize?(kind: "chords" | "melody", anchor: HTMLElement | null): void;
+  /** a Bass track's lowest grid row */
+  low?: number;
+  /** opened by FX: scroll to the sound panels (a number that goes up each time it is asked for) */
+  toSound?: boolean | number;
+}
+
+/** Guitar: key → mode → chords → shapes → your progression. With `embedded`: one of its pages, for a window of the track view. */
+export function GuitarView({ embedded }: { embedded?: EmbedHost } = {}) {
+  return embedded ? <EmbeddedView host={embedded} /> : <FullView />;
+}
+
+function FullView() {
   const { state, set, shapeOf, sheet, openSheet, tuning, toast, opened } = useApp();
   const prog = state.progression;
   const beat = prog.beat ?? DEFAULT_BEAT;
@@ -833,99 +860,7 @@ export function GuitarView() {
     });
   }, [set]);
 
-  const api = useMemo<DragApi>(() => {
-    const indexAt = (x: number, y: number, exclude?: string): number | null => {
-      const dock = miniRef.current ?? dockRef.current;
-      if (!dock) return null;
-      const r = dock.getBoundingClientRect();
-      if (y < r.top - 28 || y > r.bottom + 28 || x < r.left - 28 || x > r.right + 28) return null;
-      const scroller = dock.querySelector<HTMLElement>(".dock-slots");
-      if (scroller) {
-        const sr = scroller.getBoundingClientRect();
-        if (x > sr.right - 36) scroller.scrollLeft += 14;
-        else if (x < sr.left + 36) scroller.scrollLeft -= 14;
-      }
-      let i = 0;
-      for (const el of dock.querySelectorAll<HTMLElement>("[data-slot]")) {
-        if (el.dataset.slot === exclude) continue;
-        const b = el.getBoundingClientRect();
-        if (x < b.left + b.width / 2) break;
-        i++;
-      }
-      return i;
-    };
-    return {
-      justDragged: () => Date.now() - lastDrag.current < 150,
-      start: (e, payload) => {
-        if (e.pointerType === "mouse" && e.button !== 0) return;
-        if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
-        const touch = e.pointerType !== "mouse";
-        const pid = e.pointerId;
-        const sx = e.clientX;
-        const sy = e.clientY;
-        let active = false;
-        let index: number | null = null;
-        let timer: number | undefined;
-        const moveGhost = (x: number, y: number) => {
-          if (ghostRef.current) ghostRef.current.style.transform = `translate(${x}px, ${y}px)`;
-        };
-        const activate = (x: number, y: number) => {
-          active = true;
-          index = indexAt(x, y, payload.slotId);
-          setDrag({ ...payload, index });
-          requestAnimationFrame(() => moveGhost(x, y));
-          if (touch) navigator.vibrate?.(8);
-        };
-        const cleanup = () => {
-          window.clearTimeout(timer);
-          window.removeEventListener("pointermove", onMove);
-          window.removeEventListener("pointerup", onUp);
-          window.removeEventListener("pointercancel", onCancel);
-          document.removeEventListener("touchmove", onTouchMove);
-        };
-        const onMove = (ev: PointerEvent) => {
-          if (ev.pointerId !== pid) return;
-          if (!active) {
-            const far = Math.hypot(ev.clientX - sx, ev.clientY - sy);
-            if (touch) {
-              if (far > 10) cleanup(); // it's a scroll, not a drag
-              return;
-            }
-            if (far < 6) return;
-            activate(ev.clientX, ev.clientY);
-          }
-          moveGhost(ev.clientX, ev.clientY);
-          const next = indexAt(ev.clientX, ev.clientY, payload.slotId);
-          if (next !== index) {
-            index = next;
-            setDrag({ ...payload, index });
-          }
-        };
-        const onUp = (ev: PointerEvent) => {
-          if (ev.pointerId !== pid) return;
-          cleanup();
-          if (!active) return;
-          lastDrag.current = Date.now();
-          setDrag(null);
-          drop(payload, index);
-        };
-        const onCancel = () => {
-          cleanup();
-          if (active) lastDrag.current = Date.now();
-          setDrag(null);
-        };
-        // once a drag is live, stop the page from scrolling under the finger
-        const onTouchMove = (ev: TouchEvent) => {
-          if (active && ev.cancelable) ev.preventDefault();
-        };
-        if (touch) timer = window.setTimeout(() => activate(sx, sy), 230);
-        window.addEventListener("pointermove", onMove);
-        window.addEventListener("pointerup", onUp);
-        window.addEventListener("pointercancel", onCancel);
-        document.addEventListener("touchmove", onTouchMove, { passive: false });
-      },
-    };
-  }, [drop]);
+  const api = useMemo<DragApi>(() => dragApi({ dockRef, miniRef, ghostRef, lastDrag, setDrag, drop }), [drop]); // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <AuditionCtx.Provider value={auditionCtx}>
@@ -978,6 +913,418 @@ export function GuitarView() {
     </DragCtx.Provider>
     </AuditionCtx.Provider>
   );
+}
+
+// ── One page, in a window of the track view ─────────────────
+
+/**
+ * One of the old pages (Chords, Melody or Drums) as the body of a window. Its song is the lens song of one clip (the
+ * app context around it is a `ClipLens`), so "the section on screen" is that clip. It renders only that page: no
+ * transport, no other pages hidden beside it, no track tabs. It plays nothing itself and tells the engine nothing
+ * about the song: the track view's host does that once for the whole app (the takes, the tempo, the voices, where a
+ * tap is heard, the home note). What the page needs of the music it asks its host for.
+ */
+function EmbeddedView({ host }: { host: EmbedHost }) {
+  const { state, set, shapeOf, sheet, openSheet, tuning } = useApp();
+  const prog = state.progression;
+  const beat = prog.beat ?? DEFAULT_BEAT;
+  const { pane, playing } = host;
+  const focused = useWinFocus();
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const root = useRef<HTMLDivElement>(null);
+  const [drag, setDrag] = useState<(Payload & { index: number | null }) | null>(null);
+  const dockRef = useRef<HTMLDivElement>(null);
+  const miniRef = useRef<HTMLDivElement>(null);
+  const [away, setAway] = useState(false);
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(([e]) => setAway(!e.isIntersecting), { threshold: 0.15 });
+    io.observe(el);
+    return () => io.disconnect();
+  }, []);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const lastDrag = useRef(0);
+  const dockH = useRef(0);
+  useLayoutEffect(() => {
+    if (!sheet && dockRef.current) dockH.current = dockRef.current.getBoundingClientRect().height;
+  });
+
+  // ── the shapes in the tray (as on the old Chords page) ──
+  const arr = prog.arrange ?? null;
+  const { capo, avoidBarre } = state.settings;
+  const optsOf = useCallback(
+    (a: ArrangeSettings | null | undefined): ArrangeOptions => ({ tuning, capo, avoidBarre, preferOpen: a?.zone === 0, targetFret: null, allowInversions: a?.inversions ?? false, zone: a?.zone ?? null, strings: a?.strings ?? "any" }),
+    [tuning, capo, avoidBarre],
+  );
+  const arrOpts: ArrangeOptions = useMemo(() => optsOf(arr), [optsOf, arr]);
+  // Harmonize hears the chords as this guitar plays them, and writes chords it can play
+  useEffect(() => setHarmonyEnv({ tuning, capo }), [tuning, capo]);
+  const chordsKey = JSON.stringify(prog.chords.map((c) => [c.ref, c.voicingId, !!c.rest]));
+  const voicingsOf = useCallback(
+    (all: ProgChord[], a: ArrangeSettings | null | undefined): (Voicing | undefined)[] => {
+      const chords = all.filter((c) => !c.rest);
+      const own = chords.map((c) => shapeOf(c.ref, c.voicingId));
+      const vs = a ? arrangeProgression(chords.map((c) => c.ref), { ...optsOf(a), pinned: chords.map((c, i) => (c.voicingId && own[i]?.id === c.voicingId ? own[i] : undefined)) }) : own;
+      let k = 0;
+      return all.map((c) => {
+        if (c.rest) return undefined;
+        const v = vs[k++];
+        const ns = playedNotes(c);
+        const frets = ns && fingerNotes(ns, tuning, capo);
+        return frets ? voicingFromFrets(frets, pc(c.ref.root), getChordType(c.ref.typeId), tuning, capo) : v;
+      });
+    },
+    [optsOf, shapeOf, tuning, capo],
+  );
+  // (only the Chords page shows shapes: the others do not work them out)
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const voicings = useMemo(() => (pane === "rhythm" ? voicingsOf(prog.chords, arr) : []), [pane, chordsKey, voicingsOf, arr]);
+  const chordsId = prog.focus?.chords ?? "chords";
+  const chordTone = toneOf(prog, chordsId);
+  const chordKeys = onKeys(chordTone);
+  const keyStyle = voicingOf(chordTone);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const keyVs = useMemo(() => (chordKeys && pane === "rhythm" ? keysVoicings(prog.chords, chordTone) : null), [pane, chordsKey, chordKeys, keyStyle, chordTone.register]);
+  const trayMidi = useCallback((i: number): (number | null)[] => (keyVs ? keyVs[i] ?? [] : voicings[i]?.midi ?? []), [keyVs, voicings]);
+  const pinSlot = (slotId: string, voicingId: string) =>
+    set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c, i) => (c.id === slotId ? { ...withoutNotes(c), voicingId } : s.progression.arrange && !c.voicingId ? { ...c, voicingId: voicings[i]?.id } : c)) } }));
+  const stepSlot = (i: number, dir: -1 | 1) => {
+    const c = prog.chords[i];
+    const list = fitAlternatives(c.ref, arrOpts, voicings[i - 1], voicings[i + 1]);
+    if (!list.length) return;
+    const at = list.findIndex((v) => v.id === voicings[i]?.id);
+    const next = list[(Math.max(at, 0) + dir + list.length) % list.length];
+    pinSlot(c.id, next.id);
+    if (!playing) strum(next.midi);
+  };
+  const setArrange = (a: ArrangeSettings | null) =>
+    set((s) => ({ ...s, progression: { ...s.progression, arrange: a, chords: s.progression.chords.map((c) => ({ ...c, voicingId: undefined })) } }));
+
+  // ── the bars of the clip ──
+  const sig = sectionSig(prog);
+  const bar = sigBeats(sig);
+  const compound = isCompound(sig);
+  const nBars = barsOr(prog.bars);
+  const frame = nBars * bar;
+  const melody = useMemo(() => inBars(prog.melody ?? blankMelody(sig), nBars), [prog.melody, nBars, sig.den]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // ── how the open track sounds (its knobs write to the lens song; the host points the engine's ear at the track) ──
+  const sound = useMemo(() => reviveSound(prog.sound), [prog.sound]);
+  const tuneSound = useMemo(() => reviveSound(prog.tuneSound), [prog.tuneSound]);
+  const tuneId = prog.focus?.melody && prog.focus.melody !== "melody" ? prog.focus.melody : "melody";
+  const tuneTone = toneOf(prog, tuneId);
+  const hear = useRef(0);
+  const trayRef = useRef(trayMidi);
+  trayRef.current = trayMidi;
+  const nChords = useRef(0);
+  nChords.current = prog.chords.length;
+  const playingRef = useRef(playing);
+  playingRef.current = playing;
+  const keyRef = useRef(state.key);
+  keyRef.current = state.key;
+  useEffect(() => () => window.clearTimeout(hear.current), []);
+  const hearSoon = useCallback(() => {
+    window.clearTimeout(hear.current);
+    hear.current = window.setTimeout(() => {
+      let v: (number | null)[] = [];
+      for (let i = 0; i < nChords.current && !v.some((m) => m !== null); i++) v = trayRef.current(i);
+      if (!playingRef.current) strum(v.some((m) => m !== null) ? v : [48, 55, 60, 64, 67, 72]);
+    }, 240);
+  }, []);
+  const hearTune = useCallback(() => {
+    window.clearTimeout(hear.current);
+    // (a bass is heard where it plays: low)
+    hear.current = window.setTimeout(() => !playingRef.current && playNote((hostRef.current.low ?? melodyBase(keyRef.current)) + 12, undefined, 0.86, 48), 240);
+  }, []);
+  const setSound = useCallback((patch: Partial<HarpSound>) => set((s) => ({ ...s, progression: { ...s.progression, sound: { ...reviveSound(s.progression.sound), ...patch } } })), [set]);
+  const setTune = useCallback((patch: Partial<HarpSound>) => set((s) => ({ ...s, progression: { ...s.progression, tuneSound: { ...reviveSound(s.progression.tuneSound), ...patch } } })), [set]);
+  const soundsRef = useRef({ chords: sound, melody: tuneSound });
+  soundsRef.current = { chords: sound, melody: tuneSound };
+  const [loading, setLoading] = useState<string | null>(null);
+  const toneLoads = useRef(lastOnlyEach());
+  /** Change the open track's instrument: the song keeps it, and its voice starts loading now; then it is heard. */
+  const toneSetter = useCallback((id: string, kind: "chords" | "melody", tone: Tone, hearIt: () => void) => (patch: Partial<Tone>) => {
+    const next: Tone = { ...tone, ...patch };
+    if (next.inst === "synth" && !next.synth) next.synth = synthOf(next, kind);
+    set((s) => ({ ...s, progression: withTone(s.progression, id, next) }));
+    if (patch.inst !== undefined || patch.keys !== undefined) {
+      setLoading(id);
+      const mine = toneLoads.current.begin(id);
+      // (the voice is the real track's: the one the host has pointed the engine's ear at)
+      const track = heardTrack(kind === "chords" ? "chord" : "melody");
+      void warmSlot({ track, kind: kind === "melody" ? "melody" : "chord", tone: next, sound: soundsRef.current[kind] }).then(
+        () => {
+          if (!mine()) return;
+          setLoading((x) => (x === id ? null : x));
+          if (heardTrack(kind === "chords" ? "chord" : "melody") === track) hearIt();
+        },
+        () => mine() && setLoading((x) => (x === id ? null : x)),
+      );
+    }
+  }, [set]);
+  const chordInst: ToneProps = useMemo(() => ({ tone: chordTone, kind: "chords", loading: loading === chordsId, compound, setTone: toneSetter(chordsId, "chords", chordTone, () => hearSoon()) }), [chordTone, chordsId, loading, compound, toneSetter, hearSoon]);
+  const tuneInst: ToneProps = useMemo(() => ({ tone: tuneTone, kind: "melody", loading: loading === tuneId, compound, setTone: toneSetter(tuneId, "melody", tuneTone, () => hearTune()) }), [tuneTone, tuneId, loading, compound, toneSetter, hearTune]);
+  const sheetKeys = useCallback((ref: ChordRef, slotId?: string) => {
+    const i = slotId ? prog.chords.findIndex((c) => c.id === slotId) : -1;
+    return i >= 0 && keyVs ? keyVs[i] : keysVoicing(ref, chordTone);
+  }, [prog.chords, keyVs, chordTone]);
+
+  // ── Harmonize: the sheet, and hearing a candidate (the host plays it) ──
+  const [hz, setHz] = useState<HzOpen | null>(null);
+  const closeHz = useCallback(() => setHz(null), []);
+  const canHarmonize = useMemo(() => pane !== "drums" && harmonizeSources(prog).length > 0, [pane, prog]);
+  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null) => {
+    if (hostRef.current.onHarmonize) return hostRef.current.onHarmonize(page, anchor);
+    openSheet(null);
+    setHz((h) => (h && !h.track ? null : { kind: page, anchor }));
+  }, [openSheet]);
+  useEffect(() => {
+    if (sheet) setHz(null);
+  }, [sheet]);
+  const harmonizeChords = useCallback((el: HTMLElement | null) => harmonize("chords", el), [harmonize]);
+  const harmonizeTune = useCallback((el: HTMLElement | null) => harmonize("melody", el), [harmonize]);
+  /** the open track, when Harmonize wrote it: it can be written again (with another option) */
+  const openTrack = useMemo(() => (pane === "drums" ? undefined : allTracks(normalize(prog)).find((t) => t.id === (pane === "rhythm" ? chordsId : tuneId) && !!t.harmony)), [pane, prog, chordsId, tuneId]);
+  const [preview, setPreview] = useState<Preview | null>(null);
+  const audit = useCallback((pv: Preview | null) => setPreview(pv), []);
+  const heardNow = useRef(false);
+  useEffect(() => {
+    if (!preview) {
+      if (heardNow.current) hostRef.current.preview(null);
+      heardNow.current = false;
+      return;
+    }
+    heardNow.current = true;
+    hostRef.current.preview(previewHarmony(prog, state.key, preview.plan, preview.target));
+  }, [preview, prog, state.key]);
+  useEffect(() => () => {
+    if (heardNow.current) hostRef.current.preview(null);
+  }, []);
+  const auditionCtx = useMemo<Audition>(() => ({ preview, hear: audit, playing }), [preview, audit, playing]);
+  // Escape: one thing per press. What is open inside this window goes first, the window itself after.
+  useEffect(() => {
+    if (!focused || (!sheet && !hz)) return;
+    return onEscape(ESC_OPEN, () => {
+      if (sheet) openSheet(null);
+      else setHz(null);
+      return true;
+    });
+  }, [focused, sheet, hz, openSheet]);
+
+  // bars on screen and Follow, the same in every window
+  const { shown, follow } = useBarsView();
+  const getPos = useCallback(() => hostRef.current.getPos(), []);
+  // the chord lit in the tray, read from how far into the clip the music is
+  const [nowIdx, setNowIdx] = useState(-1);
+  const trayChords = useRef(prog.chords);
+  trayChords.current = prog.chords;
+  const frameRef = useRef(frame);
+  frameRef.current = frame;
+  useEffect(() => {
+    if (!playing || pane !== "rhythm") return setNowIdx(-1);
+    let raf = 0;
+    const tick = () => {
+      const b = getPos();
+      setNowIdx(b === null ? -1 : chordAt(trayChords.current, b, frameRef.current));
+      raf = requestAnimationFrame(tick);
+    };
+    tick();
+    return () => cancelAnimationFrame(raf);
+  }, [playing, pane, getPos]);
+
+  // ── what the page writes ──
+  const setBeat = useCallback((fn: (b: Beat) => Beat) => set((s) => ({ ...s, progression: { ...s.progression, beat: fn(s.progression.beat ?? DEFAULT_BEAT) } })), [set]);
+  const pickBeat = useCallback((p: BeatPattern) => {
+    set((s) => ({ ...s, progression: { ...s.progression, beat: applyPattern(s.progression.beat ?? DEFAULT_BEAT, p) } }));
+    // hear it straight away
+    if (!playingRef.current) hostRef.current.hearNow();
+  }, [set]);
+  const pickStyle = (id: PatternId) => {
+    set((s) => ({ ...s, progression: { ...s.progression, pattern: id } }));
+    if (!playing && prog.chords.length) host.hearNow();
+  };
+  const setMelody = useCallback((fn: (m: Melody) => Melody) => set((s) => ({ ...s, progression: { ...s.progression, melody: fn(s.progression.melody ?? blankMelody(sectionSig(s.progression))) } })), [set]);
+  const setFeel = useCallback((patch: Partial<Feel>) => set((s) => ({ ...s, progression: { ...s.progression, feel: { ...reviveFeel(s.progression.feel), ...patch } } })), [set]);
+  const setBars = useCallback((n: number) => set((s) => ({ ...s, progression: { ...s.progression, bars: barsOr(n) } })), [set]);
+  const under = useMemo(() => (pane === "melody" ? chordsUnder(prog) : []), [pane, prog]);
+  const setLengths = useCallback((beats: Record<string, number>) => set((s) => ({ ...s, progression: { ...s.progression, chords: s.progression.chords.map((c) => (beats[c.id] !== undefined ? { ...c, beats: fitBeats(beats[c.id]) } : c)) } })), [set]);
+  const drop = useCallback((p: Payload, index: number | null) => {
+    if (index === null) return;
+    set((s) => {
+      const cs = [...s.progression.chords];
+      let item: ProgChord;
+      if (p.slotId) {
+        const from = cs.findIndex((c) => c.id === p.slotId);
+        if (from < 0) return s;
+        [item] = cs.splice(from, 1);
+      } else item = { id: newId(), ref: p.ref, beats: chordBeats(s.progression), voicingId: p.voicingId };
+      cs.splice(Math.min(index, cs.length), 0, item);
+      return { ...s, progression: { ...s.progression, chords: cs } };
+    });
+  }, [set]);
+  const api = useMemo<DragApi>(() => dragApi({ dockRef, miniRef, ghostRef, lastDrag, setDrag, drop }), [drop]);
+
+  // opened by FX: the sound panels are brought into view
+  const toSound = host.toSound;
+  useEffect(() => {
+    if (!toSound) return;
+    const el = root.current?.querySelector<HTMLElement>(pane === "rhythm" ? ".card.harp" : pane === "melody" ? ".melody .sound-row" : ".drums > .dm-tabs");
+    (el ?? root.current?.lastElementChild)?.scrollIntoView({ block: pane === "rhythm" ? "start" : "nearest" });
+  }, [toSound, pane]);
+
+  const canPlay = prog.chords.some((c) => !c.rest) || beat.on || hasTune(prog.melody);
+  return (
+    <AuditionCtx.Provider value={auditionCtx}>
+    <DragCtx.Provider value={api}>
+      <div className={`page write embedded${drag ? " dragging" : ""}`} ref={root}>
+        {openTrack && (
+          <div className="emb-again">
+            <HarmonyAgain track={openTrack} className="clip-hz" onOpen={() => setHz({ kind: openTrack.kind === "melody" ? "melody" : "chords", track: openTrack })} />
+            <span className="small muted">Written by Harmonize: write it again, or choose another harmony</span>
+          </div>
+        )}
+        {pane === "rhythm" && (
+          <div className="pane">
+            <ChordBoard />
+            {sheet && <div style={{ height: dockH.current }} />}
+            <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
+              {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
+              <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
+              <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label="the clip" onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} />
+            </div>
+            <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} inst={chordInst} />
+          </div>
+        )}
+        {pane === "melody" && (
+          <div className="pane">
+            <MelodyGrid fresh={`${tuneId}:${writtenAs(prog, tuneId)}`} place={tuneId} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={under} playing={playing} getPos={getPos}
+              sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} low={host.low} />
+          </div>
+        )}
+        {pane === "drums" && (
+          <div className="pane">
+            <DrumMachine beat={beat} setBeat={setBeat} onPick={pickBeat} playing={playing} frame={nBars} getPos={getPos} shown={shown} follow={follow} active />
+          </div>
+        )}
+      </div>
+      {hz && pane !== "drums" && (
+        <HarmonyPicker key={hz.track?.id ?? `new:${hz.kind}`} kind={hz.kind} track={hz.track} first={prog.focus?.[hz.kind] ?? hz.kind} anchor={hz.anchor} onClose={closeHz} />
+      )}
+      {pane === "rhythm" && away && !sheet && (
+        <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={host.togglePlay} drag={drag} canPlay={canPlay || playing}
+          onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
+      )}
+      {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
+    </DragCtx.Provider>
+    </AuditionCtx.Provider>
+  );
+}
+
+/**
+ * Dragging a chord (from the board, or a slot of the tray) into the tray: it starts after a few pixels (a long press
+ * on a touch screen), a ghost follows the pointer, and the tray shows where the chord would land.
+ */
+function dragApi({ dockRef, miniRef, ghostRef, lastDrag, setDrag, drop }: {
+  dockRef: React.RefObject<HTMLDivElement | null>;
+  miniRef: React.RefObject<HTMLDivElement | null>;
+  ghostRef: React.RefObject<HTMLDivElement | null>;
+  lastDrag: React.RefObject<number>;
+  setDrag: (d: (Payload & { index: number | null }) | null) => void;
+  drop: (p: Payload, index: number | null) => void;
+}): DragApi {
+  const indexAt = (x: number, y: number, exclude?: string): number | null => {
+    const dock = miniRef.current ?? dockRef.current;
+    if (!dock) return null;
+    const r = dock.getBoundingClientRect();
+    if (y < r.top - 28 || y > r.bottom + 28 || x < r.left - 28 || x > r.right + 28) return null;
+    const scroller = dock.querySelector<HTMLElement>(".dock-slots");
+    if (scroller) {
+      const sr = scroller.getBoundingClientRect();
+      if (x > sr.right - 36) scroller.scrollLeft += 14;
+      else if (x < sr.left + 36) scroller.scrollLeft -= 14;
+    }
+    let i = 0;
+    for (const el of dock.querySelectorAll<HTMLElement>("[data-slot]")) {
+      if (el.dataset.slot === exclude) continue;
+      const b = el.getBoundingClientRect();
+      if (x < b.left + b.width / 2) break;
+      i++;
+    }
+    return i;
+  };
+  return {
+    justDragged: () => Date.now() - lastDrag.current < 150,
+    start: (e, payload) => {
+      if (e.pointerType === "mouse" && e.button !== 0) return;
+      if ((e.target as HTMLElement).closest("[data-nodrag]")) return;
+      const touch = e.pointerType !== "mouse";
+      const pid = e.pointerId;
+      const sx = e.clientX;
+      const sy = e.clientY;
+      let active = false;
+      let index: number | null = null;
+      let timer: number | undefined;
+      const moveGhost = (x: number, y: number) => {
+        if (ghostRef.current) ghostRef.current.style.transform = `translate(${x}px, ${y}px)`;
+      };
+      const activate = (x: number, y: number) => {
+        active = true;
+        index = indexAt(x, y, payload.slotId);
+        setDrag({ ...payload, index });
+        requestAnimationFrame(() => moveGhost(x, y));
+        if (touch) navigator.vibrate?.(8);
+      };
+      const cleanup = () => {
+        window.clearTimeout(timer);
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        document.removeEventListener("touchmove", onTouchMove);
+      };
+      const onMove = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid) return;
+        if (!active) {
+          const far = Math.hypot(ev.clientX - sx, ev.clientY - sy);
+          if (touch) {
+            if (far > 10) cleanup(); // it's a scroll, not a drag
+            return;
+          }
+          if (far < 6) return;
+          activate(ev.clientX, ev.clientY);
+        }
+        moveGhost(ev.clientX, ev.clientY);
+        const next = indexAt(ev.clientX, ev.clientY, payload.slotId);
+        if (next !== index) {
+          index = next;
+          setDrag({ ...payload, index });
+        }
+      };
+      const onUp = (ev: PointerEvent) => {
+        if (ev.pointerId !== pid) return;
+        cleanup();
+        if (!active) return;
+        lastDrag.current = Date.now();
+        setDrag(null);
+        drop(payload, index);
+      };
+      const onCancel = () => {
+        cleanup();
+        if (active) lastDrag.current = Date.now();
+        setDrag(null);
+      };
+      // once a drag is live, stop the page from scrolling under the finger
+      const onTouchMove = (ev: TouchEvent) => {
+        if (active && ev.cancelable) ev.preventDefault();
+      };
+      if (touch) timer = window.setTimeout(() => activate(sx, sy), 230);
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+      document.addEventListener("touchmove", onTouchMove, { passive: false });
+    },
+  };
 }
 
 // ── Key & mode ───────────────────────────────────────────────
