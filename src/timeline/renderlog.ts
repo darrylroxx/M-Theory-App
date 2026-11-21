@@ -135,14 +135,17 @@ export async function renderLog(items: PlayItem[], bpm: number, rename: (track: 
  * What the live player asks for, the clock run from ▶ for `seconds` (the song's length and a little more when not
  * given; going round, give it). Times are counted from the moment ▶ was pressed.
  */
-export async function liveLog(items: PlayItem[], bpm: number, o: { loop?: boolean; seconds?: number; from?: number; rename?: (track: string) => string } = {}): Promise<RenderLog> {
+export async function liveLog(items: PlayItem[], bpm: number, o: { loop?: boolean; seconds?: number; from?: number; rename?: (track: string) => string; steps?: { at: number; run(p: import("../audio/synth").ProgressionPlayer): void }[] } = {}): Promise<RenderLog> {
   const total = (items.reduce((a, x) => a + x.beats, 0) * 60) / bpm;
   const seconds = o.seconds ?? total + 0.5;
   return record(items, o.rename ?? ((t) => t), true, (S) => {
     const c = liveCtx();
     const p = new S.ProgressionPlayer();
     p.start(items, bpm, "ring", !!o.loop, null, o.from ?? 0, null);
+    // (`steps`: things done to the player while it plays, each once the clock has reached its moment)
+    const steps = [...(o.steps ?? [])].sort((a, b) => a.at - b.at);
     while (c.currentTime < seconds - 1e-9) {
+      while (steps.length && steps[0].at <= c.currentTime + 1e-9) steps.shift()!.run(p);
       c.currentTime = Math.min(seconds, c.currentTime + 0.01);
       vi.advanceTimersByTime(10);
     }
