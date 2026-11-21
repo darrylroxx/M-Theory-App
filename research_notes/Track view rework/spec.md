@@ -13,7 +13,7 @@ Written against commit `0f436e9` of `/home/user/M-Theory-App`. Revised after thr
 5. **How chords are played (style, feel, neck area) stays on the clip.** It is part of the composition. Otherwise a verse picked and a chorus strummed would split one guitar track in two.
 6. **The audio engine is kept.** A new pure function, `flatten`, turns tracks and clips into the `PlayItem[]` list the player, the WAV render, the recording backing and the MIDI writer already take. Three tiny additive engine touches are listed in C.6; everything else in `audio/` is untouched and its tests must pass unedited.
 7. **Old songs are converted once, after a full version 4 load.** New songs are stored under a new storage key and a new cloud prefix so an older build can never open or overwrite them. The old storage blob is never written again; it is moved, checked, into the browser's larger store and is the backup store. Each converted idea gets a backup entry in the ideas list, folded under one row. An old copy that turns up newer later (another device still on the old version) is never ignored.
-8. **Seven draft releases, twelve steps.** Release 1 already gives the track view, converted songs that play the same, clip move/copy/edge-repeat/split, the ruler loop (one stretch or several) with scroll and zoom, global undo, and every existing composer reachable in a simple window. Chords, Melody, Bass and Drums get there through a "lens" that presents one clip as a one-section old song; Vocals through the old page in a host mode that hands its takes to the new model. Releases 2 to 5 turn each composer into a proper plugin. Release 6 is the blank audio track. Release 7 removes the leftovers and does the phone layout.
+8. **Seven draft releases, built in thirteen steps (the second one, 1a, lands in two parts).** Release 1 already gives the track view, converted songs that play the same, clip move/copy/edge-repeat/split, the ruler loop (one stretch or several) with scroll and zoom, global undo, and every existing composer reachable in a simple window. Chords, Melody, Bass and Drums get there through a "lens" that presents one clip as a one-section old song; Vocals through the old page in a host mode that hands its takes to the new model. Releases 2 to 5 turn each composer into a proper plugin. Release 6 is the blank audio track. Release 7 removes the leftovers and does the phone layout.
 9. **No recording can be lost by accident, and nothing is a key only.** Undo never removes a take. Every action has a button on screen (and so works on a phone); keys are shortcuts.
 
 ---
@@ -227,7 +227,7 @@ export interface SavedIdea {
 }
 ```
 
-The new app state is a new type in a new file. **The version 4 modules are not edited**: `ui/state.tsx` keeps its types (`AppState`, `Progression`, `SavedProgression`, `Ctx`), its pure functions and its provider (no longer mounted), so the 15 test files that import them stay green untouched until release 7 removes them with their modules.
+The new app state is a new type in a new file. **The version 4 modules are not edited**: `ui/state.tsx` keeps its types (`AppState`, `Progression`, `SavedProgression`, `Ctx`), its pure functions and its provider (no longer mounted), so the 16 test files that import them stay green untouched until release 7 removes them with their modules.
 
 ```ts
 // src/ui/app5.tsx
@@ -247,6 +247,32 @@ export function useApp5(): Ctx5;   // state, set, edit(label, fn), setSession, u
 ```
 
 `Studio` gains one field, `inputs?: number` (how many inputs the interface had when it was last open, F.2). `tab` and `pane` are not carried over (there is one page).
+
+**What step 0 fixes, so the later steps agree.** `WinState` (E.1), `SoundCopy` and `Clipboard5` (A.7) are declared in `timeline/model.ts` and re-exported from the files those sections name, so `model.ts` imports nothing from the new screen code. `src/ui/app5.tsx` and `src/timeline/library5.ts` start as their types only (`App5State`, `Ctx5`; `SavedIdea`). `ui/state.tsx` gets additive exports and nothing else: `AppCtx`, the type `Ctx`, `STORAGE_KEY`, `type AppStateV4 = AppState`, the optional `Studio.inputs`, and the parsing half of `load` as `loadV4(raw: string | null): AppState` (`load` then reads the key and calls it; nothing it does changes), so the new code and its tests can load a version 4 text that is handed to them.
+
+```ts
+// src/ui/app5.tsx: what `useApp5()` returns
+export interface Ctx5 {
+  state: App5State;
+  /** a change that is not an undo step: settings, the libraries, studio, view, the clipboard */
+  set(fn: (s: App5State) => App5State): void;
+  /** a change of the song: one undo step (A.8). `control` folds quick changes from one control into one step */
+  edit(label: string, fn: (s: TimelineSong) => TimelineSong, control?: string): void;
+  /** a change of the song and the key together ("Move song"): one undo step */
+  editKeyed(label: string, fn: (song: TimelineSong, key: Key) => { song: TimelineSong; key: Key }): void;
+  setSession(fn: (s: Session) => Session): void;
+  undo(): void; redo(): void; canUndo: boolean; canRedo: boolean;
+  tuning: Tuning;
+  toast(msg: string, action?: { label: string; aria: string; run(): void; ms?: number; when?(s: App5State): boolean }): void;
+  idea: SavedIdea | null; dirty: boolean; opened: number;
+  saveIdea(asNew?: boolean): "new" | "updated" | "nothing";
+  openIdea(id: string): void; newIdea(): void; renameIdea(id: string, name: string): void; deleteIdea(id: string): void;
+  /** a backup file's text, version 1 or 2 (B.4); returns how many ideas were new */
+  importIdeas(text: string): number;
+  cloud: CloudStatus; syncNow(): void;
+  recordingTo: string | null; setRecordingTo(id: string | null): void;
+}
+```
 
 ### A.2 Which existing types become clip content unchanged
 
@@ -507,7 +533,7 @@ The first chords row was split in two because it was a guitar in the verse and a
 - **New storage key** `m-theory-state-v2` holds `App5State` (A.1). **The old key `m-theory-state-v1` is never written by the new build.**
 - **New cloud prefix** `idea5_<id>` (`ui/cloud.ts:60,68` use `idea_` today; `connectCloud` gets a prefix argument). Old `idea_<id>` documents are listed on every sync and never written.
 - Why: an older build treats `v >= 4` as current and its revive drops what it does not know (map-model section 6), so it would open a converted song as nearly empty and save that back. With a new key and prefix it cannot see the new songs at all.
-- **New modules beside the old ones** (the old ones are not edited, so their tests stay green): `src/ui/app5.tsx` (state, provider, storage), `src/timeline/library5.ts` (`SavedIdea`, `reviveIdea5`, `fingerprint5`, `describeIdea5`, `mergeIdeas5`, `toPush5`, `exportIdeas5`, `importIdeas5`), `src/ui/othertab5.ts` (`joinOtherTab5`: the other tab's saved ideas, tombstones, `myBeats`, `myKits`, `mySounds` are taken in, as `ui/othertab.ts:13, 50-56` does today), `src/ui/openidea5.ts`.
+- **New modules beside the old ones** (the old ones are not edited, so their tests stay green): `src/ui/app5.tsx` (state, provider, storage), `src/timeline/library5.ts` (`SavedIdea`, `reviveIdea5`, `reviveSong5`, `reviveMelody5`, `fingerprint5`, `describeIdea5`, `mergeIdeas5`, `toPush5`, `exportIdeas5`, `importIdeas5`), `src/ui/othertab5.ts` (`joinOtherTab5`: the other tab's saved ideas, tombstones, `myBeats`, `myKits`, `mySounds` are taken in, as `ui/othertab.ts:13, 50-56` does today), `src/ui/openidea5.ts`.
 - **The offline cache name is bumped** (`public/sw.js`, `CACHE = "m-theory-v2"`), so a phone or tab still running cached old code gets the new code at its next visit instead of going on saving old-format ideas for days.
 
 ```ts
@@ -522,7 +548,7 @@ export function arrive(s: App5State, old: SavedProgression, original: (id: strin
 export function backupSource(id: string): Promise<SavedProgression | null>;
 ```
 
-**The first start of the new build** (`load5()` in `ui/app5.tsx`, then `settleConversion()` once the app is on screen):
+**The first start of the new build** (`load5`, then `settleConversion` once the app is on screen; both are called from `ui/app5.tsx`):
 
 1. If the v2 key exists, load it. Conversion never runs over an existing v2 key.
 2. Otherwise read the v1 text, load it with the existing code (exported from `ui/state.tsx` as `loadV4`), and `convertAll` it in memory. The app shows this at once.
@@ -531,6 +557,21 @@ export function backupSource(id: string): Promise<SavedProgression | null>;
 5. When 3 and 4 both succeeded, remove the v1 key (its copy is in IndexedDB) and note `converted.blob = { len, hash, where: "idb" }`. So local storage is **not doubled**. If IndexedDB cannot be used (some private windows and embedded viewers), the v1 key stays where it is as the backup store (`where: "local"`) and storage is doubled; that is the only case.
 6. If the v2 write still fails: the state gets `unsaved`, and a plain message stays on screen until a later write works: "This device's storage is full, so changes are not being saved. They are safe while the app stays open. Ideas → Backup saves them to a file." The app keeps working in memory and tries again on every change. The same message is used for any later failed write (today the write sits in an empty `catch`, `ui/state.tsx:414-418`, and nobody is told).
 7. The sizes of the old and the new text are kept in `converted` and printed once to the console, so real sizes are known from the first testers.
+
+These steps are written as functions over two small interfaces, in `src/timeline/store5.ts`, so `convert.test.ts` can run them in node with pretend stores; the provider in `ui/app5.tsx` calls them with the real local storage and IndexedDB:
+
+```ts
+// src/timeline/store5.ts
+export interface KV { get(k: string): string | null; set(k: string, v: string): void; remove(k: string): void }   // local storage; `set` throws when there is no room
+export interface Blobs { get(k: string): Promise<string | null>; put(k: string, v: string): Promise<void> }       // IndexedDB database `m-theory`, store `backup`
+export const KEY_V1 = "m-theory-state-v1", KEY_V2 = "m-theory-state-v2";
+/** Steps 1 and 2: the stored version 5 state, or the version 4 one converted in memory (`v1` is then its text). */
+export function load5(kv: KV): { state: App5State; v1?: string };
+/** Steps 3 to 7. `blobs` is null where IndexedDB cannot be used. Returns the state with `converted` (and `unsaved` when the write failed). */
+export function settleConversion(kv: KV, blobs: Blobs | null, state: App5State, v1: string): Promise<App5State>;
+/** Every later write (debounced by the caller): true when it worked. */
+export function save5(kv: KV, state: App5State): boolean;
+```
 
 One plain toast after the first conversion: "Your ideas now open in the track view. The originals are in Ideas, under 'Before track view'." No dialog.
 
@@ -584,8 +625,15 @@ New test files `src/timeline/migrate5.test.ts`, `src/timeline/equal.test.ts`, `s
 The plan builder inside `GuitarView.tsx:204-307` is copied, unchanged, into a pure function (step 0; the original stays where it is until release 7) so it can be called from a test and kept as the frozen reference:
 
 ```ts
+// src/timeline/voicing.ts (GuitarView.tsx:94-125 as functions: what the old view took from its hooks)
+export interface VoicingCtx { tuning: Tuning; capo: number; avoidBarre: boolean; shapeOf(ref: ChordRef, voicingId?: string): Voicing | undefined }
+export function voicingsFor(ctx: VoicingCtx): (chords: ProgChord[], arrange: ArrangeSettings | null | undefined) => (Voicing | undefined)[];
+
 // src/song/legacyplan.ts
+export type SecPlan = { block: string; partId: string; label: string; color: number; bars: number; bar: number; items: PlayItem[]; idx: number[] };   // GuitarView.tsx:1280
 export function legacyPlan(p: Progression, ctx: VoicingCtx, buffer: (t: Take) => AudioBuffer | undefined): { items: PlayItem[]; map: { block: string; idx: number }[]; per: SecPlan[]; any: boolean };
+/** The bars of one loop run, as items (GuitarView.tsx:327-343, copied the same way). */
+export function legacySlice(per: SecPlan[], loop: LoopSpan): { items: PlayItem[]; map: { block: string; idx: number }[]; loop: true };
 ```
 
 A helper records everything a render asks for, on the pretend audio context the audio tests already use (`audio/fakectx.ts`, the `notes()` and `starts` pattern of `audio/player.test.ts:20-80`):
@@ -602,7 +650,7 @@ export interface RenderLog {
 export async function renderLog(items: PlayItem[], bpm: number, rename?: (track: string) => string): Promise<RenderLog>;
 ```
 
-The test: for each fixture `p`, `A = renderLog(legacyPlan(p).items)` and `B = renderLog(flatten(toTimeline(p).song).items, rename new ids back to old ids)`. After sorting, `A` and `B` must be equal, with times within 1e-6 s. Voices are compared by the reduced sound key of B.1 step 6. Old drums id `drums` and first-track labels are mapped through `Converted.ids`. The same comparison is run on the live player (`ProgressionPlayer.start` on the pretend live context, clock advanced to the song's end), and on a loop: old `sliceLoop` over bars 3–6 against `flatten` with `range = { from, to, loop: true }`.
+The test: for each fixture `p`, `A = renderLog(legacyPlan(p).items)` and `B = renderLog(flatten(toTimeline(p).song).items, rename new ids back to old ids)`. After sorting, `A` and `B` must be equal, with times within 1e-6 s. Voices are compared by the reduced sound key of B.1 step 6. Old drums id `drums` and first-track labels are mapped through `Converted.ids`. The same comparison is run on the live player (`ProgressionPlayer.start` on the pretend live context, clock advanced to the song's end), and on a loop: old `sliceLoop` (`legacySlice`) over bars 3–6 against `flatten` with `range = { from, to, loop: true }`.
 
 Fixtures (each a small version 4 song; start from the outputs of `song/migrate.test.ts` and add):
 
@@ -680,7 +728,7 @@ export const songBeat = (flat: Flat, pos: { index: number; beat: number }): numb
 
 ### C.2 Pseudo-sections (`src/timeline/cuts.ts`)
 
-The engine counts drum steps, melody ticks and playing styles from one shared start per group of items (`sectionStart`, `audio/patterns.ts:278`). `cutPoints(song)` chooses those starts. A cut is always on a bar line. There is a cut at bar line `L` when any of these holds:
+The engine counts drum steps, melody ticks and playing styles from one shared start per group of items (`sectionStart`, `audio/patterns.ts:278`). `cutPoints(song)` chooses those starts (`export function cutPoints(song: TimelineSong): number[]`: the beats of the cuts, sorted, the first one 0, the song's end not included). A cut is always on a bar line. There is a cut at bar line `L` when any of these holds:
 
 1. the time signature changes at `L` (a clip that lies across the change is cut there too, see C.7);
 2. no unmuted note clip on any track crosses `L` (audio clips do not count);
@@ -726,7 +774,7 @@ This reproduces the old list's item boundaries for a converted song (the old ite
 
 ### C.4 Loop, play from the cursor, and edits while playing
 
-Host: `src/ui/timeline/usePlayer.ts`, built in step 1c (it takes over `GuitarView.tsx:531-638` and the update effect at `:541-570`). The track view itself never plays anything: it is given a `PlayerApi`.
+Host: `src/ui/timeline/usePlayer.ts`, built in step 1c (it takes over `GuitarView.tsx:531-638` and the update effect at `:541-570`). The track view itself never plays anything: it is given a `PlayerApi`. The type is declared in `src/ui/timeline/api.ts` (step 0) and re-exported by `usePlayer.ts`.
 
 ```ts
 export interface PlayerApi {
@@ -833,6 +881,34 @@ export interface TrackViewProps {
   top: TopBarProps;                                    // key, tempo, signature, undo/redo, save, export, Canvas, Ideas, Settings, record: values and callbacks
   /** which lanes a strip drag may land on, while one is going (E.2) */
   dropKind?: ClipKind | null;
+  /** harmony clips whose source changed since they were written (E.5): each shows a dot */
+  stale?: ReadonlySet<string>;
+  /** the panel's ⟳: write the harmony again into this clip of this track */
+  again?(track: string, clip: string): void;
+  /** audio tracks: how many inputs there are to choose from (F.2), each one's level while the interface is open, and the way to audio setup */
+  inputs?: { count: number; level?(ch: number): number; setup(): void };
+  /** a recording that is running, drawn growing on its lane (F.3 step 4); read once a frame, never React state */
+  recording?(): { track: string; from: number; to: number } | null;
+  /** a short message from the view; with `undo` it carries the 20-second undo button (a track with clips or takes removed) */
+  say?(msg: string, undo?: boolean): void;
+}
+
+// src/ui/timeline/TopBar.tsx (the bar works out the position readout itself, from `song` and `player.getBeat()`)
+export interface TopBarProps {
+  /** what stands at the bar's left end (the draft badge) */
+  badge?: ReactNode;
+  idea: { name: string | null; dirty: boolean; count: number; save(): void };
+  onKey(key: Key): void;                              // a home note or a mode picked
+  onMove(semitones: number): void;                    // "Move song": the notes and the key, one undo step (A.4)
+  onTempo(bpm: number): void;                         // setTempo (A.7)
+  onSig(sig: TimeSig, fromHereOn: boolean): void;     // setSig at the cursor's bar (A.7)
+  /** the three vocals notes; each is shown when it is set */
+  sung?: { key?: string; bpm?: number; sig?: string };
+  undo(): void; redo(): void; canUndo: boolean; canRedo: boolean;
+  exports: { wav(): void; midi(): void; chart(): void; busy?: boolean };
+  openCanvas(): void; openIdeas(): void; openSettings(): void;
+  /** shown when the song has an audio track */
+  record?: { on: boolean; busy: boolean; live: boolean; toggle(): void; monitor: "hardware" | "effects"; setMonitor(m: "hardware" | "effects"): void };
 }
 ```
 
@@ -885,7 +961,7 @@ Popovers are the app's quiet inline kind: opened under their button, closed by E
 - **Double-click** an empty part: the loop becomes the whole song.
 - **Markers** above the numbers: click = cursor to the marker; double-click = loop from this marker to the next (Ctrl + double-click adds that stretch); this replaces "tap a section's name to loop it". `M` adds one at the cursor and its name is typed straight away (Enter saves, Escape leaves the default name). **F2**, or "Rename" in the marker's right-click menu, renames; drag moves; Delete removes the selected one. Marker editing is in release 1, because the Canvas paints per marker region and the chord sheet is written marker by marker from release 1 on.
 - **Signature flags**: a small "6/8" where the signature changes.
-- **Right-click on the ruler**: "Insert a bar here", "Insert the looped length here", "Remove the looped time", "Add marker", "Loop the whole song".
+- **Right-click on the ruler** (long-press on touch): "Insert a bar here", "Insert the looped length here", "Remove the looped time", "Add marker", "Loop the whole song".
 - **Sideways scroll**: the scroll bar, Shift + wheel, a trackpad's sideways gesture, or dragging the ruler's empty edge zones.
 - **Zoom**: Ctrl + wheel zooms around the pointer (the beat under the pointer stays under it); `+` / `−` keys and the − / + buttons zoom around the cursor; "fit" shows the whole song. Range 2 to 320 pixels per beat (the top end is for cutting a vocal between two words). The wheel listener is not passive and prevents the default, or the browser build would zoom the whole page.
 - Plain wheel scrolls the tracks up and down, as every other page does. (The reference program's wheel-zooms default is not copied; its own users complain about it.)
@@ -988,7 +1064,7 @@ The first chords track and the first drums track of a song get `lead: true`. Whe
 - Only clips that intersect the visible beats (plus one screen each side) are mounted. Each `ClipView` is `memo`'d on the clip object and the zoom.
 - The four small drawings are today's (`ChordBlock`, `MelodyBlock`, `DrumBlock`, `TakeBlock`), given a clip's content and its cycles instead of a section.
 - The play line and the cursor are two absolutely placed elements; the play line is moved by one `requestAnimationFrame` loop reading `player.getBeat()`.
-- `hands.ts:43` and `App.tsx:60` look for `section.transport`, `nav.tabs` and `.topbar`; the top bar keeps the class `topbar`, its transport group keeps the class `transport` on a `section`, and `ui/hands.test.ts` is the one existing test changed on purpose in release 1.
+- `hands.ts:43` and `App.tsx:60` look for `section.transport`, `nav.tabs` and `.topbar`; the top bar keeps the class `topbar` and its transport group keeps the class `transport` on a `section`, so `ui/hands.ts` works as it is and `ui/hands.test.ts` passes unedited. No existing test changes in release 1.
 - **On a phone** (width up to 760 px or a coarse pointer) the same view works from release 1: every action has a button (the clip's row, the ⋯ menu, ↶ ↷, the + row), a long-press opens the clip menu, and plugin windows are bottom sheets (E.1). The tuned phone layout is release 7.
 
 ---
@@ -1101,7 +1177,7 @@ Opened by FX on the panel, by the Sound button in a composer's title bar, or by 
 - The compose-versus-sound split follows map-ui section 3. `onAll` ("All sections") is not passed to any sound panel: the sound already belongs to the whole track. `DrumMachine`'s rule `deskFollowsPage` (`DrumMachine.tsx:40`) becomes "always": there is one desk per track. The drum solo while working stays a listening aid of the drum sound window.
 - The synth panel's `compound` flag (it fits arp and pulse speeds to 6/8, 9/8 and 12/8, `GuitarView.tsx:447`) is the signature of the clip open in that track's composer, else the signature at the cursor.
 - `DrumMachine` is one component with a `show: "compose" | "sound"` prop, mounted twice, with `sel`, `solo` and `hit` lifted into a small shared store per track (`src/ui/plugins/drums/store.ts`), so a drum picked in the grid is the drum shown in the sound window.
-- **Names in the drum windows.** Three kits are still named by another maker's model numbers and one rhythm group carries one of them (`audio/drums.ts:92-94`, `audio/rhythms.ts:28`); their neighbours were already renamed in plain words. Release 2 renames them in plain words ("Boom", "Punch", "Tight"; the group "Trap & electro"), keeping the ids so saved songs load.
+- **Names in the drum windows.** Three kits are still named by another maker's model numbers and one rhythm group carries one of them (`audio/drums.ts:92-94`, `audio/rhythms.ts:26`); their neighbours were already renamed in plain words. Release 2 renames them in plain words ("Boom", "Punch", "Tight"; the group "Trap & electro"), keeping the ids so saved songs load.
 
 ### E.4 The lens (`src/timeline/lens.ts`, `src/ui/windows/ClipLens.tsx`)
 
@@ -1115,6 +1191,10 @@ export interface Lens { p: Progression; span: Region; lead: string | null /* the
 export function lensOf(song: TimelineSong, target: Target, key: Key, anchor: number): Lens | null;
 /** What the old code changed, written back into the song. */
 export function unlens(song: TimelineSong, target: Target, lens: Lens, after: Progression, id: () => string): TimelineSong;
+/** The chords that sound under a stretch of the song: the lead chords track's, or those of a clip that plays instead of it (what `chordsUnder` gives through the lens). */
+export function chordsUnderSpan(song: TimelineSong, span: Region): ProgChord[];
+/** `harmonyState` (`song/harmony.ts:533`) for the harmony written into one clip: changed by hand, source changed. */
+export function harmonyState5(song: TimelineSong, key: Key, clip: string): HarmonyState;
 ```
 
 **What the lens song holds.** No sections (`song` unset: the old code's "no sections yet" case, where the top-level fields are the one section), `meter: clip.sig`, `bars: content.bars`, `bpm`.
@@ -1143,6 +1223,8 @@ export function unlens(song: TimelineSong, target: Target, lens: Lens, after: Pr
 - `toast(msg, action)` passes to the real toast with `when` and `run` wrapped: `when` is given the version 4 view of the new state, never the new state itself (the old pages' `when` reads `s.progression`, which the new state does not have; called raw it throws inside the provider, above every crash guard).
 - `idea`, `dirty`, `opened`, `recordingTo` come from the real context; `saveIdea`, `openIdea`, `newIdea` are the real ones.
 
+**Old components outside a composer window.** `CanvasPage`, `SettingsPanel`, `BarsControl` and `VocalsPage` (in host mode) also call `useApp()`. `ClipLens.tsx` exports `V4View`, the same context with no target: its `progression` is an empty version 4 song and a change to it is dropped; every other field passes through both ways, and the functions come from the real context as above. The host mounts those components inside it. `CanvasPage` is given what it paints from as an optional prop (`plans?: TapPlan[]`, from `planTaps5`, E.5) and reads `state.progression` only without it. `IdeasPanel` is ported to `useApp5()` (it lists `SavedIdea`s and folds the backups, B.4).
+
 **The embedded page.** `GuitarView` gets `embedded?: EmbedHost`:
 
 ```ts
@@ -1163,7 +1245,7 @@ export interface EmbedHost {
 
 With it set, `GuitarView` **renders exactly one pane and nothing else**: no hidden sibling panes, no `Transport`, no `FramePage`, `TrackPage`, `VocalsPage` or `CanvasPage` (today it mounts all seven pages and only hides them, `GuitarView.tsx:935-968`, so every legacy window would carry a hidden copy of the whole app). Its own player is never made. These effects are off, and the host does their work once for the whole app: reading takes from disk and `keepTakes` (`:187-196`; left on, a lens's short take list would let go of the song's decoded takes beyond eight, `takebuffers.ts:59-70`, and vocals fall silent), `setTempo`, `keepSlots`, both `hearOn` effects and `prepareNotes` (`:387-397`; it replaces the one global queue, `synth.ts:234`), `setHome` (`:418`), the loop state and Follow-by-section. The page's top strip (`ClipBar`: track tabs, +, ✕, Copy, Paste) is not rendered: tracks are chosen on the timeline, and copy, paste, the mute/solo mark and the "plays instead" chip are in the window's title bar. The key chip opens the key popover.
 
-Tests (`lens.test.ts`, `cliplens.test.tsx`): `unlens(lensOf(x))` changes nothing, for every kind; every old mutator (`addChord`, a slot removed, a knob, a rhythm picked, a melody note) lands in the right clip or track and nowhere else; a melody clip over lead chords gets its chord names (`chordsUnder`); Best fit from a melody gives `clip.instead` = the lead chords track; `writeHarmony` into a new track and into an empty track both arrive as real clips with their marks; `rewriteHarmony` through the lens; every library rhythm picked into a 3/4 and a 6/8 clip keeps `steps / div === sigBeats(sig)`; saving a rhythm inside the lens grows `myBeats`; a toast action's `when` does not throw; `lensOf` returns the same object when an unrelated track changes.
+Tests (`lens.test.ts`, `cliplens.test.ts`; the second renders with `renderToStaticMarkup` and calls the context's functions directly, because only `*.test.ts` files run): `unlens(lensOf(x))` changes nothing, for every kind; every old mutator (`addChord`, a slot removed, a knob, a rhythm picked, a melody note) lands in the right clip or track and nowhere else; a melody clip over lead chords gets its chord names (`chordsUnder`); Best fit from a melody gives `clip.instead` = the lead chords track; `writeHarmony` into a new track and into an empty track both arrive as real clips with their marks; `rewriteHarmony` through the lens; every library rhythm picked into a 3/4 and a 6/8 clip keeps `steps / div === sigBeats(sig)`; saving a rhythm inside the lens grows `myBeats`; a toast action's `when` does not throw; `lensOf` returns the same object when an unrelated track changes.
 
 ### E.5 Where the other things go
 
@@ -1570,13 +1652,13 @@ Every row of the inventory in `map-ui.md` section 1 (218 rows), by its number th
 
 ---
 
-## H. Delivery: seven draft releases, built in twelve steps
+## H. Delivery: seven draft releases, built in thirteen steps
 
 Each release is shippable alone; the app works at every merge. The full brief for each step (goal, files, signatures, acceptance checks on a 1280 × 800 window, tests, what is left for later) is in `steps.md` beside this file. This section is the map.
 
 | Step | What it is | Needs | May run beside | Ends in |
 |---|---|---|---|---|
-| 0 | Groundwork: one small commit that only copies and exports, so the next three steps do not touch the same lines | nothing | | |
+| 0 | Groundwork: one small commit that only copies, exports and declares the shared types (`model.ts`, `PlayerApi`, `App5State`, `SavedIdea`), so the next three steps do not touch the same lines | nothing | | |
 | 1a | Core, no screen. Part 1 (lands first, on its own): model helpers, bar map, edits, history. Part 2: cuts, `flatten`, conversion, library, lens, engine touches E1 and E2 | 0 | 1b, 6r | |
 | 1b | Shell: the whole track view, built on props and shown on a fixture page. Not mounted in the app | 0 (its gestures call the edits of 1a part 1) | 1a, 6r | |
 | 1c | Switch-over: new state and storage, conversion with backups, the player host, the legacy composer windows, top-bar functions, Canvas overlay, Ideas. The single moment the app changes | 1a, 1b | the pure parts of 1d, 6r | |
@@ -1594,18 +1676,21 @@ Each release is shippable alone; the app works at every merge. The full brief fo
 
 **Why 3, 4 and 5 really are separate after 2b.** Before it they all had to edit `GuitarView.tsx` (it mounts `MelodyGrid`, `VocalsPage` and `HarmonyPicker`, `:956, 960, 971`), the Harmonize button lives in the `Dock` (step 3's) and in `MelodyGrid` (step 4's), and all three would add to `ui/styles.css`. After 2b: each kind has its own host file; nobody edits `GuitarView.tsx` again (it is simply no longer mounted, and is deleted in step 7); Harmonize has one entry point (`onHarmonize`, supplied by the host); each plugin has its own stylesheet; E3 (`timeline/flatten.ts`, `renderSong`) belongs to step 3 alone. The one shared file is `ui/plugins/registry.ts`, one line each.
 
-**Existing tests.** The build type-checks tests (`package.json:9`, `tsconfig.json`), and 15 test files import the version 4 state and library modules. Those modules are not edited before step 7 (B.3), so those tests stay green untouched. The tests changed on purpose, and when:
+**Existing tests.** The build type-checks tests (`package.json:9`, `tsconfig.json`), and 16 test files import the version 4 state and library modules. Those modules are not edited before step 7 (B.3; step 0 only adds exports to `ui/state.tsx`), so those tests stay green untouched. Tests run in node and only files named `*.test.ts` are run (`vite.config.ts`); a component is tested by rendering it to text (`renderToStaticMarkup`, as `ui/components/takelane.test.ts` does). The tests changed on purpose, and when:
 
 | Test | Step | Why |
 |---|---|---|
-| `ui/hands.test.ts` | 1c | the selectors it names (transport, page tabs) |
+| none in release 1 | 0 to 1d | `ui/hands.ts:43` (the source, not its test) looks for `section.transport` and `nav.tabs`. The top bar keeps a `section` with the class `transport`, so the file works as it is, and `ui/hands.test.ts` (which tests only the pure `makeHands`) passes unedited |
 | `ui/components/drumdesk.test.ts` | 2 | "the desk follows the page" becomes "always" |
 | `song/melody.test.ts` ("shows two octaves") | 4 | the grid's rows come from `gridRows` |
-| `song/takes.test.ts`, `song/clips.test.ts`, `ui/components/takelane.test.ts`, `ui/components/harmonypicker.test.ts` | 5 | block-and-bar arguments go; the lane retires |
+| `ui/components/harmonypicker.test.ts` | 5 | the picker reads a clip's bars |
+| `song/takes.test.ts`, `song/clips.test.ts`, `ui/components/takelane.test.ts` | 7 | block-and-bar arguments go; the lane retires. Not earlier: `GuitarView.tsx` imports `VocalsPage`, which imports the lane and those functions, and it is type-checked until it is deleted |
 | `audio/handoff.test.ts` | 5 | the "wanted" rule of F.5 |
 | the section tests listed "replace on purpose" in map-model section 7, and the tests of the version 4 state modules | 7 | removed with their modules |
 
 All `audio/*.test.ts` other than `handoff` pass unedited in every step.
+
+**The old view is type-checked until step 7**, also where it is no longer mounted. So a prop added before then to a component `GuitarView.tsx` imports (`DrumMachine`, `MelodyGrid`, `HarmonyPicker`, `ShapeFinder`, `VocalsPage`, `CanvasPage`) is optional and the component behaves as before without it, and none of those files is deleted before `GuitarView.tsx` is.
 
 **What the user gets, release by release**
 
@@ -1666,7 +1751,7 @@ All `audio/*.test.ts` other than `handoff` pass unedited in every step.
 
 ## J. Review notes
 
-Three reviews (architecture, nothing lost, user intent) raised 65 findings. Each was checked against the code at commit `0f436e9`; all of them describe the code truthfully. Every blocker and major finding is resolved in the text above, and so are the minor ones. This section lists where each went, and the few places where the design differs from the fix a reviewer proposed, with the reason.
+Three reviews (architecture, nothing lost, user intent) raised 74 findings, 65 once a point made by two reviews is counted once. Each was checked against the code at commit `0f436e9`; all of them describe the code truthfully. Every blocker and major finding is resolved in the text above, and so are the minor ones. This section lists where each went, and the few places where the design differs from the fix a reviewer proposed, with the reason.
 
 ### Where the design differs from a proposed fix
 
@@ -1729,3 +1814,21 @@ Three reviews (architecture, nothing lost, user intent) raised 65 findings. Each
 | Where a window first opens | E.1 (`firstPlace`) |
 | R records | D.3 |
 | Timeline extent and first zoom; marker double-click; monitor per track; panel width; "Blank" and the clef; "New"; play inside the loop; rhythm and clip length; box select; takes across tracks; bypass; pinned children; browser keys; kit names | D.1; D.1; D.1 and F.2; D.1; D.1; E.2; C.4; A.4; D.2; A.7; E.3; E.1; D.1 and D.3; E.3 |
+
+### Added while the steps were written
+
+Writing the briefs in `steps.md` against the code showed a few names and contracts the text used but did not fix. They are now in the sections named; none changes the design.
+
+| What | Where |
+|---|---|
+| The count of steps (thirteen; 1a lands in two parts), and what step 0 holds: copies, exports, and the shared types | the first page, H |
+| Step 0's additive exports from `ui/state.tsx` (`AppCtx`, `Ctx`, `STORAGE_KEY`, `loadV4(raw)`, `AppStateV4`); `WinState`, `SoundCopy`, `Clipboard5` declared in `model.ts`; the `Ctx5` interface | A.1 |
+| `VoicingCtx`, `voicingsFor`, `SecPlan`, `legacySlice` (the old loop cut, needed by the render-equality test) | B.5 |
+| The signature of `cutPoints`; the storage steps as testable functions (`store5.ts`: `KV`, `Blobs`, `load5`, `settleConversion`, `save5`); `chordsUnderSpan` and `harmonyState5` | C.2, B.3, E.4 |
+| `reviveSong5` and `reviveMelody5` live in `library5.ts` | B.3 |
+| `PlayerApi` is declared in `ui/timeline/api.ts` | C.4 |
+| `TopBarProps`, and five more props of the track view (`stale`, `again`, `inputs`, `recording`, `say`) that the shell and the host must agree on | D |
+| How the old components that are not composers get their context (`V4View`); `CanvasPage` takes its plans as a prop; `IdeasPanel` is ported | E.4 |
+| The old view is type-checked until it is deleted: props added to the components it imports are optional, and three vocal tests change in step 7, not 5 | H |
+| Tests are `*.test.ts` only (so `cliplens.test.ts`); no existing test changes in release 1 (`ui/hands.test.ts` names no selector; `ui/hands.ts` keeps working because the top bar keeps `section.transport`); 16 test files import the version 4 modules | E.4, D.5, H |
+| The ruler's menu also opens by long-press | D.1 |
