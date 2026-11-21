@@ -247,14 +247,14 @@ async function keptOriginal(st: Stores, stem: string): Promise<SavedProgression 
   }
 }
 
-/** The old state's texts there are to read from: `late` first when asked for (what an old tab wrote after the move), then what was converted, then the old key itself. */
+/** The old state's texts there are to read from: what was converted, then (when asked for) what an old tab wrote after the move, then the old key itself. */
 async function oldStates(st: Stores, late: boolean): Promise<AppStateV4[]> {
   const texts: string[] = [];
   const add = (t: string | null | undefined) => {
     if (t && !texts.includes(t)) texts.push(t);
   };
   if (st.blobs)
-    for (const k of late ? [BLOB_LATE, BLOB] : [BLOB]) {
+    for (const k of late ? [BLOB, BLOB_LATE] : [BLOB]) {
       try {
         add(await st.blobs.get(k));
       } catch {
@@ -276,8 +276,10 @@ async function oldStates(st: Stores, late: boolean): Promise<AppStateV4[]> {
 
 /**
  * The version 4 original a backup entry stands for, by the entry's id. It is read from, in order: the ideas kept on
- * their own; the old state's text (its saved list; for the two "unsaved" kinds, the idea that was on screen when it
- * was converted); the old cloud copy. null: it cannot be read on this device.
+ * their own (an idea replaced by a newer old copy has that copy there); the old state's text as it was converted
+ * (its saved list; for the two "unsaved" kinds, the idea that was on screen then); the text an old tab wrote later
+ * (an idea saved there that the first text did not have); the old key itself; the old cloud copy. null: it cannot be
+ * read on this device.
  */
 export async function backupSource(id: string, st: Stores | null = appStores): Promise<SavedProgression | null> {
   if (!st) return null;

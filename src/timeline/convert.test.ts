@@ -585,7 +585,8 @@ describe("the originals behind the backup entries", () => {
     const v1 = oldText();
     const { state, kv, blobs } = await settled(v1);
     expect(kv.get(KEY_V1)).toBeNull();
-    const lateText = JSON.stringify({ ...JSON.parse(v1), saved: JSON.parse(exportIdeas([...fixtures().slice(0, 3), fixture(6)])).ideas });
+    // (the old tab saved a new idea, and saved one of the others again, changed)
+    const lateText = JSON.stringify({ ...JSON.parse(v1), saved: JSON.parse(exportIdeas([fixture(1), later(fixture(2), fixture(2).updatedAt! + 900, 141), fixture(3), fixture(6)])).ideas });
     kv.set(KEY_V1, lateText);
     expect(await takeLate(kv, blobs, state)).toBe(lateText);
     expect(kv.get(KEY_V1)).toBeNull();
@@ -593,6 +594,14 @@ describe("the originals behind the backup entries", () => {
     expect(await blobs.get(BLOB)).toBe(v1);
     // its ideas are read from there
     expect((await backupSource("fixture-6-v4", { kv, blobs }))!.id).toBe("fixture-6");
+    // an idea both texts have: its original is still the copy it was converted from, so a newer old copy of an idea
+    // not edited here is known as such (and replaces it); once that copy is kept on its own, the entry stands for it
+    expect((await backupSource("fixture-2-v4", { kv, blobs }))!.progression.bpm).toBe(96);
+    const newer = loadV4(lateText).saved.find((i) => i.id === "fixture-2")!;
+    const r = arrive(state, newer, () => fixture(2));
+    expect(r.added).toBe("refreshed");
+    await keepOriginal("fixture-2", newer, { kv, blobs });
+    expect((await backupSource("fixture-2-v4", { kv, blobs }))!.progression.bpm).toBe(141);
     expect(await takeLate(kv, blobs, state)).toBeNull();
     const local = await settled(v1, "broken");
     expect(await takeLate(local.kv, null, local.state)).toBe(v1);
