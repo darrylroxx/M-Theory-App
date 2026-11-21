@@ -954,7 +954,7 @@
        ],
        "bars": 2,
        "kit": {
-        "kit": "909",
+        "kit": "lofi",
         "level": 0.8,
         "space": 0.6,
         "grit": 0.4,
@@ -1012,7 +1012,7 @@
        ],
        "bars": 2,
        "kit": {
-        "kit": "808",
+        "kit": "mod",
         "level": 0.8,
         "space": 0.25,
         "grit": 0.7,
@@ -1691,7 +1691,7 @@
         "d2": {
          "beat": {
           "on": true,
-          "kit": "808",
+          "kit": "mod",
           "patternId": null,
           "name": "Half",
           "steps": 16,
@@ -1810,7 +1810,7 @@
         "d2": {
          "beat": {
           "on": true,
-          "kit": "808",
+          "kit": "mod",
           "patternId": null,
           "name": "Rock",
           "steps": 16,
@@ -5919,7 +5919,7 @@
     "arrange": null,
     "beat": {
      "on": true,
-     "kit": "909",
+     "kit": "lofi",
      "patternId": null,
      "name": "Rock",
      "steps": 16,
@@ -6001,7 +6001,7 @@
        "bars": 8,
        "style": "ring",
        "kit": {
-        "kit": "909",
+        "kit": "lofi",
         "level": 0.8,
         "space": 0.25,
         "grit": 0.4,
@@ -6136,7 +6136,7 @@
         }
        },
        "kit": {
-        "kit": "909",
+        "kit": "lofi",
         "level": 0.8,
         "space": 0.25,
         "grit": 0.4,

@@ -14,8 +14,10 @@ import { sections } from "../song/structure";
 import type { ChordRef } from "../theory/chords";
 import type { SavedProgression } from "../ui/state";
 import { barMap } from "./bars";
+import { convertIdea } from "./convert";
 import { FIXTURES, fixture, fixtures } from "./fixtures5";
 import { flatten, type FlattenCtx } from "./flatten";
+import { reviveIdea5 } from "./library5";
 import { heardTone, toTimeline, type Converted } from "./migrate5";
 import { fakeBuffer, liveLog, logDiff, midiTracks, renderLog, type RenderLog } from "./renderlog";
 import { voicingsFor, type VoicingCtx } from "./voicing";
@@ -73,6 +75,17 @@ describe("a converted song asks the engine for what the old song asked: the live
       const a = await liveLog(x.old.items, x.bpm);
       const b = await liveLog(flatten(x.conv.song, x.fctx).items, x.bpm, { rename: x.rename });
       expect(a.notes.length + a.hits.length + a.takes.length).toBeGreaterThan(0);
+      same(a, b);
+    });
+});
+
+describe("the same through the whole path the app takes (the old idea loaded, settled, converted, stored and loaded again)", () => {
+  for (const n of numbers)
+    it(title(n), async () => {
+      const x = both(n);
+      const stored = reviveIdea5(JSON.parse(JSON.stringify(convertIdea(x.idea).idea)))!;
+      const a = await renderLog(x.old.items, x.bpm);
+      const b = await renderLog(flatten(stored.song, x.fctx).items, x.bpm, x.rename);
       same(a, b);
     });
 });

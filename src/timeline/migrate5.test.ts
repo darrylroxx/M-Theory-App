@@ -68,7 +68,7 @@ describe("toTimeline: structure", () => {
     expect(track<ChordsTrack>(s, "c7x").tone.inst).toBe("synth");
     expect(track<ChordsTrack>(s, "c7x").lead).toBeUndefined();
     // the drums row was not split: one kit
-    expect(track<DrumsTrack>(s, "t-drums")).toMatchObject({ lead: true, kit: { kit: "909" } });
+    expect(track<DrumsTrack>(s, "t-drums")).toMatchObject({ lead: true, kit: { kit: "lofi" } });
     expect(ids).toEqual({ chords: ["t-chords", "t-chords~2"], melody: ["t-melody"], drums: ["t-drums"], c7x: ["c7x"], v1: ["v1"] });
     const place = (id: string) => [clip<ChordsClip>(s, id).start, clip<ChordsClip>(s, id).len, clip<ChordsClip>(s, id).off];
     expect(on(s, "t-chords")).toEqual(["b1.chords", "b3.chords"]);
@@ -135,7 +135,7 @@ describe("toTimeline: structure", () => {
     expect(track<ChordsTrack>(s, "t-chords").tone.synth).toBeDefined();
     expect(track<ChordsTrack>(s, "t-chords~2").name).toBe("Chords · B");
     // a different kit in each section: a drums track for each
-    expect(song(4).tracks.filter((t) => t.kind === "drums").map((t) => [t.id, (t as DrumsTrack).kit.kit])).toEqual([["t-drums", "box"], ["t-drums~2", "909"], ["t-drums~3", "808"]]);
+    expect(song(4).tracks.filter((t) => t.kind === "drums").map((t) => [t.id, (t as DrumsTrack).kit.kit])).toEqual([["t-drums", "box"], ["t-drums~2", "lofi"], ["t-drums~3", "mod"]]);
     expect(on(song(4), "t-drums")).toEqual(["b1.drums", "b4.drums"]);
     // counting only tracks that sound, there are never more chords and melody voices than the old song ran
     for (let n = 1; n <= FIXTURES + 1; n++) {
@@ -346,8 +346,8 @@ describe("toTimeline: structure", () => {
       ...JSON.parse(JSON.stringify(DEFAULT_STATE)), key: { tonic: "D", scaleId: "dorian" }, progression: open.progression, ideaId: open.id, saved: JSON.parse(exportIdeas(ideas)).ideas,
       settings: { tuningId: "dropd", capo: 2, leftHanded: true, labels: "notes", theme: "dark", avoidBarre: false, v: 3 },
       shapes: { "standard|0|C:maj": "x32010" }, myBeats: [{ id: "mine1", name: "Mine", group: "mine", steps: 16, div: 4, swing: 0, rows: DEFAULT_BEAT.rows }],
-      myKits: [{ id: "k1", name: "My kit", kit: "808", voices: {}, sounds: {}, fx: {} }], mySounds: [{ id: "s1", name: "My sound", sound: { voice: "lyre" } }],
-      canvas: { palette: "dusk", fade: 2 }, studio: { host: "ASIO", device: "Interface", monitor: "effects", countIn: 2, nudge: 12 }, view: { bars: 8, follow: true },
+      myKits: [{ id: "k1", name: "My kit", kit: "mod", voices: {}, sounds: {}, fx: {} }], mySounds: [{ id: "s1", name: "My sound", sound: { voice: "lyre" } }],
+      canvas: { palette: "dusk", fade: 2 }, studio: { host: "Driver", device: "Interface", monitor: "effects", countIn: 2, nudge: 12 }, view: { bars: 8, follow: true },
       tombs: { gone1: 123 }, clip: { rhythm: copied }, draft: "d7",
     };
     const old: AppStateV4 = loadV4(JSON.stringify(stored));

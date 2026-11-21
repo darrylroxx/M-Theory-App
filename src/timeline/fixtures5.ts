@@ -102,8 +102,8 @@ const f4 = (): SavedProgression =>
   idea(4, "Fixture 4", song({
     parts: [
       { id: "A", bars: 2, chords: [ch("a1", "C", 8)], groove: ROCK },
-      { id: "B", bars: 2, chords: [ch("b1", "F", 8)], groove: ROCK, kit: kit("909", { space: 0.6 }) },
-      { id: "C", bars: 2, chords: [ch("k1", "G", 8)], groove: HALF, kit: kit("808", { grit: 0.7, human: 0.3 }) },
+      { id: "B", bars: 2, chords: [ch("b1", "F", 8)], groove: ROCK, kit: kit("lofi", { space: 0.6 }) },
+      { id: "C", bars: 2, chords: [ch("k1", "G", 8)], groove: HALF, kit: kit("mod", { grit: 0.7, human: 0.3 }) },
     ],
     blocks: [["b1", "A"], ["b2", "B"], ["b3", "C"], ["b4", "A"]],
   }));
@@ -124,8 +124,8 @@ const f6 = (): SavedProgression =>
   idea(6, "Fixture 6", song({
     parts: [
       { id: "A", bars: 2, chords: [ch("a1", "C"), ch("a2", "G")], groove: ROCK, layers: { c2: { chords: [ch("x1", "E", 8, "min")], pattern: "pima", sound: { voice: "nylon", space: 0.5 } } }, tones: { c2: PIANO } },
-      { id: "B", bars: 2, chords: [ch("b1", "F"), ch("b2", "G")], groove: ROCK, layers: { m2: { melody: mel(2, [[0, 76], [2, 79], [4, 77], [6, 74]]), tuneSound: { voice: "lyre" } }, d2: { beat: { ...DEFAULT_BEAT, ...kit("808"), ...HALF } } } },
-      { id: "C", bars: 2, chords: [], layers: { c2: { chords: [ch("x2", "A", 4, "min"), ch("x3", "D", 4, "min")], pattern: "pima", sound: { voice: "nylon", space: 0.5 } }, d2: { beat: { ...DEFAULT_BEAT, ...kit("808"), ...ROCK } } }, tones: { c2: PIANO } },
+      { id: "B", bars: 2, chords: [ch("b1", "F"), ch("b2", "G")], groove: ROCK, layers: { m2: { melody: mel(2, [[0, 76], [2, 79], [4, 77], [6, 74]]), tuneSound: { voice: "lyre" } }, d2: { beat: { ...DEFAULT_BEAT, ...kit("mod"), ...HALF } } } },
+      { id: "C", bars: 2, chords: [], layers: { c2: { chords: [ch("x2", "A", 4, "min"), ch("x3", "D", 4, "min")], pattern: "pima", sound: { voice: "nylon", space: 0.5 } }, d2: { beat: { ...DEFAULT_BEAT, ...kit("mod"), ...ROCK } } }, tones: { c2: PIANO } },
     ],
     blocks: [["b1", "A"], ["b2", "B"], ["b3", "C"]],
     tracks: [{ id: "c2", kind: "chords", name: "Chords 2" }, { id: "m2", kind: "melody", name: "Melody 2" }, { id: "d2", kind: "drums", name: "Drums 2" }],
@@ -298,9 +298,9 @@ const f18 = (): SavedProgression =>
   idea(18, "Worked example", song({
     bpm: 96,
     parts: [
-      { id: "V", name: "Verse", color: 0, bars: 8, chords: [ch("v1", "C", 8), ch("v2", "F", 8), ch("v3", "G", 8), ch("v4", "C", 8)], groove: ROCK, kit: kit("909") },
+      { id: "V", name: "Verse", color: 0, bars: 8, chords: [ch("v1", "C", 8), ch("v2", "F", 8), ch("v3", "G", 8), ch("v4", "C", 8)], groove: ROCK, kit: kit("lofi") },
       {
-        id: "H", name: "Chorus", color: 1, bars: 4, meter: SIG68, chords: [ch("h1", "A", 4, "min"), ch("h2", "F", 4)], groove: SIX8, kit: kit("909"), tones: { chords: PIANO, c7x: SYNTH },
+        id: "H", name: "Chorus", color: 1, bars: 4, meter: SIG68, chords: [ch("h1", "A", 4, "min"), ch("h2", "F", 4)], groove: SIX8, kit: kit("lofi"), tones: { chords: PIANO, c7x: SYNTH },
         melody: mel(4, [[0, 69], [2 / 3, 72], [4 / 3, 76], [2, 77], [8 / 3, 76], [4, 74], [14 / 3, 72], [6, 71], [20 / 3, 72]], 3),
         layers: { c7x: { chords: [ch("y1", "A", 4, "min"), ch("y2", "F", 4)] } },
       },

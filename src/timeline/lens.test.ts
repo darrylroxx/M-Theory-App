@@ -174,8 +174,8 @@ describe("writing back", () => {
     expect(c).toMatchObject({ start: 16, len: 16, off: 0 });
     expect(c.content.steps / c.content.div).toBe(4);
     expect(rest(picked, ["d1"], [])).toEqual(rest(s, ["d1"], []));
-    const kitted = open(s, { track: "td2", clip: "e1" }).back((p) => ({ ...p, beat: { ...p.beat!, kit: "808", space: 0.7 } as Beat }));
-    expect(kitSig(trackOf<DrumsTrack>(kitted, "td2").kit)).toBe(kitSig({ ...kitOfBeat(open(s, { track: "td2", clip: "e1" }).lens.p.beat!), kit: "808", space: 0.7 }));
+    const kitted = open(s, { track: "td2", clip: "e1" }).back((p) => ({ ...p, beat: { ...p.beat!, kit: "mod", space: 0.7 } as Beat }));
+    expect(kitSig(trackOf<DrumsTrack>(kitted, "td2").kit)).toBe(kitSig({ ...kitOfBeat(open(s, { track: "td2", clip: "e1" }).lens.p.beat!), kit: "mod", space: 0.7 }));
     expect(kitted.clips).toBe(s.clips);
     expect(rest(kitted, [], ["td2"])).toEqual(rest(s, [], ["td2"]));
   });
