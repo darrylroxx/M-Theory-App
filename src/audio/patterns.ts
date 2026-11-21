@@ -224,10 +224,11 @@ const hasStrumChar = (tok: string) => [...tok].some((ch) => STRUMS.includes(ch))
 
 
 /** The bar a style is laid over: the drums' when they are on, otherwise the style's own. */
-export function meterOf(b: Beat | null | undefined, own?: { bar: number; triplet?: boolean }): Meter {
+export function meterOf(b: Beat | null | undefined, own?: { bar: number; triplet?: boolean; swing?: number }): Meter {
   const on = !!b?.on;
-  // the song's time signature says how long the bar is; the drums add their swing (and a triplet grid, their shuffle)
-  return { bar: own?.bar ?? (on ? barBeats(b!) : 0), triplet: !!own?.triplet || (on && b!.div === 3), swing: on && b!.div === 4 ? b!.swing : 0 };
+  // the song's time signature says how long the bar is; the drums add their swing (and a triplet grid, their shuffle).
+  // (A swing given with the bars is the one played with, whatever the drums': the item then says whose swing it follows.)
+  return { bar: own?.bar ?? (on ? barBeats(b!) : 0), triplet: !!own?.triplet || (on && b!.div === 3), swing: own?.swing ?? (on && b!.div === 4 ? b!.swing : 0) };
 }
 
 export interface PlayItem {
@@ -238,8 +239,8 @@ export interface PlayItem {
   /** the playing style of this chord (missing = the player's own), and how it is played */
   style?: PatternId;
   feel?: Partial<Feel>;
-  /** the bars this chord is played in: their length in beats (its section's time signature), whether each beat divides in three, and the signature itself (for MIDI files) */
-  meter?: { bar: number; triplet?: boolean; sig?: TimeSig };
+  /** the bars this chord is played in: their length in beats (its section's time signature), whether each beat divides in three, the signature itself (for MIDI files), and the swing the sixteenth-note styles follow (not set = the drums') */
+  meter?: { bar: number; triplet?: boolean; sig?: TimeSig; swing?: number };
   /** a song section starts here: its drum pattern and its playing style start again from bar 1 */
   section?: boolean;
   /** the music jumps here: a run of a loop starts that is not next to the one before it in the song (what sounds from before stops here) */

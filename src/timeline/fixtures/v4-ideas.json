@@ -1,0 +1,6310 @@
+{
+ "app": "m-theory",
+ "version": 1,
+ "ideas": [
+  {
+   "id": "fixture-1",
+   "name": "Fixture 1",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "c1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c4",
+      "ref": {
+       "root": "A",
+       "typeId": "min"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1,
+     "size": 0.45,
+     "echo": 0,
+     "echoTime": "1/8.",
+     "tape": 0,
+     "tone": 0,
+     "glue": 0.3,
+     "human": 0,
+     "verb": "room",
+     "sampler": "off",
+     "noise": "off",
+     "noiseAmt": 0.3,
+     "pump": 0,
+     "voices": {}
+    },
+    "song": null,
+    "feel": {
+     "speed": 1,
+     "swing": 0,
+     "touch": 0.7,
+     "spread": 0.5,
+     "octave": 0
+    },
+    "melody": {
+     "div": 2,
+     "bars": 4,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 12,
+       "midi": 67
+      },
+      {
+       "at": 30,
+       "midi": 69
+      },
+      {
+       "at": 48,
+       "midi": 72
+      },
+      {
+       "at": 72,
+       "midi": 71
+      },
+      {
+       "at": 96,
+       "midi": 67
+      },
+      {
+       "at": 126,
+       "midi": 64
+      },
+      {
+       "at": 144,
+       "midi": 62
+      },
+      {
+       "at": 168,
+       "midi": 60
+      },
+      {
+       "at": 186,
+       "midi": 64
+      }
+     ]
+    },
+    "bars": 4,
+    "play": "section",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4
+   },
+   "savedAt": 1700000001000,
+   "updatedAt": 1700000001000
+  },
+  {
+   "id": "fixture-2",
+   "name": "Fixture 2",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "c1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c4",
+      "ref": {
+       "root": "A",
+       "typeId": "min"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "travis",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "name": "Verse",
+       "chords": [
+        {
+         "id": "c1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c4",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 12,
+          "midi": 67
+         },
+         {
+          "at": 30,
+          "midi": 69
+         },
+         {
+          "at": 48,
+          "midi": 72
+         },
+         {
+          "at": 72,
+          "midi": 71
+         },
+         {
+          "at": 96,
+          "midi": 67
+         },
+         {
+          "at": 126,
+          "midi": 64
+         },
+         {
+          "at": 144,
+          "midi": 62
+         },
+         {
+          "at": 168,
+          "midi": 60
+         },
+         {
+          "at": 186,
+          "midi": 64
+         }
+        ]
+       },
+       "bars": 4,
+       "color": 0,
+       "style": "travis",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "name": "Chorus",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 2
+        },
+        {
+         "id": "b3",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 2
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 72
+         },
+         {
+          "at": 24,
+          "midi": 74
+         },
+         {
+          "at": 48,
+          "midi": 76
+         },
+         {
+          "at": 72,
+          "midi": 74
+         }
+        ]
+       },
+       "bars": 2,
+       "style": "strum",
+       "groove": {
+        "patternId": null,
+        "name": "Half",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000000020000000",
+         "snare": "0000000030000000",
+         "clap": "0000000000000000",
+         "hat": "2000200020002000",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "A"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "melody": {
+     "div": 2,
+     "bars": 4,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 12,
+       "midi": 67
+      },
+      {
+       "at": 30,
+       "midi": 69
+      },
+      {
+       "at": 48,
+       "midi": 72
+      },
+      {
+       "at": 72,
+       "midi": 71
+      },
+      {
+       "at": 96,
+       "midi": 67
+      },
+      {
+       "at": 126,
+       "midi": 64
+      },
+      {
+       "at": 144,
+       "midi": 62
+      },
+      {
+       "at": 168,
+       "midi": 60
+      },
+      {
+       "at": 186,
+       "midi": 64
+      }
+     ]
+    },
+    "bars": 4
+   },
+   "savedAt": 1700000002000,
+   "updatedAt": 1700000002000
+  },
+  {
+   "id": "fixture-3",
+   "name": "Fixture 3",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "color": 0,
+       "style": "strum",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "style": "block",
+       "tones": {
+        "chords": {
+         "inst": "piano"
+        }
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 8
+        },
+        {
+         "id": "k2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 4,
+       "tones": {
+        "chords": {
+         "inst": "synth",
+         "synth": {
+          "preset": "warm-pad",
+          "osc": "saw",
+          "texture": 0.2,
+          "mod": 0.7,
+          "noise": 0,
+          "lfoDest": "filter",
+          "lfoShape": "sine",
+          "lfoDepth": 0.25,
+          "lfoSpeed": 0.1761069445245729,
+          "lfoFade": 0,
+          "cutoff": 0.6228818690495881,
+          "resonance": 0.15,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.35,
+          "attack": 0.482565831711303,
+          "decay": 0.5843158046743079,
+          "sustain": 0.9,
+          "release": 0.530738261540007,
+          "fx": "chorus",
+          "fxDepth": 0.4,
+          "fxRate": 0.25,
+          "reverb": 0.45,
+          "voice": "poly",
+          "glide": 0,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.8,
+          "volume": 0.8,
+          "trim": -8.2,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "sustain",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         }
+        }
+       },
+       "color": 2
+      },
+      {
+       "id": "D",
+       "chords": [
+        {
+         "id": "d1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "d2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "style": "strum",
+       "tones": {
+        "chords": {
+         "inst": "guitar",
+         "synth": {
+          "preset": "pwm-lead",
+          "osc": "pulse",
+          "texture": 0,
+          "mod": 0.3,
+          "noise": 0,
+          "lfoDest": "osc",
+          "lfoShape": "sine",
+          "lfoDepth": 0.35,
+          "lfoSpeed": 0.5094402778579062,
+          "lfoFade": 0,
+          "cutoff": 0.7022367813028454,
+          "resonance": 0.25,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.5,
+          "attack": 0.07937005259840997,
+          "decay": 0.36717102310249816,
+          "sustain": 0.85,
+          "release": 0.2691606306043642,
+          "fx": "delay",
+          "fxDepth": 0.3,
+          "fxRate": 0.6244225742269477,
+          "reverb": 0.2,
+          "voice": "legato",
+          "glide": 0.42176029420248895,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.5,
+          "volume": 0.8,
+          "trim": -1,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "glide",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         },
+         "voicing": "close"
+        }
+       },
+       "color": 3
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      },
+      {
+       "id": "b4",
+       "partId": "D"
+      },
+      {
+       "id": "b5",
+       "partId": "B"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "bars": 2
+   },
+   "savedAt": 1700000003000,
+   "updatedAt": 1700000003000
+  },
+  {
+   "id": "fixture-4",
+   "name": "Fixture 4",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 8
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "kit": {
+        "kit": "lofi",
+        "level": 0.8,
+        "space": 0.6,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "kit": {
+        "kit": "mod",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.7,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "human": 0.3,
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Half",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000000020000000",
+         "snare": "0000000030000000",
+         "clap": "0000000000000000",
+         "hat": "2000200020002000",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      },
+      {
+       "id": "b4",
+       "partId": "A"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "bars": 2
+   },
+   "savedAt": 1700000004000,
+   "updatedAt": 1700000004000
+  },
+  {
+   "id": "fixture-5",
+   "name": "Fixture 5",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum16",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 4,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 18,
+          "midi": 67
+         },
+         {
+          "at": 48,
+          "midi": 69
+         },
+         {
+          "at": 75,
+          "midi": 67
+         }
+        ]
+       },
+       "bars": 2,
+       "color": 0,
+       "style": "strum16",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 2
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 2
+        },
+        {
+         "id": "b3",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 2
+        },
+        {
+         "id": "b4",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 2
+        }
+       ],
+       "melody": {
+        "div": 3,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 69
+         },
+         {
+          "at": 8,
+          "midi": 72
+         },
+         {
+          "at": 16,
+          "midi": 76
+         },
+         {
+          "at": 24,
+          "midi": 77
+         },
+         {
+          "at": 48,
+          "midi": 76
+         },
+         {
+          "at": 72,
+          "midi": 74
+         },
+         {
+          "at": 88,
+          "midi": 71
+         }
+        ]
+       },
+       "bars": 4,
+       "meter": {
+        "num": 6,
+        "den": 8
+       },
+       "style": "pima",
+       "groove": {
+        "patternId": null,
+        "name": "Six",
+        "edited": true,
+        "swing": 0,
+        "steps": 6,
+        "div": 3,
+        "bars": 1,
+        "rows": {
+         "kick": "300200",
+         "snare": "000300",
+         "clap": "000000",
+         "hat": "222222",
+         "open": "000000",
+         "tom": "000000",
+         "rim": "000000",
+         "shaker": "000000",
+         "bell": "000000"
+        },
+        "on": true
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 3
+        },
+        {
+         "id": "k2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 3
+        },
+        {
+         "id": "k3",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 3
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 3,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 65
+         },
+         {
+          "at": 12,
+          "midi": 69
+         },
+         {
+          "at": 24,
+          "midi": 72
+         },
+         {
+          "at": 36,
+          "midi": 71
+         },
+         {
+          "at": 72,
+          "midi": 72
+         }
+        ]
+       },
+       "bars": 3,
+       "meter": {
+        "num": 3,
+        "den": 4
+       },
+       "style": "boomchick",
+       "groove": {
+        "patternId": null,
+        "name": "Waltz",
+        "edited": true,
+        "swing": 0,
+        "steps": 12,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "300000000000",
+         "snare": "000020002000",
+         "clap": "000000000000",
+         "hat": "202020202020",
+         "open": "000000000000",
+         "tom": "000000000000",
+         "rim": "000000000000",
+         "shaker": "000000000000",
+         "bell": "000000000000"
+        },
+        "on": true
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "melody": {
+     "div": 4,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 18,
+       "midi": 67
+      },
+      {
+       "at": 48,
+       "midi": 69
+      },
+      {
+       "at": 75,
+       "midi": 67
+      }
+     ]
+    },
+    "bars": 2
+   },
+   "savedAt": 1700000005000,
+   "updatedAt": 1700000005000
+  },
+  {
+   "id": "fixture-6",
+   "name": "Fixture 6",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "layers": {
+        "c2": {
+         "chords": [
+          {
+           "id": "x1",
+           "ref": {
+            "root": "E",
+            "typeId": "min"
+           },
+           "beats": 8
+          }
+         ],
+         "pattern": "pima",
+         "sound": {
+          "voice": "nylon",
+          "pluck": 0.33,
+          "soft": 0.55,
+          "ring": 0.5,
+          "body": 0.5,
+          "level": 0.8,
+          "drive": 0,
+          "driveType": "tape",
+          "driveMix": 1,
+          "squeeze": 0.2,
+          "tone": 0,
+          "chorus": 0,
+          "phaser": 0,
+          "trem": 0,
+          "tremSpeed": "1/8",
+          "wobble": 0,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "space": 0.5,
+          "verb": "hall",
+          "size": 0.4,
+          "shimmer": 0,
+          "octave": 0,
+          "wide": 0.5
+         }
+        }
+       },
+       "tones": {
+        "c2": {
+         "inst": "piano"
+        }
+       },
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "layers": {
+        "m2": {
+         "melody": {
+          "div": 2,
+          "bars": 2,
+          "notes": [
+           {
+            "at": 0,
+            "midi": 76
+           },
+           {
+            "at": 24,
+            "midi": 79
+           },
+           {
+            "at": 48,
+            "midi": 77
+           },
+           {
+            "at": 72,
+            "midi": 74
+           }
+          ]
+         },
+         "tuneSound": {
+          "voice": "lyre",
+          "pluck": 0.33,
+          "soft": 0.55,
+          "ring": 0.5,
+          "body": 0.5,
+          "level": 0.8,
+          "drive": 0,
+          "driveType": "tape",
+          "driveMix": 1,
+          "squeeze": 0.2,
+          "tone": 0,
+          "chorus": 0,
+          "phaser": 0,
+          "trem": 0,
+          "tremSpeed": "1/8",
+          "wobble": 0,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "space": 0.3,
+          "verb": "hall",
+          "size": 0.4,
+          "shimmer": 0,
+          "octave": 0,
+          "wide": 0.5
+         }
+        },
+        "d2": {
+         "beat": {
+          "on": true,
+          "kit": "mod",
+          "patternId": null,
+          "name": "Half",
+          "steps": 16,
+          "div": 4,
+          "swing": 0,
+          "level": 0.8,
+          "space": 0.25,
+          "grit": 0.4,
+          "color": "tape",
+          "blend": 1,
+          "rows": {
+           "kick": "3000000020000000",
+           "snare": "0000000030000000",
+           "clap": "0000000000000000",
+           "hat": "2000200020002000",
+           "open": "0000000000000000",
+           "tom": "0000000000000000",
+           "rim": "0000000000000000",
+           "shaker": "0000000000000000",
+           "bell": "0000000000000000"
+          },
+          "sounds": {},
+          "edited": true,
+          "bars": 1,
+          "size": 0.45,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "tape": 0,
+          "tone": 0,
+          "glue": 0.3,
+          "human": 0,
+          "verb": "room",
+          "sampler": "off",
+          "noise": "off",
+          "noiseAmt": 0.3,
+          "pump": 0,
+          "voices": {}
+         }
+        }
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [],
+       "bars": 2,
+       "layers": {
+        "c2": {
+         "chords": [
+          {
+           "id": "x2",
+           "ref": {
+            "root": "A",
+            "typeId": "min"
+           },
+           "beats": 4
+          },
+          {
+           "id": "x3",
+           "ref": {
+            "root": "D",
+            "typeId": "min"
+           },
+           "beats": 4
+          }
+         ],
+         "pattern": "pima",
+         "sound": {
+          "voice": "nylon",
+          "pluck": 0.33,
+          "soft": 0.55,
+          "ring": 0.5,
+          "body": 0.5,
+          "level": 0.8,
+          "drive": 0,
+          "driveType": "tape",
+          "driveMix": 1,
+          "squeeze": 0.2,
+          "tone": 0,
+          "chorus": 0,
+          "phaser": 0,
+          "trem": 0,
+          "tremSpeed": "1/8",
+          "wobble": 0,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "space": 0.5,
+          "verb": "hall",
+          "size": 0.4,
+          "shimmer": 0,
+          "octave": 0,
+          "wide": 0.5
+         }
+        },
+        "d2": {
+         "beat": {
+          "on": true,
+          "kit": "mod",
+          "patternId": null,
+          "name": "Rock",
+          "steps": 16,
+          "div": 4,
+          "swing": 0,
+          "level": 0.8,
+          "space": 0.25,
+          "grit": 0.4,
+          "color": "tape",
+          "blend": 1,
+          "rows": {
+           "kick": "3000200030002000",
+           "snare": "0000300000003000",
+           "clap": "0000000000000000",
+           "hat": "2020202020202020",
+           "open": "0000000000000000",
+           "tom": "0000000000000000",
+           "rim": "0000000000000000",
+           "shaker": "0000000000000000",
+           "bell": "0000000000000000"
+          },
+          "sounds": {},
+          "edited": true,
+          "bars": 1,
+          "size": 0.45,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "tape": 0,
+          "tone": 0,
+          "glue": 0.3,
+          "human": 0,
+          "verb": "room",
+          "sampler": "off",
+          "noise": "off",
+          "noiseAmt": 0.3,
+          "pump": 0,
+          "voices": {}
+         }
+        }
+       },
+       "tones": {
+        "c2": {
+         "inst": "piano"
+        }
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "mix": {
+     "c2": {
+      "db": -3
+     },
+     "m2": {
+      "mute": true
+     }
+    },
+    "tracks": [
+     {
+      "id": "c2",
+      "kind": "chords",
+      "name": "Chords 2"
+     },
+     {
+      "id": "m2",
+      "kind": "melody",
+      "name": "Melody 2"
+     },
+     {
+      "id": "d2",
+      "kind": "drums",
+      "name": "Drums 2"
+     }
+    ],
+    "v": 4,
+    "bars": 2,
+    "layers": {
+     "c2": {
+      "chords": [
+       {
+        "id": "x1",
+        "ref": {
+         "root": "E",
+         "typeId": "min"
+        },
+        "beats": 8
+       }
+      ],
+      "pattern": "pima",
+      "sound": {
+       "voice": "nylon",
+       "pluck": 0.33,
+       "soft": 0.55,
+       "ring": 0.5,
+       "body": 0.5,
+       "level": 0.8,
+       "drive": 0,
+       "driveType": "tape",
+       "driveMix": 1,
+       "squeeze": 0.2,
+       "tone": 0,
+       "chorus": 0,
+       "phaser": 0,
+       "trem": 0,
+       "tremSpeed": "1/8",
+       "wobble": 0,
+       "echo": 0,
+       "echoTime": "1/8.",
+       "space": 0.5,
+       "verb": "hall",
+       "size": 0.4,
+       "shimmer": 0,
+       "octave": 0,
+       "wide": 0.5
+      }
+     }
+    },
+    "tones": {
+     "c2": {
+      "inst": "piano"
+     }
+    }
+   },
+   "savedAt": 1700000006000,
+   "updatedAt": 1700000006000
+  },
+  {
+   "id": "fixture-7",
+   "name": "Fixture 7",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "b1",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "b2",
+      "ref": {
+       "root": "G",
+       "typeId": "7"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "size": 0.45,
+     "echo": 0,
+     "echoTime": "1/8.",
+     "tape": 0,
+     "tone": 0,
+     "glue": 0.3,
+     "human": 0,
+     "verb": "room",
+     "sampler": "off",
+     "noise": "off",
+     "noiseAmt": 0.3,
+     "pump": 0,
+     "voices": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "color": 0,
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a3",
+         "ref": {
+          "root": "D",
+          "typeId": "min"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a4",
+         "ref": {
+          "root": "G",
+          "typeId": "7"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 24,
+          "midi": 67
+         },
+         {
+          "at": 48,
+          "midi": 69
+         },
+         {
+          "at": 72,
+          "midi": 72
+         },
+         {
+          "at": 96,
+          "midi": 74
+         },
+         {
+          "at": 120,
+          "midi": 77
+         },
+         {
+          "at": 144,
+          "midi": 74
+         },
+         {
+          "at": 168,
+          "midi": 71
+         }
+        ]
+       },
+       "bars": 4,
+       "layers": {
+        "h1": {
+         "chords": [
+          {
+           "id": "hk2szclro",
+           "ref": {
+            "root": "C",
+            "typeId": "maj"
+           },
+           "beats": 4
+          },
+          {
+           "id": "heys68jgj",
+           "ref": {
+            "root": "A",
+            "typeId": "min"
+           },
+           "beats": 4
+          },
+          {
+           "id": "haiyoeh9s",
+           "ref": {
+            "root": "D",
+            "typeId": "min"
+           },
+           "beats": 4
+          },
+          {
+           "id": "hikj2dymm",
+           "ref": {
+            "root": "G",
+            "typeId": "7"
+           },
+           "beats": 4
+          }
+         ],
+         "pattern": "ring"
+        },
+        "h2": {
+         "chords": [
+          {
+           "id": "hemf3argb",
+           "ref": {
+            "root": "C",
+            "typeId": "maj7"
+           },
+           "beats": 4,
+           "notes": [
+            71,
+            76,
+            79
+           ]
+          },
+          {
+           "id": "h914lfyc",
+           "ref": {
+            "root": "A",
+            "typeId": "m7"
+           },
+           "beats": 4,
+           "notes": [
+            72,
+            76,
+            79
+           ]
+          },
+          {
+           "id": "hduczl31a",
+           "ref": {
+            "root": "D",
+            "typeId": "min"
+           },
+           "beats": 4,
+           "notes": [
+            69,
+            74,
+            77
+           ]
+          },
+          {
+           "id": "h7ny34bbf",
+           "ref": {
+            "root": "G",
+            "typeId": "7"
+           },
+           "beats": 4,
+           "notes": [
+            71,
+            74,
+            77
+           ]
+          }
+         ],
+         "pattern": "ring"
+        },
+        "h3": {
+         "melody": {
+          "div": 2,
+          "bars": 4,
+          "notes": [
+           {
+            "at": 0,
+            "midi": 67
+           },
+           {
+            "at": 24,
+            "midi": 71
+           },
+           {
+            "at": 48,
+            "midi": 72
+           },
+           {
+            "at": 72,
+            "midi": 76
+           },
+           {
+            "at": 96,
+            "midi": 77
+           },
+           {
+            "at": 120,
+            "midi": 81
+           },
+           {
+            "at": 144,
+            "midi": 77
+           },
+           {
+            "at": 168,
+            "midi": 74
+           }
+          ]
+         }
+        }
+       },
+       "style": "strum",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "color": 1,
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "7"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 69
+         },
+         {
+          "at": 24,
+          "midi": 72
+         },
+         {
+          "at": 48,
+          "midi": 74
+         },
+         {
+          "at": 72,
+          "midi": 71
+         }
+        ]
+       },
+       "bars": 2,
+       "layers": {
+        "h2": {
+         "chords": [
+          {
+           "id": "hkeum9586",
+           "ref": {
+            "root": "F",
+            "typeId": "maj"
+           },
+           "beats": 4,
+           "notes": [
+            69,
+            72,
+            77
+           ]
+          },
+          {
+           "id": "h98g48dn6",
+           "ref": {
+            "root": "G",
+            "typeId": "7"
+           },
+           "beats": 4,
+           "notes": [
+            71,
+            74,
+            77
+           ]
+          }
+         ],
+         "pattern": "ring"
+        }
+       },
+       "style": "strum",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "A"
+      }
+     ],
+     "current": "b2"
+    },
+    "melody": {
+     "div": 2,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 69
+      },
+      {
+       "at": 24,
+       "midi": 72
+      },
+      {
+       "at": 48,
+       "midi": 74
+      },
+      {
+       "at": 72,
+       "midi": 71
+      }
+     ]
+    },
+    "bars": 2,
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "h1",
+      "kind": "chords",
+      "name": "Passing dim",
+      "role": "harmony",
+      "harmony": {
+       "from": "chords",
+       "option": "passing",
+       "marks": {
+        "A": {
+         "src": "1m0tvo",
+         "out": "c8pt88",
+         "option": "passing",
+         "from": "chords"
+        }
+       }
+      }
+     },
+     {
+      "id": "h2",
+      "kind": "chords",
+      "name": "High chords",
+      "role": "harmony",
+      "harmony": {
+       "from": "chords",
+       "option": "high",
+       "marks": {
+        "A": {
+         "src": "1m0tvo",
+         "out": "1q4qe2j",
+         "option": "high",
+         "from": "chords"
+        },
+        "B": {
+         "src": "1ag7f9g",
+         "out": "m5dmmb",
+         "option": "high",
+         "from": "chords"
+        }
+       }
+      }
+     },
+     {
+      "id": "h3",
+      "kind": "melody",
+      "name": "High harmony",
+      "role": "harmony",
+      "harmony": {
+       "from": "melody",
+       "option": "third-above",
+       "marks": {
+        "A": {
+         "src": "15lq0ea",
+         "out": "ly3kjv",
+         "option": "third-above",
+         "from": "melody"
+        }
+       }
+      }
+     }
+    ],
+    "layers": {
+     "h2": {
+      "chords": [
+       {
+        "id": "hkeum9586",
+        "ref": {
+         "root": "F",
+         "typeId": "maj"
+        },
+        "beats": 4,
+        "notes": [
+         69,
+         72,
+         77
+        ]
+       },
+       {
+        "id": "h98g48dn6",
+        "ref": {
+         "root": "G",
+         "typeId": "7"
+        },
+        "beats": 4,
+        "notes": [
+         71,
+         74,
+         77
+        ]
+       }
+      ],
+      "pattern": "ring"
+     }
+    },
+    "v": 4
+   },
+   "savedAt": 1700000007000,
+   "updatedAt": 1700000007000
+  },
+  {
+   "id": "fixture-8",
+   "name": "Fixture 8",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "c1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c4",
+      "ref": {
+       "root": "A",
+       "typeId": "min"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 84,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "c1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c4",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 4,
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "A"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "mix": {
+     "v1": {
+      "db": -2,
+      "solo": true
+     }
+    },
+    "tracks": [
+     {
+      "id": "v1",
+      "kind": "vocals",
+      "name": "Vocal 1",
+      "input": 2,
+      "takes": [
+       {
+        "id": "t1",
+        "n": 1,
+        "group": "g-t1",
+        "dry": "t1-dry.wav",
+        "wet": "t1-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 432000,
+        "at": {
+         "block": "b1",
+         "bar": 1
+        }
+       },
+       {
+        "id": "t2",
+        "n": 2,
+        "group": "g-t2",
+        "dry": "t2-dry.wav",
+        "wet": "t2-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 288000,
+        "at": {
+         "block": "b1",
+         "bar": 2
+        }
+       },
+       {
+        "id": "t3",
+        "n": 1,
+        "group": "g-t3",
+        "dry": "t3-dry.wav",
+        "wet": "t3-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 672000,
+        "at": {
+         "block": "b1",
+         "bar": 3
+        }
+       },
+       {
+        "id": "t4",
+        "n": 1,
+        "group": "g-t4",
+        "dry": "t4-dry.wav",
+        "wet": "t4-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 192000,
+        "at": {
+         "block": "b1",
+         "bar": 0
+        }
+       },
+       {
+        "id": "t5",
+        "n": 1,
+        "group": "g-t5",
+        "dry": "t5-dry.wav",
+        "wet": "t5-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 144000,
+        "at": {
+         "block": "nowhere",
+         "bar": 0
+        }
+       },
+       {
+        "id": "t6",
+        "n": 1,
+        "group": "g-t6",
+        "dry": "t6-dry.wav",
+        "wet": "t6-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 144000,
+        "at": {
+         "block": "b2",
+         "bar": 5
+        }
+       },
+       {
+        "id": "t7",
+        "n": 1,
+        "group": "g-t7",
+        "dry": "t7-dry.wav",
+        "wet": "t7-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 240000,
+        "at": {
+         "block": "b3",
+         "bar": 0
+        }
+       }
+      ],
+      "clips": [
+       {
+        "id": "k1",
+        "take": "t1",
+        "from": 24000,
+        "to": 200000
+       },
+       {
+        "id": "k2",
+        "take": "t1",
+        "from": 200000,
+        "to": 400000
+       },
+       {
+        "id": "k3",
+        "take": "t2",
+        "from": 0,
+        "to": 288000,
+        "move": 12000
+       },
+       {
+        "id": "k4",
+        "take": "t3",
+        "from": 4800,
+        "to": 672000
+       },
+       {
+        "id": "k5",
+        "take": "t4",
+        "from": 0,
+        "to": 192000,
+        "move": -30000
+       },
+       {
+        "id": "k6",
+        "take": "t5",
+        "from": 0,
+        "to": 144000
+       },
+       {
+        "id": "k7",
+        "take": "t6",
+        "from": 0,
+        "to": 144000
+       },
+       {
+        "id": "k8",
+        "take": "t7",
+        "from": 12000,
+        "to": 240000,
+        "move": -6000
+       }
+      ]
+     },
+     {
+      "id": "v2",
+      "kind": "vocals",
+      "name": "Vocal 2",
+      "input": 1,
+      "takes": [
+       {
+        "id": "u1",
+        "n": 1,
+        "group": "g-u1",
+        "dry": "u1-dry.wav",
+        "wet": "u1-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 192000,
+        "at": {
+         "block": "b2",
+         "bar": 0
+        }
+       }
+      ],
+      "clips": [
+       {
+        "id": "q1",
+        "take": "u1",
+        "from": 0,
+        "to": 192000
+       }
+      ]
+     }
+    ],
+    "v": 4,
+    "bars": 4
+   },
+   "savedAt": 1700000008000,
+   "updatedAt": 1700000008000
+  },
+  {
+   "id": "fixture-9",
+   "name": "Fixture 9",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "A",
+       "typeId": "min"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 72
+         },
+         {
+          "at": 12,
+          "midi": 76
+         },
+         {
+          "at": 24,
+          "midi": 79
+         },
+         {
+          "at": 48,
+          "midi": 81
+         },
+         {
+          "at": 72,
+          "midi": 79
+         }
+        ]
+       },
+       "bars": 2,
+       "layers": {
+        "c2": {
+         "chords": [
+          {
+           "id": "x1",
+           "ref": {
+            "root": "E",
+            "typeId": "min"
+           },
+           "beats": 4
+          },
+          {
+           "id": "x2",
+           "ref": {
+            "root": "C",
+            "typeId": "maj"
+           },
+           "beats": 2,
+           "rest": true
+          },
+          {
+           "id": "x3",
+           "ref": {
+            "root": "G",
+            "typeId": "maj"
+           },
+           "beats": 2
+          }
+         ]
+        }
+       },
+       "tones": {
+        "chords": {
+         "inst": "synth",
+         "synth": {
+          "preset": "warm-pad",
+          "osc": "saw",
+          "texture": 0.2,
+          "mod": 0.7,
+          "noise": 0,
+          "lfoDest": "filter",
+          "lfoShape": "sine",
+          "lfoDepth": 0.25,
+          "lfoSpeed": 0.1761069445245729,
+          "lfoFade": 0,
+          "cutoff": 0.6228818690495881,
+          "resonance": 0.15,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.35,
+          "attack": 0.482565831711303,
+          "decay": 0.5843158046743079,
+          "sustain": 0.9,
+          "release": 0.530738261540007,
+          "fx": "chorus",
+          "fxDepth": 0.4,
+          "fxRate": 0.25,
+          "reverb": 0.45,
+          "voice": "poly",
+          "glide": 0,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.8,
+          "volume": 0.8,
+          "trim": -8.2,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "arp",
+           "pattern": "up",
+           "rate": "1/8",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         }
+        },
+        "melody": {
+         "inst": "synth",
+         "synth": {
+          "preset": "pwm-lead",
+          "osc": "pulse",
+          "texture": 0,
+          "mod": 0.3,
+          "noise": 0,
+          "lfoDest": "osc",
+          "lfoShape": "sine",
+          "lfoDepth": 0.35,
+          "lfoSpeed": 0.5094402778579062,
+          "lfoFade": 0,
+          "cutoff": 0.7022367813028454,
+          "resonance": 0.25,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.5,
+          "attack": 0.07937005259840997,
+          "decay": 0.36717102310249816,
+          "sustain": 0.85,
+          "release": 0.2691606306043642,
+          "fx": "delay",
+          "fxDepth": 0.3,
+          "fxRate": 0.6244225742269477,
+          "reverb": 0.2,
+          "voice": "legato",
+          "glide": 0.42176029420248895,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.5,
+          "volume": 0.8,
+          "trim": -1,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "sustain",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0.2
+          }
+         }
+        },
+        "c2": {
+         "inst": "synth",
+         "synth": {
+          "preset": "warm-pad",
+          "osc": "saw",
+          "texture": 0.2,
+          "mod": 0.7,
+          "noise": 0,
+          "lfoDest": "filter",
+          "lfoShape": "sine",
+          "lfoDepth": 0.25,
+          "lfoSpeed": 0.1761069445245729,
+          "lfoFade": 0,
+          "cutoff": 0.6228818690495881,
+          "resonance": 0.15,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.35,
+          "attack": 0.482565831711303,
+          "decay": 0.5843158046743079,
+          "sustain": 0.9,
+          "release": 0.530738261540007,
+          "fx": "chorus",
+          "fxDepth": 0.4,
+          "fxRate": 0.25,
+          "reverb": 0.45,
+          "voice": "poly",
+          "glide": 0,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.8,
+          "volume": 0.8,
+          "trim": -8.2,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "sustain",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         }
+        }
+       },
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 6
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 2
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 77
+         },
+         {
+          "at": 36,
+          "midi": 74
+         },
+         {
+          "at": 48,
+          "midi": 72
+         }
+        ]
+       },
+       "bars": 2,
+       "tones": {
+        "chords": {
+         "inst": "synth",
+         "synth": {
+          "preset": "warm-pad",
+          "osc": "saw",
+          "texture": 0.2,
+          "mod": 0.7,
+          "noise": 0,
+          "lfoDest": "filter",
+          "lfoShape": "sine",
+          "lfoDepth": 0.25,
+          "lfoSpeed": 0.1761069445245729,
+          "lfoFade": 0,
+          "cutoff": 0.6228818690495881,
+          "resonance": 0.15,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.35,
+          "attack": 0.482565831711303,
+          "decay": 0.5843158046743079,
+          "sustain": 0.9,
+          "release": 0.530738261540007,
+          "fx": "chorus",
+          "fxDepth": 0.4,
+          "fxRate": 0.25,
+          "reverb": 0.45,
+          "voice": "poly",
+          "glide": 0,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.8,
+          "volume": 0.8,
+          "trim": -8.2,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "drone",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         }
+        },
+        "melody": {
+         "inst": "synth",
+         "synth": {
+          "preset": "pwm-lead",
+          "osc": "pulse",
+          "texture": 0,
+          "mod": 0.3,
+          "noise": 0,
+          "lfoDest": "osc",
+          "lfoShape": "sine",
+          "lfoDepth": 0.35,
+          "lfoSpeed": 0.5094402778579062,
+          "lfoFade": 0,
+          "cutoff": 0.7022367813028454,
+          "resonance": 0.25,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.5,
+          "attack": 0.07937005259840997,
+          "decay": 0.36717102310249816,
+          "sustain": 0.85,
+          "release": 0.2691606306043642,
+          "fx": "delay",
+          "fxDepth": 0.3,
+          "fxRate": 0.6244225742269477,
+          "reverb": 0.2,
+          "voice": "legato",
+          "glide": 0.42176029420248895,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.5,
+          "volume": 0.8,
+          "trim": -1,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "sustain",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0.2
+          }
+         }
+        }
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "A"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "c2",
+      "kind": "chords",
+      "name": "Chords 2"
+     }
+    ],
+    "v": 4,
+    "melody": {
+     "div": 2,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 72
+      },
+      {
+       "at": 12,
+       "midi": 76
+      },
+      {
+       "at": 24,
+       "midi": 79
+      },
+      {
+       "at": 48,
+       "midi": 81
+      },
+      {
+       "at": 72,
+       "midi": 79
+      }
+     ]
+    },
+    "bars": 2,
+    "layers": {
+     "c2": {
+      "chords": [
+       {
+        "id": "x1",
+        "ref": {
+         "root": "E",
+         "typeId": "min"
+        },
+        "beats": 4
+       },
+       {
+        "id": "x2",
+        "ref": {
+         "root": "C",
+         "typeId": "maj"
+        },
+        "beats": 2,
+        "rest": true
+       },
+       {
+        "id": "x3",
+        "ref": {
+         "root": "G",
+         "typeId": "maj"
+        },
+        "beats": 2
+       }
+      ]
+     }
+    },
+    "tones": {
+     "chords": {
+      "inst": "synth",
+      "synth": {
+       "preset": "warm-pad",
+       "osc": "saw",
+       "texture": 0.2,
+       "mod": 0.7,
+       "noise": 0,
+       "lfoDest": "filter",
+       "lfoShape": "sine",
+       "lfoDepth": 0.25,
+       "lfoSpeed": 0.1761069445245729,
+       "lfoFade": 0,
+       "cutoff": 0.6228818690495881,
+       "resonance": 0.15,
+       "keyTrack": 0.5,
+       "drive": 0.1,
+       "balance": 0.35,
+       "attack": 0.482565831711303,
+       "decay": 0.5843158046743079,
+       "sustain": 0.9,
+       "release": 0.530738261540007,
+       "fx": "chorus",
+       "fxDepth": 0.4,
+       "fxRate": 0.25,
+       "reverb": 0.45,
+       "voice": "poly",
+       "glide": 0,
+       "velocity": 0.4,
+       "drift": 0.2,
+       "width": 0.8,
+       "volume": 0.8,
+       "trim": -8.2,
+       "macros": {
+        "bright": 0,
+        "motion": 0,
+        "space": 0,
+        "grit": 0,
+        "width": 0,
+        "shape": 0
+       },
+       "play": {
+        "mode": "arp",
+        "pattern": "up",
+        "rate": "1/8",
+        "octaves": 1,
+        "octMove": "span",
+        "gate": 0.6,
+        "swing": 0,
+        "rhythm": "",
+        "ratchet": 1,
+        "spread": 0.35,
+        "direction": "down",
+        "humanise": 0
+       }
+      }
+     },
+     "melody": {
+      "inst": "synth",
+      "synth": {
+       "preset": "pwm-lead",
+       "osc": "pulse",
+       "texture": 0,
+       "mod": 0.3,
+       "noise": 0,
+       "lfoDest": "osc",
+       "lfoShape": "sine",
+       "lfoDepth": 0.35,
+       "lfoSpeed": 0.5094402778579062,
+       "lfoFade": 0,
+       "cutoff": 0.7022367813028454,
+       "resonance": 0.25,
+       "keyTrack": 0.5,
+       "drive": 0.1,
+       "balance": 0.5,
+       "attack": 0.07937005259840997,
+       "decay": 0.36717102310249816,
+       "sustain": 0.85,
+       "release": 0.2691606306043642,
+       "fx": "delay",
+       "fxDepth": 0.3,
+       "fxRate": 0.6244225742269477,
+       "reverb": 0.2,
+       "voice": "legato",
+       "glide": 0.42176029420248895,
+       "velocity": 0.4,
+       "drift": 0.2,
+       "width": 0.5,
+       "volume": 0.8,
+       "trim": -1,
+       "macros": {
+        "bright": 0,
+        "motion": 0,
+        "space": 0,
+        "grit": 0,
+        "width": 0,
+        "shape": 0
+       },
+       "play": {
+        "mode": "sustain",
+        "pattern": "up",
+        "rate": "1/16",
+        "octaves": 1,
+        "octMove": "span",
+        "gate": 0.6,
+        "swing": 0,
+        "rhythm": "",
+        "ratchet": 1,
+        "spread": 0.35,
+        "direction": "down",
+        "humanise": 0.2
+       }
+      }
+     },
+     "c2": {
+      "inst": "synth",
+      "synth": {
+       "preset": "warm-pad",
+       "osc": "saw",
+       "texture": 0.2,
+       "mod": 0.7,
+       "noise": 0,
+       "lfoDest": "filter",
+       "lfoShape": "sine",
+       "lfoDepth": 0.25,
+       "lfoSpeed": 0.1761069445245729,
+       "lfoFade": 0,
+       "cutoff": 0.6228818690495881,
+       "resonance": 0.15,
+       "keyTrack": 0.5,
+       "drive": 0.1,
+       "balance": 0.35,
+       "attack": 0.482565831711303,
+       "decay": 0.5843158046743079,
+       "sustain": 0.9,
+       "release": 0.530738261540007,
+       "fx": "chorus",
+       "fxDepth": 0.4,
+       "fxRate": 0.25,
+       "reverb": 0.45,
+       "voice": "poly",
+       "glide": 0,
+       "velocity": 0.4,
+       "drift": 0.2,
+       "width": 0.8,
+       "volume": 0.8,
+       "trim": -8.2,
+       "macros": {
+        "bright": 0,
+        "motion": 0,
+        "space": 0,
+        "grit": 0,
+        "width": 0,
+        "shape": 0
+       },
+       "play": {
+        "mode": "sustain",
+        "pattern": "up",
+        "rate": "1/16",
+        "octaves": 1,
+        "octMove": "span",
+        "gate": 0.6,
+        "swing": 0,
+        "rhythm": "",
+        "ratchet": 1,
+        "spread": 0.35,
+        "direction": "down",
+        "humanise": 0
+       }
+      }
+     }
+    }
+   },
+   "savedAt": 1700000009000,
+   "updatedAt": 1700000009000
+  },
+  {
+   "id": "fixture-10",
+   "name": "Fixture 10",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 24,
+          "midi": 67
+         },
+         {
+          "at": 60,
+          "midi": 69
+         },
+         {
+          "at": 96,
+          "midi": 72
+         },
+         {
+          "at": 132,
+          "midi": 71
+         },
+         {
+          "at": 156,
+          "midi": 67
+         }
+        ]
+       },
+       "bars": 4,
+       "tones": {
+        "chords": {
+         "inst": "piano",
+         "keys": "electric",
+         "pedal": true
+        },
+        "melody": {
+         "inst": "piano",
+         "pedal": true
+        }
+       },
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [],
+       "melody": {
+        "div": 2,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 60
+         },
+         {
+          "at": 48,
+          "midi": 64
+         },
+         {
+          "at": 108,
+          "midi": 67
+         }
+        ]
+       },
+       "bars": 4,
+       "layers": {
+        "m2": {
+         "melody": {
+          "div": 2,
+          "bars": 4,
+          "notes": [
+           {
+            "at": 24,
+            "midi": 76
+           },
+           {
+            "at": 72,
+            "midi": 79
+           },
+           {
+            "at": 144,
+            "midi": 84
+           }
+          ]
+         }
+        }
+       },
+       "tones": {
+        "melody": {
+         "inst": "piano",
+         "pedal": true
+        },
+        "m2": {
+         "inst": "piano",
+         "bright": 0.7,
+         "pedal": true
+        }
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "m2",
+      "kind": "melody",
+      "name": "Melody 2"
+     }
+    ],
+    "v": 4,
+    "melody": {
+     "div": 2,
+     "bars": 4,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 24,
+       "midi": 67
+      },
+      {
+       "at": 60,
+       "midi": 69
+      },
+      {
+       "at": 96,
+       "midi": 72
+      },
+      {
+       "at": 132,
+       "midi": 71
+      },
+      {
+       "at": 156,
+       "midi": 67
+      }
+     ]
+    },
+    "bars": 4,
+    "tones": {
+     "chords": {
+      "inst": "piano",
+      "keys": "electric",
+      "pedal": true
+     },
+     "melody": {
+      "inst": "piano",
+      "pedal": true
+     }
+    }
+   },
+   "savedAt": 1700000010000,
+   "updatedAt": 1700000010000
+  },
+  {
+   "id": "fixture-11",
+   "name": "Fixture 11",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 8
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "bossa",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 8
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 4,
+       "color": 0,
+       "style": "bossa",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 6
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "E",
+          "typeId": "min"
+         },
+         "beats": 6
+        },
+        {
+         "id": "b3",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 4,
+       "style": "travis",
+       "feel": {
+        "speed": 0.5,
+        "swing": 0.3,
+        "touch": 0.5,
+        "spread": 0.5,
+        "octave": 1
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "D",
+          "typeId": "min"
+         },
+         "beats": 4
+        },
+        {
+         "id": "k2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "style": "clave",
+       "feel": {
+        "speed": 2,
+        "swing": 0,
+        "touch": 0.5,
+        "spread": 0.5,
+        "octave": 0
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "bars": 4
+   },
+   "savedAt": 1700000011000,
+   "updatedAt": 1700000011000
+  },
+  {
+   "id": "fixture-12",
+   "name": "Fixture 12",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "c1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "c4",
+      "ref": {
+       "root": "A",
+       "typeId": "min"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Two",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "30002000300020003020000030000000",
+      "snare": "00003000000030000000300000003030",
+      "clap": "00000000000000000000000000000000",
+      "hat": "00000000000000000000000000000000",
+      "open": "00000000000000000000000000000000",
+      "tom": "00000000000000000000000000000000",
+      "rim": "00000000000000000000000000000000",
+      "shaker": "00000000000000000000000000000000",
+      "bell": "00000000000000000000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 2
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "c1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "c4",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 4,
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Two",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 2,
+        "swing": 0,
+        "rows": {
+         "kick": "30002000300020003020000030000000",
+         "snare": "00003000000030000000300000003030",
+         "clap": "00000000000000000000000000000000",
+         "hat": "00000000000000000000000000000000",
+         "open": "00000000000000000000000000000000",
+         "tom": "00000000000000000000000000000000",
+         "rim": "00000000000000000000000000000000",
+         "shaker": "00000000000000000000000000000000",
+         "bell": "00000000000000000000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "groove": {
+        "patternId": null,
+        "name": "Long",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 4,
+        "rows": {
+         "kick": "3000000000000000200000000000000030000000300000002222222222222222",
+         "snare": "0000000000000000000000000000000000000000000000000000000000000000",
+         "clap": "0000000000000000000000000000000000000000000000000000000000000000",
+         "hat": "2020202020202020002000200020002020202020202020200000000000000000",
+         "open": "0000000000000000000000000000000000000000000000000000000000000000",
+         "tom": "0000000000000000000000000000000000000000000000000000000000000000",
+         "rim": "0000000000000000000000000000000000000000000000000000000000000000",
+         "shaker": "0000000000000000000000000000000000000000000000000000000000000000",
+         "bell": "0000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "bars": 4
+   },
+   "savedAt": 1700000012000,
+   "updatedAt": 1700000012000
+  },
+  {
+   "id": "fixture-13",
+   "name": "Fixture 13",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 3
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 3
+     },
+     {
+      "id": "a3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 6
+     },
+     {
+      "id": "a4",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "eighths",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": "dream-heartbeat",
+     "name": "Heartbeat",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "2001000020010000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "1010101010101010",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000200000002000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": false,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 3
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 3
+        },
+        {
+         "id": "a3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 6
+        },
+        {
+         "id": "a4",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "color": 0,
+       "style": "eighths",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 1,
+       "layers": {
+        "c2": {
+         "chords": [
+          {
+           "id": "x1",
+           "ref": {
+            "root": "C",
+            "typeId": "maj"
+           },
+           "beats": 2.5
+          },
+          {
+           "id": "x2",
+           "ref": {
+            "root": "E",
+            "typeId": "min"
+           },
+           "beats": 8
+          }
+         ]
+        }
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "c2",
+      "kind": "chords",
+      "name": "Chords 2"
+     }
+    ],
+    "v": 4,
+    "bars": 2
+   },
+   "savedAt": 1700000013000,
+   "updatedAt": 1700000013000
+  },
+  {
+   "id": "fixture-14",
+   "name": "Fixture 14",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": false,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 48,
+          "midi": 67
+         }
+        ],
+        "on": false
+       },
+       "bars": 2,
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 2,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 65
+         },
+         {
+          "at": 48,
+          "midi": 67
+         }
+        ]
+       },
+       "bars": 2,
+       "layers": {
+        "m2": {
+         "melody": {
+          "div": 2,
+          "bars": 2,
+          "notes": [
+           {
+            "at": 12,
+            "midi": 72
+           }
+          ],
+          "on": false
+         }
+        },
+        "d2": {
+         "beat": {
+          "on": false,
+          "kit": "box",
+          "patternId": null,
+          "name": "Half",
+          "steps": 16,
+          "div": 4,
+          "swing": 0,
+          "level": 0.8,
+          "space": 0.25,
+          "grit": 0.4,
+          "color": "tape",
+          "blend": 1,
+          "rows": {
+           "kick": "3000000020000000",
+           "snare": "0000000030000000",
+           "clap": "0000000000000000",
+           "hat": "2000200020002000",
+           "open": "0000000000000000",
+           "tom": "0000000000000000",
+           "rim": "0000000000000000",
+           "shaker": "0000000000000000",
+           "bell": "0000000000000000"
+          },
+          "sounds": {},
+          "edited": true,
+          "bars": 1,
+          "size": 0.45,
+          "echo": 0,
+          "echoTime": "1/8.",
+          "tape": 0,
+          "tone": 0,
+          "glue": 0.3,
+          "human": 0,
+          "verb": "room",
+          "sampler": "off",
+          "noise": "off",
+          "noiseAmt": 0.3,
+          "pump": 0,
+          "voices": {}
+         }
+        }
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "m2",
+      "kind": "melody",
+      "name": "Melody 2"
+     },
+     {
+      "id": "d2",
+      "kind": "drums",
+      "name": "Drums 2"
+     }
+    ],
+    "v": 4,
+    "melody": {
+     "div": 2,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 48,
+       "midi": 67
+      }
+     ],
+     "on": false
+    },
+    "bars": 2
+   },
+   "savedAt": 1700000014000,
+   "updatedAt": 1700000014000
+  },
+  {
+   "id": "fixture-15",
+   "name": "Fixture 15",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum16",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0.6,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 4,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 3,
+          "midi": 65
+         },
+         {
+          "at": 9,
+          "midi": 67
+         },
+         {
+          "at": 24,
+          "midi": 69
+         },
+         {
+          "at": 39,
+          "midi": 67
+         },
+         {
+          "at": 48,
+          "midi": 65
+         },
+         {
+          "at": 69,
+          "midi": 64
+         },
+         {
+          "at": 87,
+          "midi": 62
+         }
+        ]
+       },
+       "bars": 2,
+       "layers": {
+        "c2": {
+         "chords": [
+          {
+           "id": "x1",
+           "ref": {
+            "root": "E",
+            "typeId": "min"
+           },
+           "beats": 8
+          }
+         ],
+         "pattern": "pima"
+        }
+       },
+       "color": 0,
+       "style": "strum16",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0.6,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 2
+        }
+       ],
+       "melody": {
+        "div": 4,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 65
+         },
+         {
+          "at": 3,
+          "midi": 67
+         },
+         {
+          "at": 21,
+          "midi": 69
+         },
+         {
+          "at": 45,
+          "midi": 72
+         },
+         {
+          "at": 48,
+          "midi": 74
+         },
+         {
+          "at": 87,
+          "midi": 72
+         },
+         {
+          "at": 117,
+          "midi": 69
+         },
+         {
+          "at": 144,
+          "midi": 67
+         },
+         {
+          "at": 189,
+          "midi": 65
+         }
+        ]
+       },
+       "bars": 4,
+       "layers": {
+        "m2": {
+         "melody": {
+          "div": 4,
+          "bars": 4,
+          "notes": [
+           {
+            "at": 9,
+            "midi": 76
+           },
+           {
+            "at": 27,
+            "midi": 79
+           },
+           {
+            "at": 93,
+            "midi": 81
+           },
+           {
+            "at": 96,
+            "midi": 79
+           },
+           {
+            "at": 141,
+            "midi": 76
+           }
+          ]
+         }
+        }
+       },
+       "style": "pop16",
+       "groove": {
+        "patternId": null,
+        "name": "Half",
+        "edited": true,
+        "swing": 0.35,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "3000000020000000",
+         "snare": "0000000030000000",
+         "clap": "0000000000000000",
+         "hat": "2000200020002000",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       },
+       "tones": {
+        "melody": {
+         "inst": "piano"
+        }
+       },
+       "color": 1
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "c2",
+      "kind": "chords",
+      "name": "Chords 2"
+     },
+     {
+      "id": "m2",
+      "kind": "melody",
+      "name": "Melody 2"
+     }
+    ],
+    "v": 4,
+    "melody": {
+     "div": 4,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 3,
+       "midi": 65
+      },
+      {
+       "at": 9,
+       "midi": 67
+      },
+      {
+       "at": 24,
+       "midi": 69
+      },
+      {
+       "at": 39,
+       "midi": 67
+      },
+      {
+       "at": 48,
+       "midi": 65
+      },
+      {
+       "at": 69,
+       "midi": 64
+      },
+      {
+       "at": 87,
+       "midi": 62
+      }
+     ]
+    },
+    "bars": 2,
+    "layers": {
+     "c2": {
+      "chords": [
+       {
+        "id": "x1",
+        "ref": {
+         "root": "E",
+         "typeId": "min"
+        },
+        "beats": 8
+       }
+      ],
+      "pattern": "pima"
+     }
+    }
+   },
+   "savedAt": 1700000015000,
+   "updatedAt": 1700000015000
+  },
+  {
+   "id": "fixture-16",
+   "name": "Fixture 16",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "strum16",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Empty",
+     "steps": 16,
+     "div": 4,
+     "swing": 0.5,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "0000000000000000",
+      "snare": "0000000000000000",
+      "clap": "0000000000000000",
+      "hat": "0000000000000000",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 4,
+        "bars": 2,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 64
+         },
+         {
+          "at": 3,
+          "midi": 65
+         },
+         {
+          "at": 21,
+          "midi": 67
+         },
+         {
+          "at": 51,
+          "midi": 69
+         }
+        ]
+       },
+       "bars": 2,
+       "color": 0,
+       "style": "strum16",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Empty",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0.5,
+        "rows": {
+         "kick": "0000000000000000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "0000000000000000",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [
+        {
+         "id": "b1",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "b2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "style": "eighths",
+       "groove": {
+        "patternId": null,
+        "name": "Triplets",
+        "edited": true,
+        "swing": 0,
+        "steps": 12,
+        "div": 3,
+        "bars": 1,
+        "rows": {
+         "kick": "000000000000",
+         "snare": "000000000000",
+         "clap": "000000000000",
+         "hat": "000000000000",
+         "open": "000000000000",
+         "tom": "000000000000",
+         "rim": "000000000000",
+         "shaker": "000000000000",
+         "bell": "000000000000"
+        },
+        "on": true
+       },
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [
+        {
+         "id": "k1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 2,
+       "style": "strum16",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": "dream-heartbeat",
+        "name": "Heartbeat",
+        "edited": false,
+        "swing": 0,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "rows": {
+         "kick": "2001000020010000",
+         "snare": "0000000000000000",
+         "clap": "0000000000000000",
+         "hat": "1010101010101010",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000200000002000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": false
+       },
+       "color": 2
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "v": 4,
+    "melody": {
+     "div": 4,
+     "bars": 2,
+     "notes": [
+      {
+       "at": 0,
+       "midi": 64
+      },
+      {
+       "at": 3,
+       "midi": 65
+      },
+      {
+       "at": 21,
+       "midi": 67
+      },
+      {
+       "at": 51,
+       "midi": 69
+      }
+     ]
+    },
+    "bars": 2
+   },
+   "savedAt": 1700000016000,
+   "updatedAt": 1700000016000
+  },
+  {
+   "id": "fixture-17",
+   "name": "Fixture 17",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "a1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 4
+     },
+     {
+      "id": "a2",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 4
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "box",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "A",
+       "chords": [
+        {
+         "id": "a1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 4
+        },
+        {
+         "id": "a2",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "bars": 2,
+       "color": 0,
+       "style": "ring",
+       "kit": {
+        "kit": "box",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "B",
+       "chords": [],
+       "bars": 3,
+       "color": 1
+      },
+      {
+       "id": "C",
+       "chords": [],
+       "bars": 2,
+       "color": 2
+      },
+      {
+       "id": "D",
+       "chords": [],
+       "bars": 1,
+       "meter": {
+        "num": 3,
+        "den": 4
+       },
+       "color": 3
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "A"
+      },
+      {
+       "id": "b2",
+       "partId": "B"
+      },
+      {
+       "id": "b3",
+       "partId": "C"
+      },
+      {
+       "id": "b4",
+       "partId": "D"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "v1",
+      "kind": "vocals",
+      "name": "Vocal 1",
+      "input": 1,
+      "takes": [
+       {
+        "id": "t1",
+        "n": 1,
+        "group": "g-t1",
+        "dry": "t1-dry.wav",
+        "wet": "t1-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 288000,
+        "at": {
+         "block": "b2",
+         "bar": 0
+        }
+       }
+      ],
+      "clips": [
+       {
+        "id": "k1",
+        "take": "t1",
+        "from": 0,
+        "to": 288000
+       }
+      ]
+     }
+    ],
+    "v": 4,
+    "bars": 2
+   },
+   "savedAt": 1700000017000,
+   "updatedAt": 1700000017000
+  },
+  {
+   "id": "worked-example",
+   "name": "Worked example",
+   "key": {
+    "tonic": "C",
+    "scaleId": "ionian"
+   },
+   "progression": {
+    "chords": [
+     {
+      "id": "v1",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 8
+     },
+     {
+      "id": "v2",
+      "ref": {
+       "root": "F",
+       "typeId": "maj"
+      },
+      "beats": 8
+     },
+     {
+      "id": "v3",
+      "ref": {
+       "root": "G",
+       "typeId": "maj"
+      },
+      "beats": 8
+     },
+     {
+      "id": "v4",
+      "ref": {
+       "root": "C",
+       "typeId": "maj"
+      },
+      "beats": 8
+     }
+    ],
+    "bpm": 96,
+    "pattern": "ring",
+    "loop": true,
+    "arrange": null,
+    "beat": {
+     "on": true,
+     "kit": "lofi",
+     "patternId": null,
+     "name": "Rock",
+     "steps": 16,
+     "div": 4,
+     "swing": 0,
+     "level": 0.8,
+     "space": 0.25,
+     "grit": 0.4,
+     "color": "tape",
+     "blend": 1,
+     "rows": {
+      "kick": "3000200030002000",
+      "snare": "0000300000003000",
+      "clap": "0000000000000000",
+      "hat": "2020202020202020",
+      "open": "0000000000000000",
+      "tom": "0000000000000000",
+      "rim": "0000000000000000",
+      "shaker": "0000000000000000",
+      "bell": "0000000000000000"
+     },
+     "sounds": {},
+     "size": 0.45,
+     "echo": 0,
+     "echoTime": "1/8.",
+     "tape": 0,
+     "tone": 0,
+     "glue": 0.3,
+     "human": 0,
+     "verb": "room",
+     "sampler": "off",
+     "noise": "off",
+     "noiseAmt": 0.3,
+     "pump": 0,
+     "voices": {},
+     "edited": true,
+     "bars": 1
+    },
+    "song": {
+     "parts": [
+      {
+       "id": "V",
+       "name": "Verse",
+       "color": 0,
+       "chords": [
+        {
+         "id": "v1",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 8
+        },
+        {
+         "id": "v2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 8
+        },
+        {
+         "id": "v3",
+         "ref": {
+          "root": "G",
+          "typeId": "maj"
+         },
+         "beats": 8
+        },
+        {
+         "id": "v4",
+         "ref": {
+          "root": "C",
+          "typeId": "maj"
+         },
+         "beats": 8
+        }
+       ],
+       "bars": 8,
+       "style": "ring",
+       "kit": {
+        "kit": "lofi",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Rock",
+        "edited": true,
+        "steps": 16,
+        "div": 4,
+        "bars": 1,
+        "swing": 0,
+        "rows": {
+         "kick": "3000200030002000",
+         "snare": "0000300000003000",
+         "clap": "0000000000000000",
+         "hat": "2020202020202020",
+         "open": "0000000000000000",
+         "tom": "0000000000000000",
+         "rim": "0000000000000000",
+         "shaker": "0000000000000000",
+         "bell": "0000000000000000"
+        },
+        "on": true
+       }
+      },
+      {
+       "id": "H",
+       "name": "Chorus",
+       "color": 1,
+       "chords": [
+        {
+         "id": "h1",
+         "ref": {
+          "root": "A",
+          "typeId": "min"
+         },
+         "beats": 4
+        },
+        {
+         "id": "h2",
+         "ref": {
+          "root": "F",
+          "typeId": "maj"
+         },
+         "beats": 4
+        }
+       ],
+       "melody": {
+        "div": 3,
+        "bars": 4,
+        "notes": [
+         {
+          "at": 0,
+          "midi": 69
+         },
+         {
+          "at": 8,
+          "midi": 72
+         },
+         {
+          "at": 16,
+          "midi": 76
+         },
+         {
+          "at": 24,
+          "midi": 77
+         },
+         {
+          "at": 32,
+          "midi": 76
+         },
+         {
+          "at": 48,
+          "midi": 74
+         },
+         {
+          "at": 56,
+          "midi": 72
+         },
+         {
+          "at": 72,
+          "midi": 71
+         },
+         {
+          "at": 80,
+          "midi": 72
+         }
+        ]
+       },
+       "bars": 4,
+       "meter": {
+        "num": 6,
+        "den": 8
+       },
+       "layers": {
+        "c7x": {
+         "chords": [
+          {
+           "id": "y1",
+           "ref": {
+            "root": "A",
+            "typeId": "min"
+           },
+           "beats": 4
+          },
+          {
+           "id": "y2",
+           "ref": {
+            "root": "F",
+            "typeId": "maj"
+           },
+           "beats": 4
+          }
+         ]
+        }
+       },
+       "kit": {
+        "kit": "lofi",
+        "level": 0.8,
+        "space": 0.25,
+        "grit": 0.4,
+        "color": "tape",
+        "blend": 1,
+        "sounds": {},
+        "size": 0.45,
+        "echo": 0,
+        "echoTime": "1/8.",
+        "tape": 0,
+        "tone": 0,
+        "glue": 0.3,
+        "human": 0,
+        "verb": "room",
+        "sampler": "off",
+        "noise": "off",
+        "noiseAmt": 0.3,
+        "pump": 0,
+        "voices": {}
+       },
+       "groove": {
+        "patternId": null,
+        "name": "Six",
+        "edited": true,
+        "swing": 0,
+        "steps": 6,
+        "div": 3,
+        "bars": 1,
+        "rows": {
+         "kick": "300200",
+         "snare": "000300",
+         "clap": "000000",
+         "hat": "222222",
+         "open": "000000",
+         "tom": "000000",
+         "rim": "000000",
+         "shaker": "000000",
+         "bell": "000000"
+        },
+        "on": true
+       },
+       "tones": {
+        "chords": {
+         "inst": "piano"
+        },
+        "c7x": {
+         "inst": "synth",
+         "synth": {
+          "preset": "warm-pad",
+          "osc": "saw",
+          "texture": 0.2,
+          "mod": 0.7,
+          "noise": 0,
+          "lfoDest": "filter",
+          "lfoShape": "sine",
+          "lfoDepth": 0.25,
+          "lfoSpeed": 0.1761069445245729,
+          "lfoFade": 0,
+          "cutoff": 0.6228818690495881,
+          "resonance": 0.15,
+          "keyTrack": 0.5,
+          "drive": 0.1,
+          "balance": 0.35,
+          "attack": 0.482565831711303,
+          "decay": 0.5843158046743079,
+          "sustain": 0.9,
+          "release": 0.530738261540007,
+          "fx": "chorus",
+          "fxDepth": 0.4,
+          "fxRate": 0.25,
+          "reverb": 0.45,
+          "voice": "poly",
+          "glide": 0,
+          "velocity": 0.4,
+          "drift": 0.2,
+          "width": 0.8,
+          "volume": 0.8,
+          "trim": -8.2,
+          "macros": {
+           "bright": 0,
+           "motion": 0,
+           "space": 0,
+           "grit": 0,
+           "width": 0,
+           "shape": 0
+          },
+          "play": {
+           "mode": "sustain",
+           "pattern": "up",
+           "rate": "1/16",
+           "octaves": 1,
+           "octMove": "span",
+           "gate": 0.6,
+           "swing": 0,
+           "rhythm": "",
+           "ratchet": 1,
+           "spread": 0.35,
+           "direction": "down",
+           "humanise": 0
+          }
+         }
+        }
+       }
+      }
+     ],
+     "blocks": [
+      {
+       "id": "b1",
+       "partId": "V"
+      },
+      {
+       "id": "b2",
+       "partId": "H"
+      },
+      {
+       "id": "b3",
+       "partId": "V"
+      }
+     ],
+     "current": "b1"
+    },
+    "play": "song",
+    "meter": {
+     "num": 4,
+     "den": 4
+    },
+    "tracks": [
+     {
+      "id": "c7x",
+      "kind": "chords",
+      "name": "Chords 2"
+     },
+     {
+      "id": "v1",
+      "kind": "vocals",
+      "name": "Vocal 1",
+      "input": 1,
+      "takes": [
+       {
+        "id": "t1",
+        "n": 1,
+        "group": "g-t1",
+        "dry": "t1-dry.wav",
+        "wet": "t1-wet.wav",
+        "rate": 48000,
+        "start": 0,
+        "frames": 144000,
+        "at": {
+         "block": "b2",
+         "bar": 2
+        }
+       }
+      ],
+      "clips": [
+       {
+        "id": "k1",
+        "take": "t1",
+        "from": 0,
+        "to": 144000
+       }
+      ]
+     }
+    ],
+    "v": 4,
+    "bars": 8
+   },
+   "savedAt": 1700000018000,
+   "updatedAt": 1700000018000
+  }
+ ]
+}

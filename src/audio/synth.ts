@@ -823,7 +823,7 @@ export class ProgressionPlayer {
         if (tune.sound) v.setSound(tune.sound, this.bpm, at(hits[0].beat));
         // (for the canvas, and the keys' held notes: a melody note sounds until the next one comes)
         const gap = nextNote(tune.m, tune.bar, this.tTick / 12) * cur.spb;
-        hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), tune.sound));
+        hits.forEach((h, i) => playTuneNote(v, h.midi, at(h.beat), gap, cur.end, Math.min(i, 3), tune.sound, h.len !== undefined ? (h.len / 12) * cur.spb : undefined));
       }
       this.tTick++;
     }
@@ -1044,7 +1044,7 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
           // notes struck together each get a string of their own, as live (where a twelfth of a beat's notes are counted off)
           const tick = (b: number) => Math.floor(b * 12 + 1e-6);
           const lane = hits.slice(0, k).filter((x) => tick(x.beat) === tick(h.beat)).length;
-          playTuneNote(v, h.midi, t + (h.beat - s0) * spb, gap, end, Math.min(lane, 3), tune.sound);
+          playTuneNote(v, h.midi, t + (h.beat - s0) * spb, gap, end, Math.min(lane, 3), tune.sound, h.len !== undefined ? (h.len / 12) * spb : undefined);
         });
       }
       const ex = item.extra;

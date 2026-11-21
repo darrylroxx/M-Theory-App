@@ -126,12 +126,20 @@ export function synthWay(v: TrackVoice): boolean {
 export function tuneSection(m: Melody, bar: number, swing: number, len: number): SecChord[] {
   const hits = tuneBetween(m, bar, 0, len, swing);
   const out: SecChord[] = [];
+  // (a note with a length of its own is held that long at most; notes struck together are held as long as the longest)
+  const own: number[] = [];
   for (const h of hits) {
     const last = out[out.length - 1];
-    if (last && Math.abs(last.at - h.beat) < 1e-6) last.midi.push(h.midi);
-    else out.push({ midi: [h.midi], at: h.beat, beats: 0 });
+    const mine = h.len !== undefined ? h.len / 12 : Infinity;
+    if (last && Math.abs(last.at - h.beat) < 1e-6) {
+      last.midi.push(h.midi);
+      own[out.length - 1] = Math.max(own[out.length - 1], mine);
+    } else {
+      out.push({ midi: [h.midi], at: h.beat, beats: 0 });
+      own.push(mine);
+    }
   }
-  out.forEach((c, i) => (c.beats = (out[i + 1]?.at ?? len) - c.at));
+  out.forEach((c, i) => (c.beats = Math.min((out[i + 1]?.at ?? len) - c.at, own[i])));
   return out;
 }
 
@@ -163,9 +171,13 @@ export function playTuneSpan(v: TrackVoice, cache: SynthCache, key: string, tune
   playSpan(v, notes, a, b);
 }
 
-/** One melody note: on the strings it rings until the next; on the keys and the synth it is held until the next note, and never past the section's end. */
-export function playTuneNote(v: TrackVoice, midi: number, when: number, gap: number, sectionEnd: number, lane: number, as?: HarpSound) {
+/**
+ * One melody note: on the strings it rings until the next; on the keys and the synth it is held until the next note,
+ * and never past the section's end. `len`: the note's own length in seconds, when it has one: on the keys and the
+ * synth it is held that long at most (the strings ring as they do).
+ */
+export function playTuneNote(v: TrackVoice, midi: number, when: number, gap: number, sectionEnd: number, lane: number, as?: HarpSound, len?: number) {
   if (!v.instrument) v.note(midi, when, 0.9, Infinity, { slot: TUNE_SLOT + lane, lift: TUNE_LIFT, as, until: gap });
-  else v.note(midi, when, TUNE_VELOCITY, Math.max(0.05, Math.min(gap, sectionEnd - when)), { as });
+  else v.note(midi, when, TUNE_VELOCITY, Math.max(0.05, Math.min(gap, sectionEnd - when, len ?? Infinity)), { as });
 }
 
