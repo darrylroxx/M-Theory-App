@@ -3,7 +3,7 @@
 // what the old page's top strip held: which bars are open, the mute or solo mark, "plays instead", the clip's On / Off
 // switch, bars on screen, and copy and paste of what is open.
 //
-// A track that records gets a window that says recording is on its way (it arrives with the next step).
+// A track that records has no composer: it opens the one record window (plugins/audio/RecordHost).
 import { memo, useMemo, useRef, type ReactNode } from "react";
 import { melodyBase } from "../../song/melody";
 import type { Key } from "../../theory/keys";
@@ -63,16 +63,8 @@ const PANE = { chords: "rhythm", melody: "melody", bass: "melody", drums: "drums
 export const LegacyComposer = memo(function LegacyComposer(p: ComposerProps) {
   const { win, track, song, target, ctl } = p;
   const frame = { win: p.win, focused: p.focused, z: p.z, onFocus: () => ctl.focus(win.id), onClose: () => ctl.close(win.id), onMove: (r: Rect) => ctl.move(win.id, r) };
-  if (track.kind === "vocals" || track.kind === "audio" || !target) {
-    return (
-      <Window {...frame} title={`${track.name} · recording`}>
-        <div className="lc-wait">
-          <p><b>Recording arrives with the next step.</b></p>
-          <p className="muted small">What is recorded on this track plays with the song, and its clips can be moved, cut and copied on the timeline.</p>
-        </div>
-      </Window>
-    );
-  }
+  // (a track that records is shown in the record window, never here)
+  if (track.kind === "vocals" || track.kind === "audio" || !target) return null;
   const clip = target.clip === undefined ? undefined : (song.clips.find((c) => c.id === target.clip && c.kind !== "audio") as NoteClip | undefined);
   const title = `${track.name} · ${clip ? openLabel(song, clip.id) : "new clip"}`;
   return (

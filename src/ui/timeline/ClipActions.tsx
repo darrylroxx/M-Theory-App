@@ -49,12 +49,13 @@ export function ClipActions({ clip, x, y, onAct }: { clip: Clip; x: number; y: n
  * The same list as a menu's lines. A recorded clip adds "Hear alone" and, where its spot has other takes, a line for each.
  * `takes`: the other takes that could play in this clip's place.
  */
-export function clipMenu(clip: Clip, onAct: (act: ClipAct) => void, more?: { hear(): void; takes: Take5[]; useTake(take: Take5): void }): MenuItem[] {
+export function clipMenu(clip: Clip, onAct: (act: ClipAct) => void, more?: { hear(): void; takes: Take5[]; useTake(take: Take5): void; /** which recording of its track a take is from, counted from 1 (said when takes of more than one are offered) */ recOf?(take: Take5): number }): MenuItem[] {
   const items: MenuItem[] = ACTS.map(({ act, name, key }) => ({ label: act === "mute" && clip.mute ? "Unmute" : act === "split" ? "Split here" : name, hint: key, danger: act === "delete", run: () => onAct(act) }));
   if (clip.kind === "audio" && more) {
     items.splice(items.length - 1, 0, { sep: true }, { label: "Hear alone", run: more.hear });
     if (more.takes.length) {
-      items.splice(items.length - 1, 0, { title: "Take" }, ...more.takes.map((t): MenuItem => ({ label: `Take ${t.n}${t.keep ? " ★" : ""}`, on: t.id === clip.take, run: () => more.useTake(t) })));
+      const many = new Set(more.takes.map((t) => t.group)).size > 1;
+      items.splice(items.length - 1, 0, { title: "Take" }, ...more.takes.map((t): MenuItem => ({ label: `${many && more.recOf ? `● ${more.recOf(t)} · ` : ""}Take ${t.n}${t.keep ? " ★" : ""}`, on: t.id === clip.take, run: () => more.useTake(t) })));
     }
     items.splice(items.length - 1, 0, { sep: true });
   }

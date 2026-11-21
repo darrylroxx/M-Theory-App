@@ -245,13 +245,15 @@ const inOrder = (x: unknown) => JSON.stringify(x, (_, v) => (v && typeof v === "
  * Two ideas are the same idea when their fingerprints match: the key, the capo and tuning, and the song (every track
  * with how it sounds, every clip, the mixer, the markers, the bars). A sound saved with only some knobs is the same
  * sound as one with the rest at their defaults, and a kit is compared by what it sounds like. What is open or selected
- * is not part of an idea, nor are removed recordings waiting on the shelf.
+ * is not part of an idea, nor are removed recordings waiting on the shelf, nor is how far the timing nudge has moved
+ * the takes.
  */
 export function fingerprint5(i: Pick<SavedIdea, "key" | "song" | "capo" | "tuningId">): string {
   const s = i.song;
   const tracks = s.tracks.map((t) => {
     if (t.kind === "drums") return { ...t, kit: kitSig(t.kit), draft: t.draft ?? null };
-    if (isAudio(t)) return { ...t, input: t.input ?? null };
+    // (where a take starts in its file moves with the timing nudge, which is a setting of this device, not part of an idea)
+    if (isAudio(t)) return { ...t, input: t.input ?? null, takes: t.takes.map(({ start: _s, nudge: _n, ...k }) => k) };
     return { ...t, sound: reviveSound(t.sound), draft: t.draft ?? null };
   });
   const clips = [...s.clips].sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0)).map((c) => (c.kind === "chords" ? { ...c, mute: !!c.mute, content: { ...c.content, feel: reviveFeel(c.content.feel), arrange: c.content.arrange ?? null } } : { ...c, mute: !!c.mute }));

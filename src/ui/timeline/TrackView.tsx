@@ -384,8 +384,11 @@ export function TrackView(props: TrackViewProps) {
       const now = inputText(t.input);
       const pick = (input: InputRef) => p.edit("Input", (s) => setTrack(s, id, { input }));
       const items: MenuItem[] = [{ title: "Records from" }];
-      for (let ch = 0; ch < count; ch++) items.push({ label: `Input ${ch + 1}`, on: now === `${ch + 1}`, run: () => pick({ ch }) });
-      for (let ch = 0; ch + 1 < count; ch += 2) items.push({ label: `Inputs ${ch + 1}+${ch + 2} (stereo)`, on: now === `${ch + 1}+${ch + 2}`, run: () => pick({ ch, pair: true }) });
+      // (one input at a time for now: a pair recorded in stereo arrives with the blank audio track)
+      for (let ch = 0; ch < count; ch++) items.push({ label: `In ${ch + 1}`, on: now === `${ch + 1}`, run: () => pick({ ch }) });
+      // the track's own choice is always in the list, also when the interface turns out to have fewer inputs
+      const mine = t.input?.ch ?? 0;
+      if (mine >= count) items.push({ label: `In ${mine + 1} (not there)`, on: true, run: () => pick({ ch: mine }) });
       if (p.inputs) items.push({ sep: true }, { label: "Audio setup…", run: () => p.inputs?.setup() });
       setMenu({ at, label: "Input", items });
     };
@@ -606,6 +609,8 @@ export function TrackView(props: TrackViewProps) {
       const more = c.kind === "audio" && t && "takes" in t ? {
         hear: () => p.player.audition({ from: c.start, to: end }, c.track),
         takes: otherTakes(c, t.takes),
+        // (numbered as the take list numbers them: the track's recordings, oldest first)
+        recOf: (take: Take5) => [...new Set(t.takes.map((k) => k.group))].indexOf(take.group) + 1,
         useTake: (take: Take5) => p.edit("Use take", (s) => ({ ...s, clips: s.clips.map((x) => (x.id === id && x.kind === "audio" ? { ...x, take: take.id } : x)) })),
       } : undefined;
       setMenu({ at, label: "Clip", items: clipMenu(c, (a) => act.clipAct(a, id, beat), more) });

@@ -30,7 +30,7 @@ export interface TopBarProps {
   exports: { wav(): void; midi(): void; chart(): void; busy?: boolean };
   openCanvas(): void; openIdeas(): void; openSettings(): void;
   /** shown when the song has an audio track */
-  record?: { on: boolean; busy: boolean; live: boolean; toggle(): void; monitor: "hardware" | "effects"; setMonitor(m: "hardware" | "effects"): void };
+  record?: { on: boolean; busy: boolean; live: boolean; toggle(): void; monitor: "hardware" | "effects"; setMonitor(m: "hardware" | "effects"): void; /** the pass being sung, while recording (shown beside ●) */ pass?: number };
 }
 
 /** What the view adds to the host's part: the song, where the cursor is, and what plays it. */
@@ -135,6 +135,7 @@ export function TopBar(p: TopBarProps & TopBarLive) {
               <button className={`tlv-round rec${rec.on ? " on" : ""}`} aria-pressed={rec.on} aria-label={rec.on ? "Stop recording" : "Record"} disabled={rec.busy} title={rec.on ? "Stop recording" : "Record onto the armed track"} onClick={rec.toggle}>
                 ●{rec.live && <span className="live-dot" title="Your mic is live" aria-label="(mic live)" />}
               </button>
+              {rec.on && !!rec.pass && <output className="tlv-pass mono" aria-label="Pass being recorded">Pass {rec.pass}</output>}
               <div className="seg tlv-mon" role="radiogroup" aria-label="How you hear yourself while recording">
                 <button role="radio" aria-checked={rec.monitor === "hardware"} className={rec.monitor === "hardware" ? "on" : ""} title="Direct: you hear yourself straight from the interface" onClick={() => rec.setMonitor("hardware")}>Direct</button>
                 <button role="radio" aria-checked={rec.monitor === "effects"} className={rec.monitor === "effects" ? "on" : ""} title="Through effects: you hear yourself with the track's sound" onClick={() => rec.setMonitor("effects")}>Effects{rec.live && rec.monitor === "effects" && <span className="live-dot" aria-label="(mic live)" />}</button>
