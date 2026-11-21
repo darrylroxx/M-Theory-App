@@ -136,7 +136,8 @@ export function Ruler(p: RulerProps) {
   };
 
   const dbl = (e: React.MouseEvent<HTMLDivElement>) => {
-    const t = e.target as HTMLElement;
+    // (the ruler holds the pointer while it is pressed, so the event names the ruler: what is under the pointer is looked up)
+    const t = (document.elementFromPoint(e.clientX, e.clientY) ?? e.target) as HTMLElement;
     if (t.closest("button, input, [data-band]")) return;
     const mk = t.closest<HTMLElement>("[data-marker]");
     if (!mk) return p.onLoop({ regions: [{ from: 0, to: end }], on: true });
@@ -263,9 +264,10 @@ export function Ruler(p: RulerProps) {
             </div>
           );
         })}
-        {endX > 0 && endX <= width + 1 && (
-          <span className={`tlv-end${endX + 64 > width ? " left" : ""}`} style={{ left: endX }} title="Where the song ends"><b>{bars} bar{bars === 1 ? "" : "s"}</b></span>
-        )}
+        {/* how long the song is: at its end, or at the ruler's right edge while the end is off screen */}
+        {endX > 0 && endX <= width + 1
+          ? <span className={`tlv-end${endX + 64 > width ? " left" : ""}`} style={{ left: endX }} title="Where the song ends"><b>{bars} bar{bars === 1 ? "" : "s"}</b></span>
+          : <span className="tlv-end left off" style={{ left: width }} title="How long the song is"><b>{bars} bar{bars === 1 ? "" : "s"}</b></span>}
         {cur >= 0 && cur <= width && <i className="tlv-cur-head" style={{ left: cur }} />}
       </div>
     </div>
