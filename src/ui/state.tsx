@@ -180,6 +180,8 @@ export interface AppState {
   /** How many bars the editing pages show at once, and whether they follow the music (kept apart from the song, so it never makes an idea look changed) */
   view?: ViewPrefs;
 }
+/** The app's state as it is stored today (version 4), under the name the track view's code knows it by. */
+export type AppStateV4 = AppState;
 
 /** The recording setup on this computer. */
 export interface Studio {
@@ -203,6 +205,8 @@ export interface Studio {
   buffer?: number;
   /** the vocal track the Vocals page shows */
   vocal?: string;
+  /** how many inputs the interface had when it was last open */
+  inputs?: number;
 }
 
 export interface SheetState {
@@ -211,7 +215,7 @@ export interface SheetState {
   slotId?: string;
 }
 
-const STORAGE_KEY = "m-theory-state-v1";
+export const STORAGE_KEY = "m-theory-state-v1";
 
 /** Theme attribute set by an embedding host (e.g. the claude.ai artifact viewer), captured before we touch it. */
 const HOST_THEME = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
@@ -280,6 +284,15 @@ function load(): AppState {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     loadedRaw = raw;
+    return loadV4(raw);
+  } catch {
+    return DEFAULT_STATE;
+  }
+}
+
+/** A stored text made whole, with no browser needed: nothing stored, or a text that cannot be read, gives the state a new app starts with. */
+export function loadV4(raw: string | null): AppState {
+  try {
     if (!raw) return DEFAULT_STATE;
     const parsed = JSON.parse(raw) as Partial<AppState> & { progression?: { avoidBarre?: boolean } };
     const tab: Tab = (parsed.tab as string) === "piano" ? "piano" : "guitar";
@@ -307,7 +320,7 @@ function load(): AppState {
   }
 }
 
-interface Ctx {
+export interface Ctx {
   state: AppState;
   set: (fn: (s: AppState) => AppState) => void;
   tuning: Tuning;
@@ -365,7 +378,7 @@ export interface ToastAction {
   when?: (s: AppState) => boolean;
 }
 
-const AppCtx = createContext<Ctx | null>(null);
+export const AppCtx = createContext<Ctx | null>(null);
 
 /** Beats in a bar: what the time signature of the section on screen says, on every page. */
 export function barOf(p: Progression): number {
