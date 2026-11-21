@@ -513,6 +513,25 @@ export function TrackView(props: TrackViewProps) {
   useEffect(() => {
     if (adding) body.current?.scrollTo({ top: body.current.scrollHeight });
   }, [adding]);
+  // A composer window lies over the lower lanes: the rows get that much room below them, and the window's own
+  // track is brought into view above it.
+  const docked = [...session.windows].reverse().find((w) => w.open && w.kind === "compose");
+  const dockedRow = docked ? song.tracks.findIndex((t) => t.id === docked.track) : -1;
+  useLayoutEffect(() => {
+    const el = body.current;
+    const grid = rows.current;
+    if (!el || !grid) return;
+    const win = docked ? document.querySelector<HTMLElement>(`.tlw[data-win="${CSS.escape(docked.id)}"]`) : null;
+    const b = el.getBoundingClientRect();
+    const w = win?.getBoundingClientRect();
+    // (only a window that lies across the bottom of the lanes: one dragged up into them covers what it covers)
+    const cover = w && w.bottom >= b.bottom - 1 && w.top > b.top ? clamp(b.bottom - w.top, 0, Math.max(0, b.height - ROW_H)) : 0;
+    grid.style.paddingBottom = cover ? `${cover}px` : "";
+    if (!cover || dockedRow < 0) return;
+    const seen = b.height - cover;
+    if ((dockedRow + 1) * ROW_H - el.scrollTop > seen) el.scrollTop = (dockedRow + 1) * ROW_H - seen;
+    else if (dockedRow * ROW_H < el.scrollTop) el.scrollTop = dockedRow * ROW_H;
+  }, [docked?.id, docked?.clip, docked?.y, docked?.h, dockedRow]);
 
   // ── clips and lanes: pressed, dragged, let go ──
   const ctl: LaneCtl = useMemo(() => {

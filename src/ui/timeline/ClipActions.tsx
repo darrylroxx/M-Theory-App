@@ -32,11 +32,13 @@ const ACTS: { act: ClipAct; name: string; key: string }[] = [
 /** The row of six buttons on a selected clip. `x`, `y`: where it stands over the lanes. */
 export function ClipActions({ clip, x, y, onAct }: { clip: Clip; x: number; y: number; onAct(act: ClipAct): void }) {
   return (
-    <div className="tlc-acts" role="toolbar" aria-label="This clip" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => e.stopPropagation()}>
+    // (the row appears with the first click on a clip: the second click of a double-click may land on it, and that
+    // is the clip being opened, never one of these buttons being pressed)
+    <div className="tlc-acts" role="toolbar" aria-label="This clip" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); onAct("open"); }}>
       {ACTS.map(({ act, name, key }) => {
         const said = act === "mute" && clip.mute ? "Unmute" : name;
         return (
-          <button key={act} className={`tlc-act${act === "mute" && clip.mute ? " on" : ""}${act === "delete" ? " danger" : ""}`} aria-label={said} title={`${said} (${key})`} onClick={() => onAct(act)}>{ICON[act]}</button>
+          <button key={act} className={`tlc-act${act === "mute" && clip.mute ? " on" : ""}${act === "delete" ? " danger" : ""}`} aria-label={said} title={`${said} (${key})`} onClick={(e) => { if (e.detail < 2) onAct(act); }}>{ICON[act]}</button>
         );
       })}
     </div>
