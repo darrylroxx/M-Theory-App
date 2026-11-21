@@ -17,6 +17,8 @@ export interface MelodyNote {
   /** when it sounds, in twelfths of a beat from the start of the section */
   at: number;
   midi: number;
+  /** how long it is held, in twelfths of a beat (on the keys and the synth; the strings ring on). Not set: until the next note */
+  len?: number;
 }
 
 export interface Melody {
@@ -134,10 +136,34 @@ export function melodyRows(key: Key, keyOnly = false): MelodyRow[] {
   return rows;
 }
 
+/** The lowest and the highest note a stored melody may hold (see reviveMelody): the widest a grid can be. */
+export const GRID_LOW = 24, GRID_HIGH = 108;
+
+/**
+ * A grid's rows from `low` up, `octaves` octaves, highest first (kept inside what a melody may hold). With
+ * `keyOnly`, just the notes of the scale. `gridRows(key, melodyBase(key), 2)` is `melodyRows(key)`.
+ */
+export function gridRows(key: Key, low: number, octaves: number, keyOnly = false): MelodyRow[] {
+  const tonic = pc(key.tonic);
+  const set = new Set(scalePcs(tonic, getScale(key.scaleId)));
+  const from = Math.max(GRID_LOW, Math.round(low));
+  const to = Math.min(GRID_HIGH, Math.round(low) + 12 * Math.max(1, Math.round(octaves)));
+  const rows: MelodyRow[] = [];
+  for (let midi = to; midi >= from; midi--) {
+    const p = mod12(midi);
+    const inKey = set.has(p);
+    if (keyOnly && !inKey) continue;
+    rows.push({ midi, name: spellInKey(p, key), inKey, home: p === tonic });
+  }
+  return rows;
+}
+
 export interface TuneHit {
   /** beats from the start of the section */
   beat: number;
   midi: number;
+  /** the note's own length, when it has one (twelfths of a beat) */
+  len?: number;
 }
 
 /**
@@ -153,7 +179,7 @@ export function tuneBetween(m: Melody, bar: number, from: number, to: number, sw
     for (const n of m.notes) {
       if (n.at !== pos) continue;
       const late = swing && pos % 3 === 0 && (pos / 3) % 2 === 1 ? swing / 12 : 0;
-      out.push({ beat: t / TICKS + late, midi: n.midi });
+      out.push({ beat: t / TICKS + late, midi: n.midi, ...(n.len !== undefined ? { len: n.len } : {}) });
     }
   }
   return out;
