@@ -1,8 +1,9 @@
 // The host of the track view: it reads the app's state and builds everything the view is handed. It owns the player,
-// the plugin windows (in this release each one is an old composer page behind a lens), the Canvas as an overlay, and
-// the two sheets (Ideas and settings).
+// the plugin windows (in this release each one is an old composer page behind a lens), the one record window (the old
+// Vocals page, mounted once and for good), the Canvas as an overlay, and the two sheets (Ideas and settings).
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { saveFile } from "../../audio/midi";
+import { isDesktop } from "../../desktop";
 import { reviveSound } from "../../audio/rack";
 import { bookAhead, hearOn } from "../../audio/synth";
 import { setHome } from "../../audio/trackplay";
@@ -21,19 +22,22 @@ import { clipboardBeats, copyOut, copySound, insertTime, pasteIn, pasteSound, se
 import { chart5, hasChords5, midi5, wav5 } from "../../timeline/export";
 import { flatten, type FlattenCtx } from "../../timeline/flatten";
 import { harmonyState5, lensOf, unlens, type Target } from "../../timeline/lens";
-import { CLIP_OF, clipEnd, contentBeats, type Clip, type NoteClip, type Session, type SoundCopy, type Take5, type TimelineSong, type Track } from "../../timeline/model";
+import { CLIP_OF, clipEnd, contentBeats, type AudioClip, type Clip, type NoteClip, type Session, type SoundCopy, type Take5, type TimelineSong, type Track } from "../../timeline/model";
 import { voicingsFor } from "../../timeline/voicing";
 import { useApp5 } from "../app5";
 import { CanvasPage } from "../components/CanvasPage";
 import { DraftBadge } from "../components/Desktop";
 import { IdeasPanel } from "../components/IdeasPanel";
 import { SettingsPanel } from "../components/SettingsPanel";
+import type { RecordPhase } from "../components/VocalsPage";
+import { useLive } from "../live";
+import { REC_WIN, RecordHost, audioTracksOf, openRecordWin, roundLabel, shownTrack, type RecordApi, type RecordCtl } from "../plugins/audio/RecordHost";
 import { LegacyComposer, type ComposerCtl } from "../plugins/LegacyComposer";
 import { newId, shapeKey, type Progression } from "../state";
 import { V4View, lensIn } from "../windows/ClipLens";
-import { openWins, useWindows, zOf } from "../windows/windows";
+import { PANEL_W, TOP_H, openWins, useWindows, zOf } from "../windows/windows";
 import type { PlayerApi } from "./api";
-import { ESC_OPEN, onEscape } from "./keys";
+import { ESC_OPEN, onEscape, whereOf } from "./keys";
 import { TrackView } from "./TrackView";
 import { usePlayer, useTakes } from "./usePlayer";
 
@@ -62,6 +66,12 @@ export class Guard extends Component<{ children: ReactNode; what: string; onClos
 const HEAVY = new Set(["Add track", "Remove track", "Duplicate track", "Paste", "Paste and make room", "Move clip", "Move clips", "Copy clip", "Copy clips", "Insert time", "Remove time"]);
 
 const EPS = 1e-6;
+/** A list as it was the last time, while every item in it is the same one (so what is handed on is not drawn again for nothing). */
+function useSame<T>(list: T[]): T[] {
+  const kept = useRef(list);
+  if (kept.current !== list && (kept.current.length !== list.length || kept.current.some((x, i) => x !== list[i]))) kept.current = list;
+  return kept.current;
+}
 /** How loud a take is along its length, for its picture on the lane: worked out once for a decoded take. */
 const peaksOf = new WeakMap<AudioBuffer, Float32Array>();
 function peaksFrom(b: AudioBuffer): Float32Array {
@@ -144,7 +154,18 @@ export function Host() {
       return song;
     }
   }, [song, key, candidate]);
-  const player = usePlayer(heard, session, ctx);
+  const played = usePlayer(heard, session, ctx);
+  /** a recording or a rehearsal runs: the interface plays the song, so the app's own player stays silent */
+  const recBusy = useRef(false);
+  const player = useMemo(() => ({
+    ...played,
+    toggle: () => {
+      if (!recBusy.current) played.toggle();
+    },
+    audition: (span: Parameters<typeof played.audition>[0], solo?: string) => {
+      if (!span || !recBusy.current) played.audition(span, solo);
+    },
+  }), [played]);
   const playerRef = useRef(player);
   playerRef.current = player;
   // another idea opened: nothing of the idea left sounds on over it
@@ -174,6 +195,104 @@ export function Host() {
     });
   }, [setSession]);
   const wins = useWindows(session, setSession);
+
+  // ── recording: the one record window, the top bar's ● and monitor control, the panels' inputs ──
+  const desktop = isDesktop();
+  const recApi = useRef<RecordApi | null>(null);
+  const [rec, setRec] = useState<{ phase: RecordPhase; pass: number; open: boolean }>({ phase: "idle", pass: 0, open: false });
+  const recNow = useRef(rec);
+  recNow.current = rec;
+  const [recSound, setRecSound] = useState(0);
+  const micLive = useLive();
+  const audioTracks = useSame(useMemo(() => audioTracksOf(song), [song.tracks]));
+  const audioClips = useSame(useMemo(() => song.clips.filter((c): c is AudioClip => c.kind === "audio"), [song.clips]));
+  /** open the record window (on a track: that track is the one shown, so the arm moves to it when another was armed) */
+  const openRecord = useCallback((track?: string, toSound = false) => {
+    const s = peek();
+    const audio = audioTracksOf(s.song);
+    const locked = live.current.app.recordingTo;
+    const on = track && audio.some((t) => t.id === track) ? track : shownTrack(audio, { recording: locked, armed: s.session.armed, selected: s.session.sel.track, last: s.session.windows.find((w) => w.id === REC_WIN)?.track });
+    bookAhead();
+    setSession((x) => {
+      const next = openRecordWin(x, on ?? "", { w: window.innerWidth, h: window.innerHeight, panel: PANEL_W, top: TOP_H });
+      if (!track || !on || locked) return next;
+      return { ...next, armed: x.armed && x.armed !== on ? on : x.armed, sel: next.sel.track === on ? next.sel : { ...next.sel, track: on } };
+    });
+    wins.focus(REC_WIN);
+    if (toSound) setRecSound((n) => n + 1);
+  }, [peek, setSession, wins]);
+  /** the top bar's ● and Ctrl+R: stop the recording that runs; else record onto the armed track (with none armed: the selected one that records, else the top one, armed first) */
+  const recordToggle = useCallback(() => {
+    const ph = recNow.current.phase;
+    if (ph === "recording") return recApi.current?.toggle();
+    if (ph !== "idle") return;
+    const s = peek();
+    const audio = audioTracksOf(s.song);
+    const target = shownTrack(audio, { armed: s.session.armed, selected: s.session.sel.track });
+    if (!target) return;
+    bookAhead();
+    setSession((x) => ({ ...openRecordWin(x, target, { w: window.innerWidth, h: window.innerHeight, panel: PANEL_W, top: TOP_H }), armed: target }));
+    wins.focus(REC_WIN);
+    // (in a browser there is no recording yet: the window says so)
+    if (desktop) recApi.current?.start(target);
+  }, [peek, setSession, wins, desktop]);
+  // Ctrl+R with the focus inside a window, in the take list or in a box (while recording it mostly is): the timeline's
+  // keys leave it alone there, and the desktop app's own window would take it for "load the page again"
+  const toggleNow = useRef(recordToggle);
+  toggleNow.current = recordToggle;
+  useEffect(() => {
+    if (!desktop) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.defaultPrevented || !(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || e.key.toLowerCase() !== "r" || whereOf(e.target) === "timeline") return;
+      e.preventDefault();
+      if (!e.repeat) toggleNow.current();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [desktop]);
+  // a recording begun from the window itself arms its track too: the lit ● on the panel is always the track that records
+  const recordingTo = app.recordingTo;
+  useEffect(() => {
+    if (recordingTo) setSession((x) => (x.armed === recordingTo ? x : { ...x, armed: recordingTo }));
+  }, [recordingTo, setSession]);
+  const monitor = state.studio?.monitor ?? "hardware";
+  const setMonitor = useCallback((m: "hardware" | "effects") => {
+    set((x) => ((x.studio?.monitor ?? "hardware") === m ? x : { ...x, studio: { ...x.studio, monitor: m } }));
+    // through the effects needs the interface: where it is not open yet, the record window opens, and the interface with it
+    if (m === "effects" && desktop && !recNow.current.open) openRecord();
+  }, [set, desktop, openRecord]);
+  const record = useMemo(() => (audioTracks.length ? {
+    on: rec.phase === "recording",
+    busy: rec.phase === "preparing" || rec.phase === "saving" || rec.phase === "rehearsing",
+    live: micLive,
+    toggle: recordToggle,
+    monitor,
+    setMonitor,
+    pass: rec.phase === "recording" ? rec.pass : 0,
+  } : undefined), [audioTracks.length, rec.phase, rec.pass, micLive, recordToggle, monitor, setMonitor]);
+  // inputs 1 and 2 in this release (as many as the interface had when it was last open, two until it has been)
+  const inputCount = Math.max(1, Math.min(2, state.studio?.inputs ?? 2));
+  const inputs = useMemo(() => ({
+    count: inputCount,
+    ...(rec.open ? { level: (ch: number) => recApi.current?.level(ch) ?? 0 } : {}),
+    setup: () => openRecord(),
+  }), [inputCount, rec.open, openRecord]);
+  const growing = useCallback(() => recApi.current?.growing() ?? null, []);
+  const round = audioTracks.length ? roundLabel(song, session) : "";
+  const recCtl = useMemo<RecordCtl>(() => ({
+    app: () => live.current.app,
+    ctx: () => ctxRef.current,
+    stopSong: () => playerRef.current.stop(),
+    busy: (on) => { recBusy.current = on; },
+    report: (r) => setRec((was) => (was.phase === r.phase && was.pass === r.pass && was.open === r.open ? was : r)),
+    focus: () => wins.focus(REC_WIN),
+    close: () => {
+      bookAhead();
+      wins.close(REC_WIN);
+    },
+    move: (r) => wins.move(REC_WIN, r),
+  }), [wins]);
+
   /** windows opened by FX: their sound panels are brought into view (a count for each, so asking again scrolls again) */
   const [toSound, setToSound] = useState<Record<string, number>>({});
   const open = useCallback((kind: "compose" | "sound", track: string, clip?: string) => {
@@ -181,6 +300,8 @@ export function Host() {
     const s = peek();
     const t = s.song.tracks.find((x) => x.id === track);
     if (!t) return;
+    // a track that records: the one record window (FX: at its vocal sound)
+    if (t.kind === "vocals" || t.kind === "audio") return openRecord(track, kind === "sound");
     bookAhead();
     // what a track's buttons open: its selected clip; else the clip under the cursor; else its first clip; with no
     // clip at all, nothing yet (the first thing written makes one)
@@ -195,7 +316,7 @@ export function Host() {
     // (in this release the sound panels are part of the composer's page: FX opens the same window, at the sound)
     wins.open("compose", track, on);
     if (kind === "sound") setToSound((m) => ({ ...m, [`compose:${track}`]: (m[`compose:${track}`] ?? 0) + 1 }));
-  }, [wins, peek]);
+  }, [wins, peek, openRecord]);
   const close = useCallback((id: string) => {
     bookAhead();
     wins.close(id);
@@ -214,7 +335,8 @@ export function Host() {
     const at = map.floorBar(Math.max(0, cursor));
     return { track: track.id, fresh: { id: clip ?? "c-new", at, sig: map.sigAt(at + EPS) } };
   }, []);
-  const shown = openWins(session);
+  // (the record window is not a composer: it is drawn on its own, below)
+  const shown = openWins(session).filter((w) => w.id !== REC_WIN);
   const targets = useMemo(() => {
     const out = new Map<string, Target | null | undefined>();
     for (const w of shown) {
@@ -235,9 +357,10 @@ export function Host() {
     kept.current = out;
     return out;
   }, [targets]);
-  // a window whose clip or track is gone (an undo, a delete) closes
+  // a window whose clip or track is gone (an undo, a delete) closes; so does a composer left open on a track that records
+  // (kept from before recording had its window)
   useEffect(() => {
-    for (const w of shown) if (stable.get(w.id) === undefined) close(w.id);
+    for (const w of shown) if (stable.get(w.id) === undefined || stable.get(w.id) === null) close(w.id);
   });
 
   // what is played to be heard goes to the track of the window that has the focus
@@ -464,12 +587,13 @@ export function Host() {
     onTempo: (bpm: number) => edit("Tempo", (s) => setTempo(s, Math.max(40, Math.min(200, Math.round(bpm)))), "tempo"),
     onSig: (sig: TimeSig, fromHereOn: boolean) => edit("Time signature", (s) => setSig(s, barMap(s).barAt(peek().session.cursor).bar, sig, fromHereOn)),
     ...(sung ? { sung } : {}),
+    ...(record ? { record } : {}),
     undo, redo, canUndo, canRedo,
     exports: { ...exportsOf, busy: rendering },
     openCanvas,
     openIdeas: () => setIdeas("open"),
     openSettings: () => setSettings(true),
-  }), [idea, dirty, count, save, editKeyed, edit, peek, sung, undo, redo, canUndo, canRedo, exportsOf, rendering, openCanvas]);
+  }), [idea, dirty, count, save, editKeyed, edit, peek, sung, record, undo, redo, canUndo, canRedo, exportsOf, rendering, openCanvas]);
 
   const editBusy = useCallback((label: string, fn: (s: TimelineSong) => TimelineSong, control?: string) => {
     if (HEAVY.has(label)) bookAhead();
@@ -555,12 +679,17 @@ export function Host() {
     <>
       <Guard what="the track view">
         <TrackView song={song} keyOf={key} session={session} edit={editBusy} setSession={setSessionBusy} player={playerApi} open={open} peaks={peaks}
-          clipboard={clipboard} sound={sounds} top={top} stale={stale} again={again} say={say} />
+          clipboard={clipboard} sound={sounds} top={top} stale={stale} again={again} say={say} inputs={inputs} recording={growing} />
+      </Guard>
+      <Guard what="the record window" onClose={recCtl.close}>
+        <RecordHost win={session.windows.find((w) => w.id === REC_WIN)} focused={wins.focused === REC_WIN} otherFocused={!!wins.focused && wins.focused !== REC_WIN} z={zOf(session, REC_WIN)}
+          tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} recordingTo={recordingTo}
+          round={round} playing={player.playing} toSound={recSound} ctl={recCtl} api={recApi} />
       </Guard>
       {shown.map((w) => {
         const t = song.tracks.find((x) => x.id === w.track);
         const target = stable.get(w.id);
-        if (!t || target === undefined) return null;
+        if (!t || !target) return null;
         const canPaste = !!clip?.clips.some((c) => c.kind === CLIP_OF[t.kind] && c.kind !== "audio");
         return (
           <Guard key={w.id} what={`the ${t.name} window`} onClose={() => close(w.id)}>

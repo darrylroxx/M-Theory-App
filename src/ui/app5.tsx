@@ -13,6 +13,7 @@ import { autoName } from "../song/library";
 import type { ViewPrefs } from "../song/window";
 import type { Key } from "../theory/keys";
 import { arrive, backupId, backupSource, besideId, convertIdea, keepOriginal, newSession, setStores, stemOf } from "../timeline/convert";
+import { renudge5 } from "../timeline/audioclips";
 import { keepTakes, makeHistory, type History } from "../timeline/history";
 import { fingerprint5, importIdeas5, isBlank5, mergeIdeas5, reviveIdea5, toPush5, type SavedIdea } from "../timeline/library5";
 import { unplacedTakes } from "../timeline/migrate5";
@@ -66,10 +67,12 @@ export interface Ctx5 {
 // ── the plain rules (no screen needed) ──────────────────────
 
 /**
- * Every song that comes back (an undo, a redo, an idea opened) passes through here before it is shown.
- * (Recording, when it arrives, moves the takes to the timing nudge in use here.)
+ * Every song that comes back (an undo, a redo, an idea opened) passes through here before it is shown: its takes are
+ * moved to the timing nudge in use (`nudge`, in milliseconds). The nudge is a setting, outside undo, and each take
+ * remembers the one it was cut with; so a song from before the nudge was changed still plays in time. The same song
+ * back when nothing moves.
  */
-export const afterRestore = (song: TimelineSong): TimelineSong => song;
+export const afterRestore = (song: TimelineSong, nudge: number | undefined): TimelineSong => renudge5(song, nudge ?? 0);
 
 /** What an idea's session is when it opens: nothing selected or looped, no track armed, no window open, the whole song across the lanes. */
 export const openSession = (): Session => ({ ...newSession(), pxPerBeat: 0 });
@@ -94,7 +97,7 @@ export function stepIn(s: App5State, h: History, back: boolean, locked: boolean)
   const now = { song: s.song, key: s.key, label: "" };
   const to = back ? h.undo(now) : h.redo(now);
   if (!to) return s;
-  return { ...s, song: afterRestore(keepTakes(to.song, s.song)), key: to.key };
+  return { ...s, song: afterRestore(keepTakes(to.song, s.song), s.studio?.nudge), key: to.key };
 }
 /** Another idea opened: its song, key, capo and tuning; no undo steps, a new session, nothing armed. The same state back when there is no such idea (or it is a backup entry). */
 export function openIn(s: App5State, h: History, id: string): App5State {
@@ -102,7 +105,7 @@ export function openIn(s: App5State, h: History, id: string): App5State {
   const it = found && !found.backup ? reviveIdea5(found) : null;
   if (!it) return s;
   h.clear();
-  return { ...s, ideaId: id, key: it.key, song: afterRestore(it.song), session: openSession(), settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
+  return { ...s, ideaId: id, key: it.key, song: afterRestore(it.song, s.studio?.nudge), session: openSession(), settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
 }
 /** A blank idea started (the key and the tempo stay): the three tracks every idea starts with, and nothing on them. */
 export function newIn(s: App5State, h: History, draft: string): App5State {

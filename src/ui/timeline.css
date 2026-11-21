@@ -24,6 +24,7 @@
 @keyframes tlv-rec { 50% { box-shadow: 0 0 0 4px rgba(229, 72, 59, 0.28); } }
 .tlv-mon { flex: none; flex-wrap: nowrap; padding: 2px; border-radius: 9px; }
 .tlv-mon button { padding: 4px 8px; font-size: 0.74rem; border-radius: 6px; white-space: nowrap; }
+.tlv-pass { flex: none; font-size: 0.78rem; font-weight: 800; color: #e5483b; white-space: nowrap; font-variant-numeric: tabular-nums; }
 .tlv-pos { flex: none; min-width: 92px; text-align: center; font-size: 0.84rem; font-weight: 700; padding: 5px 8px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border); font-variant-numeric: tabular-nums; white-space: nowrap; }
 .tlv-val { position: relative; flex: none; height: 30px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card-2); font-weight: 750; font-size: 0.84rem; white-space: nowrap; }
 .tlv-val:hover, .tlv-val.on, .tlv-popbtn.on { border-color: var(--accent); }
@@ -235,6 +236,14 @@
 /* (the body carries a transform, so anything pinned to the screen inside it stays inside the window) */
 .tlw-body { flex: 1; min-height: 0; overflow: auto; transform: translateZ(0); padding: 12px; }
 .tlw-strip { flex: none; padding: 8px 12px; background: var(--card); border-top: 1px solid var(--border); }
+/* the record window: the old Vocals page as its body; hidden, not gone, when it is closed (the page owns the interface) */
+.rec-dock[hidden] { display: none; }
+.tlw .vocals.hosted { border: none; background: none; box-shadow: none; padding: 0; }
+.vc-on { gap: 8px 10px; }
+.vc-track { font-size: 1.02rem; font-weight: 800; }
+.tb-loose { flex: none; padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--border-2); color: var(--muted); white-space: nowrap; }
+.tb-shelf { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
+.tb-from { padding: 2px 6px 0; font-weight: 700; }
 /* on a narrow screen, or under a finger: a sheet across the bottom */
 .tlw.tlw-sheet { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; height: min(70vh, 520px); max-height: 92vh; padding: 0; border-radius: 20px 20px 0 0; }
 .tlw-sheet .tlw-bar { height: 44px; cursor: default; }
