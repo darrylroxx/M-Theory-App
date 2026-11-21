@@ -123,6 +123,8 @@ export function Host() {
   useEffect(() => setHome(pc(key.tonic)), [key.tonic]);
   const buffer = useTakes(song);
   const ctx = useMemo<FlattenCtx>(() => ({ voicingsOf, buffer }), [voicingsOf, buffer]);
+  const ctxRef = useRef(ctx);
+  ctxRef.current = ctx;
 
   // ── what is heard: the song, or the song with a Harmonize candidate written in ──
   const [candidate, setCandidateState] = useState<{ win: string; target: Target; p: Progression } | null>(null);
@@ -156,10 +158,11 @@ export function Host() {
   const playerApi = useMemo<PlayerApi>(() => ({
     ...player,
     toggle: () => {
-      if (!player.playing && songEnd(live.current.state.song) <= 0) return toast("Nothing to play yet: open a track with its compose button and write something");
+      // (nothing to hear: it says so, instead of a play line crossing empty bars)
+      if (!player.playing && !flatten(peek().song, ctxRef.current).any) return toast("Nothing to play yet: open a track with its compose button and write something");
       player.toggle();
     },
-  }), [player, toast]);
+  }), [player, toast, peek]);
 
   // ── windows ──
   const setSessionBusy = useCallback((fn: (s: Session) => Session) => {
@@ -174,7 +177,8 @@ export function Host() {
   /** windows opened by FX: their sound panels are brought into view (a count for each, so asking again scrolls again) */
   const [toSound, setToSound] = useState<Record<string, number>>({});
   const open = useCallback((kind: "compose" | "sound", track: string, clip?: string) => {
-    const s = live.current.state;
+    // (the state as it is this moment: a clip made just now, by the same press, is in it)
+    const s = peek();
     const t = s.song.tracks.find((x) => x.id === track);
     if (!t) return;
     bookAhead();
@@ -191,7 +195,7 @@ export function Host() {
     // (in this release the sound panels are part of the composer's page: FX opens the same window, at the sound)
     wins.open("compose", track, on);
     if (kind === "sound") setToSound((m) => ({ ...m, [`compose:${track}`]: (m[`compose:${track}`] ?? 0) + 1 }));
-  }, [wins]);
+  }, [wins, peek]);
   const close = useCallback((id: string) => {
     bookAhead();
     wins.close(id);
@@ -257,12 +261,12 @@ export function Host() {
       playerRef.current.audition(null);
       return setCandidate(null);
     }
-    const lens = lensIn(live.current.state, target);
+    const lens = lensIn(peek(), target);
     if (!lens) return;
     // (the bars go round from the moment a candidate is first heard; another option then takes its place as it plays)
     if (candidateRef.current?.win !== win) playerRef.current.audition(lens.span);
     setCandidate({ win, target, p });
-  }, [setCandidate]);
+  }, [setCandidate, peek]);
   const onHearNow = useCallback((target: Target) => {
     if (playerRef.current.playing) return;
     const s = peek();
