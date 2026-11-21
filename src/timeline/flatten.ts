@@ -337,7 +337,7 @@ function tuneOf(t: TuneTrack, clips: MelodyClip[], s: Stretch, swing: number, dr
  * What one drums track plays in a stretch: its clips' rhythms written out step by step over the whole stretch (each
  * round of each clip in its place, silence elsewhere), on the track's kit. Nothing when its clips there have no grid in common.
  */
-function beatOf(kit: DrumKit, clips: DrumsClip[], s: Stretch): Beat | null {
+export function beatOf(kit: DrumKit, clips: DrumsClip[], s: { from: number; to: number; bar: number; bars: number }): Beat | null {
   let div = 0;
   let swing = 0;
   const owners: (DrumsClip | undefined)[] = [];
