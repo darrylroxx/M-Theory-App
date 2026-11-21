@@ -42,8 +42,12 @@ export async function cloudReady(): Promise<"granted" | "ask" | "none"> {
   return state === "granted" ? "granted" : state === "prompt" ? "ask" : "none";
 }
 
-/** Connect to the viewer's private store. Resolves null when there is none (the first call may ask the viewer). */
-export async function connectCloud(): Promise<Cloud | null> {
+/**
+ * Connect to the viewer's private store. Resolves null when there is none (the first call may ask the viewer).
+ * `prefix`: which documents are the library's (the ideas of the track view are kept under a prefix of their own, so a
+ * build from before it can never open or overwrite them).
+ */
+export async function connectCloud(prefix = "idea_"): Promise<Cloud | null> {
   const h = host();
   if (!h?.use) return null;
   const [db, user] = (await Promise.all([h.use("db").catch(() => null), h.use("user").catch(() => null)])) as [Db | null, User | null];
@@ -57,15 +61,15 @@ export async function connectCloud(): Promise<Cloud | null> {
       const out: RemoteIdea[] = [];
       for (const d of snap.docs) {
         const x = d.data();
-        if (!d.id.startsWith("idea_") || !x) continue;
-        out.push({ id: d.id.slice(5), updatedAt: Number(x.updatedAt) || 0, deleted: x.deleted === true, json: typeof x.json === "string" ? x.json : undefined });
+        if (!d.id.startsWith(prefix) || !x) continue;
+        out.push({ id: d.id.slice(prefix.length), updatedAt: Number(x.updatedAt) || 0, deleted: x.deleted === true, json: typeof x.json === "string" ? x.json : undefined });
       }
       return out;
     },
     put(idea) {
       const body: Record<string, unknown> = { updatedAt: idea.updatedAt, deleted: !!idea.deleted };
       if (idea.json) body.json = idea.json;
-      return within(col.doc(`idea_${idea.id}`).set(body), 10000);
+      return within(col.doc(`${prefix}${idea.id}`).set(body), 10000);
     },
   };
 }

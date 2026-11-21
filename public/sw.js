@@ -1,5 +1,5 @@
 // M-Theory service worker: makes the app work offline after the first visit.
-const CACHE = "m-theory-v1";
+const CACHE = "m-theory-v2";
 // Instrument recordings (keys/…) live in caches of their own, which an app update leaves alone: the
 // piano is about 19 MB and should download once, not again with every new version of the app.
 const SAMPLES = "m-theory-samples-v1";

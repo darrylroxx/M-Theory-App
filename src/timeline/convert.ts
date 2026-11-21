@@ -5,17 +5,18 @@
 import { barsOf, kitOfBeat } from "../audio/beats";
 import { GUITAR } from "../audio/tone";
 import type { DrumClip, MelodyClip as OldMelodyClip, RhythmClip } from "../song/clip";
-import { fingerprint, isBlank, reviveIdea, snapshot } from "../song/library";
+import { fingerprint, importIdeas, isBlank, reviveIdea, snapshot } from "../song/library";
 import { melodyBars } from "../song/melody";
 import { isCompound, fitRhythm, sigBeats, sigFor } from "../song/meter";
 import { commit, settle } from "../song/structure";
 import { PLAIN_KIT, PLAIN_STYLE, normalize, prune } from "../song/tracks";
 import { conform } from "../song/unity";
 import type { App5State } from "../ui/app5";
-import type { AppStateV4, Progression, SavedProgression } from "../ui/state";
+import { DEFAULT_STATE, STORAGE_KEY, loadV4, type AppStateV4, type Progression, type SavedProgression } from "../ui/state";
 import { emptySong5, fingerprint5, rhythmOf, type SavedIdea } from "./library5";
 import { toTimeline } from "./migrate5";
 import type { Clipboard5, Session, TimelineSong } from "./model";
+import type { Blobs, KV } from "./store5";
 
 const clone = <T>(x: T): T => (x === undefined ? x : (JSON.parse(JSON.stringify(x)) as T));
 const tidy = <T extends object>(o: T): T => Object.fromEntries(Object.entries(o).filter(([, v]) => v !== undefined)) as T;
@@ -181,4 +182,124 @@ export function arrive(s: App5State, old0: SavedProgression, original: (id: stri
     if (!(prev && fingerprint5(there) === fingerprint5(convertIdea({ ...prev, id, name: there.name }).idea))) return { state: s };
   }
   return { state: put(convertIdea({ ...old, id, name: `${old.name} (edited in the old version)` })), added: "beside" };
+}
+
+// ── the originals: where a backup entry's old idea is read from ──
+
+/** In the larger store: the old state's text as it was when it was converted, and the text an old tab wrote later. */
+export const BLOB = "v4-blob";
+export const BLOB_LATE = "v4-blob-late";
+/** In the larger store: an old idea kept on its own (one that arrived later, or came in a backup file). */
+export const sideKey = (stem: string): string => `idea:${stem}`;
+/** The local key those go under when the larger store cannot be used. */
+export const SIDE_LOCAL = "m-theory-backup-v4";
+
+/** Where the originals are read from and kept: local storage, the larger store (null where it cannot be used), and the old cloud copy of an idea when there is one. */
+export interface Stores { kv: KV; blobs: Blobs | null; cloud?(id: string): SavedProgression | null }
+
+/** The stores of the app itself (set once by whoever holds the state; none in a test that hands its own in). */
+let appStores: Stores | null = null;
+export function setStores(st: Stores | null): void {
+  appStores = st;
+}
+
+const isObj = (x: unknown): x is Record<string, unknown> => !!x && typeof x === "object" && !Array.isArray(x);
+const oneIdea = (raw: unknown): SavedProgression | null => importIdeas(JSON.stringify({ ideas: [raw] }))[0] ?? null;
+
+/** The part of a backup entry's id that says which original it stands for: "x-v4" stands for "x", "x-u-v4" for "x-u". */
+export const stemOf = (backup: string): string => (backup.endsWith("-v4") ? backup.slice(0, -3) : backup);
+
+/** Keep an old idea on its own, under the stem of its backup entry's id. */
+export async function keepOriginal(stem: string, idea: SavedProgression, st: Stores | null = appStores): Promise<void> {
+  if (!st) return;
+  const text = JSON.stringify(idea);
+  if (st.blobs) {
+    try {
+      await st.blobs.put(sideKey(stem), text);
+      if ((await st.blobs.get(sideKey(stem))) === text) return;
+    } catch {
+      /* the local key below is tried instead */
+    }
+  }
+  try {
+    const all = JSON.parse(st.kv.get(SIDE_LOCAL) ?? "{}") as unknown;
+    st.kv.set(SIDE_LOCAL, JSON.stringify({ ...(isObj(all) ? all : {}), [stem]: idea }));
+  } catch {
+    /* no room: the converted idea is in the library all the same */
+  }
+}
+
+async function keptOriginal(st: Stores, stem: string): Promise<SavedProgression | null> {
+  if (st.blobs) {
+    try {
+      const text = await st.blobs.get(sideKey(stem));
+      const found = text ? oneIdea(JSON.parse(text)) : null;
+      if (found) return found;
+    } catch {
+      /* looked for below */
+    }
+  }
+  try {
+    const all = JSON.parse(st.kv.get(SIDE_LOCAL) ?? "{}") as unknown;
+    return isObj(all) && all[stem] ? oneIdea(all[stem]) : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The old state's texts there are to read from: `late` first when asked for (what an old tab wrote after the move), then what was converted, then the old key itself. */
+async function oldStates(st: Stores, late: boolean): Promise<AppStateV4[]> {
+  const texts: string[] = [];
+  const add = (t: string | null | undefined) => {
+    if (t && !texts.includes(t)) texts.push(t);
+  };
+  if (st.blobs)
+    for (const k of late ? [BLOB_LATE, BLOB] : [BLOB]) {
+      try {
+        add(await st.blobs.get(k));
+      } catch {
+        /* the next place is tried */
+      }
+    }
+  try {
+    add(st.kv.get(STORAGE_KEY));
+  } catch {
+    /* nothing there */
+  }
+  const out: AppStateV4[] = [];
+  for (const t of texts) {
+    const s = loadV4(t);
+    if (s !== DEFAULT_STATE) out.push(s);
+  }
+  return out;
+}
+
+/**
+ * The version 4 original a backup entry stands for, by the entry's id. It is read from, in order: the ideas kept on
+ * their own; the old state's text (its saved list; for the two "unsaved" kinds, the idea that was on screen when it
+ * was converted); the old cloud copy. null: it cannot be read on this device.
+ */
+export async function backupSource(id: string, st: Stores | null = appStores): Promise<SavedProgression | null> {
+  if (!st) return null;
+  const stem = stemOf(id);
+  const kept = await keptOriginal(st, stem);
+  if (kept) return kept;
+  if (stem.startsWith("draft-") || stem.endsWith("-u")) {
+    // what was on the page, not in the saved list: only the text that was converted has it as it was then
+    const of = stem.startsWith("draft-") ? null : stem.slice(0, -2);
+    for (const s of await oldStates(st, false)) {
+      if (of === null ? !s.ideaId || !s.saved.some((i) => i.id === s.ideaId) : s.ideaId === of) {
+        if (of === null && `draft-${s.draft ?? "0"}` !== stem) continue;
+        const open = of === null ? undefined : s.saved.find((i) => i.id === of);
+        const at = open ? open.updatedAt ?? open.savedAt : 0;
+        return { id: stem, name: open ? `${open.name} (unsaved)` : "Unsaved idea", key: s.key, progression: s.progression, savedAt: open?.savedAt ?? at, updatedAt: at, capo: s.settings.capo, tuningId: s.settings.tuningId };
+      }
+    }
+    return null;
+  }
+  for (const s of await oldStates(st, true)) {
+    const found = s.saved.find((i) => i.id === stem);
+    if (found) return found;
+  }
+  return st.cloud?.(stem) ?? null;
 }

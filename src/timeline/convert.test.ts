@@ -4,11 +4,12 @@ import { exportIdeas, type RemoteIdea } from "../song/library";
 import { copyRhythm } from "../song/clip";
 import { DEFAULT_STATE, loadV4, type AppStateV4, type SavedProgression } from "../ui/state";
 import type { App5State } from "../ui/app5";
-import { arrive, backupId, besideId, convertAll, convertIdea, newSession } from "./convert";
+import { BLOB, BLOB_LATE, arrive, backupId, backupSource, besideId, convertAll, convertIdea, keepOriginal, newSession, sideKey, type Stores } from "./convert";
 import { fixture, fixtures } from "./fixtures5";
 import { describeIdea5, emptySong5, exportIdeas5, fingerprint5, ideaTime5, importIdeas5, isBlank5, mergeIdeas5, reviveIdea5, reviveMelody5, reviveSong5, toPush5, type SavedIdea } from "./library5";
 import { toTimeline } from "./migrate5";
 import type { TimelineSong } from "./model";
+import { KEY_V1, KEY_V2, freshState, load5, recover5, reviveState5, save5, settleConversion, storedText, takeLate, type Blobs, type KV } from "./store5";
 import { bandSong } from "./testsongs";
 
 const json = <T,>(x: T): T => JSON.parse(JSON.stringify(x)) as T;
@@ -318,5 +319,283 @@ describe("the ideas list of the track view", () => {
     expect(s).toEqual({ v: 5, bpm: 100, meter: { num: 3, den: 4 }, tracks: [], clips: [] });
     expect(isBlank5(s)).toBe(true);
     expect(isBlank5(bandSong())).toBe(false);
+  });
+});
+
+// ── where it is kept: the move from the old storage, with pretend stores ──
+
+/** Local storage that holds only so many characters in all (as a full device does). */
+function pretendKV(room = Infinity, start: Record<string, string> = {}) {
+  const map = new Map(Object.entries(start));
+  const log: string[] = [];
+  const kv: KV = {
+    get: (k) => map.get(k) ?? null,
+    set(k, v) {
+      let used = 0;
+      for (const [key, val] of map) if (key !== k) used += val.length;
+      if (used + v.length > room) {
+        log.push(`full ${k}`);
+        throw new Error("QuotaExceededError");
+      }
+      log.push(`set ${k}`);
+      map.set(k, v);
+    },
+    remove(k) {
+      log.push(`remove ${k}`);
+      map.delete(k);
+    },
+  };
+  return { kv, map, log };
+}
+/** The larger store. `broken`: it cannot be written; `forgetful`: it gives back something else than was put in. */
+function pretendBlobs(how: "ok" | "broken" | "forgetful" = "ok") {
+  const map = new Map<string, string>();
+  const blobs: Blobs = {
+    get: async (k) => (how === "forgetful" && map.has(k) ? map.get(k)!.slice(1) : map.get(k) ?? null),
+    put: async (k, v) => {
+      if (how === "broken") throw new Error("no store");
+      map.set(k, v);
+    },
+  };
+  return { blobs, map };
+}
+/** What an old build left in storage: three saved ideas, the second open with a change not saved yet. */
+const oldText = (o: { open?: SavedProgression; ideaId?: string | null; draft?: string } = {}) =>
+  JSON.stringify({ ...json(DEFAULT_STATE), saved: JSON.parse(exportIdeas(fixtures().slice(0, 3))).ideas, progression: (o.open ?? later(fixture(2), fixture(2).updatedAt!, 150)).progression, key: (o.open ?? fixture(2)).key, ideaId: o.ideaId === undefined ? "fixture-2" : o.ideaId, draft: o.draft });
+
+describe("the first start of the new build: the old storage is moved, never written", () => {
+  it("the old text is converted in memory; nothing is written until it is settled", () => {
+    const v1 = oldText();
+    const { kv, log } = pretendKV(Infinity, { [KEY_V1]: v1 });
+    const got = load5(kv);
+    expect(got.v1).toBe(v1);
+    expect(got.state.saved.filter((i) => !i.backup).map((i) => i.id)).toEqual(["fixture-1", "fixture-2", "fixture-3"]);
+    expect(got.state.saved.filter((i) => i.backup).map((i) => i.id)).toEqual(["fixture-1-v4", "fixture-2-v4", "fixture-3-v4", "fixture-2-u-v4"]);
+    expect(got.state.song.bpm).toBe(150);
+    // (an idea opens with the whole song across the lanes: no zoom is chosen yet)
+    expect(got.state.session.pxPerBeat).toBe(0);
+    expect(log).toEqual([]);
+  });
+
+  it("the old text is byte-identical in its new place, and the old key goes only after both copies were read back equal", async () => {
+    const v1 = oldText();
+    const { kv, map, log } = pretendKV(Infinity, { [KEY_V1]: v1 });
+    const { blobs, map: big } = pretendBlobs();
+    const got = load5(kv);
+    const out = await settleConversion(kv, blobs, got.state, got.v1!);
+    expect(big.get(BLOB)).toBe(v1);
+    expect(map.has(KEY_V1)).toBe(false);
+    expect(map.has(KEY_V2)).toBe(true);
+    // the new key was written before the old one was removed
+    expect(log).toEqual([`set ${KEY_V2}`, `remove ${KEY_V1}`]);
+    expect(out.converted!.blob).toMatchObject({ len: v1.length, where: "idb" });
+    expect(out.converted!.blob!.hash).toMatch(/^[0-9a-f]{8}$/);
+    expect(out.converted!.size).toBeGreaterThan(0);
+    expect(out.unsaved).toBeUndefined();
+    // what was written is the state, and loads as it
+    expect(map.get(KEY_V2)).toBe(storedText(out));
+    expect(load5(kv).state.saved.map((i) => i.id)).toEqual(out.saved.map((i) => i.id));
+  });
+
+  it("where the larger store cannot be used, or does not give back what was put in, the old key is left alone and is the backup store", async () => {
+    for (const how of ["broken", "forgetful", "none"] as const) {
+      const v1 = oldText();
+      const { kv, map, log } = pretendKV(Infinity, { [KEY_V1]: v1 });
+      const got = load5(kv);
+      const out = await settleConversion(kv, how === "none" ? null : pretendBlobs(how).blobs, got.state, got.v1!);
+      expect(map.get(KEY_V1), how).toBe(v1);
+      expect(log, how).toEqual([`set ${KEY_V2}`]);
+      expect(out.converted!.blob!.where, how).toBe("local");
+      expect(out.unsaved).toBeUndefined();
+    }
+  });
+
+  it("no room for the new key: the old key is removed (its copy verified) and the write tried again", async () => {
+    const v1 = oldText();
+    const size = storedText(load5(pretendKV(Infinity, { [KEY_V1]: v1 }).kv).state).length;
+    // room for either text, not for both
+    const { kv, map, log } = pretendKV(Math.max(v1.length, size) + 2000, { [KEY_V1]: v1 });
+    const { blobs, map: big } = pretendBlobs();
+    const got = load5(kv);
+    const out = await settleConversion(kv, blobs, got.state, got.v1!);
+    expect(log).toEqual([`full ${KEY_V2}`, `remove ${KEY_V1}`, `set ${KEY_V2}`]);
+    expect(big.get(BLOB)).toBe(v1);
+    expect(map.has(KEY_V1)).toBe(false);
+    expect(out.unsaved).toBeUndefined();
+    expect(out.converted!.blob!.where).toBe("idb");
+  });
+
+  it("still no room: the state says unsaved, the old text is back under its key, and the next start converts from it again", async () => {
+    const v1 = oldText();
+    const { kv, map } = pretendKV(v1.length + 10, { [KEY_V1]: v1 });
+    const { blobs, map: big } = pretendBlobs();
+    const got = load5(kv);
+    const out = await settleConversion(kv, blobs, got.state, got.v1!);
+    expect(out.unsaved).toBe(true);
+    expect(map.has(KEY_V2)).toBe(false);
+    expect(map.get(KEY_V1)).toBe(v1);
+    expect(big.get(BLOB)).toBe(v1);
+    // unsaved is never written
+    expect(JSON.parse(storedText(out)).unsaved).toBeUndefined();
+    const again = load5(kv);
+    expect(again.v1).toBe(v1);
+    expect(again.state.saved.map((i) => i.id)).toEqual(got.state.saved.map((i) => i.id));
+    // with no larger store and no room, nothing at all is touched
+    const tight = pretendKV(v1.length + 10, { [KEY_V1]: v1 });
+    const none = await settleConversion(tight.kv, null, got.state, v1);
+    expect(none.unsaved).toBe(true);
+    expect(tight.map.get(KEY_V1)).toBe(v1);
+    expect(tight.log.filter((l) => l.startsWith("remove"))).toEqual([`remove ${KEY_V2}`]);
+  });
+
+  it("the old key gone and the new one never written: the next start finds the old text in the larger store and converts it again", async () => {
+    const v1 = oldText();
+    const { blobs, map: big } = pretendBlobs();
+    big.set(BLOB, v1);
+    const { kv } = pretendKV();
+    expect(load5(kv).fresh).toBe(true);
+    const back = await recover5(blobs);
+    expect(back!.v1).toBe(v1);
+    expect(back!.state.saved.filter((i) => !i.backup).map((i) => i.id)).toEqual(["fixture-1", "fixture-2", "fixture-3"]);
+    expect(await recover5(pretendBlobs().blobs)).toBeNull();
+    expect(await recover5(null)).toBeNull();
+  });
+
+  it("conversion never runs over a new key that exists; loading twice changes nothing", async () => {
+    const v1 = oldText();
+    const { kv, map, log } = pretendKV(Infinity, { [KEY_V1]: v1 });
+    const got = load5(kv);
+    const out = await settleConversion(kv, pretendBlobs("broken").blobs, got.state, got.v1!);
+    // the idea is edited and saved in the new app; the old key is still there (it is the backup store)
+    const edited: App5State = { ...out, song: { ...out.song, bpm: 77 } };
+    expect(save5(kv, edited)).toBe(true);
+    const one = load5(kv);
+    expect(one.v1).toBeUndefined();
+    expect(one.state.song.bpm).toBe(77);
+    const text = map.get(KEY_V2);
+    const two = load5(kv);
+    expect(two.state).toEqual(one.state);
+    expect(map.get(KEY_V2)).toBe(text);
+    expect(map.get(KEY_V1)).toBe(v1);
+    expect(log.filter((l) => l.includes(KEY_V1))).toEqual([]);
+    // stored and loaded, the state is what it was (what is never stored aside)
+    expect(reviveState5(storedText(one.state))).toEqual(one.state);
+  });
+
+  it("what cannot be read is never taken for an empty start, and never written over", () => {
+    // a new key that is not a state: the app starts in memory, and says the stored ideas are stuck
+    const a = pretendKV(Infinity, { [KEY_V2]: "{not json", [KEY_V1]: oldText() });
+    const got = load5(a.kv);
+    expect(got.stuck).toBe("v2");
+    expect(got.v1).toBeUndefined();
+    expect(a.log).toEqual([]);
+    // an old key that is not a state
+    for (const bad of ["{not json", "null", "[1,2]"]) expect(load5(pretendKV(Infinity, { [KEY_V1]: bad }).kv).stuck, bad).toBe("v1");
+    // a store that cannot be read at all
+    const dead: KV = { get: () => { throw new Error("denied"); }, set: () => { throw new Error("denied"); }, remove: () => {} };
+    expect(load5(dead).stuck).toBe("storage");
+    expect(save5(dead, freshState())).toBe(false);
+    // nothing stored: a first start, with the three tracks every idea starts with and nothing to convert
+    const first = load5(pretendKV().kv, "d1");
+    expect(first).toMatchObject({ fresh: true });
+    expect(first.state.draft).toBe("d1");
+    expect(first.state.converted).toBeUndefined();
+    expect(first.state.song.tracks.map((t) => t.kind)).toEqual(["chords", "melody", "drums"]);
+  });
+
+  it("what is stored: everything but the armed track and the failed-write mark; the inputs of the interface are carried", () => {
+    const base = convertAll(oldState({ saved: fixtures().slice(0, 2), open: fixture(1), ideaId: "fixture-1", more: { studio: { host: "Driver" } } }), 1);
+    const s: App5State = { ...base, unsaved: true, studio: { ...base.studio, inputs: 8 }, session: { ...base.session, armed: "v1", cursor: 12, loop: { regions: [{ from: 4, to: 8 }], on: true }, windows: [{ id: "compose:t-chords", kind: "compose", track: "t-chords", clip: "a.chords", x: 260, y: 360, w: 1020, h: 440, open: true }] } };
+    const back = reviveState5(storedText(s))!;
+    expect(back.session.armed).toBeNull();
+    expect(back.unsaved).toBeUndefined();
+    expect(back.session).toEqual({ ...s.session, armed: null });
+    expect(back.studio).toMatchObject({ host: "Driver", inputs: 8 });
+    expect(back.saved).toEqual(s.saved);
+    expect(back.song).toEqual(s.song);
+    expect(reviveState5("[]")).toBeNull();
+    expect(reviveState5("{}")).toBeNull();
+  });
+});
+
+describe("the originals behind the backup entries", () => {
+  const settled = async (text: string, how: "ok" | "broken" = "ok") => {
+    const { kv } = pretendKV(Infinity, { [KEY_V1]: text });
+    const { blobs } = pretendBlobs(how);
+    const got = load5(kv);
+    const state = await settleConversion(kv, blobs, got.state, got.v1!);
+    const st: Stores = { kv, blobs: how === "ok" ? blobs : null };
+    return { state, st, kv, blobs };
+  };
+
+  it("a saved idea, the unsaved changes of a saved one, and the never-saved idea on screen are each found, wherever the old text is kept", async () => {
+    for (const how of ["ok", "broken"] as const) {
+      const { state, st } = await settled(oldText(), how);
+      // every backup entry has its original
+      for (const b of state.saved.filter((i) => i.backup)) expect(await backupSource(b.id, st), `${how} ${b.id}`).not.toBeNull();
+      const one = await backupSource("fixture-1-v4", st);
+      expect(one).toEqual(loadV4(oldText()).saved[0]);
+      // the saved idea is the saved one; its unsaved changes are what was on the page
+      expect((await backupSource("fixture-2-v4", st))!.progression.bpm).toBe(96);
+      expect((await backupSource("fixture-2-u-v4", st))!.progression.bpm).toBe(150);
+      expect(await backupSource("fixture-9-v4", st)).toBeNull();
+      expect(await backupSource("fixture-9-u-v4", st)).toBeNull();
+    }
+    const never = await settled(oldText({ open: fixture(5), ideaId: null, draft: "d7" }));
+    expect(never.state.saved.map((i) => i.id)).toContain("draft-d7-v4");
+    const page = await backupSource("draft-d7-v4", never.st);
+    expect(page!.progression.bpm).toBe(fixture(5).progression.bpm);
+    expect(convertIdea(page!).idea.song.clips).toEqual(never.state.song.clips);
+    expect(await backupSource("draft-zz-v4", never.st)).toBeNull();
+    // with no stores at all there is nothing to read
+    expect(await backupSource("fixture-1-v4", null)).toBeNull();
+  });
+
+  it("an old idea kept on its own is read first (one that arrived later); the old cloud copy last", async () => {
+    const { st, blobs } = await settled(oldText());
+    const newer = later(fixture(2), fixture(2).updatedAt! + 500, 141);
+    await keepOriginal("fixture-2", newer, st);
+    expect(await blobs.get(sideKey("fixture-2"))).toBe(JSON.stringify(newer));
+    expect((await backupSource("fixture-2-v4", st))!.progression.bpm).toBe(141);
+    // with no larger store it is kept under a local key instead
+    const local = await settled(oldText(), "broken");
+    await keepOriginal("fixture-3", later(fixture(3), 9, 99), local.st);
+    expect((await backupSource("fixture-3-v4", local.st))!.progression.bpm).toBe(99);
+    // an idea only the old cloud has
+    const cloud: Stores = { ...st, cloud: (id) => (id === "fixture-7" ? fixture(7) : null) };
+    expect((await backupSource("fixture-7-v4", cloud))!.id).toBe("fixture-7");
+  });
+
+  it("a backup entry is never converted on load, and a deleted one stays deleted", async () => {
+    const { state, kv } = await settled(oldText());
+    const b = state.saved.find((i) => i.id === "fixture-1-v4")!;
+    expect(b.song).toEqual(emptySong5());
+    const gone: App5State = { ...state, saved: state.saved.filter((i) => i.id !== b.id), tombs: { ...state.tombs, [b.id]: 9000 } };
+    save5(kv, gone);
+    const back = load5(kv).state;
+    expect(back.saved.some((i) => i.id === b.id)).toBe(false);
+    // its old copy turning up again (the cloud, an old tab) does not bring it back
+    expect(arrive(back, fixture(1), () => fixture(1)).state.saved.some((i) => i.id === b.id)).toBe(false);
+    const newer = arrive(back, later(fixture(1), fixture(1).updatedAt! + 10), () => fixture(1));
+    expect(newer.added).toBe("refreshed");
+    expect(newer.state.saved.some((i) => i.id === b.id)).toBe(false);
+  });
+
+  it("the old key written again by an old tab is kept as the late copy and removed; where the old key is the backup store it stays", async () => {
+    const v1 = oldText();
+    const { state, kv, blobs } = await settled(v1);
+    expect(kv.get(KEY_V1)).toBeNull();
+    const lateText = JSON.stringify({ ...JSON.parse(v1), saved: JSON.parse(exportIdeas([...fixtures().slice(0, 3), fixture(6)])).ideas });
+    kv.set(KEY_V1, lateText);
+    expect(await takeLate(kv, blobs, state)).toBe(lateText);
+    expect(kv.get(KEY_V1)).toBeNull();
+    expect(await blobs.get(BLOB_LATE)).toBe(lateText);
+    expect(await blobs.get(BLOB)).toBe(v1);
+    // its ideas are read from there
+    expect((await backupSource("fixture-6-v4", { kv, blobs }))!.id).toBe("fixture-6");
+    expect(await takeLate(kv, blobs, state)).toBeNull();
+    const local = await settled(v1, "broken");
+    expect(await takeLate(local.kv, null, local.state)).toBe(v1);
+    expect(local.kv.get(KEY_V1)).toBe(v1);
   });
 });
