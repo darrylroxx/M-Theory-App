@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 import type { Beat } from "../../audio/beats";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import type { PatternId, PlayItem } from "../../audio/patterns";
@@ -29,13 +29,63 @@ export interface RecordPlan {
   beatsPerBar: number;
   bpm: number;
   pattern: PatternId;
-  beat: Beat;
+  /** the drums the items fall back on (none: every track plays through the items themselves) */
+  beat: Beat | null;
   label: string;
   /** every bar that goes round, in order (for the lane of takes) */
   bars?: LaneBar[];
   /** every bar of the song, in order (a take sung elsewhere that plays in those bars is on the lane too) */
   song?: LaneBar[];
 }
+
+/** Where a recording is: nothing going, the song being made ready, singing along, recording, or its takes being saved. */
+export type RecordPhase = "idle" | "preparing" | "rehearsing" | "recording" | "saving";
+
+/** What the page lets its host do and read while it runs (see `VocalHost.control`). */
+export interface RecordControl {
+  /** start recording onto the track shown, or stop the recording that runs */
+  toggle(): void;
+  /** while the song goes round under a recording or a rehearsal: which pass it is in (from 1) and how far into it (0..1); null in the count-in and when nothing runs */
+  at(): { n: number; frac: number } | null;
+  /** how loud an input is right now, 0 to 1 on the meter (0 while the interface is closed) */
+  level(ch: number): number;
+}
+
+/**
+ * The page inside the track view's record window. With a host, the page keeps everything about the interface and
+ * the room (opening and closing it, Record and Rehearse, the count-in and the click, the passes and their ★, the
+ * meters, monitoring, the headphone mix, the reminders, the timing nudge control, the vocal sound) and gives up
+ * everything about the song: it reads no song of its own, cuts and adds no takes, draws no lane and no take list,
+ * keeps no undo of its own and asks no questions. The host does those on the song of tracks and clips.
+ */
+export interface VocalHost {
+  /** the track shown: its name, input (0-based) and chain; null = the song has no track that records */
+  track: { id: string; name: string; input: number; fx: VocalFx; /** takes recorded with an older sound */ stale: boolean } | null;
+  setFx(fx: VocalFx): void;
+  setInput(ch: number): void;
+  bpm: number;
+  /** what a recording goes round, in the page's own shape */
+  plan(): RecordPlan | null;
+  /**
+   * A finished recording: the host cuts it into takes and lays it on the track. `plan`: the very plan it was begun
+   * with; `track`: the track it was begun on; `lead`: words to say first (a recording kept through a reset of the interface).
+   */
+  onRecorded(r: Recorded, o: { kept: number[]; sound: string; plan: RecordPlan; track: string; lead?: string }): void;
+  /** the timing nudge changed: the host moves every take and stores the setting */
+  setNudge(ms: number): void;
+  /** put the vocal sound as it is now on the takes made with an older one */
+  applySound(): void | Promise<void>;
+  /** the take list, drawn by the host */
+  takes: ReactNode;
+  /** filled in by the page: lets the top bar's ● and Ctrl+R start and stop, and the lanes follow a recording */
+  control: RefObject<RecordControl | null>;
+  /** the record window has the keys (the page's own keys act only then) */
+  focused: boolean;
+  /** told whenever one of these changes: where a recording is, the pass being sung, and whether the interface is open */
+  report?(s: { phase: RecordPhase; pass: number; open: boolean }): void;
+}
+
+const NO_TRACKS: Track[] = [];
 
 const CHECKS: { id: keyof NonNullable<Studio["checks"]>; label: string; hint: string }[] = [
   { id: "phantom", label: "48V on", hint: "Only for condenser mics. Dynamic mics (like most stage mics) do not need it" },
@@ -94,7 +144,7 @@ const isTyping = (el: EventTarget | null) => el instanceof HTMLElement && ((el i
  * and every pass already sung waits in a row: tap one (or press K) to keep it ★. Nothing
  * pops up and nothing moves while singing.
  */
-export function VocalsPage({ active, recordPlan, onRecording, recording, playing, getWhere, onAlone }: {
+export function VocalsPage({ active, recordPlan, onRecording, recording, playing, getWhere, onAlone, host }: {
   active: boolean;
   recordPlan: () => RecordPlan | null;
   onRecording: (on: boolean) => void;
@@ -105,17 +155,20 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   getWhere: () => { block: string; beat: number } | null;
   /** a take is about to be heard alone: the song stops */
   onAlone: () => void;
+  /** the page is the body of the track view's record window: the song is the host's (see `VocalHost`) */
+  host?: VocalHost;
 }) {
   const { state, set, toast, setRecordingTo, opened: idea } = useApp();
   const studio = state.studio ?? {};
   const setStudio = (patch: Partial<Studio>) => set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
-  const vocals = tracksOf(state.progression, "vocals");
+  // (inside the track view the song is the host's: no track is read from the old one)
+  const vocals = host ? NO_TRACKS : tracksOf(state.progression, "vocals");
   // which vocal track is shown (the Frame and Track pages can open one)
   const sel = studio.vocal ?? null;
   const setSel = (id: string) => setStudio({ vocal: id });
   /** The timing nudge: the takes already in the song (and in a section copied) move with it, and every recording after it is cut with it. */
   const setNudge = (ms: number) =>
-    set((s) => {
+    host ? host.setNudge(ms) : set((s) => {
       const was = s.studio?.nudge ?? 0;
       const tracks = renudgeTracks(s.progression.tracks, was, ms);
       const sec = s.clip?.section;
@@ -127,18 +180,25 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         clip: sec && copied !== sec.tracks ? { ...s.clip, section: { ...sec, tracks: copied ?? [] } } : s.clip,
       };
     });
-  const track = vocals.find((t) => t.id === sel) ?? vocals[0];
+  // the host's track, as the page knows a track (its takes and clips are the host's: none here)
+  const shownIn = host?.track;
+  const hosted = useMemo<Track | undefined>(
+    () => (shownIn ? { id: shownIn.id, kind: "vocals", name: shownIn.name, input: (shownIn.input + 1) as 1 | 2, fx: shownIn.fx } : undefined),
+    [shownIn?.id, shownIn?.name, shownIn?.input, shownIn?.fx], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  const track = host ? hosted : vocals.find((t) => t.id === sel) ?? vocals[0];
   // a sound saved before colours, spaces and echo types existed gets their defaults
   const fx: VocalFx = useMemo(() => reviveFx(track?.fx) ?? FX_DEFAULT, [track?.fx]);
   const desktop = isDesktop();
-  const bpm = state.progression.bpm;
+  const bpm = host ? host.bpm : state.progression.bpm;
   // bars on screen and Follow, shared with every other page
   const { shown, follow } = useBarsView();
 
   const [hosts, setHosts] = useState<AudioHost[] | null>(listed);
   const [opened, setOpened] = useState<EngineOpened | null>(null);
+  const openedRef = useRef<EngineOpened | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [phase, setPhase] = useState<"idle" | "preparing" | "rehearsing" | "recording" | "saving">("idle");
+  const [phase, setPhase] = useState<RecordPhase>("idle");
   const rate = useRef(48000);
   const [more, setMore] = useState(false);
   const [shorts, setShorts] = useState(false);
@@ -152,6 +212,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const drops = useRef({ n: 0, at: 0 });
   const blockRef = useRef<HTMLSpanElement>(null);
   const hold = useRef<number[]>([]);
+  /** each input's level as the interface last reported it (for the host's meters) */
+  const peaks = useRef<number[]>([]);
   const planRef = useRef<RecordPlan | null>(null);
   const trackRef = useRef<Track | null>(null);
   // ── the flow while recording ──
@@ -187,7 +249,22 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const ideaRef = useRef(idea);
   ideaRef.current = idea;
 
-  const setTrack = (patch: (t: Track) => Track) => track && set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
+  /** the sound as the last change left it (two changes made before the page is drawn again each see the one before) */
+  const fxNow = useRef(fx);
+  fxNow.current = fx;
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  const setTrack = (patch: (t: Track) => Track) => {
+    if (!track) return;
+    if (!host) return set((s) => ({ ...s, progression: { ...s.progression, tracks: (s.progression.tracks ?? []).map((t) => (t.id === track.id ? patch(t) : t)) } }));
+    // the host's track: only its sound and its input are the page's to change
+    const next = patch({ ...track, fx: fxNow.current });
+    if (next.input !== track.input) host.setInput((next.input ?? 1) - 1);
+    if (next.fx && next.fx !== fxNow.current) {
+      fxNow.current = reviveFx(next.fx) ?? FX_DEFAULT;
+      host.setFx(fxNow.current);
+    }
+  };
   const setFx = (patch: Partial<VocalFx>) => setTrack((t) => ({ ...t, fx: { ...(t.fx ?? FX_DEFAULT), ...patch } }));
 
   // the app's own sound (the song, a take heard alone): the engine waits until it has been quiet
@@ -244,6 +321,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         window.setTimeout(() => setReopen((n) => n + 1), 300);
         return;
       }
+      peaks.current = st.peak;
       const el = barsRef.current;
       el?.querySelectorAll<HTMLElement>("[data-ch]").forEach((bar) => {
         const c = Number(bar.dataset.ch);
@@ -299,7 +377,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         fullRef.current = true;
         void stopRef.current();
       }
-    }).then((o) => { if (live) { rate.current = o.rate; setOpened(o); openers.current.splice(0).forEach((f) => f(o)); } }).catch((e) => { if (live) { setOpened(null); setError(String(e)); openers.current.splice(0).forEach((f) => f(null)); } });
+    }).then((o) => { if (live) { rate.current = o.rate; openedRef.current = o; setOpened(o); openers.current.splice(0).forEach((f) => f(o)); } }).catch((e) => { if (live) { setOpened(null); setError(String(e)); openers.current.splice(0).forEach((f) => f(null)); } });
     // closing: a recording still going (the driver was reset mid-session) comes back, and its takes are kept
     return () => {
       live = false;
@@ -310,6 +388,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
         .then((r) => r && salvageRef.current(r), () => {})
         .then(() => closers.current.splice(0).forEach((f) => f()));
       setOpened(null);
+      openedRef.current = null;
+      peaks.current = [];
     };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -350,6 +430,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
 
   const ensureTrack = (): Track => {
     if (track) return track;
+    // (inside the track view a track is added on the timeline, never from here; `go` has checked there is one)
+    if (host) return { id: "", kind: "vocals", name: "Vocal 1", input: 1 };
     const id = newId();
     let made: Track | null = null;
     set((s) => {
@@ -363,19 +445,25 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
 
   /** Render the loop's song, hand it to the engine, and start (recording or just singing along). */
   const go = async (record: boolean) => {
-    let o = opened;
-    if (!o && resting) {
+    if (host && !track) return toast("Add a Vocals track first: the + row under the tracks");
+    // (the interface may have opened a moment ago, before the page was drawn again)
+    let o = opened ?? (host ? openedRef.current : null);
+    // inside the track view Record can be pressed before the interface is open (the top bar's ● opens the record
+    // window and goes on): it is waited for in the same way, also while it is still being looked for
+    const coming = !!host && desktop && !error && (!hosts || !!chosen);
+    if (!o && host && hosts && !devices.length) return toast("No interface found");
+    if (!o && (resting || coming)) {
       // closed while the app played: the song stops (as it does for a recording) and the interface opens at once
       onRecording(true);
       o = await new Promise<EngineOpened | null>((done) => {
         openers.current.push(done);
-        window.setTimeout(() => done(null), 8000);
+        window.setTimeout(() => done(null), coming && !resting ? 12000 : 8000);
       });
       if (!o) onRecording(false);
     }
     if (!o) return toast("The interface is not open");
     const rateNow = o.rate;
-    const plan = recordPlan();
+    const plan = host ? host.plan() : recordPlan();
     if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
     const t = record ? ensureTrack() : track;
     // a rehearsal ends when another idea is opened, also while it is being made ready (a recording keeps its idea open: see recordingTo)
@@ -389,7 +477,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     savedRef.current = !record;
     pathRef.current = null;
     session.current += 1;
-    sungIn.current = { key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sectionSig(state.progression, plan.at.block)) };
+    // (inside the track view the host knows the key and the time signature it is sung in)
+    if (!host) sungIn.current = { key: `${state.key.tonic}|${state.key.scaleId}`, sig: sigName(sectionSig(state.progression, plan.at.block)) };
     atEnd.current = true;
     setMarks(new Set());
     setPass(0);
@@ -433,6 +522,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
    * vocal sound its file was made with (the knobs may have moved while it was being made).
    */
   const save = (r: Recorded, c: NonNullable<ReturnType<typeof claim>>, used: VocalFx, lead = "") => {
+    // inside the track view the host cuts the takes and lays them on its track (and says what was recorded)
+    if (hostRef.current) return hostRef.current.onRecorded(r, { kept: [...c.kept], sound: r.wet === r.dry ? "" : soundTag(used), plan: c.plan, track: c.track.id, ...(lead ? { lead } : {}) });
     const group = newId();
     const nudge = nudgeFrames(studio.nudge ?? 0, r.rate);
     // with no vocal sound on it (no room for that file), a take plays dry and "Apply sound" is offered
@@ -522,8 +613,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     const t = window.setTimeout(() => setFlash(0), 700);
     return () => window.clearTimeout(t);
   }, [flash]);
+  // (inside the track view: only while the record window has the keys)
+  const keysMine = !host || host.focused;
   useEffect(() => {
-    if (phase !== "recording") return;
+    if (phase !== "recording" || !keysMine) return;
     const onKey = (e: KeyboardEvent) => {
       if ((e.key !== "k" && e.key !== "K") || e.ctrlKey || e.metaKey || e.altKey || e.repeat || isTyping(e.target)) return;
       e.preventDefault();
@@ -531,7 +624,38 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [phase, markNow]);
+  }, [phase, markNow, keysMine]);
+  // ── what the host of the record window reads and does (inside the track view) ──
+  const goRef = useRef(go);
+  goRef.current = go;
+  useLayoutEffect(() => {
+    if (!host) return;
+    const control: RecordControl = {
+      toggle: () => {
+        const ph = phaseRef.current;
+        if (ph === "recording") void stopRef.current();
+        else if (ph === "idle") void goRef.current(true);
+      },
+      at: () => {
+        const s = status.current;
+        // (between the engine's reports, the music has moved on at its rate)
+        return s ? passAt(s.pos + Math.min(0.1, (performance.now() - s.at) / 1000) * rate.current, s.count_in, s.length) : null;
+      },
+      level: (ch) => meterPos(dbOf(peaks.current[ch] ?? 0)),
+    };
+    host.control.current = control;
+    return () => {
+      if (host.control.current === control) host.control.current = null;
+    };
+  }, [host?.control]); // eslint-disable-line react-hooks/exhaustive-deps
+  const isOpen = !!opened;
+  useEffect(() => hostRef.current?.report?.({ phase, pass, open: isOpen }), [phase, pass, isOpen]);
+  // how many inputs the interface has is remembered, so a track's input can be chosen while it is closed
+  const inputsNow = opened?.inputs;
+  useEffect(() => {
+    if (hostRef.current && inputsNow && inputsNow !== studio.inputs) setStudio({ inputs: inputsNow });
+  }, [inputsNow]); // eslint-disable-line react-hooks/exhaustive-deps
+
   // the newest pass stays in view, unless the row was scrolled back to find an older one
   const atEnd = useRef(true);
   useEffect(() => {
@@ -583,8 +707,10 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   undoKey.current = takeBack;
   const shownRef = useRef(track?.id);
   shownRef.current = track?.id;
+  const inHost = !!host;
   useEffect(() => {
-    if (!active || phase !== "idle") return;
+    // (inside the track view there is one undo for the whole idea: this one is off)
+    if (inHost || !active || phase !== "idle") return;
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey || (e.key !== "z" && e.key !== "Z") || isTyping(e.target) || !undoRef.current.some((x) => x.track === shownRef.current)) return;
       e.preventDefault();
@@ -592,7 +718,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [active, phase]);
+  }, [active, phase, inHost]);
 
   /** Use a take: it plays wherever its recording does (in every clip of it) */
   const choose = (id: string) => edit((t) => chooseTake(t, id, newId()));
@@ -646,8 +772,17 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const [starOnly, setStarOnly] = useState(false);
   /** the takes listed, in order: newest recording first, its passes as they were sung */
   const browseList = () => groups.flatMap((g) => (track?.takes ?? []).filter((t) => t.group === g && (!starOnly || t.keep) && (shorts || !t.short || t.keep || (track && inUse(track, t.id)))));
-  const stale = (track?.takes ?? []).some((t) => !sameSound(t, fx));
+  const stale = host ? !!host.track?.stale : (track?.takes ?? []).some((t) => !sameSound(t, fx));
   const applySound = async () => {
+    if (host) {
+      setBusy("…");
+      try {
+        await host.applySound();
+      } finally {
+        setBusy(null);
+      }
+      return;
+    }
     if (!track?.takes?.length) return;
     setBusy("…");
     try {
@@ -705,7 +840,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const channels = Math.min(2, opened?.inputs ?? chosen?.channels ?? 2);
   const checks = studio.checks ?? {};
   const running = phase !== "idle";
-  const plan = recordPlan();
+  /** may Record and Rehearse be pressed? (Inside the track view also before the interface is open: it is waited for.) */
+  const ready = !!(opened || resting) || (!!host && !error);
+  const plan = host ? host.plan() : recordPlan();
   // the lane: the bars being recorded over (while recording, exactly those the engine goes round)
   const laneBars = (running ? planRef.current?.bars : undefined) ?? plan?.bars ?? [];
   const laneSong = (running ? planRef.current?.song : undefined) ?? plan?.song;
@@ -769,7 +906,8 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
     onHear: desktop ? (x: { clip: Clip; take: Take }) => void preview(x.take, x.clip) : undefined,
     keys: active,
   } : undefined;
-  const lane = laneBars.length > 0 ? (
+  // (inside the track view the track's own lane on the timeline is the only lane)
+  const lane = !host && laneBars.length > 0 ? (
     <TakeLane bars={laneBars} song={laneSong} rows={laneRows} bpm={bpm} where={where} shown={shown} follow={follow}
       live={active && (playing || phase === "recording" || phase === "rehearsing")} edit={laneEdit} />
   ) : null;
@@ -777,7 +915,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   const swaps = selPlaced ? (track?.takes ?? []).filter((t) => sameSpot(t, selPlaced.take)) : [];
   const manyRecs = new Set(swaps.map((t) => t.group)).size > 1;
   // the editor's tools: ✂, Snap, and for the clip selected, which take it plays, hear it, delete it
-  const tools = laneBars.length > 0 && (placed.length > 0 || undoN > 0) && !running && track ? (
+  const tools = !host && laneBars.length > 0 && (placed.length > 0 || undoN > 0) && !running && track ? (
     <div className="tl-tools" role="toolbar" aria-label="Edit clips">
       <button className={`icon-btn${cut ? " on" : ""}`} aria-pressed={cut} aria-label="Cut: tap a clip to split it (S)" title="Cut: tap a clip to split it (S)" onClick={() => setCut(!cut)}>✂</button>
       <button className={`btn sm${snap ? " on" : ""}`} aria-pressed={snap} title="Moves keep to 1/16 notes (hold Alt or Shift to move freely)" onClick={() => setSnap(!snap)}>Snap</button>
@@ -795,22 +933,30 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
   ) : null;
 
   const list = browseList();
-  const takesBox = track && groups.length > 0 ? (
+  // (inside the track view the take list is the host's)
+  const takesBox = host ? host.takes : track && groups.length > 0 ? (
     <TakeBrowser track={track} groups={groups} list={list} sel={selTake} setSel={setSelTake} alone={alone} canHear={desktop} playStop={playStop} starOnly={starOnly} setStarOnly={setStarOnly}
       running={running} stale={stale} busy={busy} shorts={shorts} setShorts={setShorts} applySound={() => void applySound()} choose={choose} setKeep={setKeep} drop={dropTake} removeGroup={removeGroup} />
   ) : null;
 
   return (
-    <section className="card vocals" aria-label="Vocals">
-      <div className="dm-head">
-        <span className="seg clip-tracks" role="radiogroup" aria-label="Vocal track">
-          {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={`${track?.id === t.id ? "on" : ""}${lit === t.id ? " flash" : ""}`} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
-          <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
-        </span>
-        {track && <MixMark id={track.id} name={track.name} />}
-        <span className="spacer" />
-        {laneBars.length > 0 && <BarsControl />}
-      </div>
+    <section className={`card vocals${host ? " hosted" : ""}`} aria-label="Vocals">
+      {host ? (
+        // the track is chosen on the timeline: here it is only named
+        track
+          ? <div className="dm-head vc-on"><b className="vc-track">{track.name}</b><span className="small muted">Input {track.input ?? 1}</span></div>
+          : <p className="small vc-note">Add a Vocals track to record on: the + row under the tracks.</p>
+      ) : (
+        <div className="dm-head">
+          <span className="seg clip-tracks" role="radiogroup" aria-label="Vocal track">
+            {vocals.map((t) => <button key={t.id} role="radio" aria-checked={track?.id === t.id} className={`${track?.id === t.id ? "on" : ""}${lit === t.id ? " flash" : ""}`} disabled={running} onClick={() => setSel(t.id)} onDoubleClick={rename}>{t.name}</button>)}
+            <button className="clip-add" aria-label="Add a vocal track" title="Add a vocal track" onClick={add} disabled={running}>+</button>
+          </span>
+          {track && <MixMark id={track.id} name={track.name} />}
+          <span className="spacer" />
+          {laneBars.length > 0 && <BarsControl />}
+        </div>
+      )}
 
       {!desktop && <p className="small vc-note">Recording: in the desktop app.</p>}
       {/* in the browser too: the takes already made, and the line while the song plays */}
@@ -819,9 +965,9 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
 
       {desktop && (
         <>
-          <div className="vc-rec">
-            <button className={`rec-btn${phase === "recording" ? " on" : ""}`} aria-label={phase === "recording" ? "Stop recording" : "Record"} title={phase === "recording" ? "Stop" : "Record take after take over the loop, after a count-in"} disabled={!(opened || resting) || phase === "preparing" || phase === "saving" || phase === "rehearsing"} onClick={() => (phase === "recording" ? void stop() : void go(true))}>{phase === "recording" ? "■" : "●"}</button>
-            <button className="btn sm" disabled={!(opened || resting) || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
+          {(!host || track) && <div className="vc-rec">
+            <button className={`rec-btn${phase === "recording" ? " on" : ""}`} aria-label={phase === "recording" ? "Stop recording" : "Record"} title={phase === "recording" ? "Stop" : "Record take after take over the loop, after a count-in"} disabled={!ready || phase === "preparing" || phase === "saving" || phase === "rehearsing"} onClick={() => (phase === "recording" ? void stop() : void go(true))}>{phase === "recording" ? "■" : "●"}</button>
+            <button className="btn sm" disabled={!ready || phase === "preparing" || phase === "saving" || phase === "recording"} onClick={() => (phase === "rehearsing" ? void stop() : void go(false))} title="Sing along over the loop without recording" aria-label={phase === "rehearsing" ? "Stop" : "Rehearse: sing over the loop without recording"}>{phase === "rehearsing" ? "■" : <><EarIcon /> ▶</>}</button>
             <span className="vc-state">
               <b ref={countRef} className="vc-count" />
               <span className="small muted vc-sub">{phase === "preparing" || phase === "saving" ? <>… <span ref={renderRef} /></> : phase === "idle" ? `↻ ${plan?.label ?? "—"}` : <span ref={warnRef} className="vc-warn" />}</span>
@@ -836,7 +982,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
               </select>
             </label>
             <label className="toggle vc-mini"><input type="checkbox" checked={!!studio.clickOn} onChange={(e) => setStudio({ clickOn: e.target.checked })} /> Click</label>
-          </div>
+          </div>}
 
           {tools}
           {lane}
@@ -901,7 +1047,7 @@ export function VocalsPage({ active, recordPlan, onRecording, recording, playing
             </div>
 
             <div className="vc-box">
-              <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={limRef} className="vc-limit" hidden title="Too loud: the limiter is holding the level back. Turn Level, or the interface's gain, down.">LIMIT</span><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" /><label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
+              <div className="row"><b className="vc-title">Vocal sound</b><span className="spacer" /><span ref={limRef} className="vc-limit" hidden title="Too loud: the limiter is holding the level back. Turn Level, or the interface's gain, down.">LIMIT</span><span ref={grRef} className="tiny mono muted" title="How much the compressors are turning the voice down" />{host && stale && <button className="btn sm" disabled={!!busy || running} onClick={() => void applySound()} title="Takes are recorded dry; this puts the vocal sound as it is now on the takes made with an older one">{busy ? "…" : "↻ Apply sound"}</button>}<label className="toggle vc-mini"><input type="checkbox" checked={fx.on} disabled={!track} onChange={(e) => setFx({ on: e.target.checked })} /> On</label></div>
               <label className="vc-preset">
                 <select aria-label="Starting point" disabled={!track} value="" onChange={(e) => { const id = e.target.value; if (id) setTrack((t) => ({ ...t, fx: presetFx(id, bpm) })); }}>
                   <option value="" disabled>Preset…</option>
