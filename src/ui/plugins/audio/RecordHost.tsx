@@ -124,6 +124,8 @@ export interface RecordHostProps {
   selected: string | null;
   /** the track a recording is going onto (the app's lock on undo and on leaving the idea) */
   recordingTo: string | null;
+  /** the clips selected on the lanes (the take of one on the track shown is the one selected in the take list) */
+  picked: readonly string[];
   /** what a recording would go round, in words: when it changes, the window says so */
   round: string;
   /** the song is playing in the app */
@@ -373,8 +375,9 @@ export const RecordHost = memo(function RecordHost(p: RecordHostProps) {
     document.querySelector<HTMLElement>(`.tlw[data-win="${REC_WIN}"] .vc-grid > .vc-box:last-child`)?.scrollIntoView({ block: "start" });
   }, [p.toSound]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const pick = track ? [...p.picked].reverse().map((id) => p.clips.find((c) => c.id === id && c.track === track.id)).find((c) => !!c)?.take ?? null : null;
   const takes = track ? (
-    <TakeList5 key={track.id} track={track} clips={p.clips} shelf={p.shelf} alone={alone} canHear={desktop} running={phase !== "idle"}
+    <TakeList5 key={track.id} track={track} clips={p.clips} shelf={p.shelf} alone={alone} canHear={desktop} running={phase !== "idle"} pick={pick}
       onHear={(k) => void does.hear(k)} onKeep={does.keep} onUse={does.use} onDrop={does.drop} onRemove={does.remove} onShelfUse={does.shelfUse} onEmpty={does.empty} />
   ) : null;
   const input = track?.input?.ch ?? 0;
@@ -395,6 +398,8 @@ export const RecordHost = memo(function RecordHost(p: RecordHostProps) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }), [track?.id, track?.name, input, fx, stale, p.bpm, does, takes, keys, p.round]);
 
+  // (in a browser there is no interface to keep: the page is only there while its window is open)
+  if (!desktop && !open) return null;
   return (
     <V4View>
       <div className="rec-dock" hidden={!open}>

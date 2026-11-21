@@ -93,6 +93,13 @@ describe("the take list", () => {
   it("the keys of the list are its own (Space hears the selected take)", () => {
     expect(list()).toMatch(/class="tb-list" role="listbox" aria-label="Takes" tabindex="0" data-keys="takes"/);
   });
+
+  it("the take of the clip selected on the lane is the one selected in the list", () => {
+    expect(list()).not.toContain('aria-selected="true"');
+    const by = new Map(rows(list({ pick: "a2" })));
+    expect(by.get("a2")).toMatch(/role="option" aria-selected="true" class="tb-take sel"/);
+    expect(by.get("a1")).toMatch(/aria-selected="false"/);
+  });
 });
 
 describe("removed recordings", () => {

@@ -35,6 +35,8 @@ export interface TakeList5Props {
   /** how the list starts out: short takes shown, kept ones only */
   shorts?: boolean;
   starOnly?: boolean;
+  /** the take of the clip selected on the lane: it is the one selected here too, whenever it changes */
+  pick?: string | null;
 }
 
 /** How long a take is, as m:ss. */
@@ -49,8 +51,11 @@ export function TakeList5(p: TakeList5Props) {
   const { track, alone, canHear, running } = p;
   const [starOnly, setStarOnly] = useState(!!p.starOnly);
   const [shorts, setShorts] = useState(!!p.shorts);
-  const [sel, setSel] = useState<string | null>(null);
+  const [sel, setSel] = useState<string | null>(p.pick ?? null);
   const listRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (p.pick) setSel(p.pick);
+  }, [p.pick]);
 
   const takes = track.takes;
   const used = new Set<string>();

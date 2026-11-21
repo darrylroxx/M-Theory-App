@@ -684,7 +684,7 @@ export function Host() {
       </Guard>
       <Guard what="the record window" onClose={recCtl.close}>
         <RecordHost win={session.windows.find((w) => w.id === REC_WIN)} focused={wins.focused === REC_WIN} otherFocused={!!wins.focused && wins.focused !== REC_WIN} z={zOf(session, REC_WIN)}
-          tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} recordingTo={recordingTo}
+          tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} picked={session.sel.clips} recordingTo={recordingTo}
           round={round} playing={player.playing} toSound={recSound} ctl={recCtl} api={recApi} />
       </Guard>
       {shown.map((w) => {
