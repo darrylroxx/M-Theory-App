@@ -2,7 +2,9 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { addTrack, deleteClips, layDown, moveClips, removeTrack, transpose } from "./edit";
 import { keepTakes, makeHistory, type Step } from "./history";
 import type { AudioTrack, ChordsClip, TimelineSong } from "./model";
-import { KEY_C, audioClip, audioTrack, bandSong, chordsTrack, songOf, take } from "./testsongs";
+import { useTake5 } from "./audioclips";
+import { addRecording5 } from "./record";
+import { KEY_C, audioClip, audioTrack, bandSong, chordsTrack, counter, songOf, take } from "./testsongs";
 
 const step = (song: TimelineSong, label = "", key = KEY_C): Step => ({ song, key, label });
 const vocal = (song: TimelineSong, id = "tv") => song.tracks.find((t) => t.id === id) as AudioTrack;
@@ -266,5 +268,48 @@ describe("keepTakes: a recording is never lost by undo", () => {
     const out = keepTakes(band, more);
     expect(vocal(out).takes.map((k) => [k.id, k.at])).toEqual([["k1", 32], ["r9", null]]);
     expect(out.tracks[0]).toBe(band.tracks[0]);
+  });
+});
+
+describe("a real recording through the history", () => {
+  /** three passes round bars 3 and 4 of the band's song (at 96, two bars are five seconds), as the engine hands them back */
+  const loop = 5 * 48000;
+  const sing = (song: TimelineSong): TimelineSong =>
+    addRecording5(song, "tv", { dry: "d.wav", wet: "w.wav", rate: 48000, frames: 480 + 48000 + 3 * loop, offset: 480, count_in: 48000, loop_frames: loop, dropped: 0 }, { from: 8, to: 16, loop: true, bars: [4, 4] }, { nudge: 0, kept: [2], id: counter("r"), bpm: 96, key: "C|ionian", sig: "4/4", sound: "" });
+
+  it("record, undo, one more edit: the takes are still listed, and the undone clip's take lies nowhere", () => {
+    const h = makeHistory();
+    const start = bandSong();
+    h.push(step(start, "Record"));
+    const recorded = sing(start);
+    expect(recorded.clips.filter((c) => c.track === "tv").map((c) => c.id).sort()).toEqual(["a1", "r5"]);
+    expect(vocal(recorded).takes.map((k) => [k.id, k.at, !!k.keep])).toEqual([["k1", 32, false], ["r2", 8, false], ["r3", 8, true], ["r4", 8, false]]);
+
+    // undo: the clip leaves the lane, the takes stay in the list
+    let now = keepTakes(h.undo(step(recorded))!.song, recorded);
+    expect(now.clips).toBe(start.clips);
+    expect(vocal(now).takes.map((k) => [k.id, k.at])).toEqual([["k1", 32], ["r2", null], ["r3", null], ["r4", null]]);
+    // (the ★ and everything else about them is kept)
+    expect(vocal(now).takes[2]).toEqual({ ...vocal(recorded).takes[2], at: null });
+
+    // one more edit, and its undo: they are still there
+    h.push(step(now, "Move clip"));
+    const moved = moveClips(now, ["m1"], 4);
+    expect(vocal(moved).takes).toHaveLength(4);
+    now = keepTakes(h.undo(step(moved))!.song, moved);
+    expect(vocal(now).takes.map((k) => [k.id, k.at])).toEqual([["k1", 32], ["r2", null], ["r3", null], ["r4", null]]);
+  });
+
+  it("after the undo, Use lays one back at the cursor, and the others are a choice in the same place", () => {
+    const start = bandSong();
+    const recorded = sing(start);
+    const undone = keepTakes(start, recorded);
+    const used = useTake5(undone, "tv", "r2", 16, counter("u"));
+    expect(used.clips.filter((c) => c.track === "tv" && c.kind === "audio").map((c) => [c.id, c.kind === "audio" && c.take, c.start]).sort()).toEqual([["a1", "k1", 32], ["u1", "r2", 16]]);
+    expect(vocal(used).takes.map((k) => [k.id, k.at])).toEqual([["k1", 32], ["r2", 16], ["r3", 16], ["r4", 16]]);
+    // that Use is undone as any edit is, and still nothing is lost
+    const back = keepTakes(undone, used);
+    expect(back).toBe(undone);
+    expect(vocal(back).takes).toHaveLength(4);
   });
 });
