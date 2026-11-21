@@ -4,17 +4,21 @@
 // time signature known), and never the stored text. Every id is made from the old ids, so the same old song gives the
 // same new song on every device. Nothing here changes what is heard: a row that sounded different from section to
 // section becomes one track for each sound, and a vocal row whose recordings overlapped becomes one track for each layer.
+// A row the old engine ran several voices for was heard with more reverb than its knob said: its tracks are given the
+// Reverb it was heard with (see `keepReverb`).
 import { DEFAULT_BEAT, barsOf, grooveOf, kitOfBeat, kitSig, type Beat } from "../audio/beats";
-import type { Mix, TrackMix } from "../audio/mix";
-import { reviveSound, type HarpSound } from "../audio/rack";
+import { MAX_DB, type Mix, type TrackMix } from "../audio/mix";
+import { reviveSound, verbSendOf, type HarpSound } from "../audio/rack";
+import { roomKey } from "../audio/rooms";
 import { synthOf, toneOf, voicingOf, type Tone } from "../audio/tone";
+import { rackForPlay } from "../audio/trackvoice";
 import { FX_DEFAULT } from "../audio/vocalfx";
 import { placedClips } from "../song/clips";
-import { barsOr } from "../song/frame";
-import { inBars, type Melody } from "../song/melody";
+import { barsOr, inFrame } from "../song/frame";
+import { hasTune, inBars, type Melody } from "../song/melody";
 import { sameSig, sigBeats, type TimeSig } from "../song/meter";
 import { drumsIn, sections, soloSection, type Section } from "../song/structure";
-import { PLAIN_STYLE, allTracks, insteadHere, markIn, normalize, type HarmonyOf, type Track as OldTrack } from "../song/tracks";
+import { PLAIN_STYLE, allTracks, insteadHere, insteadIn, markIn, normalize, type HarmonyOf, type Track as OldTrack } from "../song/tracks";
 import { sigOf } from "../song/unity";
 import { reviveSynth } from "../synth/params";
 import type { ArrangeSettings, ProgChord, Progression } from "../ui/state";
@@ -43,6 +47,116 @@ export function heardTone(t: Tone, kind: "chords" | "melody"): unknown {
 }
 /** A chords or melody track's sound as one string: the same for the same sound. */
 export const soundKey = (tone: Tone, sound: Partial<HarpSound> | undefined, kind: "chords" | "melody"): string => JSON.stringify([heardTone(tone, kind), reviveSound(sound)]);
+
+// ── the reverb a converted track is given ──
+//
+// The old engine gave every way a row was played a voice of its own (synth.ts: a "slot"), and every voice of a row
+// sent to its room through the row's one send (mix.ts sendFader). Each voice joined that send to its own room
+// (rack.ts), so with N voices on one room the send was joined to it N times, and every note of the row was heard
+// with N times the reverb its knob said. With voices on different rooms, every note also went to the rooms of the
+// row's other voices. A converted track has one voice, one room and one join. So that a song keeps the reverb it was
+// heard with, a track made from a row that had several voices gets its Reverb turned up to what it was heard at.
+
+/** A number as it is stored: four decimals, so every device writes the same one. */
+const r4 = (x: number): number => Math.round(x * 1e4) / 1e4;
+/** Where a rising curve reaches `want` between `lo` and `hi` (`hi`, when it never gets there). */
+function reach(f: (x: number) => number, want: number, lo: number, hi: number): number {
+  if (!(f(hi) > want)) return hi;
+  for (let i = 0; i < 60; i++) {
+    const mid = (lo + hi) / 2;
+    if (f(mid) < want) lo = mid;
+    else hi = mid;
+  }
+  return (lo + hi) / 2;
+}
+/**
+ * Two curves of the effects rack (rack.ts `set`, which keeps them to itself): how far a sound's own mix, and what it
+ * sends to its room, are turned down as its Reverb comes up; and the volume its Level gives. (The Reverb knob's own
+ * curve is `verbSendOf`. The tests read all three off the rack itself: one changed there fails here.)
+ */
+const dryOf = (space: number): number => Math.pow(10, (-7 * Math.pow(space, 1.6)) / 20);
+const volOf = (level: number): number => level * level * 1.25;
+
+/** A track's sound with the reverb it was heard with, and how close that comes. */
+export interface KeptReverb {
+  /** the sound to give the track: the very one passed in, when nothing is to change */
+  sound: Partial<HarpSound> | undefined;
+  /** the track's fader (dB), when the Level knob alone could not keep the track's own sound where it was */
+  db?: number;
+  /** how much of the old reverb is reached, and of the old level of the track's own sound (1 = all of it) */
+  wet: number;
+  dry: number;
+}
+
+/**
+ * A sound whose reverb was heard `times` as loud as its Reverb knob says (the old engine: see above), set so that one
+ * voice sends that much: the Reverb knob up, by its own curve. More Reverb also turns the sound's own mix down (and
+ * what it sends with it), so the Level knob comes up by as much, and what Level cannot give (it ends at 1) goes on
+ * the track's fader, in the tenths of a dB a fader is stored in, up to its top. The shimmer goes to the room past the
+ * Reverb knob, so on the strings it is turned up `times` too.
+ *
+ * What cannot be kept: a Reverb that would pass the top of its knob stays there, and behind a synth's arpeggio or
+ * pulse the track's Reverb counts only up to a small amount (trackvoice.ts `rackForPlay`), which more Reverb does not
+ * pass. `wet` and `dry` say how much is reached. A Reverb at nothing stays at nothing.
+ */
+export function keepReverb(sound: Partial<HarpSound> | undefined, tone: Tone, kind: "chords" | "melody", times: number, db = 0): KeptReverb {
+  if (!(times > 1 + 1e-9)) return { sound, wet: 1, dry: 1 };
+  const s = reviveSound(sound);
+  const play = tone.inst === "synth" ? reviveSynth(synthOf(tone, kind)).play : null;
+  /** the Reverb that is heard at a setting of the knob */
+  const heard = (space: number): number => rackForPlay({ ...s, space }, play).space;
+  const sendOf = (space: number): number => verbSendOf({ space, verb: s.verb });
+  const was = heard(s.space);
+  const top = heard(1);
+  const now = Math.min(top, r4(reach(sendOf, times * sendOf(was), was, top)));
+  const more = now > was + 1e-9;
+  const space = more ? now : s.space;
+  // the sound's own mix came down with the Reverb: the volume that puts it back
+  let level = s.level;
+  let lift = 0;
+  let dry = 1;
+  if (more && s.level > 0) {
+    const want = (volOf(s.level) * dryOf(was)) / dryOf(now);
+    if (volOf(1) < want) {
+      const over = 20 * Math.log10(want / volOf(1));
+      const room = Math.max(0, Math.floor((MAX_DB - db) * 10 + 1e-6) / 10);
+      lift = Math.min(room, Math.ceil(over * 10 - 1e-6) / 10);
+    }
+    const gain = Math.pow(10, lift / 20);
+    level = r4(reach(volOf, want / gain, 0, 1));
+    dry = (volOf(level) * gain) / want;
+  }
+  const shimmer = tone.inst !== "piano" && tone.inst !== "synth" ? Math.min(1, r4(s.shimmer * times)) : s.shimmer;
+  const wet = was > 0 ? (sendOf(more ? now : was) / (times * sendOf(was))) * dry : 1;
+  const change: Partial<HarpSound> = { ...(space !== s.space ? { space } : {}), ...(level !== s.level ? { level } : {}), ...(shimmer !== s.shimmer ? { shimmer } : {}) };
+  if (!Object.keys(change).length) return { sound, wet, dry };
+  return { sound: { ...clone(sound), ...change }, ...(lift > 0 ? { db: Math.round((db + lift) * 10) / 10 } : {}), wet, dry };
+}
+
+/** The voice the old engine played a tone and a sound on: its name (synth.ts `slotOf`, without the track). */
+const voiceKey = (tone: Tone, sound: HarpSound): string => `${JSON.stringify(tone)}|${JSON.stringify(sound)}`;
+
+/**
+ * How many times as loud as its knob says the reverb of a sound was heard, on a row the old engine ran these voices
+ * for (each with its sound; the sound's own voice among them). Every voice on the sound's own room is one more join
+ * to it: they add up. What went to the other rooms cannot be sent there by one voice: it is counted as that much more
+ * of the track's own room, as loud as it was heard (rooms ring apart, so their loudness adds as power; a kind of room
+ * that gives back less of what it is sent counts for less).
+ */
+export function reverbTimes(own: HarpSound, voices: HarpSound[]): number {
+  const rooms = new Map<string, { n: number; verb: HarpSound["verb"] }>();
+  for (const v of voices) {
+    const k = roomKey(v.verb, v.size);
+    const r = rooms.get(k) ?? { n: 0, verb: v.verb };
+    r.n++;
+    rooms.set(k, r);
+  }
+  const mine = roomKey(own.verb, own.size);
+  const back = (verb: HarpSound["verb"]): number => verbSendOf({ space: 1, verb });
+  let power = 0;
+  for (const [k, r] of rooms) power += Math.pow(k === mine ? r.n : (r.n * back(own.verb)) / back(r.verb), 2);
+  return Math.sqrt(power);
+}
 
 /** Does a drum rhythm have a hit anywhere? */
 const hasHits = (b: Beat): boolean => Object.values(b.rows ?? {}).some((r) => /[1-9]/.test(r ?? ""));
@@ -112,9 +226,40 @@ export function toTimeline(p: Progression): Converted {
     return null;
   };
 
+  /**
+   * Every voice the old engine made for a chords or melody row, over the whole song, each with its sound (as the old
+   * plan listed them and the old player and render asked for them). The first chords: one in every section, silent
+   * ones too (the player asked for the voice before it looked whether there was a chord). An added chords row: where
+   * it has a chord that sounds, and no harmony plays instead of it. A melody: where it has notes and is on.
+   */
+  const voicesOf = (t: OldTrack): Map<string, HarpSound> => {
+    const out = new Map<string, HarpSound>();
+    const first = t.id === t.kind;
+    for (const x of lay) {
+      const l = first ? undefined : x.sec.layers?.[t.id];
+      let sound: Partial<HarpSound> | undefined;
+      if (t.kind === "chords") {
+        if (first) sound = x.sec.sound;
+        else {
+          if (!l?.chords?.length || insteadIn(x.sec.partId, x.sec.layers, np.tracks, np.mix).has(t.id)) continue;
+          if (!inFrame(l.chords, x.beats).some((c) => !c.item.rest)) continue;
+          sound = l.sound;
+        }
+      } else {
+        if (!hasTune(first ? x.sec.melody : l?.melody)) continue;
+        sound = first ? x.sec.tuneSound : l?.tuneSound;
+      }
+      const s = reviveSound(sound);
+      out.set(voiceKey(toneOf(x.sec, t.id), s), s);
+    }
+    return out;
+  };
+
   const tracks: Track[] = [];
   const clips: Clip[] = [];
   const ids: Record<string, string[]> = {};
+  /** the faders moved to keep a track's level (see `keepReverb`): new track id → dB */
+  const faders = new Map<string, number>();
   /** the new track that holds an old row's clip in a block */
   const holder = new Map<string, string>();
   const holderOf = (old: string, block: string): string => holder.get(`${block}\n${old}`) ?? ids[old]?.[0] ?? FIRST_IDS[old] ?? old;
@@ -141,10 +286,22 @@ export function toTimeline(p: Progression): Converted {
     const lead = t.id === "chords" || t.id === "drums" ? { lead: true as const } : {};
     const split = order.length > 1 ? { group: base } : {};
     ids[t.id] = [];
+    // the voices the old engine ran for the row: more than one, and its reverb was heard louder than its knob says
+    const voices = t.kind === "chords" || t.kind === "melody" ? voicesOf(t) : null;
     const make = (id: string, name: string, cell: Cell | null, tone: Tone | undefined): Track => {
-      if (t.kind === "chords") return tidy({ id, kind: "chords" as const, name, ...split, tone: clone(tone ?? toneOf(cur, t.id)), sound: clone(cell?.kind === "chords" ? cell.sound : restSound(t, cur)), ...lead, ...role, ...harmony }) as ChordsTrack;
-      if (t.kind === "melody") return tidy({ id, kind: "melody" as const, name, ...split, tone: clone(tone ?? toneOf(cur, t.id)), sound: clone(cell?.kind === "melody" ? cell.sound : restSound(t, cur)), ...role, ...harmony }) as TuneTrack;
-      return { id, kind: "drums", name, ...split, kit: clone(kitOfBeat(cell?.kind === "drums" ? cell.beat : restBeat(t, cur, row))), ...lead } as DrumsTrack;
+      if (t.kind === "drums") return { id, kind: "drums", name, ...split, kit: clone(kitOfBeat(cell?.kind === "drums" ? cell.beat : restBeat(t, cur, row))), ...lead } as DrumsTrack;
+      const kind = t.kind === "chords" ? ("chords" as const) : ("melody" as const);
+      let sound = clone(cell && cell.kind !== "drums" ? cell.sound : restSound(t, cur));
+      if (cell && cell.kind !== "drums" && voices) {
+        // (the track's own voice counts, also where the old engine never made it: a melody that is off)
+        const own = reviveSound(cell.sound);
+        const all = new Map(voices).set(voiceKey(cell.tone, own), own);
+        const kept = keepReverb(sound, tone ?? cell.tone, kind, reverbTimes(own, [...all.values()]), np.mix?.[t.id]?.db ?? 0);
+        sound = kept.sound;
+        if (kept.db !== undefined) faders.set(id, kept.db);
+      }
+      const head = { id, kind, name, ...split, tone: clone(tone ?? toneOf(cur, t.id)), sound };
+      return (kind === "chords" ? tidy({ ...head, ...lead, ...role, ...harmony }) : tidy({ ...head, ...role, ...harmony })) as ChordsTrack | TuneTrack;
     };
     if (!order.length) {
       tracks.push(make(base, t.name, null, undefined));
@@ -263,6 +420,7 @@ export function toTimeline(p: Progression): Converted {
     const { instead: _instead, ...rest } = m;
     for (const id of ids[old] ?? []) (mix ??= {})[id] = { ...rest } as TrackMix;
   }
+  for (const [id, db] of faders) (mix ??= {})[id] = { ...mix[id], db };
 
   const song: TimelineSong = { v: 5, bpm: np.bpm, meter: lay[0].sig, ...(sigs.length ? { sigs } : {}), tracks, clips, ...(mix ? { mix } : {}), ...(markers.length ? { markers } : {}), end };
   return { song, ids };

@@ -227,7 +227,9 @@ describe("toTimeline: structure", () => {
     expect(song(6).mix).toEqual({ c2: { db: -3 }, m2: { mute: true } });
     // the first chords row, split in three, muted because a harmony played instead of it (as older songs noted it)
     const p: Progression = { ...fixture(3).progression, mix: { chords: { mute: true, instead: true, db: -5 }, drums: { solo: true } } };
-    expect(toTimeline(p).song.mix).toEqual({ "t-chords": { mute: true, db: -5 }, "t-chords~2": { mute: true, db: -5 }, "t-chords~3": { mute: true, db: -5 }, "t-drums": { solo: true } });
+    // (the old engine ran four voices for this row: its tracks keep the reverb it was heard with, by more Reverb, more
+    // Level, and on each fader the 0.8 dB that Level could not give. See reverb.test.ts)
+    expect(toTimeline(p).song.mix).toEqual({ "t-chords": { mute: true, db: -4.2 }, "t-chords~2": { mute: true, db: -4.2 }, "t-chords~3": { mute: true, db: -4.2 }, "t-drums": { solo: true } });
   });
 
   it("9. harmony records land on the right clips, and read as they did: changed by hand, source changed", () => {

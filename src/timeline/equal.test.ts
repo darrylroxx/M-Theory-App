@@ -46,11 +46,41 @@ function both(n: number) {
 }
 
 /** Each voice by what is heard of it (a tone also remembers settings of instruments it is not playing). */
-const heard = (log: RenderLog): string[] => [...new Set(log.voices.map((v) => `${v.track}|${JSON.stringify(heardTone(JSON.parse(v.tone), "chords"))}|${v.sound}`))].sort();
+const heard = (voices: RenderLog["voices"]): string[] => [...new Set(voices.map((v) => `${v.track}|${JSON.stringify(heardTone(JSON.parse(v.tone), "chords"))}|${v.sound}`))].sort();
 
-function same(a: RenderLog, b: RenderLog) {
+/**
+ * The one thing a converted song is meant to set differently from the old one. The old engine ran a voice for every
+ * way a row was played, and each one joined the row's reverb send to its room once more: a row with two voices was
+ * heard with twice the reverb its knob said, one with four with four times. A converted track has one voice, so it is
+ * given the Reverb the row was heard with, and the Level that keeps its own sound where it was (migrate5.ts
+ * `keepReverb`; reverb.test.ts holds that what then reaches the rooms and the speakers is what the old song sent).
+ *
+ * By fixture (18: the worked example): the old rows that had more than one voice, and exactly what the two knobs are
+ * on the tracks they became. Every other knob of these voices, and every knob of every other voice, is as it was.
+ */
+const TWICE = { space: 0.5113, level: 0.8658 };
+const MORE_REVERB: Record<number, { track: string; mode?: string; set: { space: number; level: number } }[]> = {
+  // the first chords on four voices (two of them the strings, one remembering a synth it does not play)
+  3: [{ track: "chords", set: { space: 0.8715, level: 0.9955 } }],
+  // the first chords on a synth's arpeggio and on its drone: the drone only (behind an arpeggio the track's Reverb is held down, and stays)
+  9: [{ track: "chords", mode: "drone", set: TWICE }],
+  // the first chords on a piano, and a voice on the strings for the section they are silent in
+  10: [{ track: "chords", set: TWICE }],
+  // the melody on the strings and on a piano
+  15: [{ track: "melody", set: TWICE }],
+  // the first chords on the strings and on a piano
+  18: [{ track: "chords", set: TWICE }],
+};
+/** The old song's voices as the converted song must have them: the same, with the Reverb its rows were heard with. */
+const kept = (voices: RenderLog["voices"], n: number): RenderLog["voices"] =>
+  voices.map((v) => {
+    const more = (MORE_REVERB[n] ?? []).find((m) => m.track === v.track && (!m.mode || JSON.parse(v.tone).synth?.play?.mode === m.mode));
+    return more ? { ...v, sound: JSON.stringify({ ...JSON.parse(v.sound), ...more.set }) } : v;
+  });
+
+function same(a: RenderLog, b: RenderLog, n: number) {
   expect(logDiff(a, b).slice(0, 12)).toEqual([]);
-  expect(heard(b)).toEqual(heard(a));
+  expect(heard(b.voices)).toEqual(heard(kept(a.voices, n)));
 }
 
 const numbers = Array.from({ length: FIXTURES + 1 }, (_, i) => i + 1);
@@ -64,7 +94,7 @@ describe("a converted song asks the engine for what the old song asked: the offl
       const b = await renderLog(flatten(x.conv.song, x.fctx).items, x.bpm, x.rename);
       // (the fixture plays something at all: an empty record would compare equal to anything empty)
       expect(a.notes.length + a.hits.length + a.takes.length).toBeGreaterThan(0);
-      same(a, b);
+      same(a, b, n);
     });
 });
 
@@ -75,7 +105,7 @@ describe("a converted song asks the engine for what the old song asked: the live
       const a = await liveLog(x.old.items, x.bpm);
       const b = await liveLog(flatten(x.conv.song, x.fctx).items, x.bpm, { rename: x.rename });
       expect(a.notes.length + a.hits.length + a.takes.length).toBeGreaterThan(0);
-      same(a, b);
+      same(a, b, n);
     });
 });
 
@@ -86,7 +116,7 @@ describe("the same through the whole path the app takes (the old idea loaded, se
       const stored = reviveIdea5(JSON.parse(JSON.stringify(convertIdea(x.idea).idea)))!;
       const a = await renderLog(x.old.items, x.bpm);
       const b = await renderLog(flatten(stored.song, x.fctx).items, x.bpm, x.rename);
-      same(a, b);
+      same(a, b, n);
     });
 });
 
@@ -109,14 +139,14 @@ describe("a converted song asks the engine for what the old song asked: a loop o
       const x = both(n);
       const l = loopOf(x);
       expect(l.now.reduce((a, i) => a + i.beats, 0)).toBeCloseTo(l.old.reduce((a, i) => a + i.beats, 0), 9);
-      same(await renderLog(l.old, x.bpm), await renderLog(l.now, x.bpm, x.rename));
+      same(await renderLog(l.old, x.bpm), await renderLog(l.now, x.bpm, x.rename), n);
     });
   for (const n of numbers)
     it(`${title(n)}, live, two and a half times round`, async () => {
       const x = both(n);
       const l = loopOf(x);
       const seconds = (l.old.reduce((a, i) => a + i.beats, 0) * 60 * 2.5) / x.bpm;
-      same(await liveLog(l.old, x.bpm, { loop: true, seconds }), await liveLog(l.now, x.bpm, { loop: true, seconds, rename: x.rename }));
+      same(await liveLog(l.old, x.bpm, { loop: true, seconds }), await liveLog(l.now, x.bpm, { loop: true, seconds, rename: x.rename }), n);
     });
 });
 

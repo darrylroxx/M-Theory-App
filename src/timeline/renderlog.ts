@@ -6,7 +6,7 @@
 // held to its original. (It compares what is asked of the audio graph, not samples: plucked strings and loosened
 // drums use random numbers, and the tests have no real audio engine.)
 import { vi } from "vitest";
-import type { FakeSource } from "../keys/fakeaudio";
+import type { FakeNode, FakeSource } from "../keys/fakeaudio";
 import { FakeAudio, FakeOffline } from "../audio/fakectx";
 import { kitOfBeat, kitSig, type Beat } from "../audio/beats";
 import type { PlayItem } from "../audio/patterns";
@@ -30,7 +30,7 @@ export const fakeBuffer = (label: string, seconds: number): AudioBuffer => ({ du
 
 let live: FakeAudio | null = null;
 /** the record being written, and the context whose takes go into it */
-let sink: { log: RenderLog; ctx: FakeAudio | null; tracks: string[]; rename: (t: string) => string; fader: (track: string, c: BaseAudioContext) => unknown } | null = null;
+let sink: { log: RenderLog; ctx: FakeAudio | null; tracks: string[]; rename: (t: string) => string; fader: (track: string, c: BaseAudioContext) => unknown; each?: (v: TrackVoice, n: RenderLog["notes"][number]) => void } | null = null;
 
 /** Every buffer source a context starts that plays a labelled take goes into the record, with the track whose fader it reaches. */
 function watch(c: FakeAudio) {
@@ -66,7 +66,7 @@ class Render extends FakeOffline {
 }
 
 /** Set the pretend audio up, write down what `run` asks of it, and put everything back. */
-async function record(items: PlayItem[], rename: (t: string) => string, onLive: boolean, run: (S: typeof import("../audio/synth"), log: RenderLog) => Promise<void> | void): Promise<RenderLog> {
+async function record(items: PlayItem[], rename: (t: string) => string, onLive: boolean, run: (S: typeof import("../audio/synth"), log: RenderLog) => Promise<void> | void, each?: (v: TrackVoice, n: RenderLog["notes"][number]) => void): Promise<RenderLog> {
   const log: RenderLog = { notes: [], voices: [], hits: [], pedals: [], takes: [] };
   vi.useFakeTimers();
   vi.stubGlobal("window", globalThis);
@@ -93,7 +93,9 @@ async function record(items: PlayItem[], rename: (t: string) => string, onLive: 
     vi.spyOn(TrackVoice.prototype, "prepare").mockResolvedValue(undefined),
     vi.spyOn(TrackVoice.prototype, "note").mockImplementation(function (this: TrackVoice, midi: number, when: number, velocity: number, length: number, o?: { slot?: number }) {
       voice(this);
-      log.notes.push({ track: nameOf(this), midi, when, velocity, length, ...(o?.slot !== undefined ? { slot: o.slot } : {}) });
+      const n = { track: nameOf(this), midi, when, velocity, length, ...(o?.slot !== undefined ? { slot: o.slot } : {}) };
+      log.notes.push(n);
+      each?.(this, n);
     }),
     vi.spyOn(TrackVoice.prototype, "repedal").mockImplementation(function (this: TrackVoice, at: number) {
       // (only a piano with its pedal on changes pedal: on anything else the call does nothing)
@@ -105,7 +107,7 @@ async function record(items: PlayItem[], rename: (t: string) => string, onLive: 
       log.hits.push({ track: rename(track), drum: id, level, when, kit: kitSig(kitOfBeat(b)) });
     }),
   ];
-  sink = { log, ctx: null, tracks, rename, fader };
+  sink = { log, ctx: null, tracks, rename, fader, each };
   try {
     if (onLive) {
       S.getAudio();
@@ -156,6 +158,89 @@ export async function liveLog(items: PlayItem[], bpm: number, o: { loop?: boolea
     const by = <T extends { when: number }>(xs: T[]) => xs.filter((x) => x.when < seconds);
     return { ...log, notes: by(log.notes), hits: by(log.hits), pedals: by(log.pedals), takes: by(log.takes) };
   });
+}
+
+/** What one note is sent out with: its own sound's level, and what of it reaches each reverb room. */
+export interface NoteSend {
+  track: string;
+  midi: number;
+  when: number;
+  /** the gain on the note's own sound on its way out: the dry mix, the volume, the track's fade and its fader */
+  dry: number;
+  /** by room (its kind and size): the gain on what the note sends there, every way from its voice to that room added up */
+  wet: Record<string, number>;
+  /** the same for the shimmer, which goes to the room without passing the Reverb knob (0 when the strings play none) */
+  halo: Record<string, number>;
+}
+
+/**
+ * For every note of an offline render of the items: the gains between the voice that plays it and the speakers, and
+ * between that voice and each reverb room, read off the pretend audio graph once everything is made. (The pretend
+ * context has no samples, but it has every connection and every gain: a send that reaches a room by three ways counts
+ * three times, as it sounds three times as loud.) `mix`: the song's mixer, by the ids the items use.
+ */
+export async function sendLog(items: PlayItem[], bpm: number, rename: (track: string) => string = (t) => t, mix?: import("../audio/mix").Mix): Promise<NoteSend[]> {
+  const out: NoteSend[] = [];
+  const by = new Map<TrackVoice, RenderLog["notes"][number][]>();
+  await record(
+    items,
+    rename,
+    false,
+    async (S) => {
+      const { setMix } = await import("../audio/mix");
+      const { roomsOf } = await import("../audio/rooms");
+      const { TrackVoice } = await import("../audio/trackvoice");
+      // (a render lets go of its voices when it is over: here they are kept, to be read)
+      const keep = vi.spyOn(TrackVoice.prototype, "dispose").mockImplementation(() => {});
+      setMix(mix);
+      try {
+        await S.renderSong(items, { bpm, pattern: "ring", beat: null, rate: 8000 });
+      } finally {
+        setMix(undefined);
+        keep.mockRestore();
+      }
+      const ctx = sink!.ctx as FakeAudio;
+      type N = FakeNode & { gain: { at(t: number): number } };
+      const before = new Map<object, N[]>();
+      for (const n of ctx.nodes) for (const o of n.outputs) before.set(o, [...(before.get(o) ?? []), n as N]);
+      const only = (n: object): N => {
+        const p = before.get(n) ?? [];
+        if (p.length !== 1) throw new Error(`expected one way in, found ${p.length}`);
+        return p[0];
+      };
+      // (long after every glide has settled: a render sets each voice's sound once, at its start)
+      const g = (n: N) => n.gain.at(60);
+      const rooms = roomsOf(ctx as unknown as BaseAudioContext);
+      for (const [v, notes] of by) {
+        const rack = v.rack as unknown as { send: N; halo: N; duck: N };
+        // its own sound: … ─ dry mix ─ Pump dip ─ volume ─ ceiling ─ fade ─ fader
+        const dryMix = only(rack.duck);
+        const level = rack.duck.outputs[0] as N;
+        const fade = v.out as unknown as N;
+        const dry = g(dryMix) * g(level) * g(fade) * g(fade.outputs[0] as N);
+        // its send: Reverb knob ─ (the shimmer joins) ─ dry mix ─ volume ─ fade ─ fader ─ one gain for each way into a room
+        const sendLevel = only(rack.send);
+        const sendMix = only(sendLevel);
+        const sendIn = only(sendMix);
+        const knob = (before.get(sendIn) ?? []).filter((n) => n !== rack.halo);
+        if (knob.length !== 1) throw new Error("the Reverb knob's gain was not found");
+        const end = rack.send.outputs[0] as N;
+        const after = g(sendMix) * g(sendLevel) * g(rack.send) * g(end);
+        const wet: Record<string, number> = {};
+        const halo: Record<string, number> = {};
+        const shimmer = !v.instrument ? v.sound.shimmer : 0;
+        for (const way of end.outputs as N[])
+          for (const r of rooms)
+            if (way.outputs.includes(r.input as unknown as FakeNode)) {
+              wet[r.key] = (wet[r.key] ?? 0) + g(knob[0]) * after * g(way);
+              halo[r.key] = (halo[r.key] ?? 0) + shimmer * after * g(way);
+            }
+        for (const n of notes) out.push({ track: n.track, midi: n.midi, when: n.when, dry, wet, halo });
+      }
+    },
+    (v, n) => by.set(v, [...(by.get(v) ?? []), n]),
+  );
+  return out;
 }
 
 /** The differences between two records (none: they ask for the same). Times may differ by `tol` seconds. */
