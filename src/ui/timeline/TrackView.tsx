@@ -68,6 +68,9 @@ const GUESS_W = 1020;
 const TAP_PX = 4;
 /** How long a finger rests on a clip before its menu opens. */
 const HOLD_MS = 500;
+/** How near the left or right edge of the lanes a drag makes time scroll, and how far each step goes (pixels). */
+const EDGE_PX = 24;
+const EDGE_STEP = 14;
 /** After the lanes were moved by hand, Follow waits this long before it turns a page. */
 const FOLLOW_WAIT = 1500;
 
@@ -151,6 +154,7 @@ export function TrackView(props: TrackViewProps) {
   live.current = { props, view, width, map, end, total, follow, marker, naming, renaming, preview };
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const held = useRef(0);
+  const auto = useRef<{ dir: number; timer: number; again?: () => void }>({ dir: 0, timer: 0 });
   const clipDrag = useRef<ClipDrag | null>(null);
   const laneDrag = useRef<LaneDrag | null>(null);
 
@@ -193,8 +197,30 @@ export function TrackView(props: TrackViewProps) {
     const hideTag = () => {
       if (tag.current) tag.current.style.display = "none";
     };
-    return { L, lanesLeft, beatAt, rowAt, laneAtY, setView, setCursor, select, showTag, hideTag };
+    /**
+     * While something is dragged to the left or right edge of the lanes, time scrolls under it (so a clip or a loop
+     * can be taken further than the screen shows). `again` works the drag out anew after each step. Called with no
+     * pointer, it stops.
+     */
+    const edge = (clientX?: number, again?: () => void) => {
+      const a = auto.current;
+      const left = lanesLeft();
+      const dir = clientX === undefined ? 0 : clientX < left + EDGE_PX ? -1 : clientX > left + L().width - EDGE_PX ? 1 : 0;
+      a.again = again;
+      if (dir === a.dir) return;
+      a.dir = dir;
+      window.clearInterval(a.timer);
+      if (!dir) return;
+      a.timer = window.setInterval(() => {
+        const v = L().view;
+        setView({ ...v, scroll: v.scroll + (dir * EDGE_STEP) / v.pxPerBeat });
+        held.current = performance.now();
+        a.again?.();
+      }, 30);
+    };
+    return { L, lanesLeft, beatAt, rowAt, laneAtY, setView, setCursor, select, showTag, hideTag, edge };
   }, []);
+  useEffect(() => () => window.clearInterval(auto.current.timer), []);
 
   // ── everything that changes the song or the selection ──
   const act = useMemo(() => {
@@ -541,6 +567,7 @@ export function TrackView(props: TrackViewProps) {
     const elOf = (id: string) => root.current?.querySelector<HTMLElement>(`[data-clip="${CSS.escape(id)}"]`) ?? null;
 
     const endVisuals = (d: ClipDrag, glide: boolean) => {
+      h.edge();
       for (const el of d.els) {
         el.classList.remove("dragging");
         el.closest(".tlv-lane")?.classList.remove("lifting");
@@ -637,6 +664,9 @@ export function TrackView(props: TrackViewProps) {
           setBusy(true);
         }
         if (d.still) return;
+        // near the left or right edge of the lanes, time scrolls under the drag
+        const at = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
+        h.edge(e.clientX, () => ctl.clipMove(at as React.PointerEvent<HTMLElement>));
         if (d.kind !== "move") {
           // an edge: the clip is drawn as it would be, so each repeat shows its notch as it is crossed
           const to = edgeTo(p.song, c, d.kind, h.beatAt(e.clientX), { shift: e.shiftKey });
@@ -932,7 +962,7 @@ export function TrackView(props: TrackViewProps) {
       <TopBar {...top} song={song} keyOf={keyOf} cursor={session.cursor} player={player} looping={!!loop?.on} onLoop={act.toggleLoop} />
       <Ruler song={song} view={view} width={width} session={session} follow={follow} onFollow={setFollow} onZoom={act.zoomBy} onFit={act.fit}
         onCursor={onCursor} onLoop={act.setLoop} edit={props.edit} marker={marker} onMarker={setMarker} naming={naming} onNaming={onNaming}
-        menu={openMenu} onInsert={act.insert} onCutLoop={act.cutLoop} onAddMarker={act.addMarker} onFlag={act.flag} />
+        menu={openMenu} onInsert={act.insert} onCutLoop={act.cutLoop} onAddMarker={act.addMarker} onFlag={act.flag} onEdge={h.edge} />
       <div className="tlv-body" ref={body} onScroll={(e) => { if (e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0; }}>
         <div className={`tlv-rows${dropKind ? " dropping" : ""}`} ref={rows} style={{ gridTemplateRows: `repeat(${tracks.length}, ${ROW_H}px) ${ADD_H}px minmax(0, 1fr)` }}>
           {tracks.map((t, i) => {

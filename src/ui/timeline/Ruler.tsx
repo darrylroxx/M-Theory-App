@@ -40,6 +40,8 @@ export interface RulerProps {
   onAddMarker(beat: number): void;
   /** a signature flag: the signature from that bar on (null: the change is taken away) */
   onFlag(bar: number, sig: TimeSig | null): void;
+  /** a drag is at this place (time scrolls when that is the ruler's left or right edge; `again` works the drag out anew); with nothing: the drag is over */
+  onEdge?(clientX?: number, again?: () => void): void;
 }
 
 type Drag =
@@ -80,11 +82,15 @@ export function Ruler(p: RulerProps) {
       /* (a pretend pointer) */
     }
   };
+  /** the latest `move`, for the scroll at the edges to call (it must see the view as it is by then) */
+  const moveNow = useRef<(e: React.PointerEvent<HTMLDivElement>) => void>(() => {});
   const move = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointer !== e.pointerId) return;
     if (!d.moved && Math.abs(e.clientX - d.x0) < TAP_PX) return;
     d.moved = true;
+    const at = { pointerId: e.pointerId, clientX: e.clientX, shiftKey: e.shiftKey, altKey: e.altKey } as React.PointerEvent<HTMLDivElement>;
+    p.onEdge?.(e.clientX, () => moveNow.current(at));
     const beat = beatAt(e.clientX);
     const mode = e.altKey ? "free" : e.shiftKey ? "beat" : "bar";
     if (d.kind === "marker") return setMoving({ id: d.id, beat: snap(map, beat, mode) });
@@ -104,10 +110,12 @@ export function Ruler(p: RulerProps) {
     else next = { from: r.from, to: Math.max(snap(map, beat, mode), r.from + least) };
     setGhost(old.map((x, i) => (i === d.index ? next : x)));
   };
+  moveNow.current = move;
   const up = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointer !== e.pointerId) return;
     drag.current = null;
+    p.onEdge?.();
     if (!d.moved) {
       if (d.kind === "marker") {
         const m = song.markers?.find((x) => x.id === d.id);
@@ -131,6 +139,7 @@ export function Ruler(p: RulerProps) {
   };
   const cancel = () => {
     drag.current = null;
+    p.onEdge?.();
     setGhost(null);
     setMoving(null);
   };
