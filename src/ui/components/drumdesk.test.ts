@@ -4,12 +4,11 @@ import { fitRhythm } from "../../song/meter";
 import { deskFollowsPage, putBack, snapOf } from "./DrumMachine";
 
 describe("the drum page's changes on the track's desk", () => {
-  it("are heard at once when stopped or when the page's section is the one playing", () => {
+  it("are always heard at once (there is one desk for a drums track, and one kit for the whole track)", () => {
     expect(deskFollowsPage(false, null)).toBe(true);
     expect(deskFollowsPage(true, 2.5)).toBe(true);
-  });
-  it("are only noted while another section, with a kit of its own, is the one playing", () => {
-    expect(deskFollowsPage(true, null)).toBe(false);
+    // also while other bars of the song are the ones playing
+    expect(deskFollowsPage(true, null)).toBe(true);
   });
 });
 

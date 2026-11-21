@@ -6,9 +6,11 @@ import { EMPTY_MELODY, toggleNote } from "../song/melody";
 import { sigBeats } from "../song/meter";
 import { selectBlock } from "../song/structure";
 import { allTracks, normalize, writeTarget } from "../song/tracks";
+import type { Key } from "../theory/keys";
 import type { Progression } from "../ui/state";
+import { transpose } from "./edit";
 import { fixture } from "./fixtures5";
-import { chordsUnderSpan, harmonyState5, lensOf, unlens, type Target } from "./lens";
+import { chordsUnderSpan, harmonyState5, lensOf, transposeSong, unlens, type Target } from "./lens";
 import { toTimeline } from "./migrate5";
 import type { ChordsClip, ChordsTrack, DrumsClip, DrumsTrack, MelodyClip, TimelineSong, TuneTrack } from "./model";
 import { KEY_C, SIG34, SIG68, bandSong, chord, chordsClip, chordsContent, chordsTrack, counter, drumsClip, drumsTrack, melodyClip, songOf, tune, tuneTrack } from "./testsongs";
@@ -16,8 +18,8 @@ import { KEY_C, SIG34, SIG68, bandSong, chord, chordsClip, chordsContent, chords
 const clipOf = <C,>(s: TimelineSong, id: string) => s.clips.find((c) => c.id === id) as unknown as C;
 const trackOf = <T,>(s: TimelineSong, id: string) => s.tracks.find((t) => t.id === id) as unknown as T;
 /** The lens of a target, and a way to write a change of its song back. */
-function open(song: TimelineSong, target: Target) {
-  const lens = lensOf(song, target, KEY_C, 0)!;
+function open(song: TimelineSong, target: Target, key: Key = KEY_C) {
+  const lens = lensOf(song, target, key, 0)!;
   expect(lens).not.toBeNull();
   const back = (fn: (p: Progression) => Progression) => unlens(song, target, lens, fn(lens.p), counter("new"));
   return { lens, back };
@@ -305,6 +307,47 @@ describe("Harmonize through the lens", () => {
     // the source changed afterwards: out of date
     const src = open(next, { track: "tm", clip: "m1" }).back((p) => ({ ...p, melody: toggleNote(toggleNote(p.melody!, 0, 64), 0, 60) }));
     expect(harmonyState5(src, KEY_C, clip.id).stale).toBe(true);
+  });
+  it("\"Move song\": the harmony moves with the song and its record follows, so nothing reads as changed or out of date", () => {
+    // a harmony line over the melody, and chords written from the lead chords into the empty chords track
+    let s = forHarmony();
+    const c0 = open(s, { track: "tc", clip: "c1" });
+    s = c0.back((p) => writeHarmony(p, KEY_C, { kind: "chords", from: "chords", option: "high" }, writeTarget(normalize(c0.lens.p), "chords", "unused", "unused")).p);
+    // (ids of its own for the second clip: the helper counts from one every time)
+    const m0 = lensOf(s, { track: "tm", clip: "m1" }, KEY_C, 0)!;
+    s = unlens(s, { track: "tm", clip: "m1" }, m0, writeHarmony(m0.p, KEY_C, { kind: "melody", from: "melody", option: "third-above" }, { id: "hx", isNew: true, name: "x" }).p, counter("line"));
+    const marked = s.clips.filter((c) => c.kind !== "audio" && c.kind !== "drums" && c.harmony);
+    expect(marked.length).toBe(2);
+    for (const c of marked) expect(harmonyState5(s, KEY_C, c.id)).toEqual({ edited: [], stale: false, source: true });
+    for (const n of [1, 2, 5, -3, 7]) {
+      const to = { ...KEY_C, tonic: ["C", "Db", "D", "Eb", "E", "F", "F#", "G", "Ab", "A", "Bb", "B"][(n + 12) % 12] };
+      const moved = transposeSong(s, n, KEY_C, to);
+      for (const c of marked) {
+        const now = moved.clips.find((x) => x.id === c.id)!;
+        expect(harmonyState5(moved, to, c.id), `${c.id} moved by ${n}`).toEqual({ edited: [], stale: false, source: true });
+        // the notes are the moved ones, nothing was written again
+        expect(now.kind !== "audio" && now.content).toEqual((transpose(s, n, KEY_C, to).clips.find((x) => x.id === c.id) as MelodyClip).content);
+      }
+      // and it is still told apart from a change made afterwards
+      const h = marked.find((c) => c.kind === "melody")!;
+      const hand = open(moved, { track: h.track, clip: h.id }, to).back((p) => ({ ...p, melody: toggleNote(p.melody!, 0, 91) }));
+      expect(harmonyState5(hand, to, h.id).edited.length).toBe(1);
+      const src = open(moved, { track: "tm", clip: "m1" }, to).back((p) => ({ ...p, melody: { ...p.melody!, notes: p.melody!.notes.map((x, i) => (i === 1 ? { ...x, midi: x.midi + 2 } : x)) } }));
+      expect(harmonyState5(src, to, h.id).stale).toBe(true);
+    }
+  });
+  it("\"Move song\" leaves a harmony that was changed by hand, or was out of date, as it stood", () => {
+    let s = forHarmony();
+    s = open(s, { track: "tm", clip: "m1" }).back((p) => writeHarmony(p, KEY_C, { kind: "melody", from: "melody", option: "third-above" }, { id: "hx", isNew: true, name: "x" }).p);
+    const h = s.clips.find((c) => c.track === "hx")!;
+    const D = { ...KEY_C, tonic: "D" };
+    const hand = open(s, { track: "hx", clip: h.id }).back((p) => ({ ...p, melody: toggleNote(p.melody!, 0, 90) }));
+    expect(harmonyState5(transposeSong(hand, 2, KEY_C, D), D, h.id).edited.length).toBe(1);
+    const src = open(s, { track: "tm", clip: "m1" }).back((p) => ({ ...p, melody: { ...p.melody!, notes: p.melody!.notes.map((x, i) => (i === 1 ? { ...x, midi: x.midi + 2 } : x)) } }));
+    expect(harmonyState5(src, KEY_C, h.id).stale).toBe(true);
+    expect(harmonyState5(transposeSong(src, 2, KEY_C, D), D, h.id).stale).toBe(true);
+    // nothing to move: the same song
+    expect(transposeSong(s, 0, KEY_C, KEY_C)).toBe(s);
   });
 });
 

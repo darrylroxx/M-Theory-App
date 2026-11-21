@@ -12,7 +12,7 @@ import { grooveOf, kitOfBeat, kitSig, onKit, type Beat } from "../audio/beats";
 import type { Mix, TrackMix } from "../audio/mix";
 import { toneOf, type Tone, type Tones } from "../audio/tone";
 import { barsOr } from "../song/frame";
-import { harmonyState, type HarmonyState } from "../song/harmony";
+import { harmonyState, remarkHarmony, type HarmonyState } from "../song/harmony";
 import type { Melody, MelodyNote } from "../song/melody";
 import { SOUND_V } from "../song/migrate";
 import { sigBeats, type TimeSig } from "../song/meter";
@@ -22,7 +22,7 @@ import type { Key } from "../theory/keys";
 import type { ProgChord, Progression } from "../ui/state";
 import { barMap } from "./bars";
 import { barOwner, drumsClipsOf, leadDrums } from "./cuts";
-import { blankContent, layDown, resizeClip, setContent, setDraft } from "./edit";
+import { blankContent, layDown, resizeClip, setContent, setDraft, transpose } from "./edit";
 import { beatOf } from "./flatten";
 import { CLIP_OF, contentBeats, cycles } from "./model";
 import type { ChordsClip, ChordsContent, ChordsTrack, Clip, DrumsClip, DrumsTrack, HarmonyMark5, MelodyClip, NoteClip, Region, TimelineSong, Track, TuneTrack } from "./model";
@@ -483,4 +483,33 @@ export function harmonyState5(song: TimelineSong, key: Key, clip: string): Harmo
   const lens = c ? lensOf(song, { track: c.track, clip }, key, 0) : null;
   if (!c || !lens) return { edited: [], stale: false, source: false };
   return harmonyState(lens.p, key, lensId({ lead: lens.lead, melody: lens.melody }, c.track));
+}
+
+/**
+ * "Move song" with the harmony records following: every chord, melody and bass note moves into the new key (see
+ * `transpose`), and a harmony clip that stood as it was written (not changed by hand, its source not changed since)
+ * still stands so afterwards: its record is brought up to date with the moved song. Without this a harmony would
+ * read as "its source changed" just because the whole song moved. A clip that was changed by hand or was out of
+ * date before the move stays so.
+ */
+export function transposeSong(song: TimelineSong, n: number, from: Key, to: Key): TimelineSong {
+  const moved = transpose(song, n, from, to);
+  if (moved === song) return song;
+  let out = moved;
+  let made = 0;
+  for (const c of song.clips) {
+    if (c.kind === "audio" || c.kind === "drums" || !c.harmony) continue;
+    try {
+      const was = harmonyState5(song, from, c.id);
+      if (!was.source || was.stale || was.edited.length) continue;
+      const target: Target = { track: c.track, clip: c.id };
+      const lens = lensOf(out, target, to, 0);
+      if (!lens) continue;
+      const p = remarkHarmony(lens.p, to, lensId({ lead: lens.lead, melody: lens.melody }, c.track));
+      if (p !== lens.p) out = unlens(out, target, lens, p, () => `moved-${++made}`);
+    } catch {
+      /* a clip that cannot be read this way keeps its record as it is */
+    }
+  }
+  return out;
 }

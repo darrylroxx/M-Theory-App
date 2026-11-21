@@ -23,7 +23,7 @@ export const BEAT_GROUPS: { id: BeatGroupId; name: string }[] = [
   { id: "dark", name: "Dark wave" },
   { id: "dance", name: "Electronic" },
   { id: "hiphop", name: "Hip hop" },
-  { id: "808", name: "808 & trap" },
+  { id: "808", name: "Trap & electro" },
   { id: "funk", name: "Funk & soul" },
   { id: "jazz", name: "Jazz" },
   { id: "heavy", name: "Punk & metal" },

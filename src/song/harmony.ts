@@ -562,3 +562,28 @@ export function harmonyState(p0: Progression, key: Key, id: string): HarmonyStat
   }
   return { edited, stale, source: true };
 }
+
+/**
+ * A harmony track's record of the section on screen, brought up to date with the song as it is now: the notes stay
+ * exactly as they are, and from here on they count as what was written from the source as it now stands. For when
+ * the whole song was moved (to another key, say) and the harmony with it: nothing was changed by hand and nothing is
+ * out of date, so the record follows. The same song back when the track has no record there, or it is up to date.
+ */
+export function remarkHarmony(p0: Progression, key: Key, id: string): Progression {
+  const p = flat(p0);
+  const t = allTracks(p).find((x) => x.id === id);
+  const h = t?.harmony;
+  const here = partHere(p);
+  const srcKind = h && kindOf(p, fromIn(h, here));
+  const m = h && markIn(p, h, here);
+  if (!t || !h || !m || !srcKind || (t.kind !== "chords" && t.kind !== "melody")) return p0;
+  const s = spots(p).find((x) => x.part === here);
+  if (!s) return p0;
+  const l = isFirst(id) ? contentIn(p, id, t.kind) : s.layers?.[id];
+  const input = inputIn(p, s, key, t.kind, fromIn(h, here), srcKind, optionIn(h, here), id, shapeIn(h, here));
+  const next: HarmonyMark = { ...m, src: srcPrint(input), out: outPrint(l) };
+  if (next.src === m.src && next.out === m.out) return p0;
+  const record: HarmonyOf = { ...h, marks: { ...h.marks, [here]: next } };
+  const q: Progression = isFirst(id) ? withHarmony(p, id, record) : { ...p, tracks: (p.tracks ?? []).map((x) => (x.id === id ? { ...x, harmony: record } : x)) };
+  return refocus(q, p0.focus);
+}

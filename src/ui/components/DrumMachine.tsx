@@ -7,6 +7,8 @@ import { RECIPES, getRecipe } from "../../audio/voices";
 import { barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
 import { sigName } from "../../song/meter";
 import { sectionSig } from "../../song/unity";
+import { plainName } from "../plugins/drums/names";
+import { setDrumView, useDrumView } from "../plugins/drums/store";
 import { newId, useApp } from "../state";
 import { Seg } from "./common";
 import { Choice, Knob, Picker, toneText } from "./controls";
@@ -22,8 +24,8 @@ export const snapOf = (b: Beat): Snap => ({ rows: b.rows, steps: b.steps, div: b
 export const putBack = (b: Beat, s: Snap): Beat => ({ ...b, ...s });
 const sameRows = (a: Beat["rows"], b: Beat["rows"]) => DRUM_IDS.every((id) => a[id] === b[id]);
 
-/** A drum's sound by name: a library sound ("Felt"), or the machine's ("808"). */
-const soundName = (v: VoiceId) => getRecipe(v)?.name ?? (isMachine(v) ? getKit(v).name : v);
+/** A drum's sound by name, in plain words: a library sound ("Felt"), or the machine's ("Boom"). */
+const soundName = (v: VoiceId) => plainName(getRecipe(v)?.name ?? (isMachine(v) ? getKit(v).name : v));
 /** Every sound a drum can have: the library's for that drum, then each machine's version. */
 const choicesFor = (id: DrumId): VoiceId[] => [...RECIPES[id].map((r) => r.id), ...KITS.map((k) => k.id)];
 const signed = (v: number) => (v > 0 ? `+${v}` : v < 0 ? `−${-v}` : "0");
@@ -32,19 +34,23 @@ const filterText = (v: number) => (Math.abs(v) < 0.025 ? "Off" : `${v < 0 ? "Low
 /** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
 const HOLD_MS = 1500;
 /**
- * Whether the page's drums go onto the track's desk at once: not while another section plays
- * (the kit is the section's own: the desk takes a change when this section comes round, or when
- * the music stops).
- * `pos`: how far into the page's section the music is (null: stopped, or another section sounding).
+ * Whether a change of the drums goes onto the track's desk at once: always. There is one desk for a drums track and
+ * one kit for the whole track, so nothing waits for "its section" to come round any more.
+ * (`playing` and `pos` are what the old rule read: whether the music plays, and how far into the page's bars it is.)
  */
-export const deskFollowsPage = (playing: boolean, pos: number | null) => !playing || pos !== null;
+export const deskFollowsPage = (_playing: boolean, _pos: number | null) => true;
 
 /**
  * The drum machine, always on the page under the chords.
  * What you see first is small: play, the kit, the rhythm and the grid. The grid is locked until
  * you tap Edit. Everything deeper (a drum's sound, the effects) opens only when you ask for it.
+ *
+ * Inside a plugin window of the track view it is given `trackId` and `show`, and is mounted twice for one track:
+ * once as the composer (the kit, the rhythm, the grid, swing) and once as the sound (the kit, the mixer, each
+ * drum's sound, the effects). Then nothing is read from "the section on screen", and which drum is chosen or
+ * heard alone is shared by the two (plugins/drums/store).
  */
-export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, frame, getPos, shown, follow, active, onAll }: {
+export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onPick, playing, frame, getPos, shown, follow, active, onAll, trackId, resetKey, show, bpm: songBpm, onSound }: {
   beat: Beat;
   setBeat: (fn: (b: Beat) => Beat) => void;
   onPick: (p: BeatPattern) => void;
@@ -63,6 +69,16 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   follow: boolean;
   /** the page is on screen (a hidden page does no work while the music plays) */
   active: boolean;
+  /** the drums track this is, inside a plugin window: the desk, the hits and the solo are that track's, and nothing is read from the section on screen */
+  trackId?: string;
+  /** (with `trackId`) changes when the window is on another clip: an edit in progress is let go, and the grid starts at bar 1 */
+  resetKey?: string | number;
+  /** which half is drawn: the composer (kit, rhythm, grid, swing) or the sound (kit, mixer, each drum's sound, effects). None: the whole page, as before */
+  show?: "compose" | "sound";
+  /** (with `trackId`) the song's tempo */
+  bpm?: number;
+  /** a drum's name was tapped in the composer: that drum's sound is asked for (the host shows the sound window) */
+  onSound?: (id: DrumId) => void;
 }) {
   const { state, set, toast, opened } = useApp();
   const mine = state.myBeats;
@@ -70,8 +86,15 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const current = findPattern(beat.patternId, mine);
   const [group, setGroup] = useState<GroupId>(current?.group ?? "dream");
   const [brush, setBrush] = useState<StepLevel>(2);
-  const [sel, setSel] = useState<DrumId>("kick");
-  const [solo, setSolo] = useState<DrumId | null>(null);
+  const hosted = trackId !== undefined;
+  // which drum is chosen and which is heard alone: the page's own, or (in a plugin window) shared by the track's two windows
+  const [ownSel, setOwnSel] = useState<DrumId>("kick");
+  const [ownSolo, setOwnSolo] = useState<DrumId | null>(null);
+  const both = useDrumView(trackId);
+  const sel = hosted ? both.sel : ownSel;
+  const solo = hosted ? both.solo : ownSolo;
+  const setSel = (id: DrumId) => (hosted ? setDrumView(trackId, { sel: id }) : setOwnSel(id));
+  const setSolo = (id: DrumId | null) => (hosted ? setDrumView(trackId, { solo: id }) : setOwnSolo(id));
   /** one of the two pickers under the header */
   const [drawer, setDrawer] = useState<"kit" | "rhythm" | null>(null);
   /** one of the two deep panels under the grid */
@@ -93,12 +116,12 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   const win: BarWindow = inWindow(w0, shownBar) ? w0 : { start: pageStart(shownBar, w0.count, bars), count: w0.count };
   const paged = win.count < bars;
   /** the bar to bring into sight in the grid once it is drawn (after a bar is chosen or a page turned) */
-  const show = useRef<number | null>(null);
+  const sight = useRef<number | null>(null);
   /** Move the window; the chosen bar comes along when it would be left off screen. */
   const moveTo = (s: number) => {
     const w = barWindow(bars, shown, s);
     setStart(w.start);
-    show.current = inWindow(w, shownBar) ? shownBar : w.start;
+    sight.current = inWindow(w, shownBar) ? shownBar : w.start;
     if (!inWindow(w, shownBar)) setBar(w.start);
   };
   const live = useRef({ editing: false, steps: beat.steps, div: beat.div, bars, win, follow, held: 0, gen: 0, moveTo });
@@ -112,7 +135,7 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     hold();
     setBar(b);
     setStart(reveal(win, b, bars));
-    show.current = b;
+    sight.current = b;
   };
   const tabsRef = useRef<HTMLDivElement>(null);
   const stepsRef = useRef<HTMLDivElement>(null);
@@ -125,18 +148,18 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
       else if (el.offsetLeft + el.offsetWidth > r.scrollLeft + r.clientWidth) r.scrollLeft = el.offsetLeft + el.offsetWidth - r.clientWidth + 8;
     }
     const box = stepsRef.current;
-    const g = show.current === null ? null : box?.querySelector<HTMLElement>(`[data-gbar="${show.current}"]`);
-    show.current = null;
+    const g = sight.current === null ? null : box?.querySelector<HTMLElement>(`[data-gbar="${sight.current}"]`);
+    sight.current = null;
     if (box && g && (g.offsetLeft < box.scrollLeft || g.offsetLeft + g.offsetWidth > box.scrollLeft + box.clientWidth + 1)) box.scrollLeft = g.offsetLeft;
   }, [shownBar, win.start]);
   const paint = useRef<{ id: DrumId; level: StepLevel; last: number } | null>(null);
   const heard = useRef({ at: 0, timer: 0 });
-  const bpm = state.progression.bpm;
+  const bpm = hosted && songBpm !== undefined ? songBpm : state.progression.bpm;
   const fx = fxOf(beat);
   const editing = !!edit;
   const list = group === "mine" ? mine : BEAT_LIBRARY.filter((p) => p.group === group);
   /** the drums track on the page: every one has a desk of its own, so its knobs and hits go there */
-  const track = state.progression.focus?.drums ?? "drums";
+  const track = hosted ? trackId : state.progression.focus?.drums ?? "drums";
 
   // the moving playhead, on the bar that is sounding, without redrawing the grid on every frame.
   // With Follow on, a page is turned when the music runs off the end of the bars on screen
@@ -203,8 +226,9 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   // the beat it started on, never to another track's), and the grid starts at bar 1. So is it when the
   // section's time signature changes (on the Frame page): the beat was fitted to the new bars, edit
   // and all, and the other sections that went along with it have it too, so it is kept as it is now
-  const section = state.progression.song?.current;
-  const meter = sigName(sectionSig(state.progression));
+  // (in a plugin window the host says when another clip is open; a change of bars there arrives as a fitted beat with the same Undo)
+  const section = hosted ? resetKey : state.progression.song?.current;
+  const meter = hosted ? "" : sigName(sectionSig(state.progression));
   useEffect(() => {
     setEdit(null);
     setBar(0);
@@ -213,14 +237,19 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
   // a drum soloed in one track's kit is not carried into the next track's, nor off this page: it is for
   // listening while working here, and no other page shows it (the Track page would play one drum while
   // drawing them all)
-  useEffect(() => setSolo(null), [track]);
+  // (of a track's two windows the sound window owns the solo: the composer only shows it)
+  const owns = show !== "compose";
   useEffect(() => {
-    if (!active) setSolo(null);
-  }, [active]);
+    if (!hosted) setOwnSolo(null);
+  }, [track, hosted]);
   useEffect(() => {
+    if (!active && owns) setSolo(null);
+  }, [active, owns]); // eslint-disable-line react-hooks/exhaustive-deps
+  useEffect(() => {
+    if (!owns) return;
     setDrumSolo(active ? solo : null, track);
     return () => setDrumSolo(null, track);
-  }, [solo, track, active]);
+  }, [solo, track, active, owns]);
 
   const sync = (b: Beat) => {
     if (deskFollowsPage(playing, getPos())) syncDrums(b, bpm, track);
@@ -428,99 +457,265 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     </span>
   );
 
+  // ── the parts of the page (the old page shows them all; a plugin window shows its half) ──
+  const kitPick = (
+    <span className="pick-wrap">
+      <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
+        onStep={(d) => pickKit(kits[(kitAt + d + kits.length) % kits.length])} />
+    </span>
+  );
+  const rhythmPick = (
+    <span className="pick-wrap">
+      <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
+    </span>
+  );
+  const kitDrawer = drawer === "kit" && (
+    <div className="dm-drawer" role="radiogroup" aria-label="Drum kit">
+      <div className="dm-tiles">{kits.slice(0, BUILTIN_KITS.length).map((k) => tile(k))}</div>
+      <span className="kb-label">Machines</span>
+      <div className="dm-tiles">{kits.slice(BUILTIN_KITS.length, BUILTIN_KITS.length + KITS.length).map((k) => tile(k))}</div>
+      <span className="kb-label">Mine</span>
+      <div className="dm-tiles">
+        {kits.slice(BUILTIN_KITS.length + KITS.length).map((k) => tile(k, () => set((s) => ({ ...s, myKits: s.myKits.filter((x) => x.id !== k.id) }))))}
+        <button className="dm-tile add" title="Keep this kit, its sounds and effects for other songs" onClick={saveKit}>+ Save this kit</button>
+      </div>
+    </div>
+  );
+  const rhythmDrawer = drawer === "rhythm" && (
+    <div className="dm-drawer">
+      <div className="dm-chips" role="radiogroup" aria-label="Rhythm style">
+        {BEAT_GROUPS.map((g) => <button key={g.id} role="radio" aria-checked={group === g.id} className={`chip${group === g.id ? " on" : ""}`} onClick={() => setGroup(g.id)}>{g.name}</button>)}
+        {mine.length > 0 && <button role="radio" aria-checked={group === "mine"} className={`chip${group === "mine" ? " on" : ""}`} onClick={() => setGroup("mine")}>Mine</button>}
+      </div>
+      <div className="dm-chips" role="listbox" aria-label="Rhythms">
+        {list.map((x) => {
+          const on = beat.patternId === x.id;
+          return (
+            <span key={x.id} className={`beat-item${on ? " on" : ""}`}>
+              <button role="option" aria-selected={on} onClick={() => { onPick(x); setDrawer(null); }}>{x.name}</button>
+              {x.group === "mine" && <button className="beat-del" aria-label={`Delete ${x.name}`} onClick={() => set((s) => ({ ...s, myBeats: s.myBeats.filter((y) => y.id !== x.id) }))}>✕</button>}
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+  const editTools = editing ? (
+    <>
+      <button className="btn sm" onClick={undo} disabled={!edit.past.length} aria-label="Undo">↶ Undo</button>
+      <Seg value={brush} options={[{ value: 1 as StepLevel, label: "Soft" }, { value: 2 as StepLevel, label: "Normal" }, { value: 3 as StepLevel, label: "Loud" }]} onChange={setBrush} label="How hard new hits are" />
+      <button className="btn sm" title="A small random change" aria-label="Vary" onClick={() => { remember(); setBeat((b) => ({ ...varyBeat(spread(b), Math.random, shownBar), on: true })); }}>✨</button>
+      {bars > 1 && shownBar > 0 && <button className="btn sm" title={`Copy bar ${shownBar} into bar ${shownBar + 1}`} aria-label="Copy the bar before" onClick={() => { remember(); setBeat((b) => ({ ...copyBar(spread(b), shownBar - 1, shownBar), on: true })); }}>⧉</button>}
+      <button className="btn sm danger" title={bars > 1 ? `Empty bar ${shownBar + 1}: it plays nothing` : "Empty the grid"} onClick={() => { remember(); setBeat((b) => clearBeat(spread(b), shownBar)); }}>Clear</button>
+      <span className="spacer" />
+      <button className="btn sm" onClick={cancel}>Cancel</button>
+      <button className="btn sm primary" onClick={save}>✓ Save</button>
+    </>
+  ) : (
+    <>
+      <button className={`btn sm dm-edit${nudge ? " nudge" : ""}`} onClick={startEdit}>✎ Edit</button>
+      <span className="spacer" />
+    </>
+  );
+  const tabRow = bars > 1 && (
+    <div className="dm-tabrow">
+      <span className="kb-label">Bar</span>
+      {paged && <button className="btn sm dm-page" aria-label="Earlier bars" disabled={win.start === 0} onClick={() => { hold(); moveTo(turnPage(win, -1, bars)); }}>‹</button>}
+      <div className="dm-bars" role="tablist" aria-label="Bars" ref={tabsRef}>
+        {Array.from({ length: bars }, (_, i) => (
+          <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={`${i === shownBar ? "on" : ""}${barHasHits(view, i) ? "" : " hollow"}${paged && inWindow(win, i) ? " inview" : ""}`} title={barHasHits(view, i) ? undefined : "Empty: plays nothing"} onClick={() => choose(i)}>{i + 1}</button>
+        ))}
+      </div>
+      {paged && <button className="btn sm dm-page" aria-label="Later bars" disabled={win.start + win.count >= bars} onClick={() => { hold(); moveTo(turnPage(win, 1, bars)); }}>›</button>}
+    </div>
+  );
+  /** a drum's name in the grid was tapped: it is heard and chosen, and its sound is shown (below the grid on the old page, in the sound window from a composer) */
+  const nameTap = (id: DrumId) => {
+    hit(id);
+    setSel(id);
+    if (show === "compose") {
+      if (trackId !== undefined) setDrumView(trackId, { hit: both.hit + 1 });
+      onSound?.(id);
+    } else setPanel("sound");
+  };
+  const shownSel = show === "compose" ? hosted : panel === "sound";
+  const grid = (
+    <div className={`beat-grid${editing ? "" : " locked"}${win.count > 1 ? " many" : ""}`} style={{ "--steps": beat.steps, "--count": win.count } as CSSProperties}>
+      <div className="bg-labels">
+        {win.count > 1 && <span className="bg-numpad" />}
+        {DRUM_IDS.map((id) => (
+          <button key={id} className={`bg-label d-${id}${shownSel && sel === id ? " on" : ""}${muted(id) ? " muted" : ""}`} aria-pressed={shownSel && sel === id} title={`${soundName(voiceOf(beat, id))}: tap to hear it and shape its sound`}
+            onClick={() => nameTap(id)}>{DRUM_LABEL[id]}</button>
+        ))}
+      </div>
+      <div className="bg-steps" ref={stepsRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onClick={onKey}>
+        {Array.from({ length: win.count }, (_, n) => {
+          const b = win.start + n;
+          return <DrumBar key={b} b={b} steps={beat.steps} div={beat.div} hits={DRUM_IDS.map((id) => view.rows[id]?.slice(b * beat.steps, (b + 1) * beat.steps) ?? "").join("|")} quiet={DRUM_IDS.filter(muted).join()} editing={editing} head={win.count > 1} sel={win.count > 1 && b === shownBar} named={bars > 1} />;
+        })}
+      </div>
+    </div>
+  );
+  const swingKnob = beat.div % 2 === 0 && <Knob label="Swing" title="Delays every second step" value={beat.swing} def={0} onChange={(v) => setFx({ swing: v })} />;
+  const mixPanel = (
+    <div className="dm-panel dm-mixer" role="group" aria-label="Drum mixer">
+      {DRUM_IDS.map((id) => {
+        const lv = soundOf(beat, id).level;
+        const quiet = muted(id);
+        return (
+          <div key={id} className={`dm-strip d-${id}${quiet ? " quiet" : ""}`} role="group" aria-label={DRUM_LABEL[id]}>
+            <span className="dm-val mono">{Math.round(lv * 100)}</span>
+            <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={lv} aria-label={`${DRUM_LABEL[id]} volume`}
+              onChange={(e) => setLevel(id, Number(e.target.value))} onDoubleClick={() => setLevel(id, defaultParams(id).level)}
+              onPointerUp={() => { if (!playing) hit(id); }} onKeyUp={() => { if (!playing) hit(id); }} />
+            <span className="dm-ms">
+              <button className={`tv-ms${beat.mutes?.includes(id) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(id)} aria-label={`Mute ${DRUM_LABEL[id]}`} onClick={() => toggleMute(id)}>M</button>
+              <button className={`tv-ms solo${solo === id ? " on" : ""}`} aria-pressed={solo === id} aria-label={`Solo ${DRUM_LABEL[id]}`} onClick={() => setSolo(solo === id ? null : id)}>S</button>
+            </span>
+            <button className="dm-strip-name" aria-label={`Hear the ${DRUM_LABEL[id].toLowerCase()}`} onClick={() => hit(id)}>{DRUM_LABEL[id]}</button>
+          </div>
+        );
+      })}
+      <div className="dm-strip kit" role="group" aria-label="Whole kit">
+        <span className="dm-val mono">{Math.round(fx.level * 100)}</span>
+        <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={fx.level} aria-label="Whole kit volume" onChange={(e) => setFx({ level: Number(e.target.value) })} onDoubleClick={() => setFx({ level: FX_DEFAULTS.level })} />
+        <span className="dm-ms" />
+        <span className="dm-strip-name">Kit</span>
+      </div>
+    </div>
+  );
+  const soundPanel = (
+    <div className={`dm-panel d-${sel}`} role="group" aria-label={`${DRUM_LABEL[sel]} sound`}>
+      <div className="dm-phead">
+        <button className="dm-wave" aria-label={`Hear the ${DRUM_LABEL[sel].toLowerCase()}`} title="Tap to hear it" onClick={() => hit(sel)}>
+          <Wave voice={voice} id={sel} p={p} />
+        </button>
+        <select className="dm-drum" aria-label="Drum" value={sel} onChange={(e) => { const id = e.target.value as DrumId; setSel(id); hit(id); }}>
+          {DRUM_IDS.map((id) => <option key={id} value={id}>{DRUM_LABEL[id]}</option>)}
+        </select>
+        <div className="beat-pick dm-sound">
+          <button aria-label="Previous sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) - 1 + c.length) % c.length]); }}>‹</button>
+          <select aria-label="Sound" title="Which sound this drum plays" value={voice} onChange={(e) => setVoice(e.target.value)}>
+            <optgroup label="Sounds">{RECIPES[sel].map((r) => <option key={r.id} value={r.id}>{plainName(r.name)}</option>)}</optgroup>
+            <optgroup label="Machines">{KITS.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}</optgroup>
+            {!choicesFor(sel).includes(voice) && <option value={voice}>{soundName(voice)}</option>}
+          </select>
+          <button aria-label="Next sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) + 1) % c.length]); }}>›</button>
+        </div>
+        <span className="spacer" />
+        <button className={`chip${beat.mutes?.includes(sel) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(sel)} aria-label="Mute" title="Mute" onClick={() => toggleMute(sel)}>M</button>
+        <button className={`chip${solo === sel ? " on" : ""}`} aria-pressed={solo === sel} aria-label="Solo" title="Hear only this drum" onClick={() => setSolo(solo === sel ? null : sel)}>S</button>
+        <button className="icon-btn dm-reset" disabled={!changed} aria-label={`Reset the ${DRUM_LABEL[sel].toLowerCase()}`} title="Back to this kit's own sound" onClick={resetSound}>↺</button>
+      </div>
+      <div className="knobs">
+        <Knob label="Tune" min={-12} max={12} step={1} value={p.tune} def={0} fmt={signed} onChange={(v) => setSound({ tune: v })} />
+        <Knob label="Decay" title="How long it rings" value={p.decay} def={def.decay} onChange={(v) => setSound({ decay: v })} />
+        <Knob label={TONE_LABEL[sel]} value={p.tone} def={def.tone} onChange={(v) => setSound({ tone: v })} />
+        <Knob label={PUNCH_LABEL[sel]} value={p.punch} def={def.punch} onChange={(v) => setSound({ punch: v })} />
+        <Knob label="Drive" title="Distortion on this drum only" value={p.drive} def={0} onChange={(v) => setSound({ drive: v })} />
+        <Knob label="Filter" title="Left: darker. Right: thinner." min={-1} max={1} value={p.filter} def={0} fmt={filterText} onChange={(v) => setSound({ filter: v })} />
+        <Knob label="Level" value={p.level} def={def.level} onChange={(v) => setSound({ level: v })} />
+        <Knob label="Pan" title="Left or right" min={-1} max={1} value={p.pan} def={def.pan} fmt={panText} onChange={(v) => setSound({ pan: v })} />
+        <Knob label="Reverb" title="How much of this drum goes to the reverb" value={p.space} def={def.space} onChange={(v) => setSound({ space: v })} />
+        <Knob label="Echo" title="How much of this drum goes to the echo" value={p.echo} def={def.echo} onChange={(v) => setSound({ echo: v })} />
+      </div>
+    </div>
+  );
+  const fxPanel = (
+    <div className="dm-panel dm-mix" role="group" aria-label="Effects for the whole kit">
+      <div className="dm-chips" role="radiogroup" aria-label="Vibe">
+        {VIBES.map((v) => <button key={v.id} role="radio" aria-checked={vibe === v.id} className={`chip${vibe === v.id ? " on" : ""}`} title={v.hint} onClick={() => { setFx(v.fx); if (!playing) hit("snare", { ...beat, ...v.fx }); }}>{v.name}</button>)}
+      </div>
+      <div className="knobs">
+        {/* (in a plugin window Swing is in the composer: it belongs to the rhythm, and is kept with the clip) */}
+        {show !== "sound" && swingKnob}
+        <Knob label="Human" title="Looser timing and touch, like a player" value={fx.human} def={0} onChange={(v) => setFx({ human: v })} />
+      </div>
+      <div className="knobs">
+        <Knob label="Saturation" title="The colour of analogue gear pushed hard: a little is warmth, a lot is distortion" value={fx.grit} def={FX_DEFAULTS.grit} onChange={(v) => setFx({ grit: v })} />
+        <Choice label="Colour" value={fx.color} options={SAT_TYPES} onChange={(v) => { setFx({ color: v, grit: fx.grit || 0.5 }); if (!playing) hit("snare", { ...beat, color: v }); }} />
+        {fx.grit > 0 && <Knob label="Blend" title="How much of the kit goes through the saturation. Half keeps the clean punch underneath." value={fx.blend} def={1} onChange={(v) => setFx({ blend: v })} />}
+      </div>
+      <div className="knobs">
+        <Choice label="Reverb type" value={fx.verb} options={VERBS} onChange={(v) => { setFx({ verb: v }); if (!playing) window.setTimeout(() => hit("snare"), 180); }} />
+        <Knob label="Reverb" value={fx.space} def={FX_DEFAULTS.space} onChange={(v) => setFx({ space: v })} />
+        <Knob label="Size" title="Small and short … big and long" value={fx.size} def={FX_DEFAULTS.size} onChange={(v) => setFx({ size: v })} />
+        <Knob label="Echo" value={fx.echo} def={0} onChange={(v) => setFx({ echo: v })} />
+        <div className="knob wide">
+          <span><i>Echo time</i></span>
+          <Seg value={fx.echoTime} options={ECHO_TIMES.map((e) => ({ value: e.id, label: e.label }))} onChange={(v) => setFx({ echoTime: v })} label="Echo time" />
+        </div>
+      </div>
+      <div className="knobs">
+        <Choice label="Sampler" value={fx.sampler} options={SAMPLERS} onChange={(v) => { setFx({ sampler: v }); if (!playing) hit("snare", { ...beat, sampler: v }); }} />
+        <Choice label="Noise" value={fx.noise} options={NOISE_BEDS} onChange={(v) => setFx({ noise: v })} />
+        {fx.noise !== "off" && <Knob label="Noise level" value={fx.noiseAmt} def={FX_DEFAULTS.noiseAmt} onChange={(v) => setFx({ noiseAmt: v })} />}
+        <Knob label="Tape" title="Wobbly and dull, like an old cassette" value={fx.tape} def={0} onChange={(v) => setFx({ tape: v })} />
+      </div>
+      <div className="knobs">
+        <Knob label="Tone" min={-1} max={1} value={fx.tone} def={0} fmt={toneText} onChange={(v) => setFx({ tone: v })} />
+        <Knob label="Glue" title="Squashes the kit together" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
+        <Knob label="Pump" title="The other tracks duck under every kick, then swell back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
+      </div>
+    </div>
+  );
+
+  // the composer of a plugin window: the kit and the rhythm, the tools of the grid, the grid, swing
+  if (show === "compose")
+    return (
+      <section className={`drums dp dp-compose${editing ? " editing" : ""}`} aria-label="Drums">
+        <div className="dp-top">
+          {kitPick}
+          {rhythmPick}
+          <div className="dm-bar">{editTools}</div>
+          {swingKnob && <div className="dp-swing knobs">{swingKnob}</div>}
+        </div>
+        {kitDrawer}
+        {rhythmDrawer}
+        {tabRow}
+        {grid}
+      </section>
+    );
+  // the sound of a plugin window: the kit, the drum mixer, each drum's sound, the effects of the whole kit
+  if (show === "sound")
+    return (
+      <section className="drums dp dp-sound" aria-label="Drum sound">
+        <div className="dp-sec" data-sec="kit">
+          <h3>Kit</h3>
+          <div className="dm-head">{kitPick}</div>
+          {kitDrawer}
+        </div>
+        <div className="dp-sec" data-sec="mix">
+          <h3>Mixer</h3>
+          {mixPanel}
+        </div>
+        <div className="dp-sec" data-sec="sound">
+          <h3>Sound</h3>
+          {soundPanel}
+        </div>
+        <div className="dp-sec" data-sec="fx">
+          <h3>Effects</h3>
+          {fxPanel}
+        </div>
+      </section>
+    );
+
   return (
     <section className={`card drums${editing ? " editing" : ""}`} aria-label="Drums">
       <div className="dm-head">
         <button className={`chip${beat.on ? " on" : ""}`} role="switch" aria-checked={beat.on} title="Play the drums under the chords" onClick={() => setBeat((b) => ({ ...b, on: !b.on }))}>{beat.on ? "On" : "Off"}</button>
-        <span className="pick-wrap">
-          <Picker label="Kit" name={kits[kitAt]?.name ?? ""} open={drawer === "kit"} onOpen={() => setDrawer(drawer === "kit" ? null : "kit")}
-          onStep={(d) => pickKit(kits[(kitAt + d + kits.length) % kits.length])} />
-        </span>
-        <span className="pick-wrap">
-          <Picker label="Rhythm" name={beat.name + (beat.edited ? "*" : "")} open={drawer === "rhythm"} disabled={editing} onOpen={() => setDrawer(drawer === "rhythm" ? null : "rhythm")} onStep={stepRhythm} />
-        </span>
+        {kitPick}
+        {rhythmPick}
       </div>
 
-      {drawer === "kit" && (
-        <div className="dm-drawer" role="radiogroup" aria-label="Drum kit">
-          <div className="dm-tiles">{kits.slice(0, BUILTIN_KITS.length).map((k) => tile(k))}</div>
-          <span className="kb-label">Machines</span>
-          <div className="dm-tiles">{kits.slice(BUILTIN_KITS.length, BUILTIN_KITS.length + KITS.length).map((k) => tile(k))}</div>
-          <span className="kb-label">Mine</span>
-          <div className="dm-tiles">
-            {kits.slice(BUILTIN_KITS.length + KITS.length).map((k) => tile(k, () => set((s) => ({ ...s, myKits: s.myKits.filter((x) => x.id !== k.id) }))))}
-            <button className="dm-tile add" title="Keep this kit, its sounds and effects for other songs" onClick={saveKit}>+ Save this kit</button>
-          </div>
-        </div>
-      )}
-      {drawer === "rhythm" && (
-        <div className="dm-drawer">
-          <div className="dm-chips" role="radiogroup" aria-label="Rhythm style">
-            {BEAT_GROUPS.map((g) => <button key={g.id} role="radio" aria-checked={group === g.id} className={`chip${group === g.id ? " on" : ""}`} onClick={() => setGroup(g.id)}>{g.name}</button>)}
-            {mine.length > 0 && <button role="radio" aria-checked={group === "mine"} className={`chip${group === "mine" ? " on" : ""}`} onClick={() => setGroup("mine")}>Mine</button>}
-          </div>
-          <div className="dm-chips" role="listbox" aria-label="Rhythms">
-            {list.map((x) => {
-              const on = beat.patternId === x.id;
-              return (
-                <span key={x.id} className={`beat-item${on ? " on" : ""}`}>
-                  <button role="option" aria-selected={on} onClick={() => { onPick(x); setDrawer(null); }}>{x.name}</button>
-                  {x.group === "mine" && <button className="beat-del" aria-label={`Delete ${x.name}`} onClick={() => set((s) => ({ ...s, myBeats: s.myBeats.filter((y) => y.id !== x.id) }))}>✕</button>}
-                </span>
-              );
-            })}
-          </div>
-        </div>
-      )}
+      {kitDrawer}
+      {rhythmDrawer}
 
-      <div className="dm-bar">
-        {editing ? (
-          <>
-            <button className="btn sm" onClick={undo} disabled={!edit.past.length} aria-label="Undo">↶ Undo</button>
-            <Seg value={brush} options={[{ value: 1 as StepLevel, label: "Soft" }, { value: 2 as StepLevel, label: "Normal" }, { value: 3 as StepLevel, label: "Loud" }]} onChange={setBrush} label="How hard new hits are" />
-            <button className="btn sm" title="A small random change" aria-label="Vary" onClick={() => { remember(); setBeat((b) => ({ ...varyBeat(spread(b), Math.random, shownBar), on: true })); }}>✨</button>
-            {bars > 1 && shownBar > 0 && <button className="btn sm" title={`Copy bar ${shownBar} into bar ${shownBar + 1}`} aria-label="Copy the bar before" onClick={() => { remember(); setBeat((b) => ({ ...copyBar(spread(b), shownBar - 1, shownBar), on: true })); }}>⧉</button>}
-            <button className="btn sm danger" title={bars > 1 ? `Empty bar ${shownBar + 1}: it plays nothing` : "Empty the grid"} onClick={() => { remember(); setBeat((b) => clearBeat(spread(b), shownBar)); }}>Clear</button>
-            <span className="spacer" />
-            <button className="btn sm" onClick={cancel}>Cancel</button>
-            <button className="btn sm primary" onClick={save}>✓ Save</button>
-          </>
-        ) : (
-          <>
-            <button className={`btn sm dm-edit${nudge ? " nudge" : ""}`} onClick={startEdit}>✎ Edit</button>
-            <span className="spacer" />
-          </>
-        )}
-      </div>
+      <div className="dm-bar">{editTools}</div>
 
-      {bars > 1 && (
-        <div className="dm-tabrow">
-          <span className="kb-label">Bar</span>
-          {paged && <button className="btn sm dm-page" aria-label="Earlier bars" disabled={win.start === 0} onClick={() => { hold(); moveTo(turnPage(win, -1, bars)); }}>‹</button>}
-          <div className="dm-bars" role="tablist" aria-label="Bars" ref={tabsRef}>
-            {Array.from({ length: bars }, (_, i) => (
-              <button key={i} role="tab" data-bar={i} aria-selected={i === shownBar} className={`${i === shownBar ? "on" : ""}${barHasHits(view, i) ? "" : " hollow"}${paged && inWindow(win, i) ? " inview" : ""}`} title={barHasHits(view, i) ? undefined : "Empty: plays nothing"} onClick={() => choose(i)}>{i + 1}</button>
-            ))}
-          </div>
-          {paged && <button className="btn sm dm-page" aria-label="Later bars" disabled={win.start + win.count >= bars} onClick={() => { hold(); moveTo(turnPage(win, 1, bars)); }}>›</button>}
-        </div>
-      )}
+      {tabRow}
 
-      <div className={`beat-grid${editing ? "" : " locked"}${win.count > 1 ? " many" : ""}`} style={{ "--steps": beat.steps, "--count": win.count } as CSSProperties}>
-        <div className="bg-labels">
-          {win.count > 1 && <span className="bg-numpad" />}
-          {DRUM_IDS.map((id) => (
-            <button key={id} className={`bg-label d-${id}${panel === "sound" && sel === id ? " on" : ""}${muted(id) ? " muted" : ""}`} aria-pressed={panel === "sound" && sel === id} title={`${soundName(voiceOf(beat, id))}: tap to hear it and shape its sound`}
-              onClick={() => { hit(id); setSel(id); setPanel("sound"); }}>{DRUM_LABEL[id]}</button>
-          ))}
-        </div>
-        <div className="bg-steps" ref={stepsRef} onPointerDown={onDown} onPointerMove={onMove} onPointerUp={onUp} onPointerCancel={onUp} onClick={onKey}>
-          {Array.from({ length: win.count }, (_, n) => {
-            const b = win.start + n;
-            return <DrumBar key={b} b={b} steps={beat.steps} div={beat.div} hits={DRUM_IDS.map((id) => view.rows[id]?.slice(b * beat.steps, (b + 1) * beat.steps) ?? "").join("|")} quiet={DRUM_IDS.filter(muted).join()} editing={editing} head={win.count > 1} sel={win.count > 1 && b === shownBar} named={bars > 1} />;
-          })}
-        </div>
-      </div>
+      {grid}
 
       <div className="dm-tabs">
         <button className={`chip${panel === "mix" ? " on" : ""}`} aria-expanded={panel === "mix"} onClick={() => setPanel(panel === "mix" ? null : "mix")}>Mixer</button>
@@ -529,109 +724,9 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
         {onAll && <button className="chip all-chip" title="These drums sound like this in every section that has them (the rhythm stays each section's own)" onClick={onAll}>All sections</button>}
       </div>
 
-      {panel === "mix" && (
-        <div className="dm-panel dm-mixer" role="group" aria-label="Drum mixer">
-          {DRUM_IDS.map((id) => {
-            const lv = soundOf(beat, id).level;
-            const quiet = muted(id);
-            return (
-              <div key={id} className={`dm-strip d-${id}${quiet ? " quiet" : ""}`} role="group" aria-label={DRUM_LABEL[id]}>
-                <span className="dm-val mono">{Math.round(lv * 100)}</span>
-                <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={lv} aria-label={`${DRUM_LABEL[id]} volume`}
-                  onChange={(e) => setLevel(id, Number(e.target.value))} onDoubleClick={() => setLevel(id, defaultParams(id).level)}
-                  onPointerUp={() => { if (!playing) hit(id); }} onKeyUp={() => { if (!playing) hit(id); }} />
-                <span className="dm-ms">
-                  <button className={`tv-ms${beat.mutes?.includes(id) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(id)} aria-label={`Mute ${DRUM_LABEL[id]}`} onClick={() => toggleMute(id)}>M</button>
-                  <button className={`tv-ms solo${solo === id ? " on" : ""}`} aria-pressed={solo === id} aria-label={`Solo ${DRUM_LABEL[id]}`} onClick={() => setSolo(solo === id ? null : id)}>S</button>
-                </span>
-                <button className="dm-strip-name" aria-label={`Hear the ${DRUM_LABEL[id].toLowerCase()}`} onClick={() => hit(id)}>{DRUM_LABEL[id]}</button>
-              </div>
-            );
-          })}
-          <div className="dm-strip kit" role="group" aria-label="Whole kit">
-            <span className="dm-val mono">{Math.round(fx.level * 100)}</span>
-            <input type="range" className="dm-fader" min={0} max={1} step={0.01} value={fx.level} aria-label="Whole kit volume" onChange={(e) => setFx({ level: Number(e.target.value) })} onDoubleClick={() => setFx({ level: FX_DEFAULTS.level })} />
-            <span className="dm-ms" />
-            <span className="dm-strip-name">Kit</span>
-          </div>
-        </div>
-      )}
-
-      {panel === "sound" && (
-        <div className={`dm-panel d-${sel}`} role="group" aria-label={`${DRUM_LABEL[sel]} sound`}>
-          <div className="dm-phead">
-            <button className="dm-wave" aria-label={`Hear the ${DRUM_LABEL[sel].toLowerCase()}`} title="Tap to hear it" onClick={() => hit(sel)}>
-              <Wave voice={voice} id={sel} p={p} />
-            </button>
-            <select className="dm-drum" aria-label="Drum" value={sel} onChange={(e) => { const id = e.target.value as DrumId; setSel(id); hit(id); }}>
-              {DRUM_IDS.map((id) => <option key={id} value={id}>{DRUM_LABEL[id]}</option>)}
-            </select>
-            <div className="beat-pick dm-sound">
-              <button aria-label="Previous sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) - 1 + c.length) % c.length]); }}>‹</button>
-              <select aria-label="Sound" title="Which sound this drum plays" value={voice} onChange={(e) => setVoice(e.target.value)}>
-                <optgroup label="Sounds">{RECIPES[sel].map((r) => <option key={r.id} value={r.id}>{r.name}</option>)}</optgroup>
-                <optgroup label="Machines">{KITS.map((k) => <option key={k.id} value={k.id}>{k.name}</option>)}</optgroup>
-                {!choicesFor(sel).includes(voice) && <option value={voice}>{soundName(voice)}</option>}
-              </select>
-              <button aria-label="Next sound" onClick={() => { const c = choicesFor(sel); setVoice(c[(c.indexOf(voice) + 1) % c.length]); }}>›</button>
-            </div>
-            <span className="spacer" />
-            <button className={`chip${beat.mutes?.includes(sel) ? " on" : ""}`} aria-pressed={!!beat.mutes?.includes(sel)} aria-label="Mute" title="Mute" onClick={() => toggleMute(sel)}>M</button>
-            <button className={`chip${solo === sel ? " on" : ""}`} aria-pressed={solo === sel} aria-label="Solo" title="Hear only this drum" onClick={() => setSolo(solo === sel ? null : sel)}>S</button>
-            <button className="icon-btn dm-reset" disabled={!changed} aria-label={`Reset the ${DRUM_LABEL[sel].toLowerCase()}`} title="Back to this kit's own sound" onClick={resetSound}>↺</button>
-          </div>
-          <div className="knobs">
-            <Knob label="Tune" min={-12} max={12} step={1} value={p.tune} def={0} fmt={signed} onChange={(v) => setSound({ tune: v })} />
-            <Knob label="Decay" title="How long it rings" value={p.decay} def={def.decay} onChange={(v) => setSound({ decay: v })} />
-            <Knob label={TONE_LABEL[sel]} value={p.tone} def={def.tone} onChange={(v) => setSound({ tone: v })} />
-            <Knob label={PUNCH_LABEL[sel]} value={p.punch} def={def.punch} onChange={(v) => setSound({ punch: v })} />
-            <Knob label="Drive" title="Distortion on this drum only" value={p.drive} def={0} onChange={(v) => setSound({ drive: v })} />
-            <Knob label="Filter" title="Left: darker. Right: thinner." min={-1} max={1} value={p.filter} def={0} fmt={filterText} onChange={(v) => setSound({ filter: v })} />
-            <Knob label="Level" value={p.level} def={def.level} onChange={(v) => setSound({ level: v })} />
-            <Knob label="Pan" title="Left or right" min={-1} max={1} value={p.pan} def={def.pan} fmt={panText} onChange={(v) => setSound({ pan: v })} />
-            <Knob label="Reverb" title="How much of this drum goes to the reverb" value={p.space} def={def.space} onChange={(v) => setSound({ space: v })} />
-            <Knob label="Echo" title="How much of this drum goes to the echo" value={p.echo} def={def.echo} onChange={(v) => setSound({ echo: v })} />
-          </div>
-        </div>
-      )}
-
-      {panel === "fx" && (
-        <div className="dm-panel dm-mix" role="group" aria-label="Effects for the whole kit">
-          <div className="dm-chips" role="radiogroup" aria-label="Vibe">
-            {VIBES.map((v) => <button key={v.id} role="radio" aria-checked={vibe === v.id} className={`chip${vibe === v.id ? " on" : ""}`} title={v.hint} onClick={() => { setFx(v.fx); if (!playing) hit("snare", { ...beat, ...v.fx }); }}>{v.name}</button>)}
-          </div>
-          <div className="knobs">
-            {beat.div % 2 === 0 && <Knob label="Swing" title="Delays every second step" value={beat.swing} def={0} onChange={(v) => setFx({ swing: v })} />}
-            <Knob label="Human" title="Looser timing and touch, like a player" value={fx.human} def={0} onChange={(v) => setFx({ human: v })} />
-          </div>
-          <div className="knobs">
-            <Knob label="Saturation" title="The colour of analogue gear pushed hard: a little is warmth, a lot is distortion" value={fx.grit} def={FX_DEFAULTS.grit} onChange={(v) => setFx({ grit: v })} />
-            <Choice label="Colour" value={fx.color} options={SAT_TYPES} onChange={(v) => { setFx({ color: v, grit: fx.grit || 0.5 }); if (!playing) hit("snare", { ...beat, color: v }); }} />
-            {fx.grit > 0 && <Knob label="Blend" title="How much of the kit goes through the saturation. Half keeps the clean punch underneath." value={fx.blend} def={1} onChange={(v) => setFx({ blend: v })} />}
-          </div>
-          <div className="knobs">
-            <Choice label="Reverb type" value={fx.verb} options={VERBS} onChange={(v) => { setFx({ verb: v }); if (!playing) window.setTimeout(() => hit("snare"), 180); }} />
-            <Knob label="Reverb" value={fx.space} def={FX_DEFAULTS.space} onChange={(v) => setFx({ space: v })} />
-            <Knob label="Size" title="Small and short … big and long" value={fx.size} def={FX_DEFAULTS.size} onChange={(v) => setFx({ size: v })} />
-            <Knob label="Echo" value={fx.echo} def={0} onChange={(v) => setFx({ echo: v })} />
-            <div className="knob wide">
-              <span><i>Echo time</i></span>
-              <Seg value={fx.echoTime} options={ECHO_TIMES.map((e) => ({ value: e.id, label: e.label }))} onChange={(v) => setFx({ echoTime: v })} label="Echo time" />
-            </div>
-          </div>
-          <div className="knobs">
-            <Choice label="Sampler" value={fx.sampler} options={SAMPLERS} onChange={(v) => { setFx({ sampler: v }); if (!playing) hit("snare", { ...beat, sampler: v }); }} />
-            <Choice label="Noise" value={fx.noise} options={NOISE_BEDS} onChange={(v) => setFx({ noise: v })} />
-            {fx.noise !== "off" && <Knob label="Noise level" value={fx.noiseAmt} def={FX_DEFAULTS.noiseAmt} onChange={(v) => setFx({ noiseAmt: v })} />}
-            <Knob label="Tape" title="Wobbly and dull, like an old cassette" value={fx.tape} def={0} onChange={(v) => setFx({ tape: v })} />
-          </div>
-          <div className="knobs">
-            <Knob label="Tone" min={-1} max={1} value={fx.tone} def={0} fmt={toneText} onChange={(v) => setFx({ tone: v })} />
-            <Knob label="Glue" title="Squashes the kit together" value={fx.glue} def={FX_DEFAULTS.glue} onChange={(v) => setFx({ glue: v })} />
-            <Knob label="Pump" title="The other tracks duck under every kick, then swell back" value={fx.pump} def={0} onChange={(v) => setFx({ pump: v })} />
-          </div>
-        </div>
-      )}
+      {panel === "mix" && mixPanel}
+      {panel === "sound" && soundPanel}
+      {panel === "fx" && fxPanel}
     </section>
   );
 });
