@@ -39,3 +39,32 @@ What the host (step 1c) must know:
 - `useWindows(session, setSession)` returns `{ open, close, focus, focused, move }`; plain functions `firstPlace`, `keepInside`, `isSheet`, `openWin`, `closeWin`, `frontWin`, `placeWin`, `openWins`, `zOf` (45 to 59), `openLabel(song, clip)`, `winId`; also `useWinFocus()`, `useSheet()`, `PANEL_W = 260`, `TOP_H = 84`, `SOUND_W = 420`. A closed window stays in `session.windows` with `open: false`.
 - Keys: `keyAction(e, where, desktop)`, `whereOf(target)`, `listenKeys(run, desktop)`. Escape is a registry: `onEscape(level, fn)` with `ESC_OPEN = 3`, `ESC_WINDOW = 2`, `ESC_VIEW = 1`, run by `runEscape()`; sheets, the Canvas and the shape finder should register there. A container that carries `data-keys="own"` (or class `.sheet`) gets only Space, undo, redo, save, Escape. The take list should carry `data-keys="takes"`.
 - Rough edges left: the clip's button row covers the top of a selected clip (and overhangs clips narrower than about 160 px); the box select does not scroll at the edges; a new blank track is named "Audio 1" by `addTrack` while the chooser says "Blank"; touch is basic; `TrackView.tsx` is about 1,050 lines.
+
+## Step 1a part 2 (cuts, flatten, conversion, library, lens, engine touches E1 and E2)
+Render equality: all 17 fixtures and the worked example ask the engine for exactly what the old song asked (offline, live, on a loop, after store-and-load). MIDI differs in two documented cases only (a row split by sound), asserted exactly in `equal.test.ts`.
+
+Exports:
+- `cuts.ts`: `cutPoints(song)`, `stretches(song)`, `noteClips`, `drumsClipsOf`, `barOwner`, `gridOf`, `leadDrums`, `leadFeel`, `MAX_STRETCH_BARS = 32`.
+- `flatten.ts`: `FlattenCtx { voicingsOf(chords, arrange); buffer(take, dry?); bypass? }`, `Range { spans; loop; cut? }`, `Flat { items; at; origin; loop; any; end }`, `flatten(song, ctx, range?)`, `songBeat(flat, { index, beat })`, `drySound`, `dryKit`, `beatOf`.
+- `migrate5.ts`: `toTimeline(p): { song; ids }`, `heardTone`, `soundKey`, `unplacedTakes(song)`, `FIRST_IDS = { chords: "t-chords", melody: "t-melody", drums: "t-drums" }`, `SOLO_BLOCK = "a"`.
+- `convert.ts`: `convertAll(old: AppStateV4, now?)`, `convertIdea(i): { idea; backup }`, `arrive(s, old, original): { state; added? }`, `clipboard5`, `newSession()`, `backupId(id) => id + "-v4"`, `besideId(id) => id + "-o"`.
+- `library5.ts`: `reviveSong5`, `reviveIdea5`, `reviveMelody5`, `fingerprint5`, `describeIdea5`, `mergeIdeas5`, `toPush5` (never sends a backup entry), `exportIdeas5(ideas, originals)` (file version 2), `importIdeas5(text): { version; ideas; originals; old }`, `emptySong5`, `ideaTime5`, `isBlank5`, `rhythmOf`.
+- `lens.ts`: `Target { track; clip?; fresh? }`, `Lens { p; span; lead; melody }`, `lensOf(song, target, key, anchor)`, `unlens(song, target, lens, after, id)`, `chordsUnderSpan`, `harmonyState5`.
+- `renderlog.ts` (test helper): `renderLog`, `liveLog`, `logDiff`, `midiTracks`, `fakeBuffer`.
+- `song/melody.ts`: `MelodyNote.len?`, `TuneHit.len?`, `gridRows(key, low, octaves, keyOnly?)`, `GRID_LOW = 24`, `GRID_HIGH = 108`. Audio: `playTuneNote(..., as?, len?)`, `PlayItem.meter.swing?`, `meterOf(b, own?)`.
+- Tester's data: `src/timeline/fixtures/v4-ideas.json` (18 old-format ideas).
+
+What the switch-over (1c) must know:
+- `flatten` keeps its work per `ctx.voicingsOf` function: keep that function stable (memo on tuning, capo, shapes). `ctx.buffer` must return the same object for the same take, or takes restart.
+- Pass `null` for the player's fallback beat and tune. Use `keepSlots(slotsOf(flat.items), trackIds)` as before.
+- MIDI export: pass `names` as track id → name; the file's first track is empty.
+- `arrive` leaves storing the newer original to the caller: after `"refreshed"` under the idea's id, after `"beside"` under `<id>-o`. If `original(id)` returns null the idea counts as edited and the copy goes beside it.
+- Conversion toast count: `unplacedTakes(song)`.
+- Lens targets: `{track, clip}` for a clip; `{track, fresh}` for an empty track; `{track}` alone for the draft. `unlens` returns the same song object when nothing changed. `Lens.melody` presents the top melody track under the old id "melody" so harmony checks read as before.
+- `transpose` in `edit.ts` does not update a clip's harmony fingerprints, so after "Move song" a harmony may read as changed (the old app followed the marks): fix in 1c or note it.
+- `store5.ts` and `backupSource` are NOT built yet: they belong to 1c. "A version 5 song is never converted" is to be tested on `load5` in 1c.
+- `renderLog` and `liveLog` are ready for `player5.test.ts`.
+
+What recording (1d) must know:
+- Lane tracks (`v1~2`, …) hold copies of the take records their clips play; the same take id can be on two tracks. `joined` is decided across all audio clips of the song.
+- E1 `len` is in twelfths of a beat; `flatten` sets it only where a note would otherwise be held past its clip's end.

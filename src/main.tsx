@@ -1,11 +1,15 @@
-import { StrictMode } from "react";
+import { StrictMode, Suspense, lazy } from "react";
 import { createRoot } from "react-dom/client";
 import App from "./ui/App";
 import "./ui/styles.css";
 
+// ?fixture=timeline shows the track view on a song built by hand, in place of the app (it is loaded only then)
+const fixture = new URLSearchParams(window.location.search).get("fixture") === "timeline";
+const FixturePage = lazy(() => import("./ui/timeline/FixturePage"));
+
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
-    <App />
+    {fixture ? <Suspense fallback={null}><FixturePage /></Suspense> : <App />}
   </StrictMode>,
 );
 

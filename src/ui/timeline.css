@@ -1,0 +1,256 @@
+/* ── The track view: a top bar, a ruler, track panels on the left, lanes with clips. And the plugin window. ──
+   Colours, fonts and button looks are the app's own (styles.css): this file only lays the view out. */
+
+.tlv { height: 100vh; height: 100dvh; width: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.tlv input, .tlw input, .tlw textarea { user-select: text; -webkit-user-select: text; }
+
+/* ── top bar: 48 px ── */
+.tlv .tlv-top { flex: none; position: relative; top: 0; height: 48px; box-sizing: border-box; }
+.tlv .tlv-top.popped { z-index: 62; }
+.tlv-top-in { height: 47px; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
+.tlv-brand { flex: none; gap: 6px; }
+.tlv-brand .brand-mark { width: 28px; height: 28px; border-radius: 8px; font-size: 0.95rem; }
+.tlv-brand .draft-badge { margin-left: 0; }
+.tlv-transport { flex: none; display: inline-flex; align-items: center; gap: 6px; }
+.tlv-transport .play-btn { width: 34px; height: 34px; font-size: 0.9rem; padding: 0; }
+.tlv-round { position: relative; flex: none; width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border-2); background: var(--card); font-size: 1rem; font-weight: 700; line-height: 1; padding: 0; display: inline-grid; place-items: center; }
+.tlv-round:hover:not(:disabled) { border-color: var(--accent); }
+.tlv-round.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tlv-round.rec { color: #e5483b; font-size: 0.8rem; }
+.tlv-round.rec.on { background: #e5483b; border-color: transparent; color: #fff; animation: tlv-rec 1.2s ease-in-out infinite; }
+.tlv-round.rec .live-dot { position: absolute; top: -1px; right: -1px; margin: 0; }
+.tlv-round.flat { border-color: transparent; background: none; font-size: 1.15rem; }
+.tlv-round:disabled { opacity: 0.35; cursor: default; }
+@keyframes tlv-rec { 50% { box-shadow: 0 0 0 4px rgba(229, 72, 59, 0.28); } }
+.tlv-mon { flex: none; flex-wrap: nowrap; padding: 2px; border-radius: 9px; }
+.tlv-mon button { padding: 4px 8px; font-size: 0.74rem; border-radius: 6px; white-space: nowrap; }
+.tlv-pos { flex: none; min-width: 92px; text-align: center; font-size: 0.84rem; font-weight: 700; padding: 5px 8px; border-radius: 8px; background: var(--bg-2); border: 1px solid var(--border); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.tlv-val { position: relative; flex: none; height: 30px; padding: 0 9px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card-2); font-weight: 750; font-size: 0.84rem; white-space: nowrap; }
+.tlv-val:hover, .tlv-val.on, .tlv-popbtn.on { border-color: var(--accent); }
+.tlv-val small { margin-left: 3px; font-size: 0.62rem; font-weight: 700; color: var(--muted); }
+.tlv-bpm { cursor: ns-resize; touch-action: none; }
+.tlv-warn { position: absolute; top: -3px; right: -3px; width: 8px; height: 8px; border-radius: 50%; background: #e0a020; }
+.tlv-undo { flex: none; display: inline-flex; }
+.tlv-idea { flex: 0 1 auto; margin-left: auto; min-width: 0; display: inline-flex; align-items: center; gap: 8px; }
+.tlv-idea-name { min-width: 0; max-width: 170px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 750; font-size: 0.86rem; }
+.tlv-idea-name.none { color: var(--muted); font-weight: 600; }
+.tlv-top-in > .btn, .tlv-top-in > .icon-btn, .tlv-idea .btn { flex: none; }
+.tlv-top-in > .icon-btn { width: 32px; height: 32px; }
+/* the quiet panels under key, tempo, signature and Export */
+.tlv-popwrap { position: relative; flex: none; display: inline-flex; }
+.tlv-pop { position: absolute; top: calc(100% + 9px); left: 0; z-index: 2; min-width: 200px; padding: 12px; border-radius: 12px; background: var(--card); border: 1px solid var(--border-2); box-shadow: var(--shadow); cursor: default; }
+.tlv-pop.wide { width: 620px; max-width: calc(100vw - 24px); }
+.tlv-pop.right { left: auto; right: 0; }
+.tlv-pop .fr-note { margin-top: 10px; }
+.tlv-tempo { display: flex; align-items: center; gap: 8px; min-width: 280px; }
+.tlv-tempo input { flex: 1; min-width: 0; }
+.tlv-sigs { display: flex; gap: 6px; }
+.tlv-fromhere { margin-top: 12px; font-size: 0.84rem; white-space: nowrap; }
+.tlv-out { display: flex; gap: 8px; }
+
+/* ── ruler row: 36 px. Over the panels: Follow, − fit +. Then the ruler ── */
+.tlv-rulerrow { flex: none; height: 36px; box-sizing: border-box; display: flex; background: var(--card); border-bottom: 1px solid var(--border); }
+.tlv-corner { flex: none; width: 260px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-right: 1px solid var(--border); }
+.tlv-follow { height: 22px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.72rem; font-weight: 750; }
+.tlv-follow.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.tlv-zoom { margin-left: auto; display: inline-flex; border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
+.tlv-zoom button { height: 22px; min-width: 26px; padding: 0 7px; border: none; background: var(--card-2); font-size: 0.85rem; font-weight: 800; line-height: 1; }
+.tlv-zoom button + button { border-left: 1px solid var(--border-2); }
+.tlv-zoom button.fit { font-size: 0.72rem; font-weight: 750; }
+.tlv-zoom button:hover, .tlv-follow:hover { color: var(--accent); }
+.tlv-follow.on:hover { color: var(--accent-ink); }
+.tlv-ruler { flex: 1; min-width: 0; position: relative; overflow: hidden; touch-action: none; cursor: default; }
+.tlv-tick { position: absolute; bottom: 0; height: 5px; box-sizing: border-box; border-left: 1px solid color-mix(in srgb, var(--border-2) 75%, transparent); font-style: normal; pointer-events: none; }
+.tlv-tick.n { height: 18px; padding: 3px 0 0 3px; font-size: 0.62rem; line-height: 1; color: var(--muted); border-left-color: var(--border-2); font-variant-numeric: tabular-nums; }
+/* a stretch of the loop: moved by its middle, changed by its ends, taken out with its ✕ */
+.tlv-band { position: absolute; bottom: 0; height: 18px; box-sizing: border-box; border: 1px solid var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 28%, transparent); cursor: grab; }
+.tlv-ruler:not(.looping) .tlv-band { border-style: dashed; background: color-mix(in srgb, var(--accent) 10%, transparent); }
+.tlv-band-end { position: absolute; top: -1px; bottom: -1px; width: 7px; cursor: ew-resize; }
+.tlv-band-end.l { left: -3px; }
+.tlv-band-end.r { right: -3px; }
+.tlv-band-x { position: absolute; right: 6px; top: 1px; width: 14px; height: 14px; padding: 0; border: none; border-radius: 50%; background: var(--accent); color: var(--accent-ink); font-size: 0.5rem; font-weight: 900; line-height: 1; display: grid; place-items: center; }
+.tlv-band-x.out { right: -18px; }
+/* what stands at a beat, over the numbers: a marker's name, and a flag where the time signature changes */
+.tlv-at { position: absolute; top: 1px; height: 15px; display: flex; align-items: stretch; gap: 3px; }
+.tlv-marker { box-sizing: border-box; max-width: 150px; padding: 0 6px 0 4px; border-left: 2px solid var(--stable); border-radius: 0 4px 4px 0; background: color-mix(in srgb, var(--stable) 18%, var(--card)); color: var(--text); font-size: 0.66rem; font-weight: 800; line-height: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; cursor: grab; }
+.tlv-marker.on { background: var(--stable); color: #14161a; }
+.tlv-marker-name { width: 88px; height: 15px; padding: 0 2px; border: none; border-radius: 3px; background: var(--card); color: var(--text); font: inherit; outline: 1px solid var(--accent); }
+.tlv-flag { box-sizing: border-box; padding: 0 4px; border: 1px solid var(--border-2); border-radius: 4px; background: var(--card-2); color: var(--muted); font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 0.6rem; font-weight: 800; line-height: 13px; }
+.tlv-flag:hover { border-color: var(--accent); color: var(--text); }
+.tlv-end { position: absolute; top: 0; bottom: 0; width: 0; border-left: 2px solid var(--faint); pointer-events: none; }
+.tlv-end b { position: absolute; top: 1px; left: 4px; padding: 0 5px; border: 1px solid var(--border); border-radius: 4px; background: var(--card); color: var(--muted); font-size: 0.62rem; font-weight: 750; line-height: 13px; white-space: nowrap; }
+.tlv-end.left b { left: auto; right: 5px; }
+.tlv-end.off { border-left: none; }
+.tlv-cur-head { position: absolute; bottom: 0; width: 0; height: 0; margin-left: -5px; border: 5px solid transparent; border-top: 6px solid var(--text); border-bottom: none; pointer-events: none; }
+
+/* ── the box the panels and lanes share: it scrolls up and down, never sideways ── */
+.tlv-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; background: var(--card-2); }
+.tlv-rows { position: relative; min-height: 100%; display: grid; grid-template-columns: 260px minmax(0, 1fr); overflow: clip; }
+
+/* a track's panel: 260 × 64, two lines beside its colour and grip */
+.tlh { grid-column: 1; position: relative; z-index: 4; height: 64px; box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); grid-template-rows: 1fr 1fr; column-gap: 7px; padding: 4px 8px 5px 0; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.tlh.on { background: color-mix(in srgb, var(--kc) 11%, var(--card)); }
+.tlh-grip { grid-row: 1 / 3; margin: -4px 0 -5px; padding: 0; border: none; border-radius: 0; background: color-mix(in srgb, var(--kc) 62%, var(--card)); color: color-mix(in srgb, #14161a 62%, transparent); display: grid; place-items: center; cursor: grab; touch-action: none; }
+.tlh.on .tlh-grip { background: var(--kc); }
+.tlh-grip svg { width: 10px; height: 14px; }
+.tlh-line { min-width: 0; display: flex; align-items: center; gap: 5px; }
+.tlh-kind { flex: none; display: grid; color: var(--muted); }
+.tlh-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-weight: 800; font-size: 0.86rem; cursor: default; }
+.tlh.quiet .tlh-name, .tlh.quiet .tlh-kind { opacity: 0.45; }
+.tlh-rename { flex: 1; min-width: 0; height: 22px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--accent); background: var(--card); color: var(--text); font: inherit; font-size: 0.86rem; font-weight: 800; }
+.tlh-db { flex: none; min-width: 34px; text-align: right; font-size: 0.68rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tlh-more { flex: none; width: 22px; height: 20px; padding: 0; border: none; border-radius: 6px; background: none; color: var(--muted); font-weight: 900; line-height: 1; }
+.tlh-more:hover { background: var(--card-2); color: var(--text); }
+.tlh-btn { flex: none; height: 24px; min-width: 28px; padding: 0 5px; border-radius: 7px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--text); font-size: 0.68rem; font-weight: 850; display: inline-grid; place-items: center; }
+.tlh-btn:hover { border-color: var(--accent); color: var(--accent); }
+.tlh-compose { min-width: 30px; padding: 0 4px; }
+.tlh-compose svg { display: block; }
+.tlh-fx.lit { border-color: color-mix(in srgb, var(--fifth) 70%, var(--border-2)); color: var(--fifth); }
+.tlh.fresh .tlh-compose { animation: tlv-pulse 1.4s ease-out 1; }
+@keyframes tlv-pulse { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 30% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); color: var(--accent); } }
+.tlh-ms { flex: none; width: 24px; height: 22px; padding: 0; border-radius: 6px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.7rem; font-weight: 900; }
+.tlh-ms.on { background: var(--tension); border-color: transparent; color: #fff; }
+.tlh-ms.solo.on { background: var(--fifth); color: #14161a; }
+.tlh-vol { flex: 1 1 36px; min-width: 30px; width: 30px; height: 16px; margin: 0; }
+.tlh-arm { flex: none; width: 22px; height: 22px; padding: 0; border-radius: 50%; border: 1px solid var(--border-2); background: var(--card-2); color: #e5483b; font-size: 0.58rem; line-height: 1; display: inline-grid; place-items: center; }
+.tlh-arm.on { background: #e5483b; border-color: transparent; color: #fff; box-shadow: 0 0 0 2px rgba(229, 72, 59, 0.25); }
+.tlh-in { flex: none; height: 22px; min-width: 24px; padding: 0 5px; border-radius: 6px; border: 1px solid var(--border-2); background: var(--bg-2); color: var(--text); font-size: 0.68rem; font-weight: 800; display: inline-flex; align-items: center; justify-content: center; gap: 3px; }
+.tlh-in:hover { border-color: var(--accent); }
+.tlh-meter { position: relative; width: 3px; height: 12px; border-radius: 2px; background: var(--border); overflow: hidden; }
+.tlh-meter b { position: absolute; inset: 0; background: var(--fifth); transform: scaleY(0); transform-origin: bottom; }
+
+/* a lane, and the clips on it */
+.tlv-lane { grid-column: 2; position: relative; z-index: 1; height: 64px; box-sizing: border-box; border-bottom: 1px solid var(--border); touch-action: pan-y; cursor: default; }
+.tlv-lane.on { background: color-mix(in srgb, var(--text) 4%, transparent); }
+.tlv-lane.lifting { z-index: 3; }
+.tlv-lane.refuse { opacity: 0.38; cursor: not-allowed; background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--text) 9%, transparent) 7px 8px); }
+.tlv-lane.accept { box-shadow: inset 0 0 0 2px var(--accent); }
+.tlv-lane.quiet .tlc { opacity: 0.4; }
+.tlv-strip { position: absolute; left: 0; top: 0; width: 0; height: 100%; }
+.tlc { position: absolute; top: 6px; height: 51px; box-sizing: border-box; border-radius: 7px; border: 1.5px solid color-mix(in srgb, var(--kc) 62%, var(--border)); background: color-mix(in srgb, var(--kc) 15%, var(--card)); overflow: hidden; cursor: grab; touch-action: pan-y; }
+.tlc:hover { border-color: color-mix(in srgb, var(--kc) 85%, var(--text)); }
+.tlc.sel { z-index: 2; border-color: var(--text); box-shadow: 0 0 0 1.5px var(--text); background: color-mix(in srgb, var(--kc) 26%, var(--card)); }
+.tlc.muted { opacity: 0.4; border-style: dashed; }
+.tlc.quiet { opacity: 0.4; }
+.tlc.dragging { z-index: 6; cursor: grabbing; box-shadow: var(--shadow); }
+.tlc.stay { opacity: 0.6; pointer-events: none; }
+.tlv.copying .tlc.dragging { cursor: copy; }
+.tlv.refused .tlc.dragging { cursor: not-allowed; opacity: 0.55; }
+.tlv.tlv-edging .tlc.dragging { cursor: ew-resize; }
+.tlc-in { position: absolute; left: 0; right: 0; top: 2px; height: 44px; pointer-events: none; }
+.tlc-empty { position: absolute; left: 8px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 0.75rem; }
+.tlc-chords { position: absolute; inset: 0; }
+.tlc-chord { position: absolute; top: 0; height: 100%; box-sizing: border-box; display: flex; align-items: center; padding-left: 5px; overflow: hidden; white-space: nowrap; font-weight: 800; font-size: 0.78rem; border-left: 2px solid color-mix(in srgb, var(--kc) 70%, var(--text)); background: color-mix(in srgb, var(--kc) 13%, transparent); }
+.tlc-chord.rest { background: transparent; border-left-style: dashed; }
+.tlc-chord.st-borrowed, .tlc-chord.st-chromatic { color: var(--status); }
+.tlc-svg { position: absolute; left: 0; top: 0; }
+.tlc-svg rect { fill: color-mix(in srgb, var(--kc) 60%, var(--text)); }
+.tlc-take { position: absolute; inset: 0; }
+.tlc-wave { position: absolute; top: 4px; height: 36px; }
+.tlc-wave path { fill: color-mix(in srgb, var(--kc) 62%, var(--text)); }
+.tlc-label { position: absolute; left: 5px; top: 0; padding: 0 4px; border-radius: 4px; background: color-mix(in srgb, var(--card) 80%, transparent); color: var(--muted); font-size: 0.62rem; font-weight: 800; line-height: 14px; white-space: nowrap; }
+/* where the content starts again: a cut into the top and bottom edge, and a faint line between */
+.tlc-notch { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed color-mix(in srgb, var(--kc) 55%, var(--text)); opacity: 0.9; pointer-events: none; }
+.tlc-notch::before, .tlc-notch::after { content: ""; position: absolute; left: -6px; border: 5.5px solid transparent; }
+.tlc-notch::before { top: -1px; border-top-color: color-mix(in srgb, var(--kc) 80%, var(--text)); }
+.tlc-notch::after { bottom: -1px; border-bottom-color: color-mix(in srgb, var(--kc) 80%, var(--text)); }
+.tlc-sig { position: absolute; right: 4px; bottom: 3px; padding: 0 4px; border-radius: 4px; background: var(--ext); color: #14161a; font-size: 0.6rem; font-weight: 850; line-height: 13px; pointer-events: none; }
+.tlc-dot { position: absolute; right: 5px; top: 5px; width: 8px; height: 8px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 2px var(--card); }
+.tlc-grip { position: absolute; top: 0; bottom: 0; width: min(8px, 30%); cursor: ew-resize; touch-action: none; }
+.tlc-grip.l { left: 0; }
+.tlc-grip.r { right: 0; }
+/* the row of buttons on a selected clip */
+.tlc-acts { position: absolute; z-index: 2; display: flex; gap: 1px; padding: 2px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28); pointer-events: auto; }
+.tlc-act { width: 24px; height: 20px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--text); display: grid; place-items: center; }
+.tlc-act:hover { background: var(--card-2); color: var(--accent); }
+.tlc-act.on { color: var(--accent); }
+.tlc-act.danger:hover { color: var(--tension); }
+
+/* the + row, and what is left of the box below it */
+.tlv-addrow { grid-column: 1 / -1; position: relative; z-index: 4; height: 44px; display: flex; pointer-events: none; }
+.tlv-add { box-sizing: border-box; width: 260px; height: 100%; display: flex; align-items: center; padding: 0 8px; background: var(--card); border-right: 1px solid var(--border); pointer-events: auto; }
+.tlv-add.open { width: auto; max-width: 100%; border-bottom: 1px solid var(--border); border-radius: 0 0 10px 0; }
+.tlv-plus { font-weight: 800; }
+.tlv-plus span { font-weight: 650; color: var(--muted); }
+.tlv-kinds { display: flex; flex-wrap: wrap; gap: 5px; }
+.tlv-kinds .chip { padding: 3px 10px 3px 8px; font-size: 0.8rem; gap: 5px; }
+.tlv-kinds .chip svg { width: 14px; height: 14px; color: var(--muted); }
+.tlv-kinds .tlv-kinds-x { padding-inline: 9px; color: var(--muted); }
+.tlv-rest-head { grid-column: 1; position: relative; z-index: 4; background: var(--card); border-right: 1px solid var(--border); }
+.tlv-rest { grid-column: 2; position: relative; z-index: 1; }
+
+/* under the clips: bar lines and the loop's tint. Over them: the cursor, the play line, the box that selects */
+.tlv-under, .tlv-over { position: absolute; left: 260px; right: 0; top: 0; bottom: 0; overflow: hidden; pointer-events: none; }
+.tlv-under { z-index: 0; }
+.tlv-over { z-index: 5; }
+.tlv-gl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid color-mix(in srgb, var(--border-2) 40%, transparent); }
+.tlv-gl.n { border-left-color: color-mix(in srgb, var(--border-2) 90%, transparent); }
+.tlv-gl.beat { border-left-color: color-mix(in srgb, var(--border-2) 22%, transparent); }
+.tlv-gl.end { border-left: 2px solid var(--faint); }
+.tlv-tint { position: absolute; top: 0; bottom: 0; box-sizing: border-box; background: color-mix(in srgb, var(--accent) 4%, transparent); border-inline: 1px dashed color-mix(in srgb, var(--accent) 35%, transparent); }
+.tlv-tint.on { background: color-mix(in srgb, var(--accent) 10%, transparent); border-inline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
+.tlv-cursor { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--text); opacity: 0.8; }
+.tlv-line { display: none; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); }
+.tlv-rec { display: none; position: absolute; left: 0; top: 6px; height: 51px; box-sizing: border-box; border-radius: 7px; border: 1.5px solid #e5483b; background: rgba(229, 72, 59, 0.3); }
+.tlv-box { display: none; position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1px dashed var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.tlv-drop { display: none; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 8; background: var(--accent); pointer-events: none; }
+.tlh.lifted, .tlv-lane.lifted { z-index: 7; box-shadow: var(--shadow); }
+.tlv-lane.lifted { background: var(--card-2); }
+.tlh.lifted .tlh-grip { cursor: grabbing; }
+
+/* ── the sideways scroll bar: always there ── */
+.tlv-side { flex: none; height: 16px; box-sizing: border-box; display: flex; background: var(--card); border-top: 1px solid var(--border); }
+.tlv-side-corner { flex: none; width: 260px; box-sizing: border-box; border-right: 1px solid var(--border); }
+.tlv-side-track { flex: 1; min-width: 0; position: relative; overflow: hidden; touch-action: none; }
+.tlv-side-thumb { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 6px; background: var(--border-2); }
+.tlv-side-track:hover .tlv-side-thumb { background: var(--faint); }
+
+/* the small tag beside the pointer while something is dragged */
+.tlv-tag { display: none; position: fixed; left: 0; top: 0; z-index: 90; padding: 2px 7px; border-radius: 6px; background: var(--text); color: var(--bg); font-size: 0.72rem; font-weight: 800; white-space: nowrap; pointer-events: none; }
+
+/* ── the small menu ── */
+.tlv-menu { position: fixed; z-index: 75; min-width: 190px; padding: 5px; display: flex; flex-direction: column; border-radius: 12px; background: var(--card); border: 1px solid var(--border-2); box-shadow: var(--shadow); outline: none; }
+.tlv-menu-item { display: flex; align-items: center; justify-content: space-between; gap: 22px; padding: 6px 10px; border: none; border-radius: 8px; background: none; color: var(--text); text-align: left; font-size: 0.86rem; font-weight: 650; white-space: nowrap; }
+.tlv-menu-item:hover:not(:disabled), .tlv-menu-item:focus-visible { background: var(--card-2); outline: none; }
+.tlv-menu-item.danger { color: var(--tension); }
+.tlv-menu-item.on span::before { content: "✓ "; color: var(--accent); }
+.tlv-menu-item:disabled { opacity: 0.4; cursor: default; }
+.tlv-menu-item kbd { font: inherit; font-size: 0.7rem; font-weight: 700; color: var(--faint); }
+.tlv-menu hr { width: auto; margin: 4px 6px; border: none; border-top: 1px solid var(--border); }
+.tlv-menu-title { padding: 5px 10px 2px; font-size: 0.66rem; text-transform: uppercase; letter-spacing: 0.07em; color: var(--faint); font-weight: 800; }
+.tlv-menu-colours { display: flex; gap: 6px; padding: 4px 10px 6px; }
+.tlv-swatch { width: 18px; height: 18px; padding: 0; border-radius: 50%; border: 2px solid transparent; background: var(--kc); }
+.tlv-swatch.on { border-color: var(--text); }
+.tlv-swatch:hover { transform: scale(1.15); }
+
+/* ── a plugin window ── */
+.tlw { position: fixed; z-index: 45; box-sizing: border-box; display: flex; flex-direction: column; overflow: hidden; border-radius: 14px; border: 1px solid var(--border-2); background: var(--bg); box-shadow: var(--shadow); outline: none; }
+.tlw.focused { border-color: color-mix(in srgb, var(--accent) 60%, var(--border-2)); }
+.tlw-bar { flex: none; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 12px; background: var(--card); border-bottom: 1px solid var(--border); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.tlw-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; font-weight: 800; letter-spacing: 0; }
+.tlw:not(.focused) .tlw-title { color: var(--muted); }
+.tlw-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.tlw-x { flex: none; width: 28px; height: 28px; padding: 0; border: none; border-radius: 8px; background: none; color: var(--muted); font-size: 0.8rem; }
+.tlw-x:hover { background: var(--card-2); color: var(--text); }
+/* (the body carries a transform, so anything pinned to the screen inside it stays inside the window) */
+.tlw-body { flex: 1; min-height: 0; overflow: auto; transform: translateZ(0); padding: 12px; }
+.tlw-strip { flex: none; padding: 8px 12px; background: var(--card); border-top: 1px solid var(--border); }
+/* on a narrow screen, or under a finger: a sheet across the bottom */
+.tlw.tlw-sheet { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; height: min(70vh, 520px); max-height: 92vh; padding: 0; border-radius: 20px 20px 0 0; }
+.tlw-sheet .tlw-bar { height: 44px; cursor: default; }
+
+/* ── narrower than a desktop window ── */
+@media (max-width: 1100px) {
+  .tlv .tlv-top { height: auto; }
+  .tlv-top-in { height: auto; min-height: 47px; flex-wrap: wrap; padding-block: 6px; row-gap: 6px; }
+  .tlv-idea { margin-left: 0; }
+}
+@media (max-width: 760px) {
+  .tlv-pop, .tlv-pop.wide, .tlv-pop.right { position: fixed; left: 8px; right: 8px; top: auto; width: auto; margin-top: 8px; }
+  .tlv-sigs { flex-wrap: wrap; }
+  .tlv-tempo { min-width: 0; }
+}
+@media (pointer: coarse) {
+  .tlc-act { width: 34px; height: 30px; }
+  .tlc-grip { width: min(14px, 30%); }
+}
