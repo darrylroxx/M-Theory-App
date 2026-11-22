@@ -34,12 +34,30 @@ export const MelodyComposer = memo(function MelodyComposer(p: ComposerProps) {
   if ((track.kind !== "melody" && track.kind !== "bass") || !open || open.kind !== "melody") return null;
   return (
     <V4View>
-      <ComposerFrame p={p} open={open}>
+      <ComposerFrame p={p} open={open} tools={<Again p={p} open={open} />}>
         <Body win={p.win.id} track={track} open={open} target={target} song={song} keyOf={p.keyOf} anchor={p.anchor} player={p.player} shown={!p.hidden} heard={p.heard} harmonizing={p.harmonizing} ctl={p.ctl} />
       </ComposerFrame>
     </V4View>
   );
 });
+
+/**
+ * ⟳ in the title bar of a clip Harmonize wrote: it can be written again (with another option), while what it was
+ * written from is still there. A dot says that has changed since. Nothing for any other clip, or for a draft.
+ */
+function Again({ p, open }: { p: ComposerProps; open: Open }) {
+  const { song, track, keyOf, win, ctl } = p;
+  const clip = open.clip;
+  const written = !!clip && clip.kind === "melody" && !!clip.harmony && "harmony" in track && !!track.harmony;
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const state = useMemo(() => (written && clip ? harmonyState5(song, keyOf, clip.id) : null), [written, clip?.id, song.clips, song.tracks, keyOf]);
+  if (!state?.source) return null;
+  return (
+    <button className={`hz-again mel-again${state.stale ? " stale" : ""}`} aria-label={state.stale ? `Write ${track.name} again: its source has changed` : `Write ${track.name} again`}
+      title={state.stale ? "Written by Harmonize, and its source has changed: write it again, or choose another harmony" : "Written by Harmonize: write it again, or choose another harmony"}
+      onClick={() => ctl.harmonize(win.id, "melody", null, true)}>⟳</button>
+  );
+}
 
 /** A melody as a clip keeps it: whether it is heard is the clip's own switch, not part of the notes. */
 function plain(m: Melody): Melody {
@@ -92,16 +110,6 @@ const Body = memo(function Body({ win, track, open, target, song, keyOf, anchor,
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const can = useMemo(() => canHarmonize(song, target, keyOf, anchor), [song.clips, song.tracks, song.meter, song.sigs, target, keyOf, anchor]);
   const onHarmonize = useCallback((el: HTMLElement | null) => live.current.ctl.harmonize(live.current.win, "melody", el), []);
-  // a clip Harmonize wrote can be written again (with another option), while what it was written from is still there
-  const clip = open.clip;
-  const written = !!clip && clip.kind === "melody" && !!clip.harmony && !!track.harmony;
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const again = useMemo(() => (written && clip ? harmonyState5(song, keyOf, clip.id) : null), [written, clip?.id, song.clips, song.tracks, keyOf]);
-  const tools = again?.source ? (
-    <button className={`hz-again mel-again${again.stale ? " stale" : ""}`} aria-label={again.stale ? `Write ${track.name} again: its source has changed` : `Write ${track.name} again`}
-      title={again.stale ? "Written by Harmonize, and its source has changed: write it again, or choose another harmony" : "Written by Harmonize: write it again, or choose another harmony"}
-      onClick={() => live.current.ctl.harmonize(live.current.win, "melody", null, true)}>⟳</button>
-  ) : undefined;
 
   // The view and the grid's own undo belong to what the window is on. Put on another clip they start afresh; not
   // when the new clip is a copy just laid on a lane from here (the same tune: the work goes on in it, where it was).
@@ -114,7 +122,7 @@ const Body = memo(function Body({ win, track, open, target, song, keyOf, anchor,
   const opens = useMemo(() => emptySpan(bass, keyOf), [bass, keyOf]);
 
   return (
-    <MelodyGrid octaves={GRID_OCTAVES} opens={opens} name={track.name} tools={tools} fresh={place} place={place} melody={melody} setMelody={setMelody} keyOf={keyOf}
+    <MelodyGrid octaves={GRID_OCTAVES} opens={opens} name={track.name} fresh={place} place={place} melody={melody} setMelody={setMelody} keyOf={keyOf}
       bar={sigBeats(open.sig)} chords={chords} playing={player.playing && shown} getPos={getPos} shown={view.shown} follow={view.follow} active={shown}
       onHarmonize={onHarmonize} canHarmonize={can} harmonizing={harmonizing} />
   );

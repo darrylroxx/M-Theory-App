@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { playNote } from "../../audio/synth";
 import { EMPTY_MELODY, GRIDS, GRID_LOW, TICKS, canShift, cellTick, clearMelody, copyMelodyBar, gridRows, melodyBars, melodyBase, melodyRows, notesInCell, setNoteLen, shiftOctave, toggleNote, type Melody, type MelodyRow } from "../../song/melody";
 import { barAtBeat, barWindow, inWindow, pageStart, reveal, turnPage, type BarWindow, type BarsShown } from "../../song/window";
@@ -35,7 +35,7 @@ const still = () => typeof window !== "undefined" && !!window.matchMedia?.("(pre
  * over it and a small overview of the whole range beside it. There a note can also be given a length, by dragging
  * its right end; every note can be moved an octave up or down; and the view jumps a whole octave at one press.
  */
-export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing, onAll, low, octaves, opens, name, tools }: {
+export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMelody: write, keyOf, bar, chords, playing, getPos, sound, setSound, onHear, shown, follow, active, inst, onHarmonize, canHarmonize, harmonizing, onAll, low, octaves, opens, name }: {
   /** the lowest row of the grid (a bass track's is two octaves under a melody's); none: two octaves from the home note */
   low?: number;
   /** the wide grid: this many octaves from `low` up (no `low`: from the lowest note a melody may hold) */
@@ -44,8 +44,6 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
   opens?: Span;
   /** the wide grid: what it is called ("Melody", "Bass") */
   name?: string;
-  /** the wide grid: more for its row of tools, before the rest */
-  tools?: ReactNode;
   /** changes when another section or another melody track is shown, or something is pasted: undo starts afresh */
   fresh?: string;
   /** the melody track's instrument */
@@ -771,7 +769,6 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     return (
       <section className="mel" aria-label={called} style={{ "--steps": steps, "--div": melody.div, "--count": win.count } as CSSProperties} onKeyDown={wKey}>
         <div className="mel-tools">
-          {tools}
           {canHarmonize && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} />}
           {tabRow}
           {gridPick}
