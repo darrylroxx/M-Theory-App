@@ -337,6 +337,11 @@ describe("bypass: a track heard without its effects", () => {
     expect(dry.chords[0].sound).toBe(drySound(plain.chords[0].sound));
     expect(dry.tunes[0].tune.sound).toMatchObject({ chorus: 0, space: 0 });
     expect(dry.drums[0].beat).toMatchObject({ space: 0, grit: 0, glue: 0, noise: "off", sampler: "off" });
+    // every effect amount of the kit is at nothing; the machine, each drum's own sound and the drum mixer stay
+    expect(dry.drums[0].beat).toMatchObject({ echo: 0, tape: 0, tone: 0, human: 0, pump: 0 });
+    expect([dry.drums[0].beat.kit, dry.drums[0].beat.sounds, dry.drums[0].beat.level]).toEqual([plain.drums[0].beat.kit, plain.drums[0].beat.sounds, plain.drums[0].beat.level]);
+    for (const k of ["drive", "squeeze", "tone", "chorus", "phaser", "trem", "wobble", "echo", "space", "shimmer"] as const) expect(dry.chords[0].sound[k], k).toBe(0);
+    expect(dry.chords[0].sound.level).toBe(plain.chords[0].sound.level);
     expect(dry.drums[0].beat.rows).toEqual(plain.drums[0].beat.rows);
     expect(label(dry.takes![0].buffer)).toBe("k1:dry");
     // only the tracks named

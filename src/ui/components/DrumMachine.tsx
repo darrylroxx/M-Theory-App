@@ -668,11 +668,14 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
           {kitPick}
           {rhythmPick}
           <div className="dm-bar">{editTools}</div>
-          {swingKnob && <div className="dp-swing knobs">{swingKnob}</div>}
         </div>
         {kitDrawer}
         {rhythmDrawer}
-        {tabRow}
+        <div className="dp-under">
+          {tabRow}
+          <span className="spacer" />
+          {swingKnob && <div className="dp-swing knobs">{swingKnob}</div>}
+        </div>
         {grid}
       </section>
     );

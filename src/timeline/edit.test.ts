@@ -926,6 +926,23 @@ describe("setDraft, placeDraft", () => {
     expect(spans(out, "tm")).toEqual([[8, 16], [32, 36], [36, 44], [44, 64]]);
   });
 
+  it("each copy that was placed is its own: changing one changes neither the other nor the draft", () => {
+    const g = groove(1);
+    const band = setDraft(bandSong(), "td", g, SIG44);
+    const id = counter();
+    const two = placeDraft(placeDraft(band, "td", 32, id), "td", 48, id);
+    expect(spans(two, "td")).toEqual([[16, 32], [32, 36], [48, 52]]);
+    const loud = { ...g, rows: { ...g.rows, clap: "3".repeat(16) } };
+    const out = setContent(two, "n2", loud);
+    expect(clip<DrumsClip>(out, "n2").content.rows.clap).toBe("3".repeat(16));
+    expect(clip<DrumsClip>(out, "n1")).toBe(clip<DrumsClip>(two, "n1"));
+    expect(clip<DrumsClip>(out, "n1").content.rows.clap).toBe(g.rows.clap);
+    expect(track<DrumsTrack>(out, "td").draft!.content).toBe(g);
+    // and the draft changed afterwards changes neither of them
+    const later = setDraft(out, "td", { ...g, swing: 0.5 }, SIG44);
+    expect(later.clips).toBe(out.clips);
+  });
+
   it("a drums draft lands on the bar line at or before; a note draft on the nearest beat", () => {
     const band = setDraft(setDraft(bandSong(), "td", groove(2), SIG44), "tm", tune(1), SIG44);
     expect(clip(placeDraft(band, "td", 38.7, counter()), "n1")).toMatchObject({ start: 36, len: 8 });
