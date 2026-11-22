@@ -4,10 +4,10 @@
 import { MAX_BARS, emptyRows, setBars, type Beat, type Groove } from "../audio/beats";
 import { fitBars } from "../song/frame";
 import { setMelodyBars, type Melody } from "../song/melody";
-import { sameSig, sigBeats, type TimeSig } from "../song/meter";
+import { mapList, refit, sameSig, sigBeats, type TimeSig } from "../song/meter";
 import { barMap } from "./bars";
 import { blankContent, copyClips, layDown, resizeClip, setContent, setDraft } from "./edit";
-import { CLIP_OF, accepts, contentBeats, type ChordsContent, type ClipKind, type NoteClip, type Region, type TimelineSong, type Track } from "./model";
+import { CLIP_OF, accepts, contentBeats, mod, type ChordsContent, type ClipKind, type NoteClip, type Region, type TimelineSong, type Track } from "./model";
 
 type Content = NoteClip["content"];
 type NoteKind = NoteClip["kind"];
@@ -148,4 +148,37 @@ export function stampOpen(song: TimelineSong, target: OpenTarget, onto: string, 
   }
   const clip = { id: id(), track: to.id, kind: open.kind, start, len: 1, off: 0, sig: open.sig, content: clone(open.content) } as NoteClip;
   return layDown(song, { ...clip, len: contentBeats(clip) });
+}
+
+/** A content written in one signature, moved into another: chords that lasted whole bars still do, every note and drum hit stays in its bar. */
+export function refitContent(kind: ClipKind, content: Content, from: TimeSig, to: TimeSig): Content {
+  if (sameSig(from, to)) return content;
+  const f = refit(from, to);
+  if (kind === "chords") {
+    const c = content as ChordsContent;
+    return { ...c, chords: mapList(c.chords, f.chord!) };
+  }
+  if (kind === "melody") return f.melody!(content as Melody);
+  return f.rhythm!(content as Groove);
+}
+
+/**
+ * "Fit to these bars": what is open, refitted to the time signature of the bars it lies in (a draft: the bars at the
+ * anchor). A placed clip keeps its place and its length, and its left edge stays in the same bar of its content.
+ * The same song back when it fits already.
+ */
+export function fitOpen(song: TimelineSong, target: OpenTarget, anchor: number): TimelineSong {
+  const open = openOf(song, target, anchor);
+  if (!open) return song;
+  const at = open.clip ? open.clip.start : Math.max(0, anchor);
+  const to = barMap(song).sigAt(at + EPS);
+  if (sameSig(open.sig, to)) return song;
+  const content = refitContent(open.kind, open.content, open.sig, to);
+  if (!open.clip) return setDraft(song, open.track.id, content, to);
+  const c = open.clip;
+  const a = sigBeats(c.sig);
+  const b = sigBeats(to);
+  const next = { ...c, sig: to, content } as NoteClip;
+  const fitted = { ...next, off: mod(Math.floor(c.off / a) * b + Math.min(c.off % a, b - 1), contentBeats(next)) } as NoteClip;
+  return layDown(song, fitted);
 }

@@ -1,0 +1,12 @@
+/* ── The sound window of a Chords, Melody or Bass track: the instrument, its ready-made sounds, its strings or keys
+   or synth, and its effects, one under the other. The controls' own looks are the app's (styles.css). ── */
+.ts { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.ts .sound-row { padding-top: 0; }
+.ts .sound-row .inst-switch { flex: 1 1 100%; }
+.ts .sound-row .inst-switch button { flex: 1 1 0; justify-content: center; }
+.ts .sound-row .beat-pick, .ts .sound-row .pick-wrap { flex: 1 1 150px; }
+.ts .sound-row .beat-pick .beat-name { flex: 1 1 auto; min-width: 0; }
+.ts .sc-head { margin: 6px 0 -2px; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 800; color: var(--faint); }
+.ts .dm-panel { padding: 10px 10px 12px; }
+.ts .knobs { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px 12px; }
+.ts .card.synth { padding: 10px; box-shadow: none; }

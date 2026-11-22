@@ -56,6 +56,10 @@ export interface TrackViewProps {
   recording?(): { track: string; from: number; to: number } | null;
   /** a short message from the view; with `undo` it carries an undo button (a track with clips or takes removed) */
   say?(msg: string, undo?: boolean): void;
+  /** a draft as it is heard with the song (it is not on the timeline yet): drawn faintly on its lane, where it sounds */
+  ghost?: NoteClip | null;
+  /** the tracks heard without their effects just now, and the switch (Alt + click on a track's FX) */
+  bypass?: { on: ReadonlySet<string>; toggle(track: string): void };
 }
 
 /** How tall a track's row is, how tall the + row is, and how wide the panels are. */
@@ -64,6 +68,13 @@ export const ADD_H = 44;
 export const PANEL = 260;
 /** How wide the lanes are taken to be before the screen is measured (a 1280 window). */
 const GUESS_W = 1020;
+/** The row of buttons of a selected clip: how wide and how tall it is, and how far it stands clear of the clip. */
+const ACTS_W = 160;
+const ACTS_H = 26;
+const ACTS_GAP = 2;
+/** Where a clip's box starts and ends inside its lane (as the stylesheet lays it). */
+const CLIP_TOP = 6;
+const CLIP_BOTTOM = 57;
 /** A drag starts after this many pixels; less is a click. */
 const TAP_PX = 4;
 /** How long a finger rests on a clip before its menu opens. */
@@ -149,6 +160,8 @@ export function TrackView(props: TrackViewProps) {
   /** the kind of clip being dragged across lanes (the lanes that do not take it are dimmed) */
   const [dragKind, setDragKind] = useState<ClipKind | null>(null);
   const [busy, setBusy] = useState(false);
+  /** how far down the track list is scrolled (to the nearest few pixels, and only kept while a clip is selected: its row of buttons must stay in sight) */
+  const [scrolled, setScrolled] = useState(0);
 
   const live = useRef({ props, view, width, map, end, total, follow, marker, naming, renaming, preview });
   live.current = { props, view, width, map, end, total, follow, marker, naming, renaming, preview };
@@ -915,14 +928,10 @@ export function TrackView(props: TrackViewProps) {
         setRenaming((r) => (r === id ? null : r));
         if (name !== null) P().edit("Rename track", (s) => renameTrack(s, id, name));
       },
-      compose(id) {
-        // the track's selected clip; else the clip under the cursor; else its first clip; else nothing yet
-        const { song: s, session: se } = P();
-        const mine = s.clips.filter((c) => c.track === id).sort((a, b) => a.start - b.start);
-        const c = mine.find((x) => se.sel.clips.includes(x.id)) ?? mine.find((x) => x.start <= se.cursor && clipEnd(x, s) > se.cursor) ?? mine[0];
-        P().open("compose", id, c?.id);
-      },
-      sound: (id) => P().open("sound", id),
+      // the compose button opens what is being composed on the track (its draft); a clip is opened by a double-click on it
+      compose: (id) => P().open("compose", id),
+      // FX opens the track's sound window; with Alt held it switches the track's effects off and on for the ear
+      sound: (id, e) => (e.altKey && P().bypass ? P().bypass!.toggle(id) : P().open("sound", id)),
       mix(id, patch: Partial<TrackMix>) {
         const what = "db" in patch ? "Volume" : "mute" in patch ? "Mute track" : "Solo track";
         P().edit(what, (s) => ({ ...s, mix: mixWith(s.mix, id, patch) }), `mix:${id}:${Object.keys(patch).join()}`);
@@ -953,11 +962,18 @@ export function TrackView(props: TrackViewProps) {
   const loop = session.loop;
   const curX = xOfBeat(view, session.cursor);
   const dropKind = props.dropKind ?? dragKind;
-  // the row of buttons stands on the last clip selected, while nothing is being dragged
-  const lead = busy ? undefined : [...session.sel.clips].reverse().map((id) => song.clips.find((c) => c.id === id)).find((c) => !!c);
+  // the row of buttons belongs to the last clip selected, while nothing is being dragged. It stands clear of the clip,
+  // so it never covers the clip's drawing: just above it, or just below when above is off the top of the list (the
+  // top track) or a clip of the track above lies there and none of the track below does
+  const lead = busy || props.dropKind ? undefined : [...session.sel.clips].reverse().map((id) => song.clips.find((c) => c.id === id)).find((c) => !!c);
   const leadRow = lead ? tracks.findIndex((t) => t.id === lead.track) : -1;
   const leadX = lead ? xOfBeat(view, lead.start) : 0;
   const leadEnd = lead ? xOfBeat(view, clipEnd(lead, song)) : 0;
+  const actsX = clamp(leadX, 3, Math.max(3, width - ACTS_W - 3));
+  const actsFree = (row: number) => row < 0 || row >= tracks.length || !song.clips.some((c) => c.track === tracks[row].id && xOfBeat(view, c.start) < actsX + ACTS_W && xOfBeat(view, clipEnd(c, song)) > actsX);
+  const actsAbove = leadRow * ROW_H + CLIP_TOP - ACTS_GAP - ACTS_H;
+  const actsUp = actsAbove >= scrolled && (actsFree(leadRow - 1) || !actsFree(leadRow + 1));
+  const actsY = actsUp ? actsAbove : leadRow * ROW_H + CLIP_BOTTOM + ACTS_GAP;
   const beats: ReactNode[] = [];
   if (ppb >= 24) for (let b = Math.ceil(scroll); b < scroll + screen; b++) beats.push(<i key={b} className="tlv-gl beat" style={{ left: xOfBeat(view, b) }} />);
 
@@ -968,17 +984,20 @@ export function TrackView(props: TrackViewProps) {
       <Ruler song={song} view={view} width={width} session={session} follow={follow} onFollow={setFollow} onZoom={act.zoomBy} onFit={act.fit}
         onCursor={onCursor} onLoop={act.setLoop} edit={props.edit} marker={marker} onMarker={setMarker} naming={naming} onNaming={onNaming}
         menu={openMenu} onInsert={act.insert} onCutLoop={act.cutLoop} onAddMarker={act.addMarker} onFlag={act.flag} onEdge={h.edge} />
-      <div className="tlv-body" ref={body} onScroll={(e) => { if (e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0; }}>
+      <div className="tlv-body" ref={body} onScroll={(e) => {
+        if (e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0;
+        if (live.current.props.session.sel.clips.length) setScrolled(Math.ceil(e.currentTarget.scrollTop / 4) * 4);
+      }}>
         <div className={`tlv-rows${dropKind ? " dropping" : ""}`} ref={rows} style={{ gridTemplateRows: `repeat(${tracks.length}, ${ROW_H}px) ${ADD_H}px minmax(0, 1fr)` }}>
           {tracks.map((t, i) => {
             const quiet = !audible(song.mix, t.id);
             const kind = CLIP_OF[t.kind];
             return [
-              <TrackHead key={`h:${t.id}`} track={t} mix={song.mix?.[t.id]} quiet={quiet} selected={session.sel.track === t.id} armed={session.armed === t.id} fresh={lit === t.id}
+              <TrackHead key={`h:${t.id}`} track={t} mix={song.mix?.[t.id]} quiet={quiet} selected={session.sel.track === t.id} armed={session.armed === t.id} fresh={lit === t.id} bypassed={!!props.bypass?.on.has(t.id)}
                 renaming={renaming === t.id} canAgain={"role" in t && t.role === "harmony" && !!props.again} level={props.inputs?.level} row={i} rows={tracks.length} ctl={head} />,
               <Lane key={`l:${t.id}`} track={t} song={song} keyOf={keyOf} view={view} width={width} selected={session.sel.clips} on={session.sel.track === t.id} quiet={quiet}
                 refuse={!!dropKind && dropKind !== kind} accept={!!props.dropKind && props.dropKind === kind} stale={props.stale}
-                preview={preview && preview.track === t.id ? preview : null} peaks={props.peaks} ctl={ctl} />,
+                preview={preview && preview.track === t.id ? preview : null} ghost={props.ghost && props.ghost.track === t.id ? props.ghost : null} peaks={props.peaks} ctl={ctl} />,
             ];
           })}
           <div className="tlv-addrow">
@@ -1001,7 +1020,7 @@ export function TrackView(props: TrackViewProps) {
             <div className="tlv-rec" ref={rec} />
             <div className="tlv-box" ref={box} />
             {lead && leadRow >= 0 && leadEnd > 0 && leadX < width && (
-              <ClipActions clip={lead} x={clamp(leadX + 3, 3, Math.max(3, width - 166))} y={leadRow * ROW_H + 4} onAct={(a) => act.clipAct(a, lead.id)} />
+              <ClipActions clip={lead} x={actsX} y={actsY} below={!actsUp} onAct={(a) => act.clipAct(a, lead.id)} />
             )}
           </div>
           <div className="tlv-drop" ref={drop} />

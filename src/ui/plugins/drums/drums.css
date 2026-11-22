@@ -1,0 +1,43 @@
+/* ── The Drums plugin: the composer and the sound window of a drums track ──
+   The drum machine's own looks are the app's (styles.css). This file lays its two halves out for a plugin window. */
+
+/* the composer: one row of tools over a grid that fills the window, however tall the window is made */
+.tlw-body:has(> .dp-compose) { padding: 10px 12px 8px; display: flex; flex-direction: column; }
+.dp-compose { flex: 1 1 auto; min-height: 0; gap: 8px; }
+.dp-top { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 8px 10px; min-width: 0; }
+.dp-top .dm-bar { flex: 1 1 260px; min-width: 0; min-height: 38px; }
+.dp-top .beat-pick .beat-name { min-width: 104px; }
+.dp-swing { flex: 0 0 132px; display: block; }
+.dp-swing .knob > span { min-height: 16px; }
+.dp-swing .knob input[type="range"] { height: 20px; }
+.dp-compose .dm-drawer { flex: none; max-height: 100%; overflow: auto; }
+.dp-compose .dm-tabrow { flex: none; }
+.dp-compose .dm-bars button { min-width: 30px; height: 26px; }
+/* the grid takes what is left: its rows grow and shrink with the window, between a size that can still be hit and a comfortable one */
+.dp-compose .beat-grid { --cell: 10px; flex: 1 1 auto; min-height: 196px; max-height: 356px; }
+.dp-compose .bg-labels { gap: 3px; flex-basis: 66px; }
+.dp-compose .bg-label { flex: 1 1 0; height: auto; min-height: 18px; }
+.dp-compose .bg-steps { align-items: stretch; }
+.dp-compose .bg-bar { min-height: 0; }
+.dp-compose .bg-row { flex: 1 1 0; height: auto; min-height: 18px; }
+.dp-compose.editing .bg-steps { outline-offset: 2px; }
+
+/* the sound window: the kit, the mixer, the chosen drum's sound and the kit's effects, one under the other */
+.dp-sound { gap: 14px; }
+.dp-sec { display: flex; flex-direction: column; gap: 8px; min-width: 0; scroll-margin-top: 8px; }
+.dp-sec > h3 { margin: 0; font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 800; color: var(--faint); }
+.dp-sound .dm-head .pick-wrap, .dp-sound .dm-head .beat-pick { flex: 1 1 auto; }
+.dp-sound .dm-head .beat-pick .beat-name { flex: 1 1 auto; }
+.dp-sound .dm-panel { padding: 10px 10px 12px; }
+/* ten faders side by side in a narrow window: each strip is slim, its M and S one over the other */
+.dp-sound .dm-mixer { gap: 3px; padding: 10px 8px; }
+.dp-sound .dm-strip { flex: 1 1 30px; min-width: 30px; gap: 5px; padding: 6px 0; }
+.dp-sound .dm-strip.kit { margin-left: 4px; }
+.dp-sound .dm-fader { width: 18px; height: 118px; }
+.dp-sound .dm-ms { flex-direction: column; min-height: 47px; }
+.dp-sound .dm-ms .tv-ms { width: 24px; height: 22px; }
+.dp-sound .dm-strip-name { font-size: 0.62rem; padding: 2px 0; letter-spacing: -0.01em; }
+.dp-sound .dm-val { font-size: 0.66rem; }
+.dp-sound .dm-wave { width: 96px; }
+.dp-sound .dm-sound select { max-width: 118px; }
+.dp-sound .knobs { grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 10px 12px; }

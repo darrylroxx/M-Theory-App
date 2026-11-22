@@ -29,12 +29,12 @@ const ACTS: { act: ClipAct; name: string; key: string }[] = [
   { act: "delete", name: "Delete", key: "Del" },
 ];
 
-/** The row of six buttons on a selected clip. `x`, `y`: where it stands over the lanes. */
-export function ClipActions({ clip, x, y, onAct }: { clip: Clip; x: number; y: number; onAct(act: ClipAct): void }) {
+/** The row of six buttons of a selected clip. `x`, `y`: where it stands over the lanes (clear of the clip: just above it, or with `below` just under it). */
+export function ClipActions({ clip, x, y, below, onAct }: { clip: Clip; x: number; y: number; below?: boolean; onAct(act: ClipAct): void }) {
   return (
     // (the row appears with the first click on a clip: the second click of a double-click may land on it, and that
     // is the clip being opened, never one of these buttons being pressed)
-    <div className="tlc-acts" role="toolbar" aria-label="This clip" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); onAct("open"); }}>
+    <div className={`tlc-acts${below ? " below" : ""}`} role="toolbar" aria-label="This clip" style={{ left: x, top: y }} onPointerDown={(e) => e.stopPropagation()} onDoubleClick={(e) => { e.stopPropagation(); onAct("open"); }}>
       {ACTS.map(({ act, name, key }) => {
         const said = act === "mute" && clip.mute ? "Unmute" : name;
         return (

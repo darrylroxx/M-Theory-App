@@ -57,7 +57,7 @@ function InstSwitch({ tone, setTone, loading }: ToneProps) {
  * each has its own in every section. "All sections" copies it to the same track in every other
  * section that has it.
  */
-export function SoundControls({ sound, setSound, onHear, children, inst: instProps, onAll }: {
+export function SoundControls({ sound, setSound, onHear, children, inst: instProps, onAll, open }: {
   sound: HarpSound;
   setSound: (patch: Partial<HarpSound>) => void;
   /** play something once, to hear a change (when nothing is playing) */
@@ -68,6 +68,8 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
   inst?: ToneProps;
   /** copy this sound to the same track in every other section (only when another section has it) */
   onAll?: () => void;
+  /** in a sound window of the track view: the strings (or keys) and the effects are both shown, each under its name, with no chips to open them */
+  open?: boolean;
 }) {
   const { state, set, toast } = useApp();
   const mine = state.mySounds;
@@ -161,13 +163,16 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
         </div>
       )}
 
-      <div className="dm-tabs">
-        {inst !== "synth" && <button className={`chip${panel === "strings" ? " on" : ""}`} aria-expanded={panel === "strings"} onClick={() => setPanel(panel === "strings" ? null : "strings")}>{strings ? "Strings" : "Keys"}</button>}
-        <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
-        {onAll && <button className="chip all-chip" title="This track sounds like this in every section that has it" onClick={onAll}>All sections</button>}
-      </div>
+      {!open && (
+        <div className="dm-tabs">
+          {inst !== "synth" && <button className={`chip${panel === "strings" ? " on" : ""}`} aria-expanded={panel === "strings"} onClick={() => setPanel(panel === "strings" ? null : "strings")}>{strings ? "Strings" : "Keys"}</button>}
+          <button className={`chip${panel === "fx" ? " on" : ""}`} aria-expanded={panel === "fx"} onClick={() => setPanel(panel === "fx" ? null : "fx")}>Effects</button>
+          {onAll && <button className="chip all-chip" title="This track sounds like this in every section that has it" onClick={onAll}>All sections</button>}
+        </div>
+      )}
 
-      {panel === "strings" && inst === "piano" && tone && (
+      {open && inst !== "synth" && <h3 className="sc-head">{strings ? "Strings" : "Keys"}</h3>}
+      {(open || panel === "strings") && inst === "piano" && tone && (
         <div className="dm-panel dm-mix" role="group" aria-label="Keys">
           <div className="knobs">
             <Knob label="Bright" title="Duller or brighter than the piano was recorded" value={tone.bright ?? 0.5} def={0.5} onChange={(v) => { instProps!.setTone({ bright: v }); onHear(); }} />
@@ -180,7 +185,7 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
         </div>
       )}
 
-      {panel === "strings" && strings && (
+      {(open || panel === "strings") && strings && (
         <div className="dm-panel dm-mix" role="group" aria-label="Strings">
           <div className="knobs">
             <Knob label="Pluck" title="Where the finger plucks. Left: the middle of the string, round and hollow. Right: by the soundboard, thin and bright." value={sound.pluck} def={d.pluck} onChange={(v) => turn({ pluck: v }, true)} />
@@ -196,7 +201,8 @@ export function SoundControls({ sound, setSound, onHear, children, inst: instPro
         </div>
       )}
 
-      {panel === "fx" && (
+      {open && <h3 className="sc-head">Effects</h3>}
+      {(open || panel === "fx") && (
         <div className="dm-panel dm-mix" role="group" aria-label="Effects">
           <div className="knobs">
             <Knob label="Saturation" title="The colour of analogue gear pushed hard: a little is warmth, a lot is distortion" value={sound.drive} def={0} onChange={(v) => turn({ drive: v })} />

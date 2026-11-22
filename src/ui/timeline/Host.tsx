@@ -1,10 +1,13 @@
 // The host of the track view: it reads the app's state and builds everything the view is handed. It owns the player,
-// the plugin windows (in this release each one is an old composer page behind a lens), the one record window (the old
-// Vocals page, mounted once and for good), the Canvas as an overlay, and the two sheets (Ideas and settings).
+// the plugin windows (a composer and a sound window for each track: see plugins/registry), what a composer has open
+// (a clip, or its track's draft, which is heard with the song while its window is worked in), the drag of a
+// composer's clip onto a lane, the one record window (the old Vocals page, mounted once and for good), the Canvas as
+// an overlay, and the two sheets (Ideas and settings).
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { saveFile } from "../../audio/midi";
 import { isDesktop } from "../../desktop";
 import { reviveSound } from "../../audio/rack";
+import { mixWith, quietWhy } from "../../audio/mix";
 import { bookAhead, hearOn } from "../../audio/synth";
 import { setHome } from "../../audio/trackplay";
 import type { Spot } from "../../canvas/layout";
@@ -12,19 +15,21 @@ import { planKey } from "../../canvas/taps";
 import { planTaps5 } from "../../canvas/taps5";
 import { chordShape } from "../../guitar/arrange";
 import { rewriteHarmony, setHarmonyEnv } from "../../song/harmony";
-import { sigBeats, sigName, type TimeSig } from "../../song/meter";
+import { isCompound, sigBeats, sigName, type TimeSig } from "../../song/meter";
 import type { ChordRef } from "../../theory/chords";
 import type { Key } from "../../theory/keys";
 import { displayNote, pc } from "../../theory/notes";
 import { bestTonicSpelling, getScale } from "../../theory/scales";
 import { barMap } from "../../timeline/bars";
-import { clipboardBeats, copyOut, copySound, insertTime, pasteIn, pasteSound, setContent, setSig, setTempo, songEnd, transpose } from "../../timeline/edit";
+import { fitOpen, openOf, setOpenBars, stampOpen, writeOpen, type OpenTarget } from "../../timeline/content";
+import { clipboardBeats, copyOut, copySound, draftAnchor, insertTime, pasteIn, pasteSound, setContent, setDraft, setSig, setTempo, songEnd } from "../../timeline/edit";
 import { chart5, hasChords5, midi5, wav5 } from "../../timeline/export";
 import { flatten, type FlattenCtx } from "../../timeline/flatten";
-import { harmonyState5, lensOf, unlens, type Target } from "../../timeline/lens";
-import { CLIP_OF, clipEnd, contentBeats, type AudioClip, type Clip, type NoteClip, type Session, type SoundCopy, type Take5, type TimelineSong, type Track } from "../../timeline/model";
+import { harmonyState5, lensOf, transposeSong, unlens, type Target } from "../../timeline/lens";
+import { CLIP_OF, contentBeats, type AudioClip, type Clip, type ClipKind, type NoteClip, type Region, type Session, type SoundCopy, type Take5, type TimelineSong, type Track, type WinState } from "../../timeline/model";
+import { draftClipId, previewSong } from "../../timeline/preview";
 import { voicingsFor } from "../../timeline/voicing";
-import { useApp5 } from "../app5";
+import { useApp5, type App5State } from "../app5";
 import { CanvasPage } from "../components/CanvasPage";
 import { DraftBadge } from "../components/Desktop";
 import { IdeasPanel } from "../components/IdeasPanel";
@@ -32,10 +37,13 @@ import { SettingsPanel } from "../components/SettingsPanel";
 import type { RecordPhase } from "../components/VocalsPage";
 import { useLive } from "../live";
 import { REC_WIN, RecordHost, audioTracksOf, openRecordWin, roundLabel, shownTrack, type RecordApi, type RecordCtl } from "../plugins/audio/RecordHost";
-import { LegacyComposer, type ComposerCtl } from "../plugins/LegacyComposer";
+import type { ComposerCtl } from "../plugins/ComposerFrame";
+import { PLUGINS } from "../plugins/registry";
+import type { SoundCtl } from "../plugins/SoundFrame";
 import { newId, shapeKey, type Progression } from "../state";
-import { V4View, lensIn } from "../windows/ClipLens";
-import { PANEL_W, TOP_H, openWins, useWindows, zOf } from "../windows/windows";
+import { V4View } from "../windows/ClipLens";
+import { useClipDrag, type ClipDragHost } from "../windows/dragging";
+import { PANEL_W, TOP_H, closeWin, retargetWin, useWindows, zOf } from "../windows/windows";
 import type { PlayerApi } from "./api";
 import { ESC_OPEN, onEscape, whereOf } from "./keys";
 import { TrackView } from "./TrackView";
@@ -63,7 +71,7 @@ export class Guard extends Component<{ children: ReactNode; what: string; onClos
 }
 
 /** Edits that make the page busy for a moment: the song is booked further ahead first, so it plays on. */
-const HEAVY = new Set(["Add track", "Remove track", "Duplicate track", "Paste", "Paste and make room", "Move clip", "Move clips", "Copy clip", "Copy clips", "Insert time", "Remove time"]);
+const HEAVY = new Set(["Add track", "Remove track", "Duplicate track", "Paste", "Paste and make room", "Move clip", "Move clips", "Copy clip", "Copy clips", "Insert time", "Remove time", "Place clip"]);
 
 const EPS = 1e-6;
 /** A list as it was the last time, while every item in it is the same one (so what is handed on is not drawn again for nothing). */
@@ -112,6 +120,28 @@ function regionsOf(song: TimelineSong): { key: string; index: number; from: numb
   return out;
 }
 
+/** No track is heard without its effects. */
+const NO_BYPASS: ReadonlySet<string> = new Set();
+
+/** What a composer window is on, as the song's functions take it. */
+const targetOf = (w: Pick<WinState, "track" | "clip">): OpenTarget => (w.clip === undefined ? { track: w.track } : { track: w.track, clip: w.clip });
+
+/** The bars a composer's ▶ goes round: all of a placed clip (a short rhythm is heard as it comes round inside it); a draft's bars at its anchor. */
+export function auditSpan(s: Pick<App5State, "song" | "session">, w: Pick<WinState, "track" | "clip">): Region | null {
+  const o = openOf(s.song, targetOf(w), draftAnchor(s.song, s.session));
+  if (!o) return null;
+  return o.clip ? { from: o.clip.start, to: o.clip.start + o.clip.len } : o.span;
+}
+
+/** The track whose draft is heard with the song: that of the composer whose ▶ runs, else of the one that has the focus, while it is on its draft. */
+export function draftHeard(windows: readonly WinState[], audit: string | null, focused: string | null): string | null {
+  const draft = (id: string | null) => {
+    const w = id === null ? undefined : windows.find((x) => x.id === id);
+    return w && w.open && w.kind === "compose" && w.clip === undefined && w.id !== REC_WIN ? w.track : null;
+  };
+  return draft(audit) ?? draft(focused);
+}
+
 export function Host() {
   const app = useApp5();
   const { state, edit, editKeyed, setSession, toast, undo, redo, canUndo, canRedo, idea, dirty, saveIdea, syncNow, tuning, opened, peek, set } = app;
@@ -132,9 +162,40 @@ export function Host() {
   // a synth drone holds the song's home note
   useEffect(() => setHome(pc(key.tonic)), [key.tonic]);
   const buffer = useTakes(song);
-  const ctx = useMemo<FlattenCtx>(() => ({ voicingsOf, buffer }), [voicingsOf, buffer]);
+  /** the tracks heard without their effects just now (a sound window's bypass, Alt + click on FX): never part of the idea */
+  const [bypass, setBypass] = useState<ReadonlySet<string>>(NO_BYPASS);
+  const toggleBypass = useCallback((track: string) => setBypass((b) => {
+    const next = new Set(b);
+    if (!next.delete(track)) next.add(track);
+    return next.size ? next : NO_BYPASS;
+  }), []);
+  // (a track that is gone is not bypassed any more)
+  useEffect(() => setBypass((b) => ([...b].every((id) => song.tracks.some((t) => t.id === id)) ? b : new Set([...b].filter((id) => song.tracks.some((t) => t.id === id))))), [song.tracks]);
+  const ctx = useMemo<FlattenCtx>(() => ({ voicingsOf, buffer, ...(bypass.size ? { bypass } : {}) }), [voicingsOf, buffer, bypass]);
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
+
+  // ── windows ──
+  const setSessionBusy = useCallback((fn: (s: Session) => Session) => {
+    setSession((s) => {
+      const next = fn(s);
+      // (a zoom draws the lanes afresh: the song is booked further ahead for that moment)
+      if (next.pxPerBeat !== s.pxPerBeat && s.pxPerBeat > 0) bookAhead();
+      return next;
+    });
+  }, [setSession]);
+  const wins = useWindows(session, setSession);
+  /** where a draft is treated as lying: the bar line at or before the loop's start when the loop is on, else at or before the cursor */
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const anchor = useMemo(() => draftAnchor(song, session), [song.meter, song.sigs, session.cursor, session.loop]);
+  /** the composer whose ▶ is going round its bars, and for each composer whether ▶ plays its track alone */
+  const [audit, setAuditState] = useState<string | null>(null);
+  const auditRef = useRef<{ win: string; span: string; heard?: true } | null>(null);
+  const [alone, setAlone] = useState<Record<string, boolean>>({});
+  const aloneRef = useRef(alone);
+  aloneRef.current = alone;
+  /** the track whose draft is heard with the song now */
+  const drafted = draftHeard(session.windows, audit, wins.focused);
 
   // ── what is heard: the song, or the song with a Harmonize candidate written in ──
   const [candidate, setCandidateState] = useState<{ win: string; target: Target; p: Progression } | null>(null);
@@ -143,9 +204,9 @@ export function Host() {
     candidateRef.current = c;
     setCandidateState(c);
   }, []);
-  const heard = useMemo(() => {
+  const tried = useMemo(() => {
     if (!candidate) return song;
-    const lens = lensOf(song, candidate.target, key, 0);
+    const lens = lensOf(song, candidate.target, key, anchor);
     if (!lens) return song;
     let n = 0;
     try {
@@ -153,7 +214,13 @@ export function Host() {
     } catch {
       return song;
     }
-  }, [song, key, candidate]);
+  }, [song, key, candidate, anchor]);
+  // … and with the draft of the composer being worked in laid in at its anchor, on its own track (in this copy only)
+  const heard = useMemo(() => (drafted ? previewSong(tried, drafted, anchor) : tried), [tried, drafted, anchor]);
+  const heardRef = useRef(heard);
+  heardRef.current = heard;
+  /** the draft as it lies in what is heard: drawn faintly on its lane, so it is seen where it sounds */
+  const ghost = useMemo(() => (drafted ? (heard.clips.find((c) => c.id === draftClipId(drafted) && c.kind !== "audio") as NoteClip | undefined) ?? null : null), [heard, drafted]);
   const played = usePlayer(heard, session, ctx);
   /** a recording or a rehearsal runs: the interface plays the song, so the app's own player stays silent */
   const recBusy = useRef(false);
@@ -175,26 +242,17 @@ export function Host() {
     openedNow.current = opened;
     playerRef.current.stop();
     setCandidate(null);
+    setBypass(NO_BYPASS);
+    mounted.current.clear();
   }, [opened, setCandidate]);
   const playerApi = useMemo<PlayerApi>(() => ({
     ...player,
     toggle: () => {
       // (nothing to hear: it says so, instead of a play line crossing empty bars)
-      if (!player.playing && !flatten(peek().song, ctxRef.current).any) return toast("Nothing to play yet: open a track with its compose button and write something");
+      if (!player.playing && !flatten(heardRef.current, ctxRef.current).any) return toast("Nothing to play yet: open a track with its compose button and write something");
       player.toggle();
     },
   }), [player, toast, peek]);
-
-  // ── windows ──
-  const setSessionBusy = useCallback((fn: (s: Session) => Session) => {
-    setSession((s) => {
-      const next = fn(s);
-      // (a zoom draws the lanes afresh: the song is booked further ahead for that moment)
-      if (next.pxPerBeat !== s.pxPerBeat && s.pxPerBeat > 0) bookAhead();
-      return next;
-    });
-  }, [setSession]);
-  const wins = useWindows(session, setSession);
 
   // ── recording: the one record window, the top bar's ● and monitor control, the panels' inputs ──
   const desktop = isDesktop();
@@ -294,8 +352,6 @@ export function Host() {
     move: (r) => wins.move(REC_WIN, r),
   }), [wins]);
 
-  /** windows opened by FX: their sound panels are brought into view (a count for each, so asking again scrolls again) */
-  const [toSound, setToSound] = useState<Record<string, number>>({});
   const open = useCallback((kind: "compose" | "sound", track: string, clip?: string) => {
     // (the state as it is this moment: a clip made just now, by the same press, is in it)
     const s = peek();
@@ -304,20 +360,14 @@ export function Host() {
     // a track that records: the one record window (FX: at its vocal sound)
     if (t.kind === "vocals" || t.kind === "audio") return openRecord(track, kind === "sound");
     bookAhead();
-    // what a track's buttons open: its selected clip; else the clip under the cursor; else its first clip; with no
-    // clip at all, nothing yet (the first thing written makes one)
-    let on = clip;
-    if (on === undefined || !s.song.clips.some((c) => c.id === on && c.track === track)) {
-      const mine = s.song.clips.filter((c) => c.track === track).sort((a, b) => a.start - b.start);
-      const was = s.session.windows.find((w) => w.id === `compose:${track}`)?.clip;
-      on = (mine.find((x) => s.session.sel.clips.includes(x.id)) ?? mine.find((x) => x.start <= s.session.cursor && clipEnd(x, s.song) > s.session.cursor) ?? mine[0])?.id
-        // (the id the first clip will have: the same one while the window stays on the empty track)
-        ?? (clip === undefined && was && !s.song.clips.some((c) => c.id === was) ? was : `c${newId()}`);
-    }
-    // (in this release the sound panels are part of the composer's page: FX opens the same window, at the sound)
-    wins.open("compose", track, on);
-    if (kind === "sound") setToSound((m) => ({ ...m, [`compose:${track}`]: (m[`compose:${track}`] ?? 0) + 1 }));
+    if (kind === "sound") return wins.open("sound", track);
+    // the compose button opens the track's draft; a clip that was double-clicked (or just made) is opened itself
+    wins.open("compose", track, clip !== undefined && s.song.clips.some((c) => c.id === clip && c.track === track && c.kind !== "audio") ? clip : undefined);
   }, [wins, peek, openRecord]);
+  const setAudit = useCallback((win: string | null, span?: Region) => {
+    auditRef.current = win && span ? { win, span: `${span.from}:${span.to}` } : null;
+    setAuditState(win);
+  }, []);
   const close = useCallback((id: string) => {
     bookAhead();
     wins.close(id);
@@ -325,47 +375,59 @@ export function Host() {
       playerRef.current.audition(null);
       setCandidate(null);
     }
-  }, [wins, setCandidate]);
-  /** what a composer window is on (null: a track that records; undefined: its clip is gone, and it closes) */
-  const targetOf = useCallback((s: TimelineSong, cursor: number, track: Track, clip: string | undefined): Target | null | undefined => {
-    if (track.kind === "vocals" || track.kind === "audio") return null;
-    if (clip !== undefined && s.clips.some((c) => c.id === clip && c.track === track.id)) return { track: track.id, clip };
-    if (s.clips.some((c) => c.track === track.id)) return undefined;
-    // a track with nothing on it: the first thing written lands on the bar the cursor is in
-    const map = barMap(s);
-    const at = map.floorBar(Math.max(0, cursor));
-    return { track: track.id, fresh: { id: clip ?? "c-new", at, sig: map.sigAt(at + EPS) } };
-  }, []);
-  // (the record window is not a composer: it is drawn on its own, below)
-  const shown = openWins(session).filter((w) => w.id !== REC_WIN);
-  const targets = useMemo(() => {
-    const out = new Map<string, Target | null | undefined>();
-    for (const w of shown) {
-      const t = song.tracks.find((x) => x.id === w.track);
-      out.set(w.id, t ? targetOf(song, session.cursor, t, w.clip) : undefined);
+    if (auditRef.current?.win === id) {
+      playerRef.current.audition(null);
+      setAudit(null);
     }
-    return out;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown.map((w) => `${w.id}:${w.clip ?? ""}`).join("|"), song.tracks, song.clips, song.sigs, song.meter, session.cursor, targetOf]);
-  // (the same object while it says the same, so a window is not drawn again for nothing)
-  const kept = useRef(new Map<string, Target | null | undefined>());
-  const stable = useMemo(() => {
-    const out = new Map<string, Target | null | undefined>();
-    for (const [id, t] of targets) {
-      const was = kept.current.get(id);
-      out.set(id, was !== undefined && was !== null && t && JSON.stringify(was) === JSON.stringify(t) ? was : t);
-    }
-    kept.current = out;
-    return out;
-  }, [targets]);
-  // a window whose clip or track is gone (an undo, a delete) closes; so does a composer left open on a track that records
-  // (kept from before recording had its window)
+  }, [wins, setCandidate, setAudit]);
+  // (the record window is not one of these: it is drawn on its own, below)
+  const all = session.windows.filter((w) => w.id !== REC_WIN);
+  const shown = all.filter((w) => w.open);
+  /** the windows that were open at some time since this idea opened: closed, they are hidden, not gone */
+  const mounted = useRef(new Set<string>());
+  for (const w of shown) mounted.current.add(w.id);
+  // (the same object for a window while it is on the same thing, so it is not drawn again for nothing)
+  const targets = useRef(new Map<string, OpenTarget>());
+  const targetFor = (w: WinState): OpenTarget => {
+    const was = targets.current.get(w.id);
+    if (was && was.track === w.track && was.clip === w.clip) return was;
+    const t = targetOf(w);
+    targets.current.set(w.id, t);
+    return t;
+  };
+  // A window whose track is gone closes. A composer whose clip is gone (an undo, a delete) closes too, and is back on
+  // its track's draft the next time it is opened.
   useEffect(() => {
-    for (const w of shown) if (stable.get(w.id) === undefined || stable.get(w.id) === null) close(w.id);
+    const gone = all.filter((w) => !song.tracks.some((t) => t.id === w.track) || (w.kind === "compose" && w.clip !== undefined && !song.clips.some((c) => c.id === w.clip && c.track === w.track)));
+    if (!gone.length) return;
+    for (const w of gone) {
+      if (w.open) close(w.id);
+      setSession((s) => retargetWin(closeWin(s, w.id), w.id, undefined));
+    }
   });
+  // ▶ of a composer ends with the music; and while it runs it follows what the window is on (another clip, more bars, the anchor moved)
+  useEffect(() => {
+    const a = auditRef.current;
+    if (!a) return;
+    // (the music starts a moment after ▶ is pressed: it has ended only once it was heard)
+    if (!player.playing) return a.heard ? setAudit(null) : undefined;
+    a.heard = true;
+    const w = session.windows.find((x) => x.id === a.win && x.open);
+    const span = w ? auditSpan({ song, session }, w) : null;
+    if (!w || !span) {
+      playerRef.current.audition(null);
+      return setAudit(null);
+    }
+    if (`${span.from}:${span.to}` === a.span) return;
+    setAudit(a.win, span);
+    playerRef.current.audition(span, aloneRef.current[a.win] ? w.track : undefined);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [player.playing, song, session.windows, session.cursor, session.loop]);
 
   // what is played to be heard goes to the track of the window that has the focus
   const focusedWin = shown.find((w) => w.id === wins.focused) ?? shown[shown.length - 1];
+  // (the signature a synth's arp is fitted to in a sound window: that of the clip open in the track's composer, else at the cursor)
+  const sigAtCursor = barMap(song).sigAt(Math.max(0, session.cursor) + EPS);
   const heardTrack = song.tracks.find((t) => t.id === focusedWin?.track);
   const heardKind = heardTrack?.kind;
   const heardTone = heardTrack && "tone" in heardTrack ? heardTrack.tone : undefined;
@@ -385,20 +447,42 @@ export function Host() {
       playerRef.current.audition(null);
       return setCandidate(null);
     }
-    const lens = lensIn(peek(), target);
-    if (!lens) return;
-    // (the bars go round from the moment a candidate is first heard; another option then takes its place as it plays)
-    if (candidateRef.current?.win !== win) playerRef.current.audition(lens.span);
-    setCandidate({ win, target, p });
-  }, [setCandidate, peek]);
-  const onHearNow = useCallback((target: Target) => {
-    if (playerRef.current.playing) return;
     const s = peek();
-    // the clip's own bars go round (all of them: a short rhythm is heard as it comes round inside its clip)
-    const c = target.clip === undefined ? undefined : s.song.clips.find((x) => x.id === target.clip);
-    const lens = lensIn(s, target);
-    if (c && c.kind !== "audio") playerRef.current.audition({ from: c.start, to: c.start + c.len });
-    else if (lens) playerRef.current.audition(lens.span);
+    const o = openOf(s.song, target, draftAnchor(s.song, s.session));
+    if (!o) return;
+    // (the bars go round from the moment a candidate is first heard; another option then takes its place as it plays)
+    if (candidateRef.current?.win !== win) {
+      setAudit(null);
+      playerRef.current.audition(o.span);
+    }
+    setCandidate({ win, target, p });
+  }, [setCandidate, setAudit, peek]);
+  /** a composer's ▶: the bars it has open go round, with the song or (its "alone" switch) the track on its own; pressed again, they stop */
+  const playWin = useCallback((id: string, toggle: boolean) => {
+    if (auditRef.current?.win === id && playerRef.current.playing) {
+      if (!toggle) return;
+      playerRef.current.audition(null);
+      return setAudit(null);
+    }
+    const s = peek();
+    const w = s.session.windows.find((x) => x.id === id);
+    const span = w ? auditSpan(s, w) : null;
+    if (!w || !span) return;
+    wins.focus(id);
+    setAudit(id, span);
+    playerRef.current.audition(span, aloneRef.current[id] ? w.track : undefined);
+  }, [peek, wins, setAudit]);
+  /** a rhythm or a style was picked: it is heard straight away, if nothing is playing */
+  const onHearNow = useCallback((id: string) => {
+    if (!playerRef.current.playing) playWin(id, false);
+  }, [playWin]);
+  const onAlone = useCallback((id: string, on: boolean) => {
+    aloneRef.current = { ...aloneRef.current, [id]: on };
+    setAlone(aloneRef.current);
+    // (while its bars go round, the switch is heard at once)
+    const w = peek().session.windows.find((x) => x.id === id);
+    const span = w ? auditSpan(peek(), w) : null;
+    if (w && span && auditRef.current?.win === id && playerRef.current.playing) playerRef.current.audition(span, on ? w.track : undefined);
   }, [peek]);
   const again = useCallback((track: string, clip: string) => {
     const s = peek();
@@ -478,28 +562,83 @@ export function Host() {
       has: (track: string) => !!forTrack(peek().song.tracks.find((x) => x.id === track)),
     };
   }, [soundCopy, clip, peek, edit, toast]);
-  /** ⧉ and ⎘ in a composer's title bar: what is open, copied; and what was copied, written into what is open */
-  const pasteInto = useCallback((track: string, target: Target) => {
+  /** ⧉ in a composer's strip: what is open, copied (a draft as a clip one round of its content long, with its track's sound) */
+  const copyOpen = useCallback((id: string) => {
+    const s = peek();
+    const w = s.session.windows.find((x) => x.id === id);
+    if (!w) return;
+    if (w.clip !== undefined) return clipboard.copy([w.clip]);
+    const scratch = stampOpen({ ...s.song, clips: [] }, targetOf(w), w.track, 0, 0, () => "copied");
+    const c = copyOut(scratch, ["copied"], s.key);
+    if (!c.clips.length) return;
+    set((x) => ({ ...x, clip: c }));
+    toast("Draft copied");
+  }, [peek, set, toast, clipboard]);
+  /** ⎘: what was copied, written into what is open (moved into this idea's key, fitted to its time signature) */
+  const pasteInto = useCallback((id: string) => {
     const s = peek();
     const c = s.clip;
-    const t = s.song.tracks.find((x) => x.id === track);
+    const w = s.session.windows.find((x) => x.id === id);
+    const t = w && s.song.tracks.find((x) => x.id === w.track);
     const from = t && c?.clips.find((x) => x.kind === CLIP_OF[t.kind]);
-    if (!t || !c || !from || from.kind === "audio") return;
-    if (target.clip === undefined) {
-      // nothing open yet: the copy lands as a clip of its own where the first one would
-      const base = `p${newId()}`;
-      let n = 0;
-      return edit("Paste", (x) => pasteIn(x, { ...c, clips: [{ ...from, start: 0 }] }, target.fresh?.at ?? s.session.cursor, s.key, track, () => `${base}-${++n}`));
-    }
-    // the copy is moved into this idea's key on a scratch song (as any paste is), then written into the open clip
-    const scratch = pasteIn({ ...s.song, tracks: [t], clips: [] }, { ...c, clips: [{ ...from, start: 0 }] }, 0, s.key, track, () => "scratch");
+    if (!w || !t || !c || !from || from.kind === "audio") return;
+    const target = targetOf(w);
+    // the copy is moved into this idea's key on a scratch song (as any paste is), then written into what is open
+    const scratch = pasteIn({ ...s.song, tracks: [t], clips: [] }, { ...c, clips: [{ ...from, start: 0 }] }, 0, s.key, t.id, () => "scratch");
     const made = scratch.clips.find((x) => x.id === "scratch") as NoteClip | undefined;
-    const open = s.song.clips.find((x) => x.id === target.clip) as NoteClip | undefined;
-    if (!made || !open) return;
+    if (!made) return;
+    const moved = from.kind !== "drums" && (c.key.tonic !== s.key.tonic || c.key.scaleId !== s.key.scaleId) ? `, moved to ${displayNote(s.key.tonic)}` : "";
+    const back = { label: "↶", aria: "Undo", run: undo };
+    if (w.clip === undefined) {
+      // into the draft: it becomes what was copied, as long as that is
+      edit("Paste", (x) => writeOpen(x, target, made.content, draftAnchor(x, s.session)));
+      return toast(`Pasted${moved}`, back);
+    }
+    const open = s.song.clips.find((x) => x.id === w.clip) as NoteClip | undefined;
+    if (!open) return;
     edit("Paste", (x) => setContent(x, open.id, made.content));
-    const past = contentBeats(made) > open.len + EPS;
-    toast(`Pasted${from.kind !== "drums" && (c.key.tonic !== s.key.tonic || c.key.scaleId !== s.key.scaleId) ? `, moved to ${displayNote(s.key.tonic)}` : ""}${past ? ". Some of it is past the end of the clip" : ""}`, { label: "↶", aria: "Undo", run: undo });
+    toast(`Pasted${moved}${contentBeats(made) > open.len + EPS ? ". Some of it is past the end of the clip" : ""}`, back);
   }, [peek, edit, toast, undo]);
+
+  // ── a composer's clip dragged out of its strip onto a lane ──
+  /** the kind of clip being dragged (the lanes that do not take it are dimmed) */
+  const [dropKind, setDropKind] = useState<ClipKind | null>(null);
+  const dragHost = useMemo<ClipDragHost>(() => ({
+    view: () => {
+      const s = peek();
+      return { song: s.song, pxPerBeat: s.session.pxPerBeat > 0 ? s.session.pxPerBeat : 16, scroll: Math.max(0, s.session.scroll) };
+    },
+    begin: (p) => {
+      bookAhead();
+      setDropKind(p.kind);
+    },
+    end: () => setDropKind(null),
+    scrollBy: (beats) => setSession((s) => ({ ...s, scroll: Math.max(0, s.scroll + beats) })),
+    drop: (p, lane, beat) => {
+      const s = peek();
+      const base = `c${newId()}`;
+      const ids = () => {
+        let n = 0;
+        return () => `${base}-${++n}`;
+      };
+      if (stampOpen(s.song, p.from, lane, beat, draftAnchor(s.song, s.session), ids()) === s.song) return false;
+      bookAhead();
+      edit("Place clip", (x) => stampOpen(x, p.from, lane, beat, draftAnchor(x, s.session), ids()));
+      // the window is on the clip just placed (on another track: that track's composer), so the next change is heard in the song
+      const made = `${base}-1`;
+      setSession((x) => ({ ...x, sel: { clips: [made], track: lane } }));
+      wins.open("compose", lane, made);
+      return true;
+    },
+  }), [peek, edit, setSession, wins]);
+  const stripDrag = useClipDrag(dragHost, key);
+  const dragWin = useCallback((e: React.PointerEvent<HTMLElement>, id: string, look: Parameters<typeof stripDrag.start>[2]) => {
+    const s = peek();
+    const w = s.session.windows.find((x) => x.id === id);
+    const t = w && s.song.tracks.find((x) => x.id === w.track);
+    if (!w || !t) return;
+    stripDrag.start(e, { type: "clip", kind: CLIP_OF[t.kind], from: targetOf(w) }, look);
+  }, [peek, stripDrag]);
 
   // ── the top bar ──
   const [ideas, setIdeas] = useState<false | "open" | "named">(false);
@@ -583,7 +722,8 @@ export function Host() {
     onKey: (k: Key) => editKeyed("Key", (s) => ({ song: s, key: k })),
     onMove: (n: number) => editKeyed("Move song", (s, was) => {
       const to: Key = { ...was, tonic: bestTonicSpelling(pc(was.tonic) + n, getScale(was.scaleId)) };
-      return { song: transpose(s, n, was, to), key: to };
+      // (a harmony that stood as it was written still does after the move: its record follows)
+      return { song: transposeSong(s, n, was, to), key: to };
     }),
     onTempo: (bpm: number) => edit("Tempo", (s) => setTempo(s, Math.max(40, Math.min(200, Math.round(bpm)))), "tempo"),
     onSig: (sig: TimeSig, fromHereOn: boolean) => edit("Time signature", (s) => setSig(s, barMap(s).barAt(peek().session.cursor).bar, sig, fromHereOn)),
@@ -661,43 +801,99 @@ export function Host() {
     return on as Clip;
   }) })), [edit]);
   /** what every composer window asks of the host: one object for all of them, the same from one draw to the next */
-  const does = useRef({ wins, close, onPreview, onHearNow, showKey, muteClip, clipboard, pasteInto, open });
-  does.current = { wins, close, onPreview, onHearNow, showKey, muteClip, clipboard, pasteInto, open };
-  const ctl = useMemo<ComposerCtl>(() => ({
+  const does = useRef({ wins, close, onPreview, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass });
+  does.current = { wins, close, onPreview, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass };
+  const ctl = useMemo<ComposerCtl>(() => {
+    const winOf = (id: string) => peek().session.windows.find((x) => x.id === id);
+    return {
+      focus: (id) => does.current.wins.focus(id),
+      close: (id) => does.current.close(id),
+      move: (id, r) => does.current.wins.move(id, r),
+      preview: (id, target, p) => does.current.onPreview(id, target, p),
+      hearNow: (id) => does.current.onHearNow(id),
+      showKey: () => does.current.showKey(),
+      mute: (id) => does.current.muteClip(id),
+      hearTrack: (track) => edit("Hear track", (s) => {
+        const why = quietWhy(s.mix, track);
+        return why ? { ...s, mix: mixWith(s.mix, track, why === "mute" ? { mute: false } : { solo: true }) } : s;
+      }),
+      show: (track, clip) => does.current.open("compose", track, clip),
+      sound: (track) => {
+        bookAhead();
+        does.current.wins.open("sound", track, undefined, true);
+      },
+      play: (id) => does.current.playWin(id, true),
+      setAlone: (id, on) => does.current.onAlone(id, on),
+      fresh: (id) => {
+        const w = winOf(id);
+        const s = peek();
+        const t = w && s.song.tracks.find((x) => x.id === w.track);
+        if (!w || !t) return;
+        // the draft is emptied (one undo step), and the window is on it
+        edit("New draft", (x) => setDraft(x, w.track, null, barMap(x).sigAt(0)));
+        setSession((x) => retargetWin(x, id, undefined));
+      },
+      bars: (id, n) => {
+        const w = winOf(id);
+        const session = peek().session;
+        if (w) edit("Length", (x) => setOpenBars(x, targetOf(w), n, draftAnchor(x, session)), `bars:${id}`);
+      },
+      copy: (id) => does.current.copyOpen(id),
+      paste: (id) => does.current.pasteInto(id),
+      fit: (id) => {
+        const w = winOf(id);
+        const session = peek().session;
+        if (w) edit("Fit to these bars", (x) => fitOpen(x, targetOf(w), draftAnchor(x, session)));
+      },
+      drag: (e, id, look) => does.current.dragWin(e, id, look),
+    };
+  }, [peek, edit, setSession]);
+  const soundCtl = useMemo<SoundCtl>(() => ({
     focus: (id) => does.current.wins.focus(id),
     close: (id) => does.current.close(id),
     move: (id, r) => does.current.wins.move(id, r),
-    preview: (id, target, p) => does.current.onPreview(id, target, p),
-    hearNow: (target) => does.current.onHearNow(target),
-    showKey: () => does.current.showKey(),
-    mute: (id) => does.current.muteClip(id),
-    copy: (id) => does.current.clipboard.copy([id]),
-    paste: (track, target) => does.current.pasteInto(track, target),
-    show: (track, clip) => does.current.open("compose", track, clip),
+    copy: (track) => does.current.sounds.copy(track),
+    paste: (track) => does.current.sounds.paste(track),
+    bypass: (track) => does.current.toggleBypass(track),
   }), []);
+  const bypassCtl = useMemo(() => ({ on: bypass, toggle: toggleBypass }), [bypass, toggleBypass]);
 
   return (
     <>
       <Guard what="the track view">
         <TrackView song={song} keyOf={key} session={session} edit={editBusy} setSession={setSessionBusy} player={playerApi} open={open} peaks={peaks}
-          clipboard={clipboard} sound={sounds} top={top} stale={stale} again={again} say={say} inputs={inputs} recording={growing} />
+          clipboard={clipboard} sound={sounds} top={top} stale={stale} again={again} say={say} inputs={inputs} recording={growing} dropKind={dropKind} bypass={bypassCtl} ghost={ghost} />
       </Guard>
       <Guard what="the record window" onClose={recCtl.close}>
         <RecordHost win={session.windows.find((w) => w.id === REC_WIN)} focused={wins.focused === REC_WIN} otherFocused={!!wins.focused && wins.focused !== REC_WIN} z={zOf(session, REC_WIN)}
           tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} picked={session.sel.clips} recordingTo={recordingTo}
           round={round} playing={player.playing} toSound={recSound} ctl={recCtl} api={recApi} />
       </Guard>
-      {shown.map((w) => {
+      {all.map((w) => {
         const t = song.tracks.find((x) => x.id === w.track);
-        const target = stable.get(w.id);
-        if (!t || !target) return null;
+        if (!t || !mounted.current.has(w.id)) return null;
+        const frame = { win: w, track: t, song, keyOf: key, focused: wins.focused === w.id, hidden: !w.open, z: zOf(session, w.id), player: playerApi };
+        if (w.kind === "sound") {
+          const Sound = PLUGINS[t.kind].sound;
+          if (!Sound) return null;
+          const composing = all.find((x) => x.kind === "compose" && x.track === w.track && x.clip !== undefined);
+          const sig = (composing && song.clips.find((c) => c.id === composing.clip && c.kind !== "audio") as NoteClip | undefined)?.sig ?? sigAtCursor;
+          return (
+            <Guard key={w.id} what={`the sound of ${t.name}`} onClose={() => close(w.id)}>
+              <Sound {...frame} bypassed={bypass.has(t.id)} canPaste={sounds.has(t.id)} compound={isCompound(sig)} ctl={soundCtl} />
+            </Guard>
+          );
+        }
+        const Composer = PLUGINS[t.kind].compose;
+        if (!Composer) return null;
         const canPaste = !!clip?.clips.some((c) => c.kind === CLIP_OF[t.kind] && c.kind !== "audio");
         return (
           <Guard key={w.id} what={`the ${t.name} window`} onClose={() => close(w.id)}>
-            <LegacyComposer win={w} track={t} song={song} keyOf={key} target={target} focused={wins.focused === w.id} z={zOf(session, w.id)} toSound={toSound[w.id]} player={playerApi} ctl={ctl} canPaste={canPaste} />
+            <Composer {...frame} target={targetFor(w)} anchor={anchor} audit={audit === w.id && player.playing} alone={!!alone[w.id]} heard={w.clip !== undefined || drafted === w.track} ctl={ctl} canPaste={canPaste} />
           </Guard>
         );
       })}
+      {stripDrag.ghost}
       {canvas !== "never" && (
         <div className={`cv-over${canvasOpen ? " open" : ""}`} hidden={!canvasOpen} data-keys="own" ref={overlay} role="dialog" aria-label="Canvas" onPointerDown={(e) => { if (e.target === e.currentTarget) closeCanvas(); }}>
           <Guard what="the Canvas" onClose={closeCanvas}>

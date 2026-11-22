@@ -47,7 +47,7 @@ export function fxOn(t: Track): boolean {
   return s.drive > 0 || s.chorus > 0 || s.phaser > 0 || s.trem > 0 || s.wobble > 0 || s.echo > 0 || s.space > 0 || s.shimmer > 0;
 }
 
-export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, armed, fresh, renaming, canAgain, level, row, rows, ctl }: {
+export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, armed, fresh, renaming, canAgain, bypassed, level, row, rows, ctl }: {
   track: Track;
   mix: TrackMix | undefined;
   /** not heard: muted, or another track is soloed */
@@ -59,6 +59,8 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
   renaming: boolean;
   /** a harmony track with a clip to write again */
   canAgain: boolean;
+  /** heard without its effects just now (its FX button says so) */
+  bypassed?: boolean;
   /** how loud its input is right now, 0 to 1 (while the interface is open) */
   level?: (ch: number) => number;
   /** its place in the list, for what is said aloud */
@@ -110,7 +112,8 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
       </div>
       <div className="tlh-line two">
         <button className="tlh-btn tlh-compose" aria-label="Compose" title={`Compose: open ${track.name} to write in`} onClick={() => ctl.compose(id)}><ClefIcon /></button>
-        <button className={`tlh-btn tlh-fx${fxOn(track) ? " lit" : ""}`} aria-label={`Sound and effects of ${track.name}`} title="Sound and effects" onClick={(e) => ctl.sound(id, e)}>FX</button>
+        <button className={`tlh-btn tlh-fx${fxOn(track) ? " lit" : ""}${bypassed ? " off" : ""}`} aria-label={`Sound and effects of ${track.name}${bypassed ? " (bypassed: heard without its effects)" : ""}`}
+          title={bypassed ? "Bypassed: heard without its effects. Alt + click to hear them again" : "Sound and effects (Alt + click: hear the track without its effects)"} onClick={(e) => ctl.sound(id, e)}>FX</button>
         <button className={`tlh-ms${mix?.mute ? " on" : ""}`} aria-pressed={!!mix?.mute} aria-label={`Mute ${track.name}`} title="Mute" onClick={() => ctl.mix(id, { mute: !mix?.mute })}>M</button>
         <button className={`tlh-ms solo${mix?.solo ? " on" : ""}`} aria-pressed={!!mix?.solo} aria-label={`Solo ${track.name}`} title="Solo: hear only the soloed tracks" onClick={() => ctl.mix(id, { solo: !mix?.solo })}>S</button>
         <input type="range" className="tlh-vol" min={MIN_DB} max={MAX_DB} step={0.5} value={db} aria-label={`${track.name} volume`} title="Volume (double-click: back to 0)"

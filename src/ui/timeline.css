@@ -107,6 +107,8 @@
 .tlh-compose { min-width: 30px; padding: 0 4px; }
 .tlh-compose svg { display: block; }
 .tlh-fx.lit { border-color: color-mix(in srgb, var(--fifth) 70%, var(--border-2)); color: var(--fifth); }
+/* heard without its effects just now */
+.tlh-fx.off { border-style: dashed; border-color: var(--border-2); color: var(--muted); text-decoration: line-through; }
 .tlh.fresh .tlh-compose { animation: tlv-pulse 1.4s ease-out 1; }
 @keyframes tlv-pulse { 0%, 100% { box-shadow: 0 0 0 0 transparent; } 30% { box-shadow: 0 0 0 5px color-mix(in srgb, var(--accent) 45%, transparent); border-color: var(--accent); color: var(--accent); } }
 .tlh-ms { flex: none; width: 24px; height: 22px; padding: 0; border-radius: 6px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.7rem; font-weight: 900; }
@@ -160,8 +162,11 @@
 .tlc-grip { position: absolute; top: 0; bottom: 0; width: min(8px, 30%); cursor: ew-resize; touch-action: none; }
 .tlc-grip.l { left: 0; }
 .tlc-grip.r { right: 0; }
-/* the row of buttons on a selected clip */
-.tlc-acts { position: absolute; z-index: 2; display: flex; gap: 1px; padding: 2px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28); pointer-events: auto; }
+/* what is being composed on a track, where it is heard with the song: not on the timeline, only shown where it sounds */
+.tlc.tlc-draft { z-index: 1; pointer-events: none; border-style: dashed; border-color: color-mix(in srgb, var(--kc) 75%, var(--text)); background: color-mix(in srgb, var(--kc) 10%, transparent); opacity: 0.72; }
+.tlc-draft-tag { position: absolute; left: 4px; bottom: 2px; padding: 0 5px; border-radius: 4px; background: color-mix(in srgb, var(--kc) 70%, var(--card)); color: #14161a; font-size: 0.58rem; font-weight: 850; line-height: 12px; text-transform: uppercase; letter-spacing: 0.06em; }
+/* the row of buttons of a selected clip: clear of the clip (just above it, or just below), so it never covers the clip's drawing */
+.tlc-acts { position: absolute; z-index: 2; box-sizing: border-box; height: 26px; display: flex; gap: 1px; padding: 2px; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card); box-shadow: 0 3px 12px rgba(0, 0, 0, 0.28); pointer-events: auto; }
 .tlc-act { width: 24px; height: 20px; padding: 0; border: none; border-radius: 5px; background: none; color: var(--text); display: grid; place-items: center; }
 .tlc-act:hover { background: var(--card-2); color: var(--accent); }
 .tlc-act.on { color: var(--accent); }
@@ -230,12 +235,73 @@
 .tlw-bar { flex: none; height: 38px; display: flex; align-items: center; gap: 10px; padding: 0 6px 0 12px; background: var(--card); border-bottom: 1px solid var(--border); cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
 .tlw-title { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.92rem; font-weight: 800; letter-spacing: 0; }
 .tlw:not(.focused) .tlw-title { color: var(--muted); }
-.tlw-tools { margin-left: auto; display: inline-flex; align-items: center; gap: 6px; }
+.tlw-icon { flex: none; display: grid; color: var(--muted); margin-right: -4px; }
+.tlw.focused .tlw-icon { color: var(--accent); }
+.tlw-tools { margin-left: auto; min-width: 0; display: inline-flex; align-items: center; gap: 6px; }
 .tlw-x { flex: none; width: 28px; height: 28px; padding: 0; border: none; border-radius: 8px; background: none; color: var(--muted); font-size: 0.8rem; }
 .tlw-x:hover { background: var(--card-2); color: var(--text); }
 /* (the body carries a transform, so anything pinned to the screen inside it stays inside the window) */
 .tlw-body { flex: 1; min-height: 0; overflow: auto; transform: translateZ(0); padding: 12px; }
-.tlw-strip { flex: none; padding: 8px 12px; background: var(--card); border-top: 1px solid var(--border); }
+.tlw-strip { flex: none; padding: 7px 18px 7px 10px; background: var(--card); border-top: 1px solid var(--border); }
+.tlw[hidden] { display: none; }
+/* the corner a window is made larger or smaller by */
+.tlw-size { position: absolute; right: 0; bottom: 0; z-index: 3; width: 16px; height: 16px; cursor: nwse-resize; touch-action: none; background: linear-gradient(135deg, transparent 0 55%, var(--faint) 55% 63%, transparent 63% 74%, var(--faint) 74% 82%, transparent 82%); opacity: 0.7; border-bottom-right-radius: 13px; }
+.tlw-size:hover { opacity: 1; }
+.tlw-tools .tlw-sound { color: var(--text); }
+.tlw-tools .tlw-sound:hover { color: var(--accent); border-color: var(--accent); }
+.tlw-tools .sw-bypass { padding: 2px 10px; font-size: 0.78rem; }
+.tlw-tools .sw-bypass.on { background: var(--tension); border-color: transparent; color: #fff; }
+
+/* ── the strip at the bottom of a composer: the clip being composed, and what can be done with it ── */
+.cs { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.cs-new { flex: none; }
+.cs-play { flex: none; display: inline-flex; align-items: center; gap: 5px; }
+.cs-go { width: 32px; height: 32px; padding: 0; border-radius: 50%; border: 1px solid var(--border-2); background: var(--card-2); color: var(--text); font-size: 0.78rem; line-height: 1; display: inline-grid; place-items: center; }
+.cs-go:hover { border-color: var(--accent); color: var(--accent); }
+.cs-go.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+.cs-alone { padding: 2px 9px; font-size: 0.74rem; }
+/* the clip itself, as on its lane: pressed and dragged up onto the timeline */
+.cs .cs-clip { position: relative; top: auto; flex: 1 1 140px; min-width: 60px; height: 48px; cursor: grab; touch-action: none; user-select: none; -webkit-user-select: none; }
+.cs .cs-clip:hover { box-shadow: 0 0 0 2px color-mix(in srgb, var(--kc) 55%, transparent); }
+.cs .cs-clip:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.cs .cs-clip:active { cursor: grabbing; }
+.cs-grip { position: absolute; left: 0; top: 0; bottom: 0; z-index: 2; width: 14px; display: grid; place-items: center; background: color-mix(in srgb, var(--kc) 62%, var(--card)); color: color-mix(in srgb, #14161a 62%, transparent); pointer-events: none; }
+.cs-grip svg { width: 9px; height: 13px; }
+.cs .cs-clip .tlc-in { left: 14px; }
+.cs .cs-clip .tlc-notch { margin-left: 14px; }
+.cs-hint { position: absolute; left: 44px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 0.74rem; font-weight: 650; white-space: nowrap; pointer-events: none; }
+.cs-fit { flex: none; border-color: var(--ext); }
+.cs-len { flex: none; display: inline-flex; align-items: stretch; height: 30px; border: 1px solid var(--border-2); border-radius: 9px; overflow: hidden; background: var(--card-2); }
+.cs-len button { width: 28px; padding: 0; border: none; background: none; font-size: 1rem; font-weight: 800; line-height: 1; }
+.cs-len button:hover:not(:disabled) { color: var(--accent); }
+.cs-len button:disabled { opacity: 0.35; cursor: default; }
+.cs-len select { border: none; border-inline: 1px solid var(--border-2); border-radius: 0; background: none; color: var(--text); padding: 0 6px; font: inherit; font-size: 0.84rem; font-weight: 750; cursor: pointer; }
+.cs-clipb { flex: none; display: inline-flex; gap: 4px; }
+.cs-clipb .icon-btn { width: 30px; height: 30px; }
+.tlw-sheet .cs { flex-wrap: wrap; }
+
+/* ── while a composer's clip is dragged onto the timeline ──
+   every window lets the pointer through and turns see-through (all but the strip it came from), so the lanes under
+   it can be reached; the ghost follows the pointer, and on a lane that takes it stands on the bar under the pointer */
+body.strip-drag { cursor: grabbing; user-select: none; -webkit-user-select: none; }
+body.strip-drag.strip-refused, body.strip-drag.strip-refused .tlv-lane { cursor: not-allowed; }
+body.strip-drag .tlw { pointer-events: none; background: transparent; border-color: color-mix(in srgb, var(--border-2) 35%, transparent); box-shadow: none; }
+body.strip-drag .tlw > .tlw-bar, body.strip-drag .tlw > .tlw-body, body.strip-drag .tlw > .tlw-strip, body.strip-drag .tlw > .tlw-size { opacity: 0.35; }
+body.strip-drag .tlw.strip-src > .tlw-strip { opacity: 1; }
+body.strip-drag .tlw.strip-src .cs-clip { opacity: 0.45; }
+.sd-ghost { position: fixed; left: 0; top: 0; z-index: 90; max-width: 220px; pointer-events: none; opacity: 0.78; box-shadow: var(--shadow); will-change: transform; }
+.sd-ghost.landing { max-width: none; opacity: 0.95; border-color: var(--accent); box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.sd-ghost.refused { opacity: 0.45; filter: grayscale(0.7); }
+.sd-ghost.gliding { max-width: none; transition: transform 180ms ease, opacity 180ms ease; opacity: 0.3; }
+.sd-tag { position: fixed; left: 0; top: 0; z-index: 91; padding: 2px 7px; border-radius: 6px; background: var(--text); color: var(--bg); font-size: 0.72rem; font-weight: 800; white-space: nowrap; pointer-events: none; }
+
+/* a composer whose track has its own sound window: the old page's own sound controls are not shown in it.
+   On a Chords page the row keeps how the chords are played (the style and its feel); a synth has no such row */
+.lc-nosound .card.harp .sound-row > * { display: none; }
+.lc-nosound .card.harp .sound-row > .inst-switch + .pick-wrap { display: inline-flex; }
+.lc-nosound .card.harp > .synth, .lc-nosound .card.harp > .dm-tabs, .lc-nosound .card.harp > .dm-panel, .lc-nosound .card.harp > .syn { display: none; }
+.lc-nosound .card.harp:not(:has(.sound-row > .inst-switch + .pick-wrap)) { display: none; }
+.lc-nosound .melody > .sound-row, .lc-nosound .melody > .sound-row ~ * { display: none; }
 /* the record window: the old Vocals page as its body; hidden, not gone, when it is closed (the page owns the interface) */
 .rec-dock[hidden] { display: none; }
 .tlw .vocals.hosted { border: none; background: none; box-shadow: none; padding: 0; }

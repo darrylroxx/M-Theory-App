@@ -12,7 +12,8 @@ import { ESC_WINDOW, onEscape } from "../timeline/keys";
 export type { WinState } from "../../timeline/model";
 
 export interface WindowsApi {
-  open(kind: "compose" | "sound", track: string, clip?: string): void;
+  /** `beside`: a sound window opened from its track's composer stands beside it (the composer gives up that width) */
+  open(kind: "compose" | "sound", track: string, clip?: string, beside?: boolean): void;
   close(id: string): void;
   focus(id: string): void;
   focused: string | null;
@@ -23,6 +24,9 @@ export const PANEL_W = 260;
 export const TOP_H = 84;
 /** How wide a sound window opens. */
 export const SOUND_W = 420;
+/** The smallest a window can be made by its corner, and the least a composer keeps when a sound window stands beside it. */
+export const MIN_W = 320;
+export const MIN_H = 200;
 /** The band of the stacking order kept for windows: above the page, below sheets and messages. */
 export const Z_FIRST = 45;
 export const Z_LAST = 59;
@@ -54,27 +58,62 @@ export function keepInside(r: Rect, view: { w: number; h: number }): Rect {
   return x === r.x && y === r.y ? r : { ...r, x, y };
 }
 
+/** A window's box after its bottom-right corner was dragged by so much: never smaller than the least, never past the screen's edges. */
+export function resized(r: Rect, dx: number, dy: number, view: { w: number; h: number }): Rect {
+  const w = Math.round(Math.max(Math.min(MIN_W, view.w - r.x), Math.min(r.w + dx, view.w - r.x)));
+  const h = Math.round(Math.max(Math.min(MIN_H, view.h - r.y), Math.min(r.h + dy, view.h - r.y)));
+  return w === r.w && h === r.h ? r : { ...r, w, h };
+}
+
+/** Does a sound window stand directly beside a composer (at its right edge, as tall and as high up)? */
+export const isBeside = (sound: Rect, composer: Rect): boolean => sound.x === composer.x + composer.w && sound.y === composer.y && sound.h === composer.h;
+
 /** At 760 pixels and narrower, or under a finger, a window is a sheet across the bottom of the screen. */
 export const isSheet = (width: number, coarse: boolean): boolean => width <= 760 || coarse;
 
 // ── the list, as plain changes of the session ───────────────
 
-/** A window opened: a new one at its first place, in front; one that was open before where it was left. A composer opened on another clip of its track shows that clip (no clip: what is being composed). */
-export function openWin(session: Session, kind: "compose" | "sound", track: string, clip: string | undefined, view: { w: number; h: number; panel: number; top: number }): Session {
+/**
+ * A window opened: a new one at its first place, in front; one that was open before where it was left. A composer
+ * opened on another clip of its track shows that clip (no clip: what is being composed, the track's draft).
+ * `beside`: a sound window asked for from its track's composer stands at the composer's right end, as tall as it,
+ * and the composer gives up that width (when the two already stand so, nothing moves; when the composer is too
+ * narrow to share, the sound window opens where it would on its own).
+ */
+export function openWin(session: Session, kind: "compose" | "sound", track: string, clip: string | undefined, view: { w: number; h: number; panel: number; top: number }, beside = false): Session {
   const id = winId(kind, track);
   const old = session.windows.find((w) => w.id === id);
-  const rest = session.windows.filter((w) => w.id !== id);
-  const next: WinState = old ? { ...old, open: true } : { id, kind, track, ...firstPlace(kind, view), open: true };
+  let rest = session.windows.filter((w) => w.id !== id);
+  let next: WinState = old ? { ...old, open: true } : { id, kind, track, ...firstPlace(kind, view), open: true };
   if (kind === "compose") {
     if (clip !== undefined) next.clip = clip;
     else delete next.clip;
   }
+  const composer = kind === "sound" && beside ? rest.find((w) => w.id === winId("compose", track) && w.open) : undefined;
+  if (composer && !isBeside(next, composer)) {
+    const w = Math.min(SOUND_W, composer.w - MIN_W);
+    if (w >= MIN_W - 40) {
+      const narrower = { ...composer, w: composer.w - w };
+      rest = rest.map((x) => (x === composer ? narrower : x));
+      next = { ...next, x: narrower.x + narrower.w, y: narrower.y, w, h: narrower.h };
+    }
+  }
   return { ...session, windows: [...rest, next] };
 }
-/** A window closed: it keeps its place for the next time. */
+/** A window closed: it keeps its place for the next time. A sound window that stood beside its composer gives the width back. */
 export function closeWin(session: Session, id: string): Session {
   const w = session.windows.find((x) => x.id === id);
-  return !w || !w.open ? session : { ...session, windows: session.windows.map((x) => (x === w ? { ...x, open: false } : x)) };
+  if (!w || !w.open) return session;
+  const composer = w.kind === "sound" ? session.windows.find((x) => x.id === winId("compose", w.track)) : undefined;
+  const back = composer && isBeside(w, composer) ? composer : undefined;
+  return { ...session, windows: session.windows.map((x) => (x === w ? { ...x, open: false } : x === back ? { ...x, w: x.w + w.w } : x)) };
+}
+/** A composer put on another clip of its track (none: on the track's draft), wherever it is and whether or not it is open. */
+export function retargetWin(session: Session, id: string, clip: string | undefined): Session {
+  const w = session.windows.find((x) => x.id === id);
+  if (!w || w.kind !== "compose" || w.clip === clip) return session;
+  const { clip: _was, ...bare } = w;
+  return { ...session, windows: session.windows.map((x) => (x === w ? (clip === undefined ? bare : { ...bare, clip }) : x)) };
 }
 /** A window brought to the front. */
 export function frontWin(session: Session, id: string): Session {
@@ -114,8 +153,8 @@ export function useWindows(session: Session, setSession: (fn: (s: Session) => Se
   const [focused, setFocused] = useState<string | null>(null);
   const now = useRef({ session, focused });
   now.current = { session, focused };
-  const open = useCallback((kind: "compose" | "sound", track: string, clip?: string) => {
-    setSession((s) => openWin(s, kind, track, clip, { ...screen(), panel: PANEL_W, top: TOP_H }));
+  const open = useCallback((kind: "compose" | "sound", track: string, clip?: string, beside?: boolean) => {
+    setSession((s) => openWin(s, kind, track, clip, { ...screen(), panel: PANEL_W, top: TOP_H }, beside));
     setFocused(winId(kind, track));
   }, [setSession]);
   const close = useCallback((id: string) => {
@@ -127,10 +166,11 @@ export function useWindows(session: Session, setSession: (fn: (s: Session) => Se
     setFocused(id);
   }, [setSession]);
   const move = useCallback((id: string, r: Rect) => setSession((s) => placeWin(s, id, r)), [setSession]);
-  // a press outside every window: none of them has the focus
+  // a press outside every window: none of them has the focus. (Not a press on the top bar or the ruler: playing,
+  // moving the cursor and marking a loop are done to what the window is on, and it goes on being heard.)
   useEffect(() => {
     const away = (e: PointerEvent) => {
-      if (e.target instanceof Element && e.target.closest(".tlw")) return;
+      if (e.target instanceof Element && e.target.closest(KEEPS_FOCUS)) return;
       setFocused(null);
     };
     window.addEventListener("pointerdown", away, true);
@@ -150,6 +190,9 @@ export function useWindows(session: Session, setSession: (fn: (s: Session) => Se
   const shown = focused && session.windows.some((w) => w.id === focused && w.open) ? focused : null;
   return useMemo(() => ({ open, close, focus, focused: shown, move }), [open, close, focus, shown, move]);
 }
+
+/** Where a press leaves the focused window its focus: in any window, on the top bar, on the ruler row, in a menu or a message. */
+const KEEPS_FOCUS = ".tlw, .tlv-top, .tlv-rulerrow, .tlv-menu, .toast";
 
 /** Is this the focused window (or a place outside every window)? The pages inside windows listen for keys only while it is. */
 export const WinFocus = createContext(true);

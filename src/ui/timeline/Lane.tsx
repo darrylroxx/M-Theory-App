@@ -5,8 +5,10 @@ import { memo, useMemo } from "react";
 import { sameSig, sigName } from "../../song/meter";
 import type { Key } from "../../theory/keys";
 import { barMap } from "../../timeline/bars";
-import { CLIP_OF, clipEnd, type Clip, type Take5, type TimelineSong, type Track } from "../../timeline/model";
+import { CLIP_OF, clipEnd, type Clip, type NoteClip, type Take5, type TimelineSong, type Track } from "../../timeline/model";
+import { letterClass } from "../letters";
 import { ClipView, type ClipCtl } from "./ClipView";
+import { ChordBlock, DrumBlock, MelodyBlock } from "./draw";
 import { barsLabel, inView, type View } from "./gestures";
 import { colorOf } from "./TrackHead";
 
@@ -20,7 +22,7 @@ export interface LaneCtl extends ClipCtl {
   laneMenu(e: React.MouseEvent<HTMLElement>, track: string): void;
 }
 
-export const Lane = memo(function Lane({ track, song, keyOf, view, width, selected, on, quiet, refuse, accept, stale, preview, peaks, ctl }: {
+export const Lane = memo(function Lane({ track, song, keyOf, view, width, selected, on, quiet, refuse, accept, stale, preview, ghost, peaks, ctl }: {
   track: Track;
   song: TimelineSong;
   keyOf: Key;
@@ -40,6 +42,8 @@ export const Lane = memo(function Lane({ track, song, keyOf, view, width, select
   stale?: ReadonlySet<string>;
   /** a clip of this track as it is while its edge is being dragged */
   preview?: Clip | null;
+  /** what is being composed on this track, where it is heard with the song (it is not on the timeline: it only shows where it sounds) */
+  ghost?: NoteClip | null;
   peaks?: (take: Take5) => Float32Array | undefined;
   ctl: LaneCtl;
 }) {
@@ -76,6 +80,16 @@ export const Lane = memo(function Lane({ track, song, keyOf, view, width, select
               take={take} peaks={take && peaks ? peaks(take) : undefined} />
           );
         })}
+        {ghost && (
+          <div className={`tlc k-${ghost.kind} ${letterClass(color)} tlc-draft`} style={{ left: ghost.start * view.pxPerBeat, width: Math.max(3, ghost.len * view.pxPerBeat) }} aria-hidden="true" title="The draft, where it is heard. Drag it from its window to place it">
+            <div className="tlc-in">
+              {ghost.kind === "chords" ? <ChordBlock clip={ghost} ppb={view.pxPerBeat} keyOf={keyOf} />
+                : ghost.kind === "melody" ? <MelodyBlock clip={ghost} ppb={view.pxPerBeat} lo={range.lo} hi={range.hi} />
+                : <DrumBlock clip={ghost} ppb={view.pxPerBeat} mutes={"kit" in track ? track.kit.mutes : undefined} />}
+            </div>
+            <span className="tlc-draft-tag">draft</span>
+          </div>
+        )}
       </div>
     </div>
   );
