@@ -18,6 +18,7 @@ import { ClipLens } from "../../windows/ClipLens";
 import type { ComposerCtl, ComposerProps } from "../ComposerFrame";
 import { PLUGINS } from "../registry";
 import { ChordsComposer } from "./ChordsComposer";
+import { placeIn } from "./drag";
 import { stepStyle } from "./Playing";
 import { addRest, allPlayAs, clearChords, dropChord, finderShown, litChord, pinShape, playingToAll, posIn, removeChord, setArrange, setBars, setLengths, setStyle } from "./tray";
 
@@ -171,6 +172,15 @@ describe("the Chords plugin's window", () => {
     // nothing to harmonize with: no button
     const alone = songOf([chordsTrack("tc", "Chords", { lead: true })], {});
     expect(draw(box(alone).app, "tc", undefined)).not.toContain("hz-go");
+  });
+
+  it("a chord that starts past the end of the content is struck out: it is kept, and never played", () => {
+    const short = songOf([chordsTrack("tc", "Chords", { lead: true })], { clips: [chordsClip("c1", "tc", 0, 8, { content: chordsContent(2, undefined, [chord("a", "C", 4), chord("b", "F", 4), chord("x", "G", 4), chord("y", "A", 2, "min")]) })] });
+    const html = draw(box(short).app, "tc", "c1");
+    expect(count(html, /data-slot="/g)).toBe(4);
+    expect(count(html, /class="slot draggable st-\w+ out"/g)).toBe(2);
+    // the ruler offers to make the clip as long as its chords
+    expect(html).toContain("The clip ends before these chords do · make it 4 bars");
   });
 
   it("draws nothing for a track of another kind, or a clip that is gone", () => {
@@ -470,6 +480,32 @@ describe("\"All clips\"", () => {
     const draft = (b.song().tracks.find((t) => t.id === "tc") as ChordsTrack).draft;
     const after = playingToAll(b.song(), "tc", "travis", feel);
     expect((after.tracks.find((t) => t.id === "tc") as ChordsTrack).draft).toBe(draft);
+  });
+});
+
+describe("where a dragged chord lands among the chords of the tray", () => {
+  const box4 = (left: number, top: number) => ({ left, top, width: 100, bottom: top + 140 });
+  it("in one row: before the first chord whose middle is right of the pointer", () => {
+    const row = [box4(0, 0), box4(110, 0), box4(220, 0)];
+    expect(placeIn(row, 10, 70)).toBe(0);
+    expect(placeIn(row, 60, 70)).toBe(1);
+    expect(placeIn(row, 159, 70)).toBe(1);
+    expect(placeIn(row, 161, 70)).toBe(2);
+    expect(placeIn(row, 900, 70)).toBe(3);
+    // a little above or under the row counts as on it
+    expect(placeIn(row, 60, -20)).toBe(1);
+    expect(placeIn(row, 60, 160)).toBe(1);
+    expect(placeIn([], 60, 70)).toBe(0);
+  });
+  it("on rows (a tall window): a chord on a row under the pointer comes after, one on a row above before", () => {
+    const rows = [box4(0, 0), box4(110, 0), box4(0, 150), box4(110, 150)];
+    expect(placeIn(rows, 10, 70)).toBe(0);
+    expect(placeIn(rows, 500, 70)).toBe(2);
+    expect(placeIn(rows, 10, 200)).toBe(2);
+    expect(placeIn(rows, 60, 200)).toBe(3);
+    expect(placeIn(rows, 500, 200)).toBe(4);
+    // between the rows: after the last chord of the row above
+    expect(placeIn(rows, 10, 145)).toBe(2);
   });
 });
 
