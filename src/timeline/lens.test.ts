@@ -223,6 +223,15 @@ describe("writing back", () => {
     // and the lens then shows the draft
     expect(lensOf(next, { track: "tm" }, KEY_C, 0)!.p.melody?.notes).toEqual([{ at: 0, midi: 72 }]);
   });
+  it("a track with nothing written yet shows the very same one-section song each time (so a kept harmony is written into it)", () => {
+    const s = band();
+    // (no draft on the track: its empty content must not be made anew on each asking)
+    expect(trackOf<TuneTrack>(s, "tm").draft).toBeUndefined();
+    const a = lensOf(s, { track: "tm" }, KEY_C, 0)!;
+    expect(lensOf(s, { track: "tm" }, KEY_C, 0)!.p).toBe(a.p);
+    const fresh: Target = { track: "tm", fresh: { id: "f1", at: 16, sig: { num: 4, den: 4 } } };
+    expect(lensOf(s, fresh, KEY_C, 0)!.p).toBe(lensOf(s, fresh, KEY_C, 0)!.p);
+  });
   it("a mute set inside goes to the real mixer, with the old first chords track mapped to the lead track", () => {
     const s = band();
     const muted = open(s, { track: "tm", clip: "m1" }).back((p) => ({ ...p, mix: { ...p.mix, chords: { mute: true }, tp: { db: -6 } } }));

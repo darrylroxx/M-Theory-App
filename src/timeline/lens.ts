@@ -25,7 +25,7 @@ import { barOwner, drumsClipsOf, leadDrums } from "./cuts";
 import { blankContent, layDown, resizeClip, setContent, setDraft, transpose } from "./edit";
 import { beatOf } from "./flatten";
 import { CLIP_OF, contentBeats, cycles } from "./model";
-import type { ChordsClip, ChordsContent, ChordsTrack, Clip, DrumsClip, DrumsTrack, HarmonyMark5, MelodyClip, NoteClip, Region, TimelineSong, Track, TuneTrack } from "./model";
+import type { ChordsClip, ChordsContent, ChordsTrack, Clip, ClipKind, DrumsClip, DrumsTrack, HarmonyMark5, MelodyClip, NoteClip, Region, TimelineSong, Track, TuneTrack } from "./model";
 
 /** What a window is on: a placed clip; or a track with nothing on it yet (`fresh`: where the first thing written will lie); or, with neither, what is being composed on the track. */
 export interface Target { track: string; clip?: string; fresh?: { id: string; at: number; sig: TimeSig } }
@@ -169,14 +169,27 @@ function openOf(song: TimelineSong, target: Target, anchor: number): Open | null
   if (target.fresh) {
     // nothing on the track yet: four bars, where the first thing written will lie
     const sig = target.fresh.sig;
-    const blank = blankContent(kind, sig);
+    const blank = blankFor(kind, sig);
     return { track, content: blank, sig, span: { from: target.fresh.at, to: target.fresh.at + FRESH_BARS * sigBeats(sig) }, mute: false };
   }
   const sig = track.draft?.sig ?? barMap(song).sigAt(anchor);
-  const content = track.draft?.content ?? blankContent(kind, sig);
+  const content = track.draft?.content ?? blankFor(kind, sig);
   const bars = kind === "drums" ? Math.max(1, (content as DrumsClip["content"]).bars ?? 1) : (content as ChordsContent | Melody).bars;
   return { track, content, sig, span: { from: anchor, to: anchor + bars * sigBeats(sig) }, mute: false };
 }
+const blanks = new Map<string, NoteClip["content"]>();
+/**
+ * The same empty content for the same kind and signature, every time. A track with nothing in it yet must show the
+ * same one-section song each time it is asked for, or what is written into it "while nothing else changed" (a kept
+ * harmony) would never be written.
+ */
+function blankFor(kind: ClipKind, sig: TimeSig): NoteClip["content"] {
+  const k = `${kind}|${sig.num}/${sig.den}`;
+  let b = blanks.get(k);
+  if (!b) blanks.set(k, (b = blankContent(kind, sig)));
+  return b;
+}
+
 /** How long the first clip of an empty track is, in bars. */
 const FRESH_BARS = 4;
 
