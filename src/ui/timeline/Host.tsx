@@ -7,7 +7,7 @@
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { windowWants } from "../../audio/handoff";
 import { saveFile } from "../../audio/midi";
-import { keepTakes as keepBuffers, loadTake, takeBuffer, type TakeRef } from "../../audio/takebuffers";
+import { canLoad, keepTakes as keepBuffers, loadTake, takeBuffer, type TakeRef } from "../../audio/takebuffers";
 import { FX_DEFAULT, reviveFx } from "../../audio/vocalfx";
 import { isDesktop } from "../../desktop";
 import { reviveSound } from "../../audio/rack";
@@ -35,6 +35,7 @@ import { draftClipId, previewSong } from "../../timeline/preview";
 import { voicingsFor } from "../../timeline/voicing";
 import { useApp5, type App5State } from "../app5";
 import { useEngine, type EngineApi, type EngineTrack } from "../audio/useEngine";
+import { useWebRec } from "../audio/useWebRec";
 import { CanvasPage } from "../components/CanvasPage";
 import { DraftBadge } from "../components/Desktop";
 import { IdeasPanel } from "../components/IdeasPanel";
@@ -51,6 +52,7 @@ import { useClipDrag, type ClipDragHost } from "../windows/dragging";
 import { PANEL_W, TOP_H, closeWin, retargetWin, useWindows, zOf } from "../windows/windows";
 import type { PlayerApi } from "./api";
 import { ESC_OPEN, onEscape, whereOf } from "./keys";
+import { INPUTS_UNKNOWN, engineInputs, inputCount as countInputs } from "./inputs";
 import { TrackView } from "./TrackView";
 import { usePlayer, useTakes } from "./usePlayer";
 
@@ -86,32 +88,42 @@ function useSame<T>(list: T[]): T[] {
   return kept.current;
 }
 /** How loud a take is along its length, for its picture on the lane: worked out once for a decoded take. */
-const peaksOf = new WeakMap<AudioBuffer, Float32Array>();
-function peaksFrom(b: AudioBuffer): Float32Array {
+const peaksOf = new WeakMap<AudioBuffer, { all: Float32Array; sides: Float32Array[] }>();
+/**
+ * `side`: none, the loudest of all its channels together (one picture); 0 or 1, the left or the right channel on its
+ * own (a stereo take is drawn as two). The two sides are drawn to one scale, so a quiet side looks quiet.
+ */
+export function peaksFrom(b: AudioBuffer, side?: number): Float32Array {
   let out = peaksOf.get(b);
-  if (out) return out;
-  const n = Math.max(1, Math.min(1200, Math.ceil(b.duration * 40)));
-  out = new Float32Array(n);
-  const step = b.length / n;
-  for (let ch = 0; ch < b.numberOfChannels; ch++) {
-    const d = b.getChannelData(ch);
-    for (let i = 0; i < n; i++) {
-      let m = out[i];
-      // (every few samples is enough for a picture this small)
-      const end = Math.min(b.length, Math.floor((i + 1) * step));
-      const hop = Math.max(1, Math.floor(step / 64));
-      for (let j = Math.floor(i * step); j < end; j += hop) {
-        const v = d[j] < 0 ? -d[j] : d[j];
-        if (v > m) m = v;
+  if (!out) {
+    const n = Math.max(1, Math.min(1200, Math.ceil(b.duration * 40)));
+    const step = b.length / n;
+    const sides: Float32Array[] = [];
+    for (let ch = 0; ch < b.numberOfChannels; ch++) {
+      const d = b.getChannelData(ch);
+      const one = new Float32Array(n);
+      for (let i = 0; i < n; i++) {
+        let m = 0;
+        // (every few samples is enough for a picture this small)
+        const end = Math.min(b.length, Math.floor((i + 1) * step));
+        const hop = Math.max(1, Math.floor(step / 64));
+        for (let j = Math.floor(i * step); j < end; j += hop) {
+          const v = d[j] < 0 ? -d[j] : d[j];
+          if (v > m) m = v;
+        }
+        one[i] = m;
       }
-      out[i] = m;
+      sides.push(one);
     }
+    const all = new Float32Array(n);
+    let top = 0;
+    for (const one of sides) for (let i = 0; i < n; i++) if (one[i] > all[i]) all[i] = one[i];
+    for (const v of all) if (v > top) top = v;
+    if (top > 0) for (const list of [all, ...sides]) for (let i = 0; i < n; i++) list[i] = Math.min(1, list[i] / top);
+    out = { all, sides };
+    peaksOf.set(b, out);
   }
-  let top = 0;
-  for (const v of out) if (v > top) top = v;
-  if (top > 0) for (let i = 0; i < n; i++) out[i] = Math.min(1, out[i] / top);
-  peaksOf.set(b, out);
-  return out;
+  return side === undefined ? out.all : out.sides[Math.min(side, out.sides.length - 1)] ?? out.all;
 }
 
 /** The stretches the Canvas paints one picture each for: from one marker to the next (the whole song when it has none). */
@@ -197,7 +209,7 @@ export function Host() {
     if (!dryTakes.length) return;
     let on = true;
     keepBuffers([...takesHeard(song, bypass, false), ...dryTakes]);
-    if (isDesktop()) for (const tk of dryTakes) if (!takeBuffer(tk)) void loadTake(tk).then((b) => on && b && setDryReady((n) => n + 1));
+    for (const tk of dryTakes) if (canLoad(tk) && !takeBuffer(tk)) void loadTake(tk).then((b) => on && b && setDryReady((n) => n + 1));
     return () => { on = false; };
   }, [dryTakes]); // eslint-disable-line react-hooks/exhaustive-deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -254,10 +266,16 @@ export function Host() {
   const played = usePlayer(heard, session, ctx);
   /** a recording or a rehearsal runs: the interface plays the song, so the app's own player stays silent */
   const recBusy = useRef(false);
+  /** the recorder as it is this moment (the desktop app's engine, or a browser's microphone: set further down) */
+  const engineNow = useRef<EngineApi>(null as unknown as EngineApi);
+  const playedRef = useRef(played);
+  playedRef.current = played;
   const player = useMemo(() => ({
     ...played,
     toggle: () => {
-      if (!recBusy.current) played.toggle();
+      // (in a browser the song plays under a recording through this very player: ▶ and Space then stop the recording, and the song with it)
+      if (recBusy.current) return void (!isDesktop() && engineNow.current.phase === "recording" && engineNow.current.stop());
+      played.toggle();
     },
     audition: (span: Parameters<typeof played.audition>[0], solo?: string) => {
       if (!span || !recBusy.current) played.audition(span, solo);
@@ -301,11 +319,15 @@ export function Host() {
   lastRec.current = recId;
   const recTrack = audioTracks.find((t) => t.id === recId) ?? null;
   const recFx = useMemo(() => reviveFx(recTrack?.fx) ?? FX_DEFAULT, [recTrack?.fx]);
-  const recInput = recTrack?.input?.ch ?? 0;
+  // (one input, or a pair: the pair's first input is the left side, the next one the right)
+  const recInput = Math.max(0, Math.round(recTrack?.input?.ch ?? 0));
+  const recPair = !!recTrack?.input?.pair;
   const engineTrack = useMemo<EngineTrack | null>(
-    () => (recTrack ? { id: recTrack.id, name: recTrack.name, input: recInput, fx: recFx } : null),
-    [recTrack?.id, recTrack?.name, recInput, recFx], // eslint-disable-line react-hooks/exhaustive-deps
+    () => (recTrack ? { id: recTrack.id, name: recTrack.name, ...engineInputs(recPair ? { ch: recInput, pair: true } : { ch: recInput }), fx: recFx } : null),
+    [recTrack?.id, recTrack?.name, recInput, recPair, recFx], // eslint-disable-line react-hooks/exhaustive-deps
   );
+  /** a track's list of inputs is open: the interface is wanted for it as for a window that shows it, so the levels beside its lines are live */
+  const [listing, setListing] = useState(false);
   /** which part of the settings is open (false: the sheet is closed) */
   const [settings, setSettings] = useState<false | SettingsPart>(false);
   const recWin = session.windows.find((w) => w.id === REC_WIN);
@@ -315,8 +337,8 @@ export function Host() {
   // recording track's sound window (wherever no other window has them)
   const focusedOn = session.windows.find((w) => w.id === wins.focused);
   const keysElsewhere = !!focusedOn && focusedOn.id !== REC_WIN && !(focusedOn.kind === "sound" && audioTracks.some((t) => t.id === focusedOn.track));
-  const engine = useEngine({
-    active: windowWants({ record: !!recWin?.open, setup: settings === "audio", armed: !!session.armed }),
+  const native = useEngine({
+    active: windowWants({ record: !!recWin?.open, setup: settings === "audio", armed: !!session.armed }) || listing,
     playing: played.playing,
     track: engineTrack,
     bypassed: !!recId && bypass.has(recId),
@@ -329,7 +351,34 @@ export function Host() {
       if (on) playerRef.current.stop();
     },
   });
-  const engineNow = useRef<EngineApi>(engine);
+  // in a browser there is no such engine: the microphone is recorded as the browser gives it, while the song plays
+  // through the app's own player (ui/audio/useWebRec; it does nothing in the desktop app)
+  const web = useWebRec({
+    on: !desktop,
+    track: engineTrack,
+    keys: !keysElsewhere,
+    plan: recSong.plan,
+    spanOf: recSong.spanOf,
+    onRecorded: recSong.onRecorded,
+    onRecording: (on) => {
+      recBusy.current = on;
+      if (on) playerRef.current.stop();
+    },
+    play: (from, round) => {
+      const s = heardRef.current;
+      if (round) {
+        if (!flatten(s, ctxRef.current, { spans: [round], loop: true }).items.length) return false;
+        playedRef.current.audition(round);
+        return true;
+      }
+      if (from >= songEnd(s) - EPS) return false;
+      playedRef.current.playFrom(from);
+      return true;
+    },
+    stopSong: () => playedRef.current.stop(),
+    beat: () => playedRef.current.getBeat(),
+  });
+  const engine = desktop ? native : web;
   engineNow.current = engine;
   /** open the record window (on a track: that track is the one shown, so the arm moves to it when another was armed) */
   const openRecord = useCallback((track?: string) => {
@@ -357,9 +406,8 @@ export function Host() {
     bookAhead();
     setSession((x) => ({ ...openRecordWin(x, target, { w: window.innerWidth, h: window.innerHeight, panel: PANEL_W, top: TOP_H }), armed: target }));
     wins.focus(REC_WIN);
-    // (in a browser there is no recording yet: the window says so)
-    if (desktop) engineNow.current.start(target);
-  }, [peek, setSession, wins, desktop]);
+    engineNow.current.start(target);
+  }, [peek, setSession, wins]);
   // Ctrl+R with the focus inside a window, in the take list or in a box (while recording it mostly is): the timeline's
   // keys leave it alone there, and the desktop app's own window would take it for "load the page again"
   const toggleNow = useRef(recordToggle);
@@ -394,26 +442,39 @@ export function Host() {
     setMonitor,
     pass: engine.phase === "recording" ? engine.pass : 0,
   } : undefined), [audioTracks.length, engine.phase, engine.pass, micLive, recordToggle, monitor, setMonitor]);
-  // inputs 1 and 2 in this release (as many as the interface had when it was last open, two until it has been)
-  const inputCount = Math.max(1, Math.min(2, state.studio?.inputs ?? 2));
+  // every input the interface has: as it opened; else as the list of interfaces says of the one chosen; else as
+  // many as it had when it was last open (two until one has been). In a browser: the two channels a microphone can give
+  const inputCount = desktop ? countInputs({ opened: engine.opened?.inputs, device: engine.chosen?.channels, remembered: state.studio?.inputs }) : INPUTS_UNKNOWN;
   const inputs = useMemo(() => ({
     count: inputCount,
     ...(isOpen ? { level: (ch: number) => engineNow.current.level(ch) } : {}),
-    // "Audio setup…" in a track's input list: the Audio part of the settings
-    setup: () => setSettings("audio"),
-  }), [inputCount, isOpen]);
-  /** the recording that runs, as it grows on its lane: from the beat it goes round from to where the music is in this pass */
+    ...(desktop ? {
+      // a small live level beside every line of a track's input list
+      meters: true,
+      // "Audio setup…" in a track's input list: the Audio part of the settings
+      setup: () => setSettings("audio"),
+      listing: setListing,
+    } : {}),
+  }), [inputCount, isOpen, desktop]);
+  /**
+   * The recording that runs, as it grows on its lane. Round a loop: from the beat it goes round from to where the
+   * music is in this pass. With the song played once: from the beat the song was played from, for as long as the
+   * recording has run (on past the song's end, until it is stopped).
+   */
   const growing = useCallback(() => {
     const to = live.current.app.recordingTo;
     if (!to) return null;
     const plan = engineNow.current.running();
     const span = plan && recSong.spanOf(plan);
-    if (!span) return { track: to, from: 0, to: 0 };
+    if (!plan || !span) return { track: to, from: 0, to: 0 };
+    if (plan.once) return { track: to, from: span.from, to: span.from + ((engineNow.current.since() ?? 0) * plan.bpm) / 60 };
     const at = engineNow.current.at();
     return { track: to, from: span.from, to: span.from + (at ? at.frac * (span.to - span.from) : 0) };
   }, [recSong]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const round = useMemo(() => (audioTracks.length ? roundLabel(song, session) : ""), [audioTracks.length, song, session.loop, session.cursor]);
+  /** with the loop off a recording plays the song once, from the cursor's bar */
+  const recordsOnce = !(session.loop?.on && session.loop.regions.length);
   const recCtl = useMemo<RecordCtl>(() => ({
     app: () => live.current.app,
     stopSong: () => playerRef.current.stop(),
@@ -426,7 +487,7 @@ export function Host() {
     move: (r) => wins.move(REC_WIN, r),
   }), [wins]);
   const audioSettings = useMemo<AudioSettings>(
-    () => ({ engine, setNudge: recSong.setNudge, track: engineTrack ? { name: engineTrack.name, input: engineTrack.input } : null }),
+    () => ({ engine, setNudge: recSong.setNudge, track: engineTrack ? { name: engineTrack.name, input: engineTrack.input, ...(engineTrack.inputB !== undefined ? { pair: true } : {}) } : null }),
     [engine, recSong, engineTrack],
   );
 
@@ -827,9 +888,9 @@ export function Host() {
     edit(label, fn, control);
   }, [edit]);
   const say = useCallback((msg: string, withUndo?: boolean) => toast(msg, withUndo ? { label: "↶", aria: "Undo", run: undo } : undefined), [toast, undo]);
-  const peaks = useCallback((take: Take5) => {
+  const peaks = useCallback((take: Take5, side?: number) => {
     const b = buffer(take);
-    return b ? peaksFrom(b) : undefined;
+    return b ? peaksFrom(b, side) : undefined;
   }, [buffer]);
 
   // ── the Canvas: an overlay with the whole Canvas card; one painting for each stretch between markers ──
@@ -953,7 +1014,7 @@ export function Host() {
       </Guard>
       <Guard what="the record window" onClose={recCtl.close}>
         <RecordHost win={recWin} focused={wins.focused === REC_WIN} z={zOf(session, REC_WIN)} track={recTrack} clips={audioClips} shelf={song.shelf} inputs={inputCount}
-          picked={session.sel.clips} round={round} engine={engine} studio={state.studio ?? NO_STUDIO} ctl={recCtl} />
+          picked={session.sel.clips} round={round} once={recordsOnce} engine={engine} studio={state.studio ?? NO_STUDIO} setNudge={recSong.setNudge} ctl={recCtl} />
       </Guard>
       {/* (always in the same order on the page, whichever is in front: a window pressed to bring it forward must not be moved in the page under the press, or the press is lost. What is in front is the stacking number's to say) */}
       {[...all].sort((a, b) => (a.id < b.id ? -1 : 1)).map((w) => {

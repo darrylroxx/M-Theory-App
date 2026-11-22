@@ -14,10 +14,9 @@ import { setMix, type Mix } from "../../audio/mix";
 import { freeInterface } from "../../audio/handoff";
 import type { PlayItem } from "../../audio/patterns";
 import { ProgressionPlayer, getAudio, keepSlots, prepFor, prepareNotes, readySlots, setTempo, slotsOf } from "../../audio/synth";
-import { keepTakes as keepBuffers, loadTake, takeBuffer, takeKey, type TakeRef } from "../../audio/takebuffers";
+import { canLoad, keepTakes as keepBuffers, loadTake, takeBuffer, takeKey, type TakeRef } from "../../audio/takebuffers";
 import { stopAlone } from "../../audio/takeplay";
 import { onKeys } from "../../audio/tone";
-import { isDesktop } from "../../desktop";
 import { songEnd } from "../../timeline/edit";
 import { flatten, songBeat, type Flat, type FlattenCtx, type Range } from "../../timeline/flatten";
 import type { Region, Session, Take5, TimelineSong } from "../../timeline/model";
@@ -120,8 +119,8 @@ export function carryOn(old: Flat, m: PlayMode, heard: TimelineSong, session: Pi
 const refOf = (take: Take5, dry?: boolean): TakeRef => ({ wet: dry ? take.dry : take.wet, start: take.start, frames: take.frames });
 
 /**
- * The song's recorded takes, read from disk once (in the desktop app, where the recordings are) and kept while the
- * song plays them. Returns the way `flatten` asks for a take's sound; it is a new function whenever another take has
+ * The song's recorded takes, read once (from disk in the desktop app, where the recordings are; a take recorded in a
+ * browser from that browser's own store) and kept while the song plays them. Returns the way `flatten` asks for a take's sound; it is a new function whenever another take has
  * arrived, so the song is flattened again with it.
  */
 export function useTakes(song: TimelineSong): FlattenCtx["buffer"] {
@@ -138,7 +137,7 @@ export function useTakes(song: TimelineSong): FlattenCtx["buffer"] {
   useEffect(() => {
     let live = true;
     keepBuffers(played);
-    if (isDesktop()) for (const tk of played) if (!takeBuffer(tk)) void loadTake(tk).then((b) => live && b && setReady((n) => n + 1));
+    for (const tk of played) if (canLoad(tk) && !takeBuffer(tk)) void loadTake(tk).then((b) => live && b && setReady((n) => n + 1));
     return () => { live = false; };
   }, [key]); // eslint-disable-line react-hooks/exhaustive-deps
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -156,7 +155,7 @@ function alone(mix: Mix | undefined, track: string): Mix {
 // ── the player ──────────────────────────────────────────────
 
 /** `heard` is the song as it should sound now: the stored song, or that with a candidate laid in to be heard. */
-export function usePlayer(heard: TimelineSong, session: Session, ctx: FlattenCtx): PlayerApi {
+export function usePlayer(heard: TimelineSong, session: Session, ctx: FlattenCtx): PlayerApi & { playFrom(beat: number): void } {
   const [playing, setPlaying] = useState(false);
   /** a stretch heard round and round on its own, and the one track heard then, if only one is */
   const [audit, setAudit] = useState<{ span: Region; solo?: string } | null>(null);
@@ -310,5 +309,11 @@ export function usePlayer(heard: TimelineSong, session: Session, ctx: FlattenCtx
     else start(span.from, span, true);
   }, [begin, start, stop]);
 
-  return useMemo(() => ({ playing, toggle, stop, getBeat, seek, audition }), [playing, toggle, stop, getBeat, seek, audition]);
+  /** play from a beat, wherever the cursor is (a recording in a browser plays the song from its own first beat) */
+  const playFrom = useCallback((beat: number) => {
+    if (player.current?.playing || waiting.current) stop();
+    start(beat, null);
+  }, [start, stop]);
+
+  return useMemo(() => ({ playing, toggle, stop, getBeat, seek, audition, playFrom }), [playing, toggle, stop, getBeat, seek, audition, playFrom]);
 }

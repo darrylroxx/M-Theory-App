@@ -55,7 +55,7 @@ const engine = (o: Partial<EngineApi> = {}): EngineApi => ({
   chosen: { host: "ASIO", name: "Test Interface", channels: 4 },
   opened: { host: "ASIO", device: "Test Interface", rate: 48000, inputs: 4, outputs: 2, format: "f32", min_buffer: 32, max_buffer: 256 },
   error: null, phase: "idle", pass: 0, marks: new Set(), flash: 0, ready: true, monitor: false,
-  record: no, rehearse: no, stop: no, toggle: no, start: no, mark: no, markNow: no, at: () => null, level: () => 0, running: () => null, relist: no,
+  record: no, rehearse: no, stop: no, toggle: no, start: no, mark: no, markNow: no, at: () => null, since: () => null, level: () => 0, running: () => null, relist: no, once: false, again: false,
   ...o,
 });
 

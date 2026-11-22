@@ -40,6 +40,14 @@ export interface RecordPlan {
   label: string;
   /** every bar that goes round, in order, with the beats in it (the click accents each bar in its own time) */
   bars?: { beats: number }[];
+  /** the song is played once, from the plan's first beat, and the recording goes on until it is stopped (none: round and round) */
+  once?: boolean;
+  /**
+   * Everything the song under the recording is made from, as a text (timeline/record `backingKey`, and what the song is
+   * flattened with). `skip`: the track being recorded, left out of it (null: a rehearsal, which leaves none out). While
+   * it is the same as the last time, the song rendered then is played again, so a second take starts at once.
+   */
+  backing?(skip: string | null): string;
 }
 
 /** Where a recording is: nothing going, the song being made ready, singing along, recording, or its takes being saved. */
@@ -123,8 +131,30 @@ export function countText(r: EngineReadout): string {
     return `${Math.ceil((st.count_in - st.pos) / beatLen)}`;
   }
   const going = r.now.phase === "recording" || r.now.phase === "rehearsing";
+  // the song played once (it has no loop, so no passes): how long it has run, as m:ss
+  if (going && !st.length) return clockText((st.pos - st.count_in) / rateOf(r));
   const at = going ? passAt(st.pos, st.count_in, st.length) : null;
   return at ? `Pass ${at.n}` : "";
+}
+/** Seconds as m:ss. */
+export function clockText(seconds: number): string {
+  const s = Math.max(0, Math.floor(Number.isFinite(seconds) ? seconds : 0));
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+}
+
+/**
+ * A rendered song made exactly `frames` long, to go round: what it holds past that (the last notes ringing on) comes
+ * round again at the start, and where it is shorter the rest is silence. For a loop that reaches past the song's
+ * end: the song is rendered to its end with its ring-out, and the bars after it are the silence they are.
+ */
+export function foldRound(ch: readonly Float32Array[], frames: number): Float32Array[] {
+  const n = Math.max(1, Math.round(frames));
+  return ch.map((d) => {
+    const out = new Float32Array(n);
+    out.set(d.length > n ? d.subarray(0, n) : d);
+    for (let i = n; i < d.length; i++) out[(i - n) % n] += d[i];
+    return out;
+  });
 }
 /** Small notes for a long session: how long it has run, and what room is left (the most pressing first). `warn`: one of them needs heeding. */
 export function sessionNotes(r: EngineReadout): { text: string; warn: boolean } {
@@ -241,8 +271,10 @@ export class Claims<P, T> {
 export interface EngineTrack {
   id: string;
   name: string;
-  /** which input it records (0 = Input 1) */
+  /** which input it records (0 = Input 1); of a pair of inputs, the first: the left side */
   input: number;
+  /** the second input of a pair, the right side (none: one input, as a voice has) */
+  inputB?: number;
   /** its vocal sound */
   fx: VocalFx;
 }
@@ -293,6 +325,10 @@ export interface EngineApi {
   ready: boolean;
   /** you hear yourself through the effects */
   monitor: boolean;
+  /** what runs (or ran last) plays the song once: it has no passes, and goes on until it is stopped */
+  once: boolean;
+  /** the song under what is being made ready was kept from the last time: it starts at once, with nothing to wait for */
+  again: boolean;
   record(): void;
   rehearse(): void;
   stop(): void;
@@ -305,6 +341,8 @@ export interface EngineApi {
   markNow(): void;
   /** while the song goes round under a recording or a rehearsal: which pass it is in (from 1) and how far into it (0..1) */
   at(): { n: number; frac: number } | null;
+  /** while a recording or a rehearsal runs: the seconds since the song's first frame (null in the count-in, and when nothing runs) */
+  since(): number | null;
   /** how loud an input is right now, 0 to 1 on the meter (0 while the interface is closed) */
   level(ch: number): number;
   /** what the recording (or rehearsal) that runs goes round */
@@ -355,6 +393,12 @@ export function useEngine(host: EngineHost): EngineApi {
   const [phase, setPhase] = useState<RecordPhase>("idle");
   /** a recording or a rehearsal is on, or about to be (the interface is being waited for) */
   const [recording, setRecording] = useState(false);
+  const [once, setOnce] = useState(false);
+  const [again, setAgain] = useState(false);
+  /** the song rendered last, with the text that says what it was made from (see `RecordPlan.backing`) */
+  const lastRender = useRef<{ key: string; ch: Float32Array[] } | null>(null);
+  /** the inputs told to the engine last (null: none yet since the interface opened) */
+  const sent = useRef<{ input: number; inputB: number | null } | null>(null);
   const rate = useRef(48000);
   /** each input's level as the interface last reported it */
   const peaks = useRef<number[]>([]);
@@ -479,6 +523,7 @@ export function useEngine(host: EngineHost): EngineApi {
       openedRef.current = null;
       peaks.current = [];
       status.current = null;
+      sent.current = null;
       engineStatus.publish({ st: null, now: nowRef.current });
     };
   }, [desktop, keepOpen, chosen?.host, chosen?.name, reopen, studio.buffer]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -513,11 +558,22 @@ export function useEngine(host: EngineHost): EngineApi {
 
   // what the singer hears follows the track and the sliders at once (a track that is bypassed: the voice without its effects)
   const heard: VocalFx = host.bypassed && fx.on ? { ...fx, on: false } : fx;
+  // (one input: nothing is said of a second, exactly as before; a pair: its right side too)
+  const pairB = track?.inputB;
+  const settings = { monitor, input: track?.input ?? 0, ...(pairB !== undefined ? { inputB: pairB } : {}), fx: heard, backingGain: studio.backing ?? 1, clickGain: studio.click ?? 0.5, clickOn: !!studio.clickOn };
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  /** tell the engine what is recorded and heard, as it is this moment */
+  const sendSet = () => {
+    const o = settingsRef.current;
+    sent.current = { input: o.input, inputB: o.inputB ?? null };
+    return engineSet(o);
+  };
   useEffect(() => {
     if (!opened) return;
-    const t = window.setTimeout(() => void engineSet({ monitor, input: track?.input ?? 0, fx: heard, backingGain: studio.backing ?? 1, clickGain: studio.click ?? 0.5, clickOn: !!studio.clickOn }).catch(() => {}), 30);
+    const t = window.setTimeout(() => void sendSet().catch(() => {}), 30);
     return () => window.clearTimeout(t);
-  }, [opened, monitor, track?.input, sig(heard), studio.backing, studio.click, studio.clickOn]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [opened, monitor, track?.input, pairB, sig(heard), studio.backing, studio.click, studio.clickOn]); // eslint-disable-line react-hooks/exhaustive-deps
 
   /** Render the loop's song, hand it to the engine, and start (recording or just singing along). */
   const go = async (record: boolean) => {
@@ -553,15 +609,39 @@ export function useEngine(host: EngineHost): EngineApi {
     setPass(0);
     stopAlone();
     onRecording(true);
+    const playOnce = !!plan.once;
+    setOnce(playOnce);
+    // the song under it: the one rendered last, while everything it was made from is the same (a second take starts at once)
+    const skip = record ? t.id : null;
+    const key = plan.backing ? `${rateNow}|${plan.backing(skip)}` : null;
+    const had = key !== null && lastRender.current?.key === key ? lastRender.current.ch : null;
+    setAgain(!!had);
     setPhase("preparing");
     try {
-      const [l, r] = await renderSong(plan.items, { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: rateNow, skip: record ? t.id : undefined });
+      let ch = had;
+      if (!ch) {
+        const o = { bpm: plan.bpm, pattern: plan.pattern, beat: plan.beat, rate: rateNow, skip: record ? t.id : undefined };
+        const frames = Math.round(((plan.beats * 60) / plan.bpm) * rateNow);
+        const have = Math.round(((plan.items.reduce((a, x) => a + x.beats, 0) * 60) / plan.bpm) * rateNow);
+        // played once: the song, then what rings on after it (nothing is folded back onto the start)
+        if (playOnce) ch = await renderSong(plan.items, { ...o, fold: false });
+        // round and round, the stretch all inside the song: as ever
+        else if (have >= frames - 2) ch = await renderSong(plan.items, o);
+        // round a stretch that reaches past the song's end (or over a song with nothing in it yet): the bars after
+        // the end are silence, and the loop is as long as the stretch
+        else ch = foldRound(await renderSong(plan.items, { ...o, fold: false, tail: (frames - have) / rateNow + 3 }), frames);
+        lastRender.current = key !== null ? { key, ch } : null;
+      }
+      const [l, r] = ch;
       if (left()) throw LEFT;
       await engineBacking(l, r);
       if (left()) throw LEFT;
       // the count-in is in the meter of the loop's first bar; after it, every bar clicks in its own
       const click = clickPlan(plan.bars, plan.beatsPerBar, studio.countIn ?? 1);
-      const path = await engineStart({ bpm: plan.bpm, countInBeats: click.countInBeats, beatsPerBar: click.beatsPerBar, bars: click.bars, record, name: t.name ?? "Vocal" });
+      // what the file is (one input or a pair) is fixed here, by what the engine was told last: when that is not
+      // this track's choice yet (it was picked a moment ago), the engine is told first
+      if (!sent.current || sent.current.input !== t.input || sent.current.inputB !== (t.inputB ?? null)) await sendSet();
+      const path = await engineStart({ bpm: plan.bpm, countInBeats: click.countInBeats, beatsPerBar: click.beatsPerBar, bars: click.bars, record, name: t.name ?? "Vocal", ...(playOnce ? { once: true } : {}) });
       claims.current!.started(record ? path : null);
       if (left()) return void stop();
       setPhase(record ? "recording" : "rehearsing");
@@ -717,6 +797,11 @@ export function useEngine(host: EngineHost): EngineApi {
       // (between the engine's reports, the music has moved on at its rate)
       return s ? passAt(s.pos + Math.min(0.1, (performance.now() - s.at) / 1000) * rate.current, s.count_in, s.length) : null;
     },
+    since: () => {
+      const s = status.current;
+      if (!s || s.pos < s.count_in) return null;
+      return (s.pos + Math.min(0.1, (performance.now() - s.at) / 1000) * rate.current - s.count_in) / rate.current;
+    },
     level: (ch: number) => meterPos(dbOf(peaks.current[ch] ?? 0)),
     running: () => (phaseRef.current === "idle" ? null : claims.current?.plan ?? null),
     relist: () => {
@@ -729,7 +814,7 @@ export function useEngine(host: EngineHost): EngineApi {
   /** may Record and Rehearse be pressed? (Also before the interface is open: it is waited for.) */
   const ready = !!(opened || resting) || !error;
   return useMemo<EngineApi>(
-    () => ({ desktop, hosts, devices, chosen, opened, error, phase, pass, marks, flash, ready, monitor, mark, markNow, ...does }),
-    [desktop, hosts, devices, chosen, opened, error, phase, pass, marks, flash, ready, monitor, mark, markNow, does],
+    () => ({ desktop, hosts, devices, chosen, opened, error, phase, pass, marks, flash, ready, monitor, once, again, mark, markNow, ...does }),
+    [desktop, hosts, devices, chosen, opened, error, phase, pass, marks, flash, ready, monitor, once, again, mark, markNow, does],
   );
 }

@@ -8,6 +8,7 @@
 // the one undo) or when the timing nudge is changed (every take moves).
 import { memo, useEffect, useRef } from "react";
 import type { PlayItem } from "../../../audio/patterns";
+import { canLoad } from "../../../audio/takebuffers";
 import { stopAlone } from "../../../audio/takeplay";
 import { isDesktop } from "../../../desktop";
 import { sigName } from "../../../song/meter";
@@ -16,8 +17,8 @@ import { renudge5, renudgeTakes5, stampTakes5 } from "../../../timeline/audiocli
 import { barMap } from "../../../timeline/bars";
 import { addTrack, setTrack } from "../../../timeline/edit";
 import { flatten, type FlattenCtx } from "../../../timeline/flatten";
-import type { AudioClip, AudioTrack, Session, Shelved, Take5, TimelineSong, WinState } from "../../../timeline/model";
-import { addRecording5, recordPlan5, type RecordPlan5 } from "../../../timeline/record";
+import type { AudioClip, AudioTrack, InputRef, Session, Shelved, Take5, TimelineSong, WinState } from "../../../timeline/model";
+import { addRecording5, backingKey, recordPlan5, type RecordPlan5 } from "../../../timeline/record";
 import type { Ctx5 } from "../../app5";
 import type { EngineApi, RecordPlan } from "../../audio/useEngine";
 import { KindIcon } from "../../icons";
@@ -56,10 +57,40 @@ export function shownTrack(tracks: readonly AudioTrack[], o: { recording?: strin
   return has(o.recording) ? o.recording : has(o.armed) ? o.armed : has(o.selected) ? o.selected : has(o.last) ? o.last : tracks[0]?.id ?? null;
 }
 
-/** What a recording would go round, in words ("bars 1–4"). */
+/** What a recording would go round, in words ("bars 1–4"); with the loop off, where the song is played from, once ("from bar 5"). */
 export function roundLabel(song: TimelineSong, session: Pick<Session, "cursor" | "loop">): string {
   const p = recordPlan5(song, session);
-  return barsLabel(barMap(song), p.from, p.to);
+  const map = barMap(song);
+  return p.loop ? barsLabel(map, p.from, p.to) : `from bar ${map.barAt(p.from + EPS).bar + 1}`;
+}
+
+/** a number for each thing that can only be told apart by being the same one (a function, a decoded take) */
+const marks = new WeakMap<object, number>();
+let marked = 0;
+const markOf = (o: object | undefined): number => {
+  if (!o) return 0;
+  let n = marks.get(o);
+  if (!n) marks.set(o, (n = ++marked));
+  return n;
+};
+
+/**
+ * What the song is flattened with, as far as it is heard under a recording, as a text: the guitar's shapes (they are
+ * the same while the function that gives them is), the tracks heard without their effects, and for every recorded
+ * clip of another track whether its sound is loaded (one that is not yet is not in the render).
+ */
+function heardWith(song: TimelineSong, fctx: FlattenCtx, skip: string | null): string {
+  const takes: number[] = [];
+  for (const t of song.tracks) {
+    if (!isAudioTrack(t) || t.id === skip) continue;
+    const dry = !!fctx.bypass?.has(t.id);
+    for (const c of song.clips) {
+      if (c.kind !== "audio" || c.track !== t.id) continue;
+      const k = t.takes.find((x) => x.id === c.take);
+      takes.push(markOf(k ? fctx.buffer(k, dry) : undefined));
+    }
+  }
+  return `${markOf(fctx.voicingsOf)}|${[...(fctx.bypass ?? [])].filter((id) => id !== skip).sort().join(",")}|${takes.join(",")}`;
 }
 
 /** What was recorded, said in a line (as the old page said it). */
@@ -89,7 +120,7 @@ export function recordSong(ctl: RecordSongCtl) {
   const app = () => ctl.app();
   // what a recording goes round, kept while nothing it reads has changed
   const plans = new WeakMap<RecordPlan, { p5: RecordPlan5; key: string; sig: string }>();
-  let planNow: { song: TimelineSong; from: number; to: number; ctx: FlattenCtx; plan: RecordPlan } | null = null;
+  let planNow: { song: TimelineSong; key: unknown; from: number; to: number; loop: boolean; ctx: FlattenCtx; plan: RecordPlan } | null = null;
   const takesOn = (song: TimelineSong, id: string): Take5[] => {
     const t = song.tracks.find((x) => x.id === id);
     return isAudioTrack(t) ? t.takes : [];
@@ -100,15 +131,16 @@ export function recordSong(ctl: RecordSongCtl) {
       const p5 = recordPlan5(s.song, s.session);
       const fctx = ctl.ctx();
       const was = planNow;
-      if (was && was.song === s.song && was.from === p5.from && was.to === p5.to && was.ctx === fctx) return was.plan;
+      if (was && was.song === s.song && was.key === s.key && was.from === p5.from && was.to === p5.to && was.loop === p5.loop && was.ctx === fctx) return was.plan;
       const song = s.song;
       const map = barMap(song);
       let items: PlayItem[] | null = null;
+      const key = `${s.key.tonic}|${s.key.scaleId}`;
       const made: RecordPlan = {
         // (worked out when a recording starts, not each time it is asked for: every track of the song over those
         // bars, as the loop plays them; the track being recorded is left out of the render by its id)
         get items() {
-          return (items ??= flatten(song, fctx, { spans: [{ from: p5.from, to: p5.to }], loop: true }).items);
+          return (items ??= flatten(song, fctx, { spans: [{ from: p5.from, to: p5.to }], loop: p5.loop }).items);
         },
         beats: p5.to - p5.from,
         beatsPerBar: Math.max(1, p5.bars[0] ?? 4),
@@ -117,9 +149,13 @@ export function recordSong(ctl: RecordSongCtl) {
         beat: null,
         label: barsLabel(map, p5.from, p5.to),
         bars: p5.bars.map((beats) => ({ beats })),
+        // with the loop off the song is played once, from the cursor's bar, and the recording goes on until Stop
+        ...(p5.loop ? {} : { once: true }),
+        // (a synth's drone holds the key's home note, so the key is in what is heard too)
+        backing: (skip) => `${backingKey(song, skip, p5)}|${key}|${heardWith(song, fctx, skip)}`,
       };
-      plans.set(made, { p5, key: `${s.key.tonic}|${s.key.scaleId}`, sig: sigName(map.sigAt(p5.from + EPS)) });
-      planNow = { song, from: p5.from, to: p5.to, ctx: fctx, plan: made };
+      plans.set(made, { p5, key, sig: sigName(map.sigAt(p5.from + EPS)) });
+      planNow = { song, key: s.key, from: p5.from, to: p5.to, loop: p5.loop, ctx: fctx, plan: made };
       return made;
     },
     /** the beats a plan goes round (null: not one of these plans) */
@@ -196,12 +232,16 @@ export interface RecordHostProps {
   shelf: readonly Shelved[] | undefined;
   /** how many inputs a track's input is chosen from */
   inputs: number;
+  /** with the loop off: the song is played once, from the cursor's bar */
+  once: boolean;
   /** the clips selected on the lanes (the take of one on the track shown is the one selected in the take list) */
   picked: readonly string[];
   /** what a recording would go round, in words */
   round: string;
   engine: EngineApi;
   studio: Studio;
+  /** the timing nudge changed (set in the window itself in a browser): every take moves */
+  setNudge(ms: number): void;
   ctl: RecordCtl;
 }
 
@@ -226,19 +266,18 @@ export const RecordHost = memo(function RecordHost(p: RecordHostProps) {
   }, [open]);
 
   if (!seen.current || (!desktop && !open)) return null;
-  const input = track?.input?.ch ?? 0;
   const setStudio = (patch: Partial<Studio>) => ctl.app().set((s) => ({ ...s, studio: { ...s.studio, ...patch } }));
-  const setInput = (ch: number) => {
-    if (shownId) ctl.app().edit("Input", (s) => setTrack<AudioTrack>(s, shownId, { input: { ch: Math.max(0, Math.round(ch)) } }));
+  const setInput = (input: InputRef) => {
+    if (shownId) ctl.app().edit("Input", (s) => setTrack<AudioTrack>(s, shownId, { input: { ch: Math.max(0, Math.round(input.ch)), ...(input.pair ? { pair: true as const } : {}) } }));
   };
   return (
     <div className="rec-dock" hidden={!open}>
       <Window win={win ?? PLACE} title={track ? `${track.name} · record` : "Record"} icon={track ? <KindIcon kind={track.kind} /> : undefined} focused={p.focused} z={p.z} onFocus={ctl.focus} onClose={ctl.close} onMove={ctl.move}
         tools={desktop ? <button className="chip rw-setup" title="The interface, its buffer, every input's meter" onClick={ctl.setup}>Audio setup…</button> : undefined}>
         <div className="lc-scroll rec-body" ref={body}>
-          <RecordWindow track={track ? { id: track.id, name: track.name, input } : null} inputs={p.inputs} engine={engine} studio={p.studio} setStudio={setStudio} round={p.round} open={open} onInput={setInput} onSetup={ctl.setup}>
+          <RecordWindow track={track ? { id: track.id, name: track.name, input: track.input?.ch ?? 0, ...(track.input?.pair ? { pair: true } : {}) } : null} inputs={p.inputs} engine={engine} studio={p.studio} setStudio={setStudio} round={p.round} once={p.once} open={open} onInput={setInput} onNudge={p.setNudge} onSetup={ctl.setup}>
             {track && (
-              <TakeBrowser track={track} clips={p.clips} shelf={p.shelf} picked={p.picked} canHear={desktop} running={engine.phase !== "idle"} app={ctl.app} stopSong={ctl.stopSong} />
+              <TakeBrowser track={track} clips={p.clips} shelf={p.shelf} picked={p.picked} canHear={desktop || track.takes.some((k) => canLoad(k))} running={engine.phase !== "idle"} app={ctl.app} stopSong={ctl.stopSong} />
             )}
           </RecordWindow>
         </div>

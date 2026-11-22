@@ -26,10 +26,11 @@ import {
 } from "./gestures";
 import { ESC_VIEW, listenKeys, onEscape, type KeyAction } from "./keys";
 import { Lane, type LaneCtl } from "./Lane";
+import { INPUTS_UNKNOWN, inputLines, metersOf, type InputLine } from "./inputs";
 import { Menu, type MenuAt, type MenuItem } from "./Menu";
 import { Ruler } from "./Ruler";
 import { TopBar, type TopBarProps } from "./TopBar";
-import { TrackHead, inputText, type HeadCtl } from "./TrackHead";
+import { TrackHead, type HeadCtl } from "./TrackHead";
 
 export interface TrackViewProps {
   song: TimelineSong; keyOf: Key; session: Session;
@@ -40,7 +41,7 @@ export interface TrackViewProps {
   /** open a plugin window (the host decides what that is) */
   open(kind: "compose" | "sound", track: string, clip?: string): void;
   /** a take's waveform for the lane, when its audio is loaded: how loud it is along its length, 0 to 1, any number of values spread evenly over the take */
-  peaks?(take: Take5): Float32Array | undefined;
+  peaks?(take: Take5, side?: number): Float32Array | undefined;
   clipboard: { copy(ids: string[]): void; paste(at: number, onto: string | null, insert: boolean): void; has: boolean };
   sound: { copy(track: string): void; paste(track: string): void; has(track: string): boolean };
   top: TopBarProps;
@@ -50,8 +51,13 @@ export interface TrackViewProps {
   stale?: ReadonlySet<string>;
   /** the panel's ⟳: write the harmony again into this clip of this track */
   again?(track: string, clip: string): void;
-  /** tracks that record: how many inputs there are to choose from, each one's level while the interface is open, and the way to audio setup */
-  inputs?: { count: number; level?(ch: number): number; setup(): void };
+  /**
+   * Tracks that record: how many inputs there are to choose from, each one's level while the interface is open
+   * (`meters`: there is an interface to show levels of, so the list of inputs has a small meter beside each), the
+   * way to audio setup, and `listing`, told when a list of inputs opens and closes (the interface is opened for it
+   * while the app is quiet, so the levels are live in the list).
+   */
+  inputs?: { count: number; level?(ch: number): number; meters?: boolean; setup?(): void; listing?(open: boolean): void };
   /** a recording that is running, drawn growing on its lane; read once a frame */
   recording?(): { track: string; from: number; to: number } | null;
   /** a short message from the view; with `undo` it carries an undo button (a track with clips or takes removed) */
@@ -154,7 +160,8 @@ export function TrackView(props: TrackViewProps) {
   const [renaming, setRenaming] = useState<string | null>(null);
   const [marker, setMarker] = useState<string | null>(null);
   const [naming, setNaming] = useState<string | null>(null);
-  const [menu, setMenu] = useState<{ at: MenuAt; items: MenuItem[]; label: string } | null>(null);
+  /** the open menu. Its lines are a list, or (a track's list of inputs) worked out afresh each time it is drawn: the interface may only then say how many inputs it has */
+  const [menu, setMenu] = useState<{ at: MenuAt; items: MenuItem[] | (() => MenuItem[]); label: string; inputs?: true } | null>(null);
   /** a clip as it is while its edge is dragged */
   const [preview, setPreview] = useState<Clip | null>(null);
   /** the kind of clip being dragged across lanes (the lanes that do not take it are dimmed) */
@@ -393,17 +400,26 @@ export function TrackView(props: TrackViewProps) {
       const { props: p } = L();
       const t = p.song.tracks.find((x) => x.id === id);
       if (!t || !("takes" in t)) return;
-      const count = Math.max(1, p.inputs?.count ?? 2);
-      const now = inputText(t.input);
-      const pick = (input: InputRef) => p.edit("Input", (s) => setTrack(s, id, { input }));
-      const items: MenuItem[] = [{ title: "Records from" }];
-      // (one input at a time for now: a pair recorded in stereo arrives with the blank audio track)
-      for (let ch = 0; ch < count; ch++) items.push({ label: `In ${ch + 1}`, on: now === `${ch + 1}`, run: () => pick({ ch }) });
-      // the track's own choice is always in the list, also when the interface turns out to have fewer inputs
-      const mine = t.input?.ch ?? 0;
-      if (mine >= count) items.push({ label: `In ${mine + 1} (not there)`, on: true, run: () => pick({ ch: mine }) });
-      if (p.inputs) items.push({ sep: true }, { label: "Audio setup…", run: () => p.inputs?.setup() });
-      setMenu({ at, label: "Input", items });
+      // (what is being recorded stays what it is until the recording is stopped)
+      if (p.recording?.()?.track === id) return p.say?.("Stop recording first");
+      const items = (): MenuItem[] => {
+        const { props: q } = L();
+        const now = q.song.tracks.find((x) => x.id === id);
+        if (!now || !("takes" in now)) return [];
+        const pick = (input: InputRef) => q.edit("Input", (s) => setTrack(s, id, { input }));
+        const meters = !!q.inputs?.meters;
+        const level = (ch: number) => () => L().props.inputs?.level?.(ch) ?? 0;
+        // every input of the interface, and every pair of neighbours; the track's own choice is always there, marked
+        // when the interface turns out not to have it
+        const lines = inputLines(q.inputs?.count ?? INPUTS_UNKNOWN, now.input);
+        const row = (l: InputLine): MenuItem => ({ label: l.missing ? `${l.label} (not there)` : l.label, on: l.on, run: () => pick(l.input), ...(meters && !l.missing ? { levels: metersOf(l.input).map(level) } : {}) });
+        const out: MenuItem[] = [{ title: "Records from" }, ...lines.singles.map(row)];
+        if (lines.pairs.length) out.push({ title: "Stereo pairs" }, ...lines.pairs.map(row));
+        const setup = q.inputs?.setup;
+        if (setup) out.push({ sep: true }, { label: "Audio setup…", run: () => setup() });
+        return out;
+      };
+      setMenu({ at, label: "Input", items, inputs: true });
     };
 
     /** a key's action (Escape is not one of them: see below) */
@@ -951,6 +967,14 @@ export function TrackView(props: TrackViewProps) {
 
   const openMenu = useCallback((at: MenuAt, items: MenuItem[], label: string) => setMenu({ at, items, label }), []);
   const closeMenu = useCallback(() => setMenu(null), []);
+  // a list of inputs is open: the host is told, so the levels beside its lines are live
+  const listing = !!menu?.inputs;
+  const tellListing = props.inputs?.listing;
+  useEffect(() => {
+    if (!listing || !tellListing) return;
+    tellListing(true);
+    return () => tellListing(false);
+  }, [listing, tellListing]);
   const onCursor = useCallback((beat: number) => h.setCursor(beat), [h]);
   const onNaming = useCallback((id: string | null) => setNaming(id), []);
 
@@ -1028,7 +1052,7 @@ export function TrackView(props: TrackViewProps) {
       </div>
       <SideScroll view={view} width={width} total={total} onScroll={(to) => { held.current = performance.now(); h.setView({ ...view, scroll: to }); }} />
       <div className="tlv-tag mono" ref={tag} aria-hidden="true" />
-      {menu && <Menu at={menu.at} items={menu.items} label={menu.label} onClose={closeMenu} />}
+      {menu && <Menu at={menu.at} items={typeof menu.items === "function" ? menu.items() : menu.items} label={menu.label} onClose={closeMenu} />}
     </div>
   );
 }

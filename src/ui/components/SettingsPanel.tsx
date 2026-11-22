@@ -19,8 +19,8 @@ export interface AudioSettings {
   engine: EngineApi;
   /** the timing nudge changed: every take moves */
   setNudge(ms: number): void;
-  /** the track the engine listens to now: its name and its input (0 = Input 1); null = the song has no track that records */
-  track: { name: string; input: number } | null;
+  /** the track the engine listens to now: its name and its input (0 = Input 1; `pair`: that input and the next); null = the song has no track that records */
+  track: { name: string; input: number; pair?: boolean } | null;
 }
 
 /**
@@ -138,7 +138,19 @@ export function AudioPart({ engine, setNudge, track }: AudioSettings) {
     });
   }, []);
 
-  if (!engine.desktop) return <p className="small vc-note">Recording: in the desktop app.</p>;
+  if (!engine.desktop)
+    // a browser: the microphone as the browser gives it. The one setting is where its takes land
+    return (
+      <section className="au" aria-label="Audio">
+        <div className="au-box">
+          <b className="vc-title">Microphone</b>
+          <span className="small muted">In a browser, a track records the microphone the browser offers (it asks the first time). The interface, its inputs and pairs, monitoring and the vocal sound are in the desktop app.</span>
+          <label className="vc-mini" title="A browser does not say how long the sound takes to come in through the microphone. If takes sound late, raise this; early, lower it. The takes already in this song move too">Timing nudge <input type="number" step={1} value={studio.nudge ?? 0} disabled={running} onChange={(e) => setNudge(Number(e.target.value) || 0)} /> ms</label>
+        </div>
+      </section>
+    );
+  /** the inputs the engine's track records: one, or the two of a pair */
+  const mine = (c: number) => !!track && (c === track.input || (!!track.pair && c === track.input + 1));
   const inputs = Math.min(opened?.inputs ?? chosen?.channels ?? 2, Math.max(METERS, metered));
   /** closed only because the app is sounding */
   const resting = !!chosen && !opened && !error;
@@ -170,14 +182,14 @@ export function AudioPart({ engine, setNudge, track }: AudioSettings) {
         <b className="vc-title">Inputs</b>
         <div className="vc-meters" ref={barsRef}>
           {Array.from({ length: inputs }, (_, c) => (
-            <div key={c} className={`vm${track?.input === c ? " mine" : ""}`} data-ch={c} data-halo="off" title={track?.input === c ? `${track.name} records this input` : undefined}>
+            <div key={c} className={`vm${mine(c) ? " mine" : ""}`} data-ch={c} data-halo="off" title={mine(c) && track ? `${track.name} records this input` : undefined}>
               <span className="vm-name">Input {c + 1}{inputs === 2 && <small>{c === 0 ? "mic" : "inst / line"}</small>}</span>
               <span className="vm-bar"><i className="vm-fill" /><i className="vm-hold" /><i className="vm-tick t24" /><i className="vm-tick t6" /></span>
               <span className="vm-db mono">—</span>
             </div>
           ))}
         </div>
-        {track && <span className="tiny muted">{track.name} records Input {track.input + 1}. A track's input is chosen on its panel.</span>}
+        {track && <span className="tiny muted">{track.name} records {track.pair ? `Inputs ${track.input + 1} and ${track.input + 2}, in stereo` : `Input ${track.input + 1}`}. A track's input is chosen on its panel.</span>}
       </div>
 
       <div className="au-box">

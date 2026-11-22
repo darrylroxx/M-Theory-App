@@ -23,7 +23,7 @@ export function notchesIn(clip: Clip, bpm: number, rate: number): number[] {
   return clip.kind === "audio" ? frameCycles(clip).slice(1).map((r) => framesToBeats(r.at, rate, bpm)) : cycles(clip).slice(1).map((r) => r.at);
 }
 
-export const ClipView = memo(function ClipView({ clip, ppb, bpm, color, label, selected, quiet, stale, tag, cut, keyOf, lo, hi, mutes, take, peaks, ctl }: {
+export const ClipView = memo(function ClipView({ clip, ppb, bpm, color, label, selected, quiet, stale, tag, cut, keyOf, lo, hi, mutes, take, peaks, peaksR, ctl }: {
   clip: Clip;
   /** pixels to a beat */
   ppb: number;
@@ -46,8 +46,8 @@ export const ClipView = memo(function ClipView({ clip, ppb, bpm, color, label, s
   lo: number; hi: number;
   /** the drums its track's kit keeps silent */
   mutes?: DrumId[];
-  /** the take it plays, and how loud that is along its length (a recorded clip) */
-  take?: Take5; peaks?: Float32Array;
+  /** the take it plays, and how loud that is along its length (a recorded clip); for a stereo take: the left side, and `peaksR` the right */
+  take?: Take5; peaks?: Float32Array; peaksR?: Float32Array;
   ctl: ClipCtl;
 }) {
   const rate = take && take.rate > 0 ? take.rate : 48000;
@@ -64,7 +64,7 @@ export const ClipView = memo(function ClipView({ clip, ppb, bpm, color, label, s
         {clip.kind === "chords" ? <ChordBlock clip={clip} ppb={ppb} keyOf={keyOf} />
           : clip.kind === "melody" ? <MelodyBlock clip={clip} ppb={ppb} lo={lo} hi={hi} />
           : clip.kind === "drums" ? <DrumBlock clip={clip} ppb={ppb} mutes={mutes} />
-          : <TakeBlock clip={clip} take={take} peaks={peaks} ppb={ppb} bpm={bpm} />}
+          : <TakeBlock clip={clip} take={take} peaks={peaks} peaksR={peaksR} ppb={ppb} bpm={bpm} />}
       </div>
       {notchesIn(clip, bpm, rate).filter((x) => x < shown - 1e-6).map((x) => <i key={x} className="tlc-notch" style={{ left: x * ppb }} />)}
       {tag && <span className="tlc-sig" title={`Written in ${tag}`}>{tag}</span>}

@@ -44,7 +44,8 @@ export const Lane = memo(function Lane({ track, song, keyOf, view, width, select
   preview?: Clip | null;
   /** what is being composed on this track, where it is heard with the song (it is not on the timeline: it only shows where it sounds) */
   ghost?: NoteClip | null;
-  peaks?: (take: Take5) => Float32Array | undefined;
+  /** how loud a take is along its length; `side` 0 or 1: its left or right channel alone (a stereo take is drawn as two) */
+  peaks?: (take: Take5, side?: number) => Float32Array | undefined;
   ctl: LaneCtl;
 }) {
   const map = barMap(song);
@@ -77,7 +78,7 @@ export const Lane = memo(function Lane({ track, song, keyOf, view, width, select
               tag={c.kind !== "audio" && !sameSig(c.sig, map.sigAt(c.start)) ? sigName(c.sig) : undefined}
               cut={over < Infinity ? over - c.start : undefined}
               mutes={"kit" in track ? track.kit.mutes : undefined}
-              take={take} peaks={take && peaks ? peaks(take) : undefined} />
+              take={take} peaks={take && peaks ? peaks(take, take.channels === 2 ? 0 : undefined) : undefined} peaksR={take && peaks && take.channels === 2 ? peaks(take, 1) : undefined} />
           );
         })}
         {ghost && (

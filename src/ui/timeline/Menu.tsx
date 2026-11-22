@@ -6,7 +6,9 @@ import { letterClass } from "../letters";
 import { ESC_OPEN, onEscape } from "./keys";
 
 export type MenuItem =
-  | { label: string; run(): void; /** the key that does the same, written out */ hint?: string; disabled?: boolean; danger?: boolean; /** it is the one in force */ on?: boolean }
+  | { label: string; run(): void; /** the key that does the same, written out */ hint?: string; disabled?: boolean; danger?: boolean; /** it is the one in force */ on?: boolean;
+      /** small live meters beside the line (an input's level; two for a stereo pair): each is asked every frame for a value 0 to 1 */
+      levels?: (() => number)[] }
   | { sep: true }
   | { title: string }
   /** a row of the eight colours */
@@ -40,6 +42,23 @@ export function Menu({ at, items, label, onClose }: { at: MenuAt; items: MenuIte
       window.removeEventListener("resize", onClose);
     };
   }, [onClose]);
+  // the small meters of its lines (an input list): moved every frame while it is open, never drawn again
+  const live = useRef(items);
+  live.current = items;
+  const metered = items.some((it) => "levels" in it && !!it.levels?.length);
+  useEffect(() => {
+    if (!metered) return;
+    let raf = 0;
+    const tick = () => {
+      const fns = live.current.flatMap((it) => ("levels" in it && it.levels ? it.levels : []));
+      ref.current?.querySelectorAll<HTMLElement>(".tlv-menu-lv b").forEach((el, i) => {
+        el.style.transform = `scaleX(${Math.max(0, Math.min(1, fns[i]?.() ?? 0)).toFixed(3)})`;
+      });
+      raf = requestAnimationFrame(tick);
+    };
+    raf = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(raf);
+  }, [metered]);
   const step = (dir: 1 | -1) => {
     const all = [...(ref.current?.querySelectorAll<HTMLButtonElement>("button:not(:disabled)") ?? [])];
     if (!all.length) return;
@@ -66,6 +85,7 @@ export function Menu({ at, items, label, onClose }: { at: MenuAt; items: MenuIte
           <button key={i} role="menuitem" className={`tlv-menu-item${it.danger ? " danger" : ""}${it.on ? " on" : ""}`} disabled={it.disabled} onClick={() => { onClose(); it.run(); }}>
             <span>{it.label}</span>
             {it.hint && <kbd>{it.hint}</kbd>}
+            {it.levels && it.levels.length > 0 && <span className="tlv-menu-lvs" aria-hidden="true">{it.levels.map((_, k) => <i key={k} className="tlv-menu-lv"><b /></i>)}</span>}
           </button>
         ),
       )}

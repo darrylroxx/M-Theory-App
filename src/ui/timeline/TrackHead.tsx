@@ -70,20 +70,23 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
   const db = mix?.db ?? 0;
   const records = track.kind === "vocals" || track.kind === "audio";
   const id = track.id;
-  const meter = useRef<HTMLElement>(null);
-  const ch = records ? track.input?.ch ?? 0 : 0;
-  // the small input meter, moved every frame without drawing the panel again
+  const meter = useRef<HTMLSpanElement>(null);
+  const ch = records ? Math.max(0, Math.round(track.input?.ch ?? 0)) : 0;
+  const pair = records && !!track.input?.pair;
+  // the small input meter (two for a pair: left and right), moved every frame without drawing the panel again
   useEffect(() => {
     const el = meter.current;
     if (!records || !level || !el) return;
     let raf = 0;
     const tick = () => {
-      el.style.transform = `scaleY(${Math.max(0, Math.min(1, level(ch))).toFixed(3)})`;
+      el.querySelectorAll<HTMLElement>("b").forEach((b, i) => {
+        b.style.transform = `scaleY(${Math.max(0, Math.min(1, level(ch + i))).toFixed(3)})`;
+      });
       raf = requestAnimationFrame(tick);
     };
     raf = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(raf);
-  }, [records, level, ch]);
+  }, [records, level, ch, pair]);
   const at = (e: React.MouseEvent): MenuAt => {
     const r = e.currentTarget.getBoundingClientRect();
     return { x: r.left, y: r.bottom + 4 };
@@ -122,9 +125,9 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
         {records && (
           <>
             <button className={`tlh-arm${armed ? " on" : ""}`} aria-pressed={armed} aria-label={`Arm ${track.name} for recording`} title={armed ? "Armed: this track records" : "Arm: make this the track that records"} onClick={() => ctl.arm(id)}>●</button>
-            <button className="tlh-in mono" aria-label={`Input of ${track.name}: ${inputText(track.input)}`} aria-haspopup="menu" title="Which input it records" onClick={(e) => ctl.inputMenu(at(e), id)}>
+            <button className="tlh-in mono" aria-label={`Input of ${track.name}: ${inputText(track.input)}`} aria-haspopup="menu" title={pair ? "Which inputs it records: these two, in stereo" : "Which input it records"} onClick={(e) => ctl.inputMenu(at(e), id)}>
               {inputText(track.input)}
-              {level && <i className="tlh-meter" aria-hidden="true"><b ref={meter} /></i>}
+              {level && <span className="tlh-meters" ref={meter} aria-hidden="true"><i className="tlh-meter"><b /></i>{pair && <i className="tlh-meter"><b /></i>}</span>}
             </button>
           </>
         )}

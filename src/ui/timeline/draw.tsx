@@ -107,24 +107,28 @@ function wavePath(peaks: Float32Array): string {
 /**
  * A recorded clip: the stretch of its take that it plays, as a waveform; past the take's end the take starts again.
  * `peaks`: how loud the take is along its length, 0 to 1, any number of them spread evenly over the take's frames
- * (none while the audio is not loaded: the clip is then a plain block with the take's number).
+ * (none while the audio is not loaded: the clip is then a plain block with the take's number). A stereo take (one
+ * recorded from a pair of inputs) is drawn as two waveforms, the left side over the right: `peaks` is then the left
+ * side's and `peaksR` the right's.
  */
-export function TakeBlock({ clip, take, peaks, ppb, bpm }: { clip: AudioClip; take: Take5 | undefined; peaks?: Float32Array; ppb: number; bpm: number }) {
+export function TakeBlock({ clip, take, peaks, peaksR, ppb, bpm }: { clip: AudioClip; take: Take5 | undefined; peaks?: Float32Array; peaksR?: Float32Array; ppb: number; bpm: number }) {
   const rate = take && take.rate > 0 ? take.rate : 48000;
   const total = take?.frames || clip.to;
   const label = take ? `Take ${take.n}` : "";
+  const stereo = take?.channels === 2;
+  const sides = stereo && peaks && peaksR ? [{ p: peaks, cls: " left" }, { p: peaksR, cls: " right" }] : peaks ? [{ p: peaks, cls: "" }] : [];
   return (
-    <span className="tlc-take">
-      {peaks && peaks.length > 0 && total > 0 && frameCycles(clip).map((r, k) => {
+    <span className={`tlc-take${stereo ? " stereo" : ""}`}>
+      {total > 0 && sides.map(({ p, cls }) => p.length > 0 && frameCycles(clip).map((r, k) => {
         const x = framesToBeats(r.at, rate, bpm) * ppb;
         const w = framesToBeats(r.to - r.from, rate, bpm) * ppb;
-        const scale = peaks.length / total;
+        const scale = p.length / total;
         return (
-          <svg key={k} className="tlc-wave" style={{ left: x, width: Math.max(1, w) }} viewBox={`${(r.from * scale).toFixed(3)} -1 ${Math.max(0.001, (r.to - r.from) * scale).toFixed(3)} 2`} preserveAspectRatio="none" aria-hidden="true">
-            <path d={wavePath(peaks)} />
+          <svg key={`${cls}${k}`} className={`tlc-wave${cls}`} style={{ left: x, width: Math.max(1, w) }} viewBox={`${(r.from * scale).toFixed(3)} -1 ${Math.max(0.001, (r.to - r.from) * scale).toFixed(3)} 2`} preserveAspectRatio="none" aria-hidden="true">
+            <path d={wavePath(p)} />
           </svg>
         );
-      })}
+      }))}
       {label && <span className="tlc-label">{label}</span>}
     </span>
   );
