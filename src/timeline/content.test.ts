@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Groove } from "../audio/beats";
 import type { Melody } from "../song/melody";
-import { DRAFT_DRUM_BARS, blankDraft, contentBars, contentHas, needsFit, openOf, setOpenBars, stampOpen, withBars, writeOpen } from "./content";
+import { DRAFT_DRUM_BARS, blankDraft, contentBars, contentHas, fitOpen, needsFit, openOf, setOpenBars, stampOpen, withBars, writeOpen } from "./content";
 import { addTrack, resizeClip, setDraft } from "./edit";
 import type { ChordsContent, DrumsClip, DrumsTrack, MelodyClip, NoteClip, TimelineSong } from "./model";
 import { SIG34, SIG44, SIG68, bandSong, chordsContent, counter, groove, mixedSong, tune } from "./testsongs";
@@ -127,6 +127,31 @@ describe("\"Fit to these bars\"", () => {
     const drafted = setDraft(mixed, "td", groove(1), SIG44);
     expect(needsFit(drafted, { track: "td" }, 0)).toBe(false);
     expect(needsFit(drafted, { track: "td" }, 32)).toBe(true);
+  });
+});
+
+describe("fitting what is open to the bars it lies in", () => {
+  it("a clip moved into bars of another signature is rewritten in theirs, and keeps its place and its length", () => {
+    const mixed = mixedSong();
+    const moved = { ...mixed, clips: mixed.clips.filter((c) => c.id !== "d2").map((c) => (c.id === "d3" ? { ...c, start: 32, len: 8 } : c)) };
+    const out = fitOpen(moved, { track: "td", clip: "d3" }, 0);
+    const c = clip<DrumsClip>(out, "d3");
+    expect(c).toMatchObject({ start: 32, len: 8, sig: SIG68 });
+    expect(c.content.steps / c.content.div).toBe(2);
+    expect(c.content.div).toBe(3);
+    expect(needsFit(out, { track: "td", clip: "d3" }, 0)).toBe(false);
+    // one that fits already is left alone
+    expect(fitOpen(mixed, { track: "td", clip: "d1" }, 0)).toBe(mixed);
+  });
+  it("a draft is rewritten in the signature of the bars at its anchor; chords that lasted whole bars still do", () => {
+    const drafted = setDraft(setDraft(mixedSong(), "td", groove(1), SIG44), "tc", chordsContent(2), SIG44);
+    const d = fitOpen(drafted, { track: "td" }, 32).tracks.find((t) => t.id === "td") as DrumsTrack;
+    expect(d.draft!.sig).toEqual(SIG68);
+    expect(d.draft!.content.steps / d.draft!.content.div).toBe(2);
+    const c = fitOpen(drafted, { track: "tc" }, 32).tracks.find((t) => t.id === "tc") as { draft?: { sig: unknown; content: ChordsContent } };
+    expect(c.draft!.sig).toEqual(SIG68);
+    expect(c.draft!.content.chords.map((x) => x.beats)).toEqual([2, 2]);
+    expect(fitOpen(drafted, { track: "td" }, 0)).toBe(drafted);
   });
 });
 
