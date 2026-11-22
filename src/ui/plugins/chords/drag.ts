@@ -4,6 +4,23 @@
 // (The engine of the old Chords page, views/GuitarView: `dragApi`, for a tray that is always in view.)
 import type { DragApi, Payload } from "../../drag";
 
+/**
+ * Where among the chords of the tray a point is: how many of them come before it. `boxes`: where each chord is drawn,
+ * in the order they are played, row after row.
+ */
+export function placeIn(boxes: readonly { left: number; top: number; width: number; bottom: number }[], x: number, y: number): number {
+  if (!boxes.length) return 0;
+  // (above the first row counts as on it, under the last as on that one)
+  const at = Math.min(Math.max(y, boxes[0].top), boxes[boxes.length - 1].bottom - 1);
+  let i = 0;
+  for (const b of boxes) {
+    if (at < b.top) break;
+    if (at < b.bottom && x < b.left + b.width / 2) break;
+    i++;
+  }
+  return i;
+}
+
 /** What is being dragged, and where in the row it would land now (null: outside the tray). */
 export type ChordDrag = Payload & { index: number | null };
 
@@ -25,14 +42,10 @@ export function chordDrag({ dockRef, ghostRef, lastDrag, setDrag, drop }: {
       if (x > sr.right - 36) scroller.scrollLeft += 14;
       else if (x < sr.left + 36) scroller.scrollLeft -= 14;
     }
-    let i = 0;
-    for (const el of dock.querySelectorAll<HTMLElement>("[data-slot]")) {
-      if (el.dataset.slot === exclude) continue;
-      const b = el.getBoundingClientRect();
-      if (x < b.left + b.width / 2) break;
-      i++;
-    }
-    return i;
+    // the place in the row: before the first chord whose middle is right of the pointer. In a tall window the chords
+    // go on to more rows: a chord on a row under the pointer comes after it, one on a row above comes before it.
+    const boxes = [...dock.querySelectorAll<HTMLElement>("[data-slot]")].filter((el) => el.dataset.slot !== exclude).map((el) => el.getBoundingClientRect());
+    return placeIn(boxes, x, y);
   };
   return {
     justDragged: () => Date.now() - lastDrag.current < 150,

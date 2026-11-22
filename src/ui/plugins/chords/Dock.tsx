@@ -63,6 +63,23 @@ export function Dock({ ref, head, voicings, keys, keyStyle, onKeyStyle, nowIdx, 
     const b = r.getBoundingClientRect();
     if (a.left < b.left || a.right > b.right) r.scrollLeft += a.left - b.left - 8;
   }, [nowIdx, follow]);
+  // Under the ruler more can open (a chord's exact length; "make it N bars"). Where the tray has no room to grow, it
+  // scrolls: what has just opened is brought into view, so it does not open out of sight.
+  const innerRef = useRef<HTMLDivElement>(null);
+  const footRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const inner = innerRef.current;
+    const foot = footRef.current;
+    if (!inner || !foot || typeof ResizeObserver === "undefined") return;
+    let was = foot.offsetHeight;
+    const ro = new ResizeObserver(() => {
+      const now = foot.offsetHeight;
+      if (now > was + 1) inner.scrollTop = inner.scrollHeight;
+      was = now;
+    });
+    ro.observe(foot);
+    return () => ro.disconnect();
+  }, []);
   const marker = <span key="marker" className="drop-marker" />;
   const els: ReactNode[] = [];
   let k = 0;
@@ -80,7 +97,7 @@ export function Dock({ ref, head, voicings, keys, keyStyle, onKeyStyle, nowIdx, 
 
   return (
     <div className={`dock cp-dock${chords.length ? "" : " bare"}${drag ? " armed" : ""}${drag?.index != null ? " over" : ""}`} ref={ref} role="group" aria-label="Your chords">
-      <div className="dock-inner">
+      <div className="dock-inner" ref={innerRef}>
         {head}
         {keys && chords.length > 0 && (
           <div className="arrange">
@@ -94,7 +111,10 @@ export function Dock({ ref, head, voicings, keys, keyStyle, onKeyStyle, nowIdx, 
         )}
         {!keys && chords.length >= 2 && (
           <div className="arrange">
-            <span className="kb-label">Arrange</span>
+            <span className="cp-arr">
+              <span className="kb-label">Arrange</span>
+              {span && <span className="span" title="The frets these shapes lie on">frets {span[0]}–{span[1]}</span>}
+            </span>
             <div className="arrange-tools">
               <div className="seg" role="radiogroup" aria-label="Arrange all chords in one area of the neck">
                 <button role="radio" aria-checked={!arr} className={arr ? "" : "on"} onClick={() => onArrange(null)}>My shapes</button>
@@ -110,7 +130,6 @@ export function Dock({ ref, head, voicings, keys, keyStyle, onKeyStyle, nowIdx, 
                   <button className={`chip${arr.inversions ? " on" : ""}`} aria-pressed={arr.inversions} title="Allow a different bass note for smoother changes" onClick={() => onArrange({ ...arr, inversions: !arr.inversions })}>Inversions</button>
                 </>
               )}
-              {span && <span className="span">frets {span[0]}–{span[1]}</span>}
             </div>
           </div>
         )}
@@ -120,7 +139,7 @@ export function Dock({ ref, head, voicings, keys, keyStyle, onKeyStyle, nowIdx, 
             {chords.length === 0 && drag && drag.index === null && <span className="dock-empty">↓</span>}
           </div>
         </div>
-        <div className="dock-foot">
+        <div className="dock-foot" ref={footRef}>
           {/* (put on another clip, the ruler opens at its first bar, as the melody and the drums do) */}
           <BarRuler key={resetKey} chords={chords} bar={bar} length={length} label={label} onFit={onFit} nowIdx={nowIdx} onChange={onLengths} shown={shown} follow={follow} />
           <button className="rest-add" title="Add a bar of silence after the last chord" onClick={() => set(addRest())}>+ Rest</button>
