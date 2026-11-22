@@ -105,6 +105,22 @@ export function transposeMelody(m: Melody, semitones: number): Melody {
   return { ...m, notes: m.notes.map((n) => ({ ...n, midi: n.midi + semitones })) };
 }
 
+/**
+ * Give the notes in one grid cell a length, in twelfths of a beat (on the keys and the synth a note is held that
+ * long; the strings ring on). With no length they are held until the next note again, as a note just tapped in is.
+ */
+export function setNoteLen(m: Melody, tick: number, midi: number, len?: number): Melody {
+  const there = notesInCell(m, tick, midi);
+  const want = len === undefined ? undefined : Math.max(1, Math.round(len));
+  if (!there.length || there.every((n) => n.len === want)) return m;
+  const notes = m.notes.map((n) => {
+    if (!there.includes(n)) return n;
+    const { len: _len, ...plain } = n;
+    return want === undefined ? plain : { ...plain, len: want };
+  });
+  return { ...m, notes };
+}
+
 export interface MelodyRow {
   midi: number;
   /** the note's name in this key */
@@ -156,6 +172,18 @@ export function gridRows(key: Key, low: number, octaves: number, keyOnly = false
     rows.push({ midi, name: spellInKey(p, key), inKey, home: p === tonic });
   }
   return rows;
+}
+
+/** Can every note move by so many semitones and still be a note a melody may hold? */
+export const canShift = (m: Melody, semitones: number): boolean => m.notes.every((n) => n.midi + semitones >= GRID_LOW && n.midi + semitones <= GRID_HIGH);
+
+/**
+ * Every note an octave up (1) or down (-1): the same tune, higher or lower. Nothing is lost on the way: when a note
+ * would leave what a melody may hold, the melody comes back as it is (see `canShift`).
+ */
+export function shiftOctave(m: Melody, dir: 1 | -1): Melody {
+  if (!m.notes.length || !canShift(m, 12 * dir)) return m;
+  return transposeMelody(m, 12 * dir);
 }
 
 export interface TuneHit {

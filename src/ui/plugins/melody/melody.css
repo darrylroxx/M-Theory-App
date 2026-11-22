@@ -1,3 +1,92 @@
 /* ── The Melody and Bass plugin: the composer window of a melody track and of a bass track ──
-   Nothing yet: the old Melody page still draws it, with the app's looks and what the old pages need inside a window
-   (styles.css, timeline.css: left where they are). The styles of the Melody and Bass plugin go here, and nowhere else. */
+   One row of tools over the note grid, and the grid fills what is left of the window, however tall it is made.
+   The grid has every octave a melody may hold, so it stands in a box that scrolls: the row names stay at the left,
+   the bar numbers and the chords at the top, and a small overview of the whole range stands at the right.
+   The grid's own looks (which rows are lit, the home note, the dots of the chord) are the app's (styles.css). */
+
+.tlw-body:has(> .mel) { padding: 8px 10px 6px; overflow: hidden; display: flex; flex-direction: column; }
+.mel { --rh: 18px; --cell: 14px; --pitch: calc(var(--rh) + 2px); --tile: calc((100% + 2px) / var(--steps)); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+
+/* the tools: one row while the window is wide enough for them */
+.mel-tools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; min-height: 30px; }
+.mel-tools .dm-tabrow { flex: 0 1 auto; min-width: 0; }
+.mel-tools .dm-bars button { min-width: 30px; height: 26px; }
+.mel-tools .hz-go { margin-left: 0; }
+.mel-tools .chip { padding: 4px 11px; font-size: 0.82rem; white-space: nowrap; }
+.mel-tools .btn.sm { padding: 4px 9px; }
+.mel-tools .dm-grid { margin-left: 0; gap: 6px; }
+.mel-tools .seg { flex-wrap: nowrap; padding: 2px; }
+.mel-tools .seg button { min-width: 30px; padding: 3px 8px; }
+/* every note an octave up or down: said in words, and apart from the buttons that only move the view */
+.mel-shift { display: inline-flex; align-items: center; gap: 4px; padding-left: 8px; border-left: 1px solid var(--border); }
+.mel-shift .kb-label { margin-right: 2px; white-space: nowrap; }
+.mel-again { border: none; background: none; font-size: 1.05rem; line-height: 1; }
+
+/* the grid in its box */
+.mel-main { flex: 1 1 auto; min-height: 0; display: flex; gap: 6px; }
+.mel-box { position: relative; flex: 1 1 auto; min-width: 0; overflow: auto; overscroll-behavior: contain; outline: none; user-select: none; -webkit-user-select: none; border-radius: 6px; }
+.mel-box:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 55%, transparent); }
+/* (up and down the overview at the right is the scroll bar; sideways a thin one of its own) */
+.mel-box::-webkit-scrollbar { width: 0; height: 8px; }
+.mel-box::-webkit-scrollbar-thumb { background: var(--border-2); border-radius: 4px; }
+.mel-box::-webkit-scrollbar-corner { background: none; }
+.mel-in { display: flex; width: 100%; min-width: calc(52px + var(--count) * (var(--steps) * var(--cell) + (var(--steps) - 1) * 2px) + (var(--count) - 1) * 10px); }
+.mel-names { position: sticky; left: 0; z-index: 3; flex: 0 0 46px; padding-right: 6px; display: flex; flex-direction: column; gap: 2px; background: var(--bg); }
+.mel-names .mg-label { flex: none; height: var(--rh); display: flex; align-items: center; justify-content: center; gap: 1px; border-radius: 5px; font-size: 0.68rem; line-height: 1; }
+.mel-names .mg-label small { font-size: 0.56rem; font-weight: 700; opacity: 0.72; }
+/* what stays at the top while the rows scroll under it: the bar's number and the chords (over the row names: as much room) */
+.mel-head { position: sticky; top: 0; z-index: 2; flex: none; display: flex; flex-direction: column; gap: 2px; background: var(--bg); }
+.mel-names .mel-head { z-index: 4; }
+.mel-head > * { flex: none; }
+.mel-bars { flex: 1 1 0; min-width: 0; display: flex; gap: 10px; }
+.mel-chords { display: grid; grid-template-columns: repeat(var(--steps), minmax(0, 1fr)); gap: 2px; }
+
+/* a bar's rows: each row is one stripe, and the squares are cut out of the stripes all at once */
+.mel-rows { position: relative; flex: none; }
+.mel-cells {
+  position: relative; display: flex; flex-direction: column; gap: 2px;
+  -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect style='width:calc(100%25 - 2px);height:calc(100%25 - 2px)' rx='5'/%3E%3C/svg%3E") 0 0 / var(--tile) var(--pitch) repeat;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect style='width:calc(100%25 - 2px);height:calc(100%25 - 2px)' rx='5'/%3E%3C/svg%3E") 0 0 / var(--tile) var(--pitch) repeat;
+}
+.mel-row { flex: none; height: var(--rh); background: var(--bg-2); }
+.mel-row.in { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
+.mel-row.home { background: color-mix(in srgb, var(--accent) 14%, var(--card-2)); }
+/* the first square of every beat has a line down its left side */
+.mel-cells::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to right, var(--border-2) 0 2px, transparent 2px) 0 0 / calc(var(--tile) * var(--div)) 100% repeat-x; }
+/* a dot on every square that is a note of the chord sounding underneath */
+.mel-fit { position: absolute; left: calc(var(--k) * var(--tile)); width: calc(var(--n) * var(--tile)); top: calc(var(--i) * var(--pitch)); height: var(--rh); pointer-events: none; opacity: 0.55; background: radial-gradient(circle at calc(50% - 1px) 50%, var(--fifth) 0 2.5px, transparent 3px) 0 0 / calc(100% / var(--n)) 100% repeat-x; }
+
+/* a note: as long as it is held (one square when it has no length of its own) */
+.mel-note { position: absolute; z-index: 1; left: calc(var(--k) * var(--tile)); width: calc(var(--n) * var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); border-radius: 5px; background: var(--accent); cursor: pointer; }
+.mel-note.from { border-top-left-radius: 0; border-bottom-left-radius: 0; }
+.mel-note.on { width: calc(var(--n) * var(--tile)); border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.mel-note.fit:not(.from)::after { content: ""; position: absolute; left: calc(((100% + 2px) / var(--n) - 2px) / 2); top: 50%; width: 5px; height: 5px; margin: -2.5px; border-radius: 50%; background: var(--accent-ink); opacity: 0.8; pointer-events: none; }
+/* its right end: dragged to make it longer or shorter */
+.mel-grip { position: absolute; top: 0; bottom: 0; right: 0; width: 7px; border-radius: 0 5px 5px 0; cursor: ew-resize; }
+.mel-note.len .mel-grip { background: color-mix(in srgb, var(--accent-ink) 24%, transparent); }
+.mel-note:hover .mel-grip { background: color-mix(in srgb, var(--accent-ink) 42%, transparent); }
+/* the square under the pointer, and the square the keys act on */
+.mel-hover, .mel-cur { position: absolute; z-index: 2; display: none; left: calc(var(--k) * var(--tile)); width: calc(var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); border-radius: 5px; pointer-events: none; }
+.mel-hover.on { display: block; outline: 2px solid var(--accent); outline-offset: -2px; }
+.mel-cur.on { display: block; outline: 2px solid var(--text); outline-offset: -2px; }
+.mel-rows .mg-now { z-index: 2; }
+
+/* the overview: the whole range, where the notes are, and what is in view; an octave up and down at its ends */
+.mel-rail { flex: 0 0 46px; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
+.mel-oct { position: relative; flex: none; height: 26px; padding: 0; border-radius: 8px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--text); font-size: 0.72rem; line-height: 1; }
+.mel-oct:hover { border-color: var(--accent); color: var(--accent); }
+.mel-oct:active { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
+/* (a dot: there are notes further up, or further down, than what is in view) */
+.mel-rail.above .mel-oct.up::after, .mel-rail.below .mel-oct.down::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.mel-map { position: relative; flex: 1 1 auto; min-height: 36px; overflow: hidden; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); cursor: pointer; touch-action: none; }
+.mel-map svg { position: absolute; left: 19px; top: 0; width: calc(100% - 19px); height: 100%; }
+.mel-map-home { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
+.mel-map-note { fill: var(--accent); }
+.mel-map-oct { position: absolute; left: 3px; transform: translateY(-50%); font-size: 0.56rem; font-weight: 800; line-height: 1; color: var(--faint); pointer-events: none; }
+.mel-view { position: absolute; left: 0; right: 0; top: 0; height: 15%; min-height: 8px; box-sizing: border-box; border: 1.5px solid var(--accent); border-radius: 5px; background: color-mix(in srgb, var(--accent) 14%, transparent); pointer-events: none; }
+
+/* under a finger, and in a window that is a sheet: rows and squares big enough to hit */
+@media (pointer: coarse), (max-width: 760px) {
+  .mel { --rh: 26px; --cell: 28px; }
+  .mel-names .mg-label { font-size: 0.74rem; }
+}
