@@ -1,3 +1,30 @@
-/* ── The Vocals plugin: the record window, the vocal sound window and the take browser ──
-   Nothing yet: the old Vocals page still draws the record window, with the app's looks (styles.css) and the track
-   view's (timeline.css). The styles of the Vocals plugin go here, and nowhere else. */
+/* ── The Vocals plugin: the record window, the vocal sound window, the take browser, and the Audio part of the
+   settings. The looks of the parts that came from the old Vocals page (the meters, the round Record button, the
+   passes, the take list, the knobs of the vocal sound) are the app's (styles.css); what is new is here, and nowhere
+   else. ── */
+
+/* the record window: the track and its input across the top, Record under it, the takes, then what you hear */
+.rw { min-width: 0; }
+.rw-head { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 14px; }
+.rw-head .vc-track { font-size: 1rem; }
+.rw-head select { min-width: 56px; }
+/* the level of the track's own input: a bar and its peak in dB */
+.rw-meter { flex: 1 1 180px; min-width: 120px; max-width: 420px; display: grid; grid-template-columns: 1fr 52px; align-items: center; gap: 8px; --lvl: 0; --hold: 0; }
+.rw-meter[data-halo="amber"] .vm-fill { background: #f0a62b; }
+.rw-meter[data-halo="red"] .vm-fill { background: #e5483b; }
+.rw-problem { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--tension, #c0392b) 45%, var(--border)); }
+.rw-hear { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 16px; padding: 10px 12px; border-radius: 12px; border: 1px solid var(--border); }
+.rw-hear input[type="range"] { width: 120px; }
+.rw-setup { font-size: 0.78rem; white-space: nowrap; }
+
+/* the vocal sound window: the box fills the window, with no frame of its own */
+.vs.vc-box { border: none; background: none; padding: 0; min-width: 0; }
+.vs .vc-knobs { grid-template-columns: repeat(auto-fill, minmax(120px, 1fr)); }
+.vs svg { max-width: 100%; height: auto; }
+
+/* Settings → Audio: one box for each thing */
+.au { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.au-box { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card-2); min-width: 0; }
+.au-box select { max-width: 100%; }
+.au-checks { display: flex; flex-wrap: wrap; gap: 6px 16px; }
+.au .vm-name { cursor: default; }

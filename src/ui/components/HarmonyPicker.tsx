@@ -14,6 +14,14 @@
  * The same sheet writes an existing harmony track again (from its ⟳), in the section on screen:
  * with another option, or the same one after its source changed. A section changed by hand since
  * is only written over after a yes.
+ *
+ * In the track view the sheet works on the bars of the clip that is open (a draft: its bars at
+ * the cursor or the loop): the song it reads is that clip's bars and nothing else (windows/ClipLens),
+ * so the tracks it offers are the ones with music under those bars, and what it keeps is written
+ * at those bars. The host says so with three optional props: `bars` names the bars in the sheet,
+ * `onKept` hands the "kept" message to the host (which offers the one undo with it), and
+ * `noConfirm` leaves out the question before a harmony changed by hand is written over (the one
+ * undo takes it back). Without them the sheet is as the old view shows it.
  */
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { harmonizeSources, harmonyMenu, harmonyState, isHarmony, partHere, rewriteHarmony, writeHarmony, writtenFrom, type HarmonyPlan } from "../../song/harmony";
@@ -44,7 +52,7 @@ export const AuditionCtx = createContext<Audition>({ preview: null, hear: () => 
  * The sheet. With `track` it writes that harmony track again. Without, it makes a new track of
  * `kind`, asking first which track it goes with (`first`: the one on screen, listed first).
  */
-export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
+export function HarmonyPicker({ kind, track, first, anchor, onClose, bars, onKept, noConfirm }: {
   kind: "chords" | "melody";
   track?: Track;
   /** the track on screen: listed first (fixed while the sheet is open, so the chips never jump) */
@@ -52,6 +60,12 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
   /** the button that opened the sheet: it is kept in sight above the sheet */
   anchor?: HTMLElement | null;
   onClose: () => void;
+  /** the bars it works on, in words ("bars 9–12"): the open clip's, in the track view. Said in the sheet */
+  bars?: string;
+  /** a harmony was kept or written again: the host says so, and offers its own undo (without it the sheet does both) */
+  onKept?: (msg: string) => void;
+  /** write over a harmony changed by hand without asking first (the host's undo takes it back) */
+  noConfirm?: boolean;
 }) {
   const { state, set, toast } = useApp();
   const { preview, hear, playing } = useContext(AuditionCtx);
@@ -167,7 +181,7 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
     let after: typeof before;
     let msg: string;
     if (track) {
-      if (status?.edited.length && !window.confirm(`${track.name} was changed in ${status.edited.join(", ")} since it was written. Write over it?`)) return;
+      if (!noConfirm && status?.edited.length && !window.confirm(`${track.name} was changed in ${status.edited.join(", ")} since it was written. Write over it?`)) return;
       after = rewriteHarmony(before, key, track.id, option, shape);
       msg = `${after.tracks?.find((t) => t.id === track.id)?.name ?? track.name} ⟳`;
     } else {
@@ -178,6 +192,10 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
     }
     hear(null);
     set((s) => ({ ...s, progression: s.progression === before ? after : s.progression }));
+    if (onKept) {
+      onKept(msg);
+      return onClose();
+    }
     const still = (s: AppState) => s.key.tonic === key.tonic && s.key.scaleId === key.scaleId && sameMusic(s.progression, after);
     toast(msg, { label: "↶", aria: "Undo", when: still, run: () => set((s) => (still(s) ? { ...s, progression: undoTo(s.progression, before) } : s)) });
     onClose();
@@ -191,12 +209,12 @@ export function HarmonyPicker({ kind, track, first, anchor, onClose }: {
       <div className="hz-row">
         {track ? (
           <span className="hz-src-now" title={`Written from ${srcName}`}>
-            <b>{track.name}</b> with {srcName}
+            <b>{track.name}</b> with {srcName}{bars ? <span className="hz-bars">, {bars}</span> : null}
             {status?.stale && <i className="hz-dot" aria-label="Its source has changed" title="Its source has changed" />}
           </span>
         ) : (
           <>
-            <span className="hz-q">Harmonize {target.isNew ? <b>a new track</b> : <b className="hz-to">{target.name}</b>} with</span>
+            <span className="hz-q">Harmonize {target.isNew ? <b>a new track</b> : <b className="hz-to">{target.name}</b>}{bars ? <span className="hz-bars">, {bars},</span> : null} with</span>
             {sources.map((t) => (
               <button key={t.id} className={`chip${from === t.id ? " on" : ""}`} aria-pressed={from === t.id} aria-label={`Harmonize with ${t.name}`} onClick={() => toSource(t.id)}>
                 {t.name}

@@ -116,6 +116,29 @@ describe("the harmony sheet on what a window has open", () => {
     expect(html).toContain('aria-label="Keep it"');
   });
 
+  it("works on the bars of the open clip: it names them, and offers only the tracks with music under them", () => {
+    // chords in bars 1–4 only; a melody and a second chords track in bars 9–12
+    const notes: [number, number][] = [[0, 64], [2, 67], [4, 69], [6, 72], [8, 74], [10, 77], [12, 74], [14, 71]];
+    const four = [chord("a1", "C"), chord("a2", "A", 4, "min"), chord("a3", "D", 4, "min"), chord("a4", "G", 4, "7")];
+    const later = [chord("b1", "F"), chord("b2", "G", 4, "7"), chord("b3", "C"), chord("b4", "C")];
+    const song = songOf([chordsTrack("tc", "Chords", { lead: true }), tuneTrack("tm"), chordsTrack("t2", "Chords 2")], {
+      clips: [
+        chordsClip("c1", "tc", 0, 16, { content: chordsContent(4, undefined, four) }),
+        melodyClip("m1", "tm", 32, 16, { content: tune(4, notes) }),
+        chordsClip("c2", "t2", 32, 16, { content: chordsContent(4, undefined, later) }),
+      ],
+    });
+    const html = draw(song, { track: "tm", clip: "m1" }, "melody");
+    expect(html).toContain("bars 9–12");
+    // (the lead chords have nothing under bars 9–12: they are not offered)
+    expect(sources(html)).toEqual(["Melody", "Chords 2"]);
+    // the same melody under the chords of bars 1–4: those are the ones offered
+    const early = { ...song, clips: song.clips.map((c) => (c.id === "m1" ? { ...c, start: 0 } : c)) };
+    const first = draw(early, { track: "tm", clip: "m1" }, "melody");
+    expect(first).toContain("bars 1–4");
+    expect(sources(first)).toEqual(["Melody", "Chords"]);
+  });
+
   it("⟳ on a track Harmonize wrote: the sheet that writes it again, on the option it was written with", () => {
     const { song, clip } = harmonized();
     const html = draw(song, { track: "hx", clip }, "melody", true);

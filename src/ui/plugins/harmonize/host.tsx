@@ -8,6 +8,11 @@
 // same lens the old pages use (windows/ClipLens), so the sheet itself is the old one, unchanged: it reads the lens
 // song, and what it keeps goes back into the real song as one undo step. While an option is chosen the track view's
 // player plays the open bars round with it written in (`preview`).
+//
+// The sheet works on the bars of what is open: the lens song is those bars and nothing else, so the tracks offered
+// are the ones with music under them, and the sheet names the bars. What is kept is said by the app's own message,
+// with the one undo (never a second, private one); and a harmony changed by hand is written again without a
+// question first, since the same undo takes it back.
 import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { harmonizeSources, previewHarmony } from "../../../song/harmony";
@@ -16,10 +21,13 @@ import type { Key } from "../../../theory/keys";
 import type { OpenTarget } from "../../../timeline/content";
 import { lensOf } from "../../../timeline/lens";
 import type { TimelineSong, WinState } from "../../../timeline/model";
+import { barMap } from "../../../timeline/bars";
+import { useApp5 } from "../../app5";
+import { barsLabel } from "../../timeline/gestures";
 import { AuditionCtx, HarmonyPicker, type Audition, type Preview } from "../../components/HarmonyPicker";
 import { useApp, type Pane, type Progression } from "../../state";
 import { ESC_OPEN, onEscape } from "../../timeline/keys";
-import { ClipLens } from "../../windows/ClipLens";
+import { ClipLens, useLens } from "../../windows/ClipLens";
 import { WinFocus } from "../../windows/windows";
 
 /** What the sheet is open for. */
@@ -181,6 +189,19 @@ export function HarmonySheet({ kind, again, anchor, playing, onPreview, onClose 
 }) {
   const { state } = useApp();
   const prog = state.progression;
+  // the bars it works on (the open clip's; a draft's at its anchor), named in the sheet
+  const app = useApp5();
+  const span = useLens()?.lens.span;
+  const realSong = app.state.song;
+  const bars = useMemo(() => (span ? barsLabel(barMap(realSong), span.from, span.to) : undefined), [realSong.meter, realSong.sigs, span?.from, span?.to]); // eslint-disable-line react-hooks/exhaustive-deps
+  // what was kept is said with the one undo: offered while the song is as the keeping left it
+  const live = useRef(app);
+  live.current = app;
+  const kept = useCallback((msg: string) => {
+    const a = live.current;
+    const after = a.peek().song;
+    a.toast(msg, { label: "↶", aria: "Undo", run: () => live.current.undo(), when: (s) => s.song === after });
+  }, []);
   // the open track, as the lens song names it: listed first among the tracks to harmonize with
   const openId = prog.focus?.[kind] ?? kind;
   // written again: the open track, when Harmonize wrote it (as it was when ⟳ was pressed)
@@ -212,7 +233,7 @@ export function HarmonySheet({ kind, again, anchor, playing, onPreview, onClose 
   if (lost) return null;
   return (
     <AuditionCtx.Provider value={audition}>
-      <HarmonyPicker kind={kind} track={track} first={openId} anchor={anchor} onClose={onClose} />
+      <HarmonyPicker kind={kind} track={track} first={openId} anchor={anchor} onClose={onClose} bars={bars} onKept={kept} noConfirm />
     </AuditionCtx.Provider>
   );
 }
