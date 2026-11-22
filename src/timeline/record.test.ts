@@ -222,8 +222,21 @@ describe("the song under a recording, as a text that says when it can be played 
     expect(backingKey({ ...s, bpm: 121 }, "ta", plan)).not.toBe(key);
     expect(backingKey({ ...s, mix: { tc: { db: -3 } } }, "ta", plan)).not.toBe(key);
     // the armed track's own fader is not in what is sung over; its solo is (it silences the others)
-    expect(backingKey({ ...s, mix: { ta: { db: -6, mute: true } } }, "ta", plan)).toBe(backingKey({ ...s, mix: { ta: {} } }, "ta", plan));
-    expect(backingKey({ ...s, mix: { ta: { solo: true } } }, "ta", plan)).not.toBe(backingKey({ ...s, mix: { ta: {} } }, "ta", plan));
+    expect(backingKey({ ...s, mix: { ta: { db: -6, mute: true } } }, "ta", plan)).toBe(key);
+    expect(backingKey({ ...s, mix: { ta: { solo: true } } }, "ta", plan)).not.toBe(key);
+  });
+
+  it("played once: a take just recorded past the song's end moves the plan's end, and not the text", () => {
+    const before = song();
+    const p1 = recordPlan5(before, session({ cursor: 16 }));
+    // the recording ran on past the end: its clip on the armed track is now the last thing in the song
+    const long = take("k9", 60, 16);
+    const after: TimelineSong = { ...before, tracks: before.tracks.map((t) => (t.id === "ta" ? ({ ...t, takes: [long] } as AudioTrack) : t)), clips: [...before.clips, audioClip("a9", "ta", long, 16)] };
+    const p2 = recordPlan5(after, session({ cursor: 16 }));
+    expect(p2.to).toBeGreaterThan(p1.to);
+    expect(backingKey(after, "ta", p2)).toBe(backingKey(before, "ta", p1));
+    // round a loop, where the stretch ends is heard
+    expect(backingKey(before, "ta", { from: 0, to: 16, loop: true })).not.toBe(backingKey(before, "ta", { from: 0, to: 32, loop: true }));
   });
 
   it("does not read what is not heard: a name, a colour", () => {

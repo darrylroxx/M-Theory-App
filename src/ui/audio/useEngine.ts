@@ -577,7 +577,7 @@ export function useEngine(host: EngineHost): EngineApi {
 
   /** Render the loop's song, hand it to the engine, and start (recording or just singing along). */
   const go = async (record: boolean) => {
-    if (!track) return toast("Add a Vocals track first: the + row under the tracks");
+    if (!track) return toast("Add a Vocals or a Blank track first: the + row under the tracks");
     // (the interface may have opened a moment ago, before this was drawn again)
     let o = opened ?? openedRef.current;
     // Record can be pressed before the interface is open (the top bar's ● opens the record window and goes on): it
@@ -596,7 +596,7 @@ export function useEngine(host: EngineHost): EngineApi {
     if (!o) return toast(found.current === 0 ? "No interface found" : "The interface is not open");
     const rateNow = o.rate;
     const plan = hostRef.current.plan();
-    if (!plan || plan.beats <= 0) return toast("Nothing to sing over: set a loop or pick a section");
+    if (!plan || plan.beats <= 0) return toast("Nothing to record over here: set a loop, or put the cursor where it should start");
     const t = track;
     // a rehearsal ends when another idea is opened, also while it is being made ready (a recording keeps its idea open: see recordingTo)
     const inIdea = ideaRef.current;

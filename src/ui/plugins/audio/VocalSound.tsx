@@ -9,6 +9,7 @@
 // Like every sound window it has Bypass, "Copy sound" and "Paste sound" in its title bar (see SoundFrame).
 import { memo, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { AIR_BANDS, COLORS, ECHOES, ECHO_TIMES, FX_DEFAULT, PRESETS, SPACES, WIDTHS, echoSeconds, presetFx, reviveFx, type VocalFx } from "../../../audio/vocalfx";
+import { isStored } from "../../../audio/takestore";
 import { fxRender } from "../../../desktop";
 import { sameSound, soundTag } from "../../../song/takes";
 import { setTrack } from "../../../timeline/edit";
@@ -43,14 +44,16 @@ const KNOBS: { k: keyof VocalFx; g: Group; label: string; min: number; max: numb
 /** A track's vocal sound, with what a sound saved before colours, spaces and echo types existed is missing filled in. */
 export const fxOf = (track: Pick<AudioTrack, "fx">): VocalFx => reviveFx(track.fx) ?? FX_DEFAULT;
 /** Were some of a track's takes made with another sound than it has now? ("Apply sound" is offered then.) */
-export const staleTakes = (track: Pick<AudioTrack, "takes">, fx: VocalFx): boolean => track.takes.some((k) => !sameSound(k as unknown as Parameters<typeof sameSound>[0], fx));
+export const staleTakes = (track: Pick<AudioTrack, "takes">, fx: VocalFx): boolean => track.takes.some((k) => canApply(k) && !sameSound(k as unknown as Parameters<typeof sameSound>[0], fx));
+/** Can a sound be put on this take at all? Not on one recorded in a browser: it is kept there as it came in, and only the desktop app's engine makes a take's second file. */
+const canApply = (k: { dry: string }): boolean => !isStored(k.dry);
 /** Is the track recorded from a pair of inputs? (The vocal sound takes one voice: such a track has only its level.) */
 export const isStereo = (track: Pick<AudioTrack, "input">): boolean => !!track.input?.pair;
 
 /** Put a track's sound as it is now on its takes made with an older one: their files are made again, and the song plays the new ones. */
 export async function applySound(app: () => Ctx5, track: AudioTrack): Promise<void> {
   const sound = fxOf(track);
-  const drys = [...new Set(track.takes.filter((k) => !sameSound(k as unknown as Parameters<typeof sameSound>[0], sound)).map((k) => k.dry))];
+  const drys = [...new Set(track.takes.filter((k) => canApply(k) && !sameSound(k as unknown as Parameters<typeof sameSound>[0], sound)).map((k) => k.dry))];
   if (!drys.length) return;
   try {
     const made: Record<string, string> = {};

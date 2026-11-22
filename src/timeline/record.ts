@@ -58,8 +58,14 @@ export function backingKey(song: TimelineSong, skip: string | null, plan: Pick<R
     return heard;
   });
   const mix: Record<string, unknown> = {};
-  for (const [id, m] of Object.entries(song.mix ?? {})) if (m) mix[id] = id === skip ? { solo: !!m.solo } : m;
-  return JSON.stringify([plan.from, plan.to, plan.loop, song.bpm, song.meter, song.sigs ?? [], song.end ?? 0, mix, tracks, song.clips.filter((c) => c.track !== skip)]);
+  for (const [id, m] of Object.entries(song.mix ?? {})) {
+    if (!m) continue;
+    if (id !== skip) mix[id] = m;
+    else if (m.solo) mix[id] = { solo: true };
+  }
+  // (played once, the song is heard from the plan's first beat to its own end, wherever the plan reaches: a take
+  // just recorded past the old end moves the plan's end, and changes nothing that is heard)
+  return JSON.stringify([plan.from, plan.loop ? plan.to : "end", plan.loop, song.bpm, song.meter, song.sigs ?? [], song.end ?? 0, mix, tracks, song.clips.filter((c) => c.track !== skip)]);
 }
 
 /**

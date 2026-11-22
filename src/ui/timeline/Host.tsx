@@ -439,9 +439,10 @@ export function Host() {
     live: micLive,
     toggle: recordToggle,
     monitor,
-    setMonitor,
+    // (in a browser there is no monitoring to choose)
+    ...(desktop ? { setMonitor } : {}),
     pass: engine.phase === "recording" ? engine.pass : 0,
-  } : undefined), [audioTracks.length, engine.phase, engine.pass, micLive, recordToggle, monitor, setMonitor]);
+  } : undefined), [audioTracks.length, engine.phase, engine.pass, micLive, recordToggle, monitor, setMonitor, desktop]);
   // every input the interface has: as it opened; else as the list of interfaces says of the one chosen; else as
   // many as it had when it was last open (two until one has been). In a browser: the two channels a microphone can give
   const inputCount = desktop ? countInputs({ opened: engine.opened?.inputs, device: engine.chosen?.channels, remembered: state.studio?.inputs }) : INPUTS_UNKNOWN;

@@ -85,7 +85,7 @@ export function Menu({ at, items, label, onClose }: { at: MenuAt; items: MenuIte
           <button key={i} role="menuitem" className={`tlv-menu-item${it.danger ? " danger" : ""}${it.on ? " on" : ""}`} disabled={it.disabled} onClick={() => { onClose(); it.run(); }}>
             <span>{it.label}</span>
             {it.hint && <kbd>{it.hint}</kbd>}
-            {it.levels && it.levels.length > 0 && <span className="tlv-menu-lvs" aria-hidden="true">{it.levels.map((_, k) => <i key={k} className="tlv-menu-lv"><b /></i>)}</span>}
+            {it.levels && it.levels.length > 0 && <i className="tlv-menu-lvs" aria-hidden="true">{it.levels.map((_, k) => <i key={k} className="tlv-menu-lv"><b /></i>)}</i>}
           </button>
         ),
       )}

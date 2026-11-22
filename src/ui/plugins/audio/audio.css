@@ -9,7 +9,12 @@
 .rw-head .vc-track { font-size: 1rem; }
 .rw-head select { min-width: 56px; }
 /* the level of the track's own input: a bar and its peak in dB */
-.rw-meter { flex: 1 1 180px; min-width: 120px; max-width: 420px; display: grid; grid-template-columns: 1fr 52px; align-items: center; gap: 8px; --lvl: 0; --hold: 0; }
+/* the level of the track's input; of both inputs of a pair, the left over the right */
+.rw-meters { flex: 1 1 180px; min-width: 120px; max-width: 420px; display: grid; gap: 3px; }
+.rw-meter { display: grid; grid-template-columns: 1fr 52px; align-items: center; gap: 8px; --lvl: 0; --hold: 0; }
+/* in a browser: the one line about where a take lands, with the nudge in it */
+.rw-web { display: block; }
+.rw-web input[type="number"] { width: 64px; margin: 0 4px; }
 .rw-meter[data-halo="amber"] .vm-fill { background: #f0a62b; }
 .rw-meter[data-halo="red"] .vm-fill { background: #e5483b; }
 .rw-problem { display: flex; align-items: center; flex-wrap: wrap; gap: 8px 12px; padding: 8px 12px; border-radius: 10px; border: 1px solid color-mix(in srgb, var(--tension, #c0392b) 45%, var(--border)); }
