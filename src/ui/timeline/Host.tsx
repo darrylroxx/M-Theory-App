@@ -1,8 +1,9 @@
 // The host of the track view: it reads the app's state and builds everything the view is handed. It owns the player,
 // the plugin windows (a composer and a sound window for each track: see plugins/registry), what a composer has open
 // (a clip, or its track's draft, which is heard with the song while its window is worked in), the drag of a
-// composer's clip onto a lane, the one record window (the old Vocals page, mounted once and for good), the Canvas as
-// an overlay, and the two sheets (Ideas and settings).
+// composer's clip onto a lane, the one harmony sheet every composer asks for (plugins/harmonize/host), the one record
+// window (the old Vocals page, mounted once and for good), the Canvas as an overlay, and the two sheets (Ideas and
+// settings).
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { saveFile } from "../../audio/midi";
 import { isDesktop } from "../../desktop";
@@ -38,6 +39,7 @@ import type { RecordPhase } from "../components/VocalsPage";
 import { useLive } from "../live";
 import { REC_WIN, RecordHost, audioTracksOf, openRecordWin, roundLabel, shownTrack, type RecordApi, type RecordCtl } from "../plugins/audio/RecordHost";
 import type { ComposerCtl } from "../plugins/ComposerFrame";
+import { useHarmonize } from "../plugins/harmonize/host";
 import { PLUGINS } from "../plugins/registry";
 import type { SoundCtl } from "../plugins/SoundFrame";
 import { newId, shapeKey, type Progression } from "../state";
@@ -237,6 +239,8 @@ export function Host() {
   playerRef.current = player;
   // another idea opened: nothing of the idea left sounds on over it
   const openedNow = useRef(opened);
+  /** (the harmony sheet is set up further down: this closes it) */
+  const closeHarmony = useRef(() => {});
   useEffect(() => {
     if (openedNow.current === opened) return;
     openedNow.current = opened;
@@ -244,6 +248,7 @@ export function Host() {
     setCandidate(null);
     setBypass(NO_BYPASS);
     mounted.current.clear();
+    closeHarmony.current();
   }, [opened, setCandidate]);
   const playerApi = useMemo<PlayerApi>(() => ({
     ...player,
@@ -457,6 +462,9 @@ export function Host() {
     }
     setCandidate({ win, target, p });
   }, [setCandidate, setAudit, peek]);
+  // the one harmony sheet: a composer's Harmonize button asks for it, and it is shown inside that composer's window
+  const harmony = useHarmonize({ song, windows: session.windows, focused: wins.focused, playing: player.playing, preview: onPreview, focus: wins.focus });
+  closeHarmony.current = harmony.close;
   /** a composer's ▶: the bars it has open go round, with the song or (its "alone" switch) the track on its own; pressed again, they stop */
   const playWin = useCallback((id: string, toggle: boolean) => {
     if (auditRef.current?.win === id && playerRef.current.playing) {
@@ -801,15 +809,16 @@ export function Host() {
     return on as Clip;
   }) })), [edit]);
   /** what every composer window asks of the host: one object for all of them, the same from one draw to the next */
-  const does = useRef({ wins, close, onPreview, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass });
-  does.current = { wins, close, onPreview, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass };
+  const does = useRef({ wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass });
+  does.current = { wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass };
   const ctl = useMemo<ComposerCtl>(() => {
     const winOf = (id: string) => peek().session.windows.find((x) => x.id === id);
     return {
       focus: (id) => does.current.wins.focus(id),
       close: (id) => does.current.close(id),
       move: (id, r) => does.current.wins.move(id, r),
-      preview: (id, target, p) => does.current.onPreview(id, target, p),
+      harmonize: (id, kind, anchor, again) => does.current.harmony.ask(id, kind, anchor, again),
+      endHarmonize: (id) => does.current.harmony.end(id),
       hearNow: (id) => does.current.onHearNow(id),
       showKey: () => does.current.showKey(),
       mute: (id) => does.current.muteClip(id),
@@ -890,10 +899,11 @@ export function Host() {
         const canPaste = !!clip?.clips.some((c) => c.kind === CLIP_OF[t.kind] && c.kind !== "audio");
         return (
           <Guard key={w.id} what={`the ${t.name} window`} onClose={() => close(w.id)}>
-            <Composer {...frame} target={targetFor(w)} anchor={anchor} audit={audit === w.id && player.playing} alone={!!alone[w.id]} heard={w.clip !== undefined || drafted === w.track} ctl={ctl} canPaste={canPaste} />
+            <Composer {...frame} target={targetFor(w)} anchor={anchor} audit={audit === w.id && player.playing} alone={!!alone[w.id]} heard={w.clip !== undefined || drafted === w.track} ctl={ctl} canPaste={canPaste} harmonizing={harmony.lit === w.id} />
           </Guard>
         );
       })}
+      {harmony.sheet}
       {stripDrag.ghost}
       {canvas !== "never" && (
         <div className={`cv-over${canvasOpen ? " open" : ""}`} hidden={!canvasOpen} data-keys="own" ref={overlay} role="dialog" aria-label="Canvas" onPointerDown={(e) => { if (e.target === e.currentTarget) closeCanvas(); }}>

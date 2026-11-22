@@ -11,7 +11,6 @@ import { needsFit, type Open, type OpenTarget } from "../../timeline/content";
 import type { TimelineSong, Track, WinState } from "../../timeline/model";
 import { BarsControl } from "../components/BarsControl";
 import { KindIcon } from "../icons";
-import type { Progression } from "../state";
 import type { PlayerApi } from "../timeline/api";
 import { ClipStrip, ClipSwitch, type StripCtl } from "../windows/ClipStrip";
 import type { DragLook } from "../windows/dragging";
@@ -44,6 +43,8 @@ export interface ComposerProps {
   ctl: ComposerCtl;
   /** is there something copied that this track can hold? */
   canPaste: boolean;
+  /** the harmony sheet is open for this window, from its Harmonize button (the button is lit) */
+  harmonizing: boolean;
 }
 
 /** What a composer window asks of the host. Every function names its window, so one object serves them all. */
@@ -51,8 +52,15 @@ export interface ComposerCtl {
   focus(win: string): void;
   close(win: string): void;
   move(win: string, r: Rect): void;
-  /** hear a Harmonize candidate: the lens song with it written in (null ends it) */
-  preview(win: string, target: OpenTarget, heard: Progression | null): void;
+  /**
+   * Harmonize: the one harmony sheet of the track view (plugins/harmonize/host) is asked for, to write a new track
+   * that goes with what this window has open. It is shown inside this window; `anchor` is the button that was
+   * pressed (kept in sight above the sheet). Asked again by the same window, it closes. `again`: write the open
+   * track's own harmony again instead (the ⟳ of a track Harmonize wrote).
+   */
+  harmonize(win: string, kind: "chords" | "melody", anchor: HTMLElement | null, again?: boolean): void;
+  /** the window opened something of its own where the sheet is (a shape finder): the sheet gives way */
+  endHarmonize(win: string): void;
   /** a rhythm or a style was picked: play what is open now if nothing is playing */
   hearNow(win: string): void;
   /** the page's key chip was pressed */

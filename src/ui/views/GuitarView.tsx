@@ -69,12 +69,20 @@ export interface EmbedHost {
   playing: boolean; togglePlay(): void;
   /** beats into the open content while the play line is inside it, else null */
   getPos(): number | null;
-  /** hear a Harmonize candidate: the lens song with it written in (null ends it) */
-  preview(heard: Progression | null): void;
+  /** (not called any more: the harmony sheet is the track view's, and it plays a candidate itself) */
+  preview?(heard: Progression | null): void;
   /** a rhythm or a style was picked: play now if nothing is playing */
   hearNow(): void;
-  /** Harmonize hosted outside the page (when given, the page only asks for it) */
-  onHarmonize?(kind: "chords" | "melody", anchor: HTMLElement | null): void;
+  /**
+   * Harmonize: the sheet is not the page's. The track view shows one for the whole app (plugins/harmonize/host); the
+   * page's Harmonize button only asks for it (asked again, it closes). `again`: the ⟳ of a track Harmonize wrote was
+   * pressed, to write it again. Without this the page has no Harmonize button and no ⟳.
+   */
+  onHarmonize?(kind: "chords" | "melody", anchor: HTMLElement | null, again?: boolean): void;
+  /** the sheet is open for this page, from its Harmonize button: the button is lit */
+  harmonizing?: boolean;
+  /** the page's shape finder opened: the harmony sheet gives way */
+  endHarmonize?(): void;
   /** a Bass track's lowest grid row */
   low?: number;
   /** opened by FX: scroll to the sound panels (a number that goes up each time it is asked for) */
@@ -922,7 +930,8 @@ function FullView() {
  * app context around it is a `ClipLens`), so "the section on screen" is that clip. It renders only that page: no
  * transport, no other pages hidden beside it, no track tabs. It plays nothing itself and tells the engine nothing
  * about the song: the track view's host does that once for the whole app (the takes, the tempo, the voices, where a
- * tap is heard, the home note). What the page needs of the music it asks its host for.
+ * tap is heard, the home note). What the page needs of the music it asks its host for. It shows no harmony sheet of
+ * its own either: its Harmonize button asks the host for the one sheet the track view has.
  */
 function EmbeddedView({ host }: { host: EmbedHost }) {
   const { state, set, shapeOf, sheet, openSheet, tuning } = useApp();
@@ -1071,47 +1080,30 @@ function EmbeddedView({ host }: { host: EmbedHost }) {
     return i >= 0 && keyVs ? keyVs[i] : keysVoicing(ref, chordTone);
   }, [prog.chords, keyVs, chordTone]);
 
-  // ── Harmonize: the sheet, and hearing a candidate (the host plays it) ──
-  const [hz, setHz] = useState<HzOpen | null>(null);
-  const closeHz = useCallback(() => setHz(null), []);
-  const canHarmonize = useMemo(() => pane !== "drums" && harmonizeSources(prog).length > 0, [pane, prog]);
-  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null) => {
-    if (hostRef.current.onHarmonize) return hostRef.current.onHarmonize(page, anchor);
+  // ── Harmonize: the page only asks for the sheet. The track view shows it, and plays a candidate (plugins/harmonize/host) ──
+  const hosted = !!host.onHarmonize;
+  const canHarmonize = useMemo(() => hosted && pane !== "drums" && harmonizeSources(prog).length > 0, [hosted, pane, prog]);
+  const harmonize = useCallback((page: "chords" | "melody", anchor: HTMLElement | null, again?: boolean) => {
+    // the shape finder would sit under the sheet: it gives way
     openSheet(null);
-    setHz((h) => (h && !h.track ? null : { kind: page, anchor }));
+    hostRef.current.onHarmonize?.(page, anchor, again);
   }, [openSheet]);
+  // the shape finder opened over the sheet: the sheet gives way
   useEffect(() => {
-    if (sheet) setHz(null);
+    if (sheet) hostRef.current.endHarmonize?.();
   }, [sheet]);
   const harmonizeChords = useCallback((el: HTMLElement | null) => harmonize("chords", el), [harmonize]);
   const harmonizeTune = useCallback((el: HTMLElement | null) => harmonize("melody", el), [harmonize]);
   /** the open track, when Harmonize wrote it: it can be written again (with another option) */
-  const openTrack = useMemo(() => (pane === "drums" ? undefined : allTracks(normalize(prog)).find((t) => t.id === (pane === "rhythm" ? chordsId : tuneId) && !!t.harmony)), [pane, prog, chordsId, tuneId]);
-  const [preview, setPreview] = useState<Preview | null>(null);
-  const audit = useCallback((pv: Preview | null) => setPreview(pv), []);
-  const heardNow = useRef(false);
-  useEffect(() => {
-    if (!preview) {
-      if (heardNow.current) hostRef.current.preview(null);
-      heardNow.current = false;
-      return;
-    }
-    heardNow.current = true;
-    hostRef.current.preview(previewHarmony(prog, state.key, preview.plan, preview.target));
-  }, [preview, prog, state.key]);
-  useEffect(() => () => {
-    if (heardNow.current) hostRef.current.preview(null);
-  }, []);
-  const auditionCtx = useMemo<Audition>(() => ({ preview, hear: audit, playing }), [preview, audit, playing]);
+  const openTrack = useMemo(() => (!hosted || pane === "drums" ? undefined : allTracks(normalize(prog)).find((t) => t.id === (pane === "rhythm" ? chordsId : tuneId) && !!t.harmony)), [hosted, pane, prog, chordsId, tuneId]);
   // Escape: one thing per press. What is open inside this window goes first, the window itself after.
   useEffect(() => {
-    if (!focused || (!sheet && !hz)) return;
+    if (!focused || !sheet) return;
     return onEscape(ESC_OPEN, () => {
-      if (sheet) openSheet(null);
-      else setHz(null);
+      openSheet(null);
       return true;
     });
-  }, [focused, sheet, hz, openSheet]);
+  }, [focused, sheet, openSheet]);
 
   // bars on screen and Follow, the same in every window
   const { shown, follow } = useBarsView();
@@ -1176,12 +1168,11 @@ function EmbeddedView({ host }: { host: EmbedHost }) {
 
   const canPlay = prog.chords.some((c) => !c.rest) || beat.on || hasTune(prog.melody);
   return (
-    <AuditionCtx.Provider value={auditionCtx}>
     <DragCtx.Provider value={api}>
       <div className={`page write embedded${drag ? " dragging" : ""}`} ref={root}>
         {openTrack && (
           <div className="emb-again">
-            <HarmonyAgain track={openTrack} className="clip-hz" onOpen={() => setHz({ kind: openTrack.kind === "melody" ? "melody" : "chords", track: openTrack })} />
+            <HarmonyAgain track={openTrack} className="clip-hz" onOpen={() => harmonize(openTrack.kind === "melody" ? "melody" : "chords", null, true)} />
             <span className="small muted">Written by Harmonize: write it again, or choose another harmony</span>
           </div>
         )}
@@ -1192,7 +1183,7 @@ function EmbeddedView({ host }: { host: EmbedHost }) {
             <div className={`bottom-layer${sheet ? " open" : ""}${drag ? " dragging" : ""}`}>
               {sheet && <div className="finder-backdrop" onClick={() => openSheet(null)} />}
               <ShapeFinder slotShape={(id) => voicings[prog.chords.findIndex((c) => c.id === id)]} onPinSlot={pinSlot} keys={chordKeys ? sheetKeys : undefined} />
-              <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label="the clip" onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} />
+              <Dock ref={dockRef} voicings={voicings} keys={keyVs} keyStyle={keyStyle} onKeyStyle={(v) => chordInst.setTone({ voicing: v })} nowIdx={nowIdx} drag={drag} onStep={stepSlot} onArrange={setArrange} bar={bar} onLengths={setLengths} length={frame} label="the clip" onFit={setBars} shown={shown} follow={follow} onHarmonize={harmonizeChords} canHarmonize={canHarmonize} harmonizing={!!host.harmonizing} />
             </div>
             <HarpPanel sound={sound} setSound={setSound} style={prog.pattern} onStyle={pickStyle} feel={reviveFeel(prog.feel)} setFeel={setFeel} onHear={hearSoon} inst={chordInst} />
           </div>
@@ -1200,7 +1191,7 @@ function EmbeddedView({ host }: { host: EmbedHost }) {
         {pane === "melody" && (
           <div className="pane">
             <MelodyGrid fresh={`${tuneId}:${writtenAs(prog, tuneId)}`} place={tuneId} melody={melody} setMelody={setMelody} keyOf={state.key} bar={bar} chords={under} playing={playing} getPos={getPos}
-              sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!hz && !hz.track} low={host.low} />
+              sound={tuneSound} setSound={setTune} onHear={hearTune} shown={shown} follow={follow} active inst={tuneInst} onHarmonize={harmonizeTune} canHarmonize={canHarmonize} harmonizing={!!host.harmonizing} low={host.low} />
           </div>
         )}
         {pane === "drums" && (
@@ -1209,16 +1200,12 @@ function EmbeddedView({ host }: { host: EmbedHost }) {
           </div>
         )}
       </div>
-      {hz && pane !== "drums" && (
-        <HarmonyPicker key={hz.track?.id ?? `new:${hz.kind}`} kind={hz.kind} track={hz.track} first={prog.focus?.[hz.kind] ?? hz.kind} anchor={hz.anchor} onClose={closeHz} />
-      )}
       {pane === "rhythm" && away && !sheet && (
         <MiniTray ref={miniRef} chords={prog.chords} play={trayMidi} nowIdx={nowIdx} playing={playing} onPlay={host.togglePlay} drag={drag} canPlay={canPlay || playing}
           onOpen={() => dockRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })} />
       )}
       {drag && <div ref={ghostRef} className="drag-ghost">{chordSymbol(drag.ref)}</div>}
     </DragCtx.Provider>
-    </AuditionCtx.Provider>
   );
 }
 

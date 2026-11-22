@@ -28,6 +28,7 @@ import { V4View } from "../../windows/ClipLens";
 import { Window } from "../../windows/Window";
 import { firstPlace } from "../../windows/windows";
 import { TakeList5 } from "./TakeList5";
+import "./audio.css";
 
 /** The record window's id in the session's list of windows (there is one for the whole app). */
 export const REC_WIN = "record";
