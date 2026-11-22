@@ -29,7 +29,7 @@ export const Overview = memo(function Overview({ rows, notes, ticks, size, rootR
   const drag = useRef<number | null>(null);
   const n = Math.max(1, rows.length);
   const at = (e: ReactPointerEvent<HTMLDivElement>) => {
-    const r = e.currentTarget.getBoundingClientRect();
+    const r = (e.currentTarget.firstElementChild ?? e.currentTarget).getBoundingClientRect();
     return r.height > 0 ? Math.max(0, Math.min(1, (e.clientY - r.top) / r.height)) : 0;
   };
   const down = (e: ReactPointerEvent<HTMLDivElement>) => {
@@ -54,6 +54,7 @@ export const Overview = memo(function Overview({ rows, notes, ticks, size, rootR
     <div className="mel-rail" ref={rootRef}>
       <button className="mel-oct up" aria-label="Show an octave higher" title="Show an octave higher (Page Up)" onClick={() => onOctave(1)}><span aria-hidden="true">▲</span></button>
       <div className="mel-map" title="The whole range: press where you want to be" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
+        <div className="mel-map-in">
         <svg viewBox={`0 0 100 ${n}`} preserveAspectRatio="none" aria-hidden="true">
           {rows.map((r, i) => (r.home ? <rect key={r.midi} className="mel-map-home" x={0} y={i} width={100} height={1} /> : null))}
           {notes.map((x, i) => {
@@ -65,6 +66,7 @@ export const Overview = memo(function Overview({ rows, notes, ticks, size, rootR
         </svg>
         {rows.map((r, i) => (r.home ? <span key={r.midi} className="mel-map-oct" style={{ top: `${((i + 0.5) / n) * 100}%` }} aria-hidden="true">{displayNote(r.name)}{octaveOf(r.midi)}</span> : null))}
         <i className="mel-view" ref={viewRef} />
+        </div>
       </div>
       <button className="mel-oct down" aria-label="Show an octave lower" title="Show an octave lower (Page Down)" onClick={() => onOctave(-1)}><span aria-hidden="true">▼</span></button>
     </div>

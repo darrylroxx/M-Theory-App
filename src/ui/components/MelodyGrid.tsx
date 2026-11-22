@@ -664,10 +664,12 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     const c = cellAt(t, e.clientX, e.clientY);
     if (c) tap(c.b0, c.k0, c.midi);
   };
-  // the keys, while the grid has the focus: Page Up and Page Down move the view an octave; the arrows move a square
-  // about, and Enter puts a note in it or takes it out
-  const wKey = (e: React.KeyboardEvent<HTMLDivElement>) => {
+  // the keys: Page Up and Page Down move the view an octave, from anywhere in the composer; while the grid itself has
+  // the focus the arrows move a square about, and Enter puts a note in it or takes it out
+  const wKey = (e: React.KeyboardEvent<HTMLElement>) => {
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    const tag = (e.target as HTMLElement).tagName;
+    if (tag === "INPUT" || tag === "SELECT" || tag === "TEXTAREA") return;
     const l = live.current;
     const rs = wl.current.rows;
     if (!rs.length) return;
@@ -682,6 +684,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
       jump(dir);
       return;
     }
+    if (!stepsRef.current?.contains(e.target as Node)) return;
     const by = e.key === "ArrowUp" ? [0, -1] : e.key === "ArrowDown" ? [0, 1] : e.key === "ArrowLeft" ? [-1, 0] : e.key === "ArrowRight" ? [1, 0] : null;
     if (!by && e.key !== "Enter") return;
     // (Enter on a row's name or a bar's number presses it)
@@ -761,7 +764,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     const called = name ?? "Melody";
     const first = spanOf(melody.notes) ?? wl.current.opens;
     return (
-      <section className="melody mel" aria-label={called} style={{ "--steps": steps, "--div": melody.div, "--count": win.count } as CSSProperties}>
+      <section className="mel" aria-label={called} style={{ "--steps": steps, "--div": melody.div, "--count": win.count } as CSSProperties} onKeyDown={wKey}>
         <div className="mel-tools">
           {tools}
           {canHarmonize && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} />}
@@ -780,7 +783,7 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
         <div className="mel-main">
           <div className={`mel-box${many ? " many" : ""}`} ref={stepsRef} tabIndex={0} role="group" aria-label={`${called}: the notes. Page Up and Page Down show an octave higher or lower`}
             data-low={first.low} data-high={first.high}
-            onScroll={onScroll} onPointerDown={wDown} onPointerMove={wMove} onPointerUp={wUp} onPointerCancel={wCancel} onPointerLeave={() => hover(null, null)} onClick={wClick} onKeyDown={wKey}>
+            onScroll={onScroll} onPointerDown={wDown} onPointerMove={wMove} onPointerUp={wUp} onPointerCancel={wCancel} onPointerLeave={() => hover(null, null)} onClick={wClick}>
             <div className="mel-in">
               <div className="mel-names" ref={namesRef}>
                 <span className="mel-head">

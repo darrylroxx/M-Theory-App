@@ -4,8 +4,8 @@
    the bar numbers and the chords at the top, and a small overview of the whole range stands at the right.
    The grid's own looks (which rows are lit, the home note, the dots of the chord) are the app's (styles.css). */
 
-.tlw-body:has(> .mel) { padding: 8px 10px 6px; overflow: hidden; display: flex; flex-direction: column; }
-.mel { --rh: 18px; --cell: 14px; --pitch: calc(var(--rh) + 2px); --tile: calc((100% + 2px) / var(--steps)); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 6px; }
+.tlw-body:has(> .mel) { padding: 6px 10px 4px; overflow: hidden; display: flex; flex-direction: column; }
+.mel { --rh: 17px; --cell: 14px; --pitch: calc(var(--rh) + 2px); --tile: calc((100% + 2px) / var(--steps)); flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
 
 /* the tools: one row while the window is wide enough for them */
 .mel-tools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; min-height: 30px; }
@@ -48,28 +48,28 @@
   -webkit-mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect style='width:calc(100%25 - 2px);height:calc(100%25 - 2px)' rx='5'/%3E%3C/svg%3E") 0 0 / var(--tile) var(--pitch) repeat;
   mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg'%3E%3Crect style='width:calc(100%25 - 2px);height:calc(100%25 - 2px)' rx='5'/%3E%3C/svg%3E") 0 0 / var(--tile) var(--pitch) repeat;
 }
-.mel-row { flex: none; height: var(--rh); background: var(--bg-2); }
+.mel-row { flex: none; height: var(--rh); background: var(--card); }
 .mel-row.in { background: color-mix(in srgb, var(--accent) 7%, var(--card-2)); }
 .mel-row.home { background: color-mix(in srgb, var(--accent) 14%, var(--card-2)); }
 /* the first square of every beat has a line down its left side */
 .mel-cells::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: linear-gradient(to right, var(--border-2) 0 2px, transparent 2px) 0 0 / calc(var(--tile) * var(--div)) 100% repeat-x; }
 /* a dot on every square that is a note of the chord sounding underneath */
-.mel-fit { position: absolute; left: calc(var(--k) * var(--tile)); width: calc(var(--n) * var(--tile)); top: calc(var(--i) * var(--pitch)); height: var(--rh); pointer-events: none; opacity: 0.55; background: radial-gradient(circle at calc(50% - 1px) 50%, var(--fifth) 0 2.5px, transparent 3px) 0 0 / calc(100% / var(--n)) 100% repeat-x; }
+.mel-fit { position: absolute; left: calc(var(--k) * var(--tile)); width: calc(var(--n) * var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); pointer-events: none; opacity: 0.55; background: radial-gradient(circle at calc(50% - 1px) 50%, var(--fifth) 0 2.5px, transparent 3px) 0 0 / calc((100% + 2px) / var(--n)) 100% repeat-x; }
 
 /* a note: as long as it is held (one square when it has no length of its own) */
 .mel-note { position: absolute; z-index: 1; left: calc(var(--k) * var(--tile)); width: calc(var(--n) * var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); border-radius: 5px; background: var(--accent); cursor: pointer; }
 .mel-note.from { border-top-left-radius: 0; border-bottom-left-radius: 0; }
-.mel-note.on { width: calc(var(--n) * var(--tile)); border-top-right-radius: 0; border-bottom-right-radius: 0; }
+.mel-note.on { border-top-right-radius: 0; border-bottom-right-radius: 0; }
 .mel-note.fit:not(.from)::after { content: ""; position: absolute; left: calc(((100% + 2px) / var(--n) - 2px) / 2); top: 50%; width: 5px; height: 5px; margin: -2.5px; border-radius: 50%; background: var(--accent-ink); opacity: 0.8; pointer-events: none; }
 /* its right end: dragged to make it longer or shorter */
 .mel-grip { position: absolute; top: 0; bottom: 0; right: 0; width: 7px; border-radius: 0 5px 5px 0; cursor: ew-resize; }
 .mel-note.len .mel-grip { background: color-mix(in srgb, var(--accent-ink) 24%, transparent); }
 .mel-note:hover .mel-grip { background: color-mix(in srgb, var(--accent-ink) 42%, transparent); }
 /* the square under the pointer, and the square the keys act on */
-.mel-hover, .mel-cur { position: absolute; z-index: 2; display: none; left: calc(var(--k) * var(--tile)); width: calc(var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); border-radius: 5px; pointer-events: none; }
+.mel-hover, .mel-cur { position: absolute; z-index: 1; display: none; left: calc(var(--k) * var(--tile)); width: calc(var(--tile) - 2px); top: calc(var(--i) * var(--pitch)); height: var(--rh); border-radius: 5px; pointer-events: none; }
 .mel-hover.on { display: block; outline: 2px solid var(--accent); outline-offset: -2px; }
 .mel-cur.on { display: block; outline: 2px solid var(--text); outline-offset: -2px; }
-.mel-rows .mg-now { z-index: 2; }
+.mel-rows .mg-now { z-index: 1; }
 
 /* the overview: the whole range, where the notes are, and what is in view; an octave up and down at its ends */
 .mel-rail { flex: 0 0 46px; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
@@ -79,7 +79,9 @@
 /* (a dot: there are notes further up, or further down, than what is in view) */
 .mel-rail.above .mel-oct.up::after, .mel-rail.below .mel-oct.down::after { content: ""; position: absolute; top: 3px; right: 3px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
 .mel-map { position: relative; flex: 1 1 auto; min-height: 36px; overflow: hidden; border-radius: 8px; border: 1px solid var(--border); background: var(--bg-2); cursor: pointer; touch-action: none; }
-.mel-map svg { position: absolute; left: 19px; top: 0; width: calc(100% - 19px); height: 100%; }
+/* (a little room at both ends, so the highest and the lowest octave can be read) */
+.mel-map-in { position: absolute; inset: 6px 0; }
+.mel-map svg { position: absolute; left: 19px; top: 0; width: calc(100% - 19px); height: 100%; overflow: visible; }
 .mel-map-home { fill: color-mix(in srgb, var(--accent) 22%, transparent); }
 .mel-map-note { fill: var(--accent); }
 .mel-map-oct { position: absolute; left: 3px; transform: translateY(-50%); font-size: 0.56rem; font-weight: 800; line-height: 1; color: var(--faint); pointer-events: none; }
