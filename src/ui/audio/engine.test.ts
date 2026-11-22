@@ -193,6 +193,29 @@ describe("the order the interface is opened and closed in", () => {
     expect(eng.open).toBe("ASIO|Test Interface|256");
   });
 
+  it("the app's own sound is asked to come back in the same breath as the close is (the close is the one that waits for its fade)", async () => {
+    const { calls, bridge } = pretend();
+    const order: string[] = [];
+    // as audio/through does it: the first to ask waits for the fade; one who asks while it fades is not kept waiting
+    let fading = false;
+    const comeBack = async () => {
+      if (fading) return;
+      fading = true;
+      order.push("fade begins");
+      await new Promise((r) => setTimeout(r, 10));
+      order.push("fade done");
+    };
+    const door = makeDoor({ ...bridge, engineClose: async () => { order.push("close"); return bridge.engineClose(); } }, { ...rest, comeBack });
+    await door.open("ASIO", "Test Interface", null, noStatus);
+    const closing = door.close();
+    expect(order).toEqual(["fade begins"]);
+    // (hearing yourself through the effects is turned off in the same moment: that asks too, and finds the fade begun)
+    void comeBack();
+    await closing;
+    expect(order).toEqual(["fade begins", "fade done", "close"]);
+    expect(calls).toEqual(["open driver", "close"]);
+  });
+
   it("three changes in a row, each before the last was done: every close before the open that follows it, the last open stands", async () => {
     const { calls, eng, bridge } = pretend({ openMs: 2 });
     const door = makeDoor(bridge, rest);

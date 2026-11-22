@@ -185,9 +185,13 @@ export function makeDoor(bridge: Pick<Bridge, "engineOpen" | "engineClose">, o: 
     open: (host, device, buffer, onStatus) => closing.then(() => bridge.engineOpen(host, device, buffer, onStatus)),
     close() {
       // the app's own sound, if it came through the engine, goes back to the computer's sound first, faded out of the
-      // engine, and then the engine closes: never cut off mid-sound (see through.ts; at once when it did not come through)
+      // engine, and then the engine closes: never cut off mid-sound (see through.ts; at once when it did not come through).
+      // It is asked to come back in this very breath, as the page asked it: whoever asks first is the one that waits
+      // for the fade, and this close must be that one.
+      const back = o.comeBack();
+      back.catch(() => {});
       closing = closing
-        .then(() => o.comeBack())
+        .then(() => back)
         .then(() => bridge.engineClose())
         .then((r) => void (r && o.salvage(r)), () => {})
         .then(() => o.closed());
