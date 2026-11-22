@@ -50,6 +50,8 @@ export interface Recorded {
   padded?: number;
   /** why the recording stopped taking sound early, or why it has no vocal sound on it */
   note?: string | null;
+  /** how many channels its files have: 2 for a pair of inputs (the first on the left); 1, or not said, for one input */
+  channels?: number;
 }
 
 /**

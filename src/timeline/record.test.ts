@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { Recorded } from "../song/takes";
 import type { AudioClip, AudioTrack, Session, TimelineSong } from "./model";
-import { addRecording5, recordPlan5, RECORD_BARS } from "./record";
+import { addRecording5, backingKey, recordPlan5, RECORD_BARS } from "./record";
+import { setContent, setTrack } from "./edit";
 import { audioClip, audioTrack, bandSong, chordsClip, chordsTrack, counter, mixedSong, songOf, take } from "./testsongs";
 
 const session = (o: Partial<Session> = {}): Pick<Session, "cursor" | "loop"> => ({ cursor: 0, loop: null, ...o });
@@ -30,23 +31,36 @@ describe("what a recording goes round", () => {
     expect(recordPlan5(bandSong(), session({ loop: { regions: [{ from: 4, to: 12 }], on: true } }))).toMatchObject({ from: 4, to: 12 });
   });
 
-  it("with no loop (or the loop off): from the bar the cursor is in, at most eight bars", () => {
+  it("with no loop (or the loop off) the song is played once: from the bar line at or before the cursor to the song's end and eight bars more", () => {
+    // the band's song is 16 bars (64 beats)
     const off = recordPlan5(bandSong(), session({ cursor: 9.5 }));
-    expect([off.from, off.to, off.loop]).toEqual([8, 8 + 4 * RECORD_BARS, true]);
-    expect(off.bars).toEqual(Array(RECORD_BARS).fill(4));
+    expect([off.from, off.to, off.loop]).toEqual([8, 64 + 4 * RECORD_BARS, false]);
+    expect(off.bars).toEqual(Array(14 + RECORD_BARS).fill(4));
+    // a cursor on a bar line starts there
+    expect(recordPlan5(bandSong(), session({ cursor: 16 }))).toMatchObject({ from: 16, to: 96, loop: false });
     // stretches that are marked but switched off do not count
     expect(recordPlan5(bandSong(), session({ cursor: 9.5, loop: { regions: [{ from: 0, to: 4 }], on: false } }))).toEqual(off);
   });
 
-  it("with no loop it stops at the song's end when that is nearer, and goes eight bars when the cursor is past it", () => {
-    // the band's song is 16 bars (64 beats): from bar 13, four bars are left
+  it("with the loop off and the cursor at or past the song's end: eight bars from the cursor's bar; a song with nothing in it: eight bars from the start", () => {
     const near = recordPlan5(bandSong(), session({ cursor: 48 }));
-    expect([near.from, near.to]).toEqual([48, 64]);
-    expect(near.bars).toEqual([4, 4, 4, 4]);
-    const past = recordPlan5(bandSong(), session({ cursor: 64 }));
-    expect([past.from, past.to]).toEqual([64, 96]);
-    // a song with nothing in it: eight bars from the start
-    expect(recordPlan5(songOf([audioTrack("tv")]), session())).toEqual({ from: 0, to: 32, loop: true, bars: Array(8).fill(4) });
+    expect([near.from, near.to]).toEqual([48, 96]);
+    const past = recordPlan5(bandSong(), session({ cursor: 70 }));
+    expect([past.from, past.to, past.loop]).toEqual([68, 100, false]);
+    expect(past.bars).toEqual(Array(8).fill(4));
+    expect(recordPlan5(songOf([audioTrack("tv")]), session())).toEqual({ from: 0, to: 32, loop: false, bars: Array(8).fill(4) });
+  });
+
+  it("with the loop off across a change of time signature: every bar to the end and past it in its own beats", () => {
+    // 4/4 to bar 8, 6/8 (two beats) in bars 9 to 12, 4/4 again from bar 13
+    const song = mixedSong();
+    const p = recordPlan5(song, session({ cursor: 30 }));
+    expect(p.from).toBe(28);
+    expect(p.loop).toBe(false);
+    expect(p.bars.slice(0, 6)).toEqual([4, 2, 2, 2, 2, 4]);
+    expect(p.bars.reduce((a, b) => a + b, 0)).toBe(p.to - p.from);
+    // the last eight bars lie past the song's end, in the time signature the song ends in
+    expect(p.bars.slice(-RECORD_BARS)).toEqual(Array(RECORD_BARS).fill(4));
   });
 
   it("the bars hold each bar's own beats across a change of time signature", () => {
@@ -144,5 +158,77 @@ describe("a finished recording, with the song played once", () => {
     const out = addRecording5(empty(), "tv", r, { ...plan, loop: true }, opts({ kept: [1] }));
     expect(vocal(out).takes).toHaveLength(1);
     expect(vocal(out).takes[0]).toMatchObject({ frames: 300000, keep: true });
+  });
+});
+
+describe("a recording from a pair of inputs", () => {
+  const stereo = (passes: number, o: Partial<Recorded> = {}) => recorded(passes, { channels: 2, ...o });
+
+  it("round the loop: every pass is a stereo take, cut where a voice's would be (the counts are frames, whatever the channels)", () => {
+    const plan = { from: 8, to: 12, loop: true, bars: [4] };
+    const out = addRecording5(empty(), "tv", stereo(3), plan, opts());
+    const mono = addRecording5(empty(), "tv", recorded(3), plan, opts());
+    expect(vocal(out).takes.map((k) => k.channels)).toEqual([2, 2, 2]);
+    expect(vocal(out).takes.map(({ channels: _c, ...k }) => k)).toEqual(vocal(mono).takes);
+    // a voice's takes say nothing of channels, as before
+    expect(vocal(mono).takes.every((k) => !("channels" in k))).toBe(true);
+    expect(clipsOn(out)).toEqual(clipsOn(mono));
+  });
+
+  it("once through: one stereo take from where the song began to the stop", () => {
+    const r = stereo(0, { loop_frames: 0, frames: 480 + 48000 + 300000 });
+    const out = addRecording5(empty(), "tv", r, { from: 16, to: 80, loop: false, bars: Array(16).fill(4) }, opts());
+    expect(vocal(out).takes).toHaveLength(1);
+    expect(vocal(out).takes[0]).toMatchObject({ channels: 2, start: 480 + 48000, frames: 300000, at: 16 });
+    expect(clipsOn(out)[0]).toMatchObject({ take: vocal(out).takes[0].id, start: 16, frames: 300000 });
+  });
+
+  it("what the file is counts, not what the track's input says by then", () => {
+    const paired = setTrack<AudioTrack>(empty(), "tv", { input: { ch: 2, pair: true } });
+    expect(vocal(addRecording5(paired, "tv", recorded(1), { from: 0, to: 4, loop: true, bars: [4] }, opts())).takes[0].channels).toBeUndefined();
+  });
+});
+
+describe("the song under a recording, as a text that says when it can be played again", () => {
+  const plan = { from: 16, to: 96, loop: false };
+  const k1 = take("k1", 8, 4);
+  const song = () => songOf([chordsTrack("tc"), audioTrack("tv", "vocals", "Vocal 1", [k1]), audioTrack("ta", "audio", "Guitar")], { bpm: 120, clips: [chordsClip("c1", "tc", 0, 16), audioClip("a1", "tv", k1, 4)] });
+
+  it("is the same for the same song and stretch", () => {
+    expect(backingKey(song(), "ta", plan)).toBe(backingKey(song(), "ta", plan));
+  });
+
+  it("changes when another track's clip changes, and not when the armed track's does", () => {
+    const before = song();
+    const key = backingKey(before, "tv", plan);
+    // another track: its clip moved, its content changed, its sound changed
+    const moved: TimelineSong = { ...before, clips: before.clips.map((c) => (c.id === "c1" ? { ...c, start: 4 } : c)) };
+    expect(backingKey(moved, "tv", plan)).not.toBe(key);
+    const c1 = before.clips.find((c) => c.id === "c1") as Extract<TimelineSong["clips"][number], { kind: "chords" }>;
+    expect(backingKey(setContent(before, "c1", { ...c1.content, style: "strum" }), "tv", plan)).not.toBe(key);
+    // the armed track: a new take and its clip (a recording just made), a clip trimmed, its name
+    const k2 = take("k2", 8, 16);
+    const sung: TimelineSong = { ...before, tracks: before.tracks.map((t) => (t.id === "tv" ? ({ ...t, name: "Lead", takes: [k1, k2] } as AudioTrack) : t)), clips: [...before.clips.map((c) => (c.id === "a1" ? { ...c, frames: 1000 } : c)), audioClip("a2", "tv", k2, 16)] };
+    expect(backingKey(sung, "tv", plan)).toBe(key);
+    // (heard under a rehearsal, where nothing is left out, the same change counts)
+    expect(backingKey(sung, null, plan)).not.toBe(backingKey(before, null, plan));
+  });
+
+  it("changes with the stretch, the tempo, the mixer, and whether the song goes round", () => {
+    const s = song();
+    const key = backingKey(s, "ta", plan);
+    expect(backingKey(s, "ta", { ...plan, from: 12 })).not.toBe(key);
+    expect(backingKey(s, "ta", { ...plan, loop: true })).not.toBe(key);
+    expect(backingKey({ ...s, bpm: 121 }, "ta", plan)).not.toBe(key);
+    expect(backingKey({ ...s, mix: { tc: { db: -3 } } }, "ta", plan)).not.toBe(key);
+    // the armed track's own fader is not in what is sung over; its solo is (it silences the others)
+    expect(backingKey({ ...s, mix: { ta: { db: -6, mute: true } } }, "ta", plan)).toBe(backingKey({ ...s, mix: { ta: {} } }, "ta", plan));
+    expect(backingKey({ ...s, mix: { ta: { solo: true } } }, "ta", plan)).not.toBe(backingKey({ ...s, mix: { ta: {} } }, "ta", plan));
+  });
+
+  it("does not read what is not heard: a name, a colour", () => {
+    const s = song();
+    expect(backingKey(setTrack(s, "tc", { color: 3 }), "ta", plan)).toBe(backingKey(s, "ta", plan));
+    expect(backingKey({ ...s, tracks: s.tracks.map((t) => (t.id === "tc" ? { ...t, name: "Keys" } : t)) }, "ta", plan)).toBe(backingKey(s, "ta", plan));
   });
 });

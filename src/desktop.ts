@@ -117,7 +117,7 @@ export async function engineOpen(host: string, device: string, buffer: number | 
  * `loop_frames`, `dropped` and `padded` are frames whatever the channels. `loop_frames` is 0 for a recording
  * started with `once`: the whole of it is one take, from `offset + count_in` (plus the timing nudge) to its end.
  */
-export type EngineRecorded = import("./song/takes").Recorded & { channels?: number };
+export type EngineRecorded = import("./song/takes").Recorded;
 /**
  * Close the interface. A recording still going (the driver was reset mid-session) comes back,
  * dry, so its takes can be kept: put the vocal sound on it with `fxRender`.
