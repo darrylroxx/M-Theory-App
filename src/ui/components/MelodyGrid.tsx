@@ -115,17 +115,17 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
 
   // the rows: two octaves from the home note (the wide grid: every octave it has), stretched to hold any note already written outside them
   const rowsOf = useCallback((k: Key, only: boolean) => (wide ? gridRows(k, low ?? GRID_LOW, octaves ?? 2, only) : low === undefined ? melodyRows(k, only) : gridRows(k, low, 2, only)), [wide, low, octaves]);
+  const base = useMemo(() => rowsOf(keyOf, keyOnly), [rowsOf, keyOf, keyOnly]);
   const extra = useMemo(() => {
-    const have = new Set(rowsOf(keyOf, keyOnly).map((r) => r.midi));
+    const have = new Set(base.map((r) => r.midi));
     return [...new Set(melody.notes.map((n) => n.midi).filter((m) => !have.has(m)))].sort((a, b) => a - b).join();
-  }, [keyOf, keyOnly, melody.notes, rowsOf]);
+  }, [base, melody.notes]);
   const rows = useMemo(() => {
-    const base = rowsOf(keyOf, keyOnly);
     if (!extra) return base;
     const all = rowsOf(keyOf, false);
     const more = extra.split(",").map(Number).map((midi) => all.find((r) => r.midi === midi) ?? { ...all.find((r) => mod12(r.midi) === mod12(midi))!, midi });
     return [...base, ...more].sort((a, b) => b.midi - a.midi);
-  }, [keyOf, keyOnly, extra, rowsOf]);
+  }, [base, keyOf, extra, rowsOf]);
 
   // the notes, bar by bar: what is lit in each bar, as one string, so a bar is only redrawn when its own notes change
   const size = TICKS / melody.div;
@@ -267,6 +267,11 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     const g = geom();
     if (g) goTop(centreTop(wl.current.rows, where * wl.current.rows.length, g.inView), glide);
   }, [geom, goTop]);
+  /** The wheel turned over the overview: the rows scroll, as under the wheel in the grid. */
+  const wheelBy = useCallback((dy: number) => {
+    view.current.goal = null;
+    stepsRef.current?.scrollBy({ top: dy });
+  }, []);
   /** Put the view where the notes are (a clip with none: where its kind of track starts). False: the box is not on screen yet. */
   const placeView = useCallback(() => {
     const box = stepsRef.current;
@@ -769,7 +774,6 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
           {tools}
           {canHarmonize && onHarmonize && <HarmonizeButton on={!!harmonizing} onClick={onHarmonize} />}
           {tabRow}
-          <span className="spacer" />
           {gridPick}
           {keyChip}
           <span className="mel-shift" role="group" aria-label="Move every note an octave">
@@ -790,16 +794,14 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
                   {many && <span className="mg-numpad" />}
                   {fits && <span className="mg-corner" />}
                 </span>
-                {rows.map((r) => (
-                  <button key={r.midi} data-m={r.midi} className={`mg-label${r.inKey ? " in" : ""}${r.home ? " home" : ""}`} aria-label={`Hear ${displayNote(r.name)}${octaveOf(r.midi)}`} onClick={() => playNote(r.midi, undefined, 0.86, 48)}>{displayNote(r.name)}<small>{octaveOf(r.midi)}</small></button>
-                ))}
+                <RowNames rows={rows} />
               </div>
               <div className="mel-bars">
                 {shownBars.map((b) => <WideBar key={b} b={b} rows={rows} steps={steps} notes={pieces?.[b] ?? ""} fits={fits?.[b] ?? null} head={many} sel={many && b === at} />)}
               </div>
             </div>
           </div>
-          <Overview rows={rows} notes={melody.notes} ticks={bars * bar * TICKS} size={size} rootRef={railRef} viewRef={viewRef} onOctave={jump} onGo={goMap} />
+          <Overview rows={rows} notes={melody.notes} ticks={bars * bar * TICKS} size={size} rootRef={railRef} viewRef={viewRef} onOctave={jump} onGo={goMap} onWheel={wheelBy} />
         </div>
       </section>
     );
@@ -883,6 +885,40 @@ const MelodyBar = memo(function MelodyBar({ b, rows, steps, div, lit, fits, head
   );
 });
 
+/** The names of the wide grid's rows, each with its octave: a tap plays the note. Drawn again only when the rows change. */
+const RowNames = memo(function RowNames({ rows }: { rows: MelodyRow[] }) {
+  return (
+    <>
+      {rows.map((r) => (
+        <button key={r.midi} data-m={r.midi} className={`mg-label${r.inKey ? " in" : ""}${r.home ? " home" : ""}`} aria-label={`Hear ${displayNote(r.name)}${octaveOf(r.midi)}`} onClick={() => playNote(r.midi, undefined, 0.86, 48)}>{displayNote(r.name)}<small>{octaveOf(r.midi)}</small></button>
+      ))}
+    </>
+  );
+});
+
+/** What does not change when a note does: a bar's stripes, one for every row, and the dots of the chords under it. */
+const BarCells = memo(function BarCells({ rows, fits }: { rows: MelodyRow[]; fits: Fit[] | null }) {
+  // the stretches of the bar under one chord, and for each the rows that are a note of it
+  const dots = useMemo(() => {
+    if (!fits) return null;
+    const runs: { from: number; to: number; pcs: Set<number> }[] = [];
+    let was = "";
+    fits.forEach((f, k) => {
+      const sig = f ? [...f.pcs].join() : "";
+      if (sig && sig === was) runs[runs.length - 1].to = k + 1;
+      else if (sig) runs.push({ from: k, to: k + 1, pcs: f!.pcs });
+      was = sig;
+    });
+    return runs.flatMap((r) => rows.map((row, i) => (r.pcs.has(mod12(row.midi)) ? <i key={`${r.from}:${row.midi}`} className="mel-fit" style={{ "--k": r.from, "--n": r.to - r.from, "--i": i } as CSSProperties} /> : null)));
+  }, [fits, rows]);
+  return (
+    <div className="mel-cells">
+      {rows.map((r) => <i key={r.midi} className={`mel-row${r.inKey ? " in" : ""}${r.home ? " home" : ""}`} />)}
+      {dots}
+    </div>
+  );
+});
+
 /**
  * One bar of the wide grid. With seven octaves a square for every step of every row would be thousands of
  * elements, so here a row is one stripe and the squares are cut out of the stripes by the look of the bar (see
@@ -902,19 +938,6 @@ const WideBar = memo(function WideBar({ b, rows, steps, notes, fits, head, sel }
   sel: boolean;
 }) {
   const index = useMemo(() => new Map(rows.map((r, i) => [r.midi, i])), [rows]);
-  // the stretches of the bar under one chord, and for each the rows that are a note of it
-  const dots = useMemo(() => {
-    if (!fits) return null;
-    const runs: { from: number; to: number; pcs: Set<number> }[] = [];
-    let was = "";
-    fits.forEach((f, k) => {
-      const sig = f ? [...f.pcs].join() : "";
-      if (sig && sig === was) runs[runs.length - 1].to = k + 1;
-      else if (sig) runs.push({ from: k, to: k + 1, pcs: f!.pcs });
-      was = sig;
-    });
-    return runs.flatMap((r) => rows.map((row, i) => (r.pcs.has(mod12(row.midi)) ? <i key={`${r.from}:${row.midi}`} className="mel-fit" style={{ "--k": r.from, "--n": r.to - r.from, "--i": i } as CSSProperties} /> : null)));
-  }, [fits, rows]);
   const drawn = useMemo(() => (notes ? notes.split(" ") : []).map((x) => {
     const [k, midi, w, g, marks] = x.split(":");
     return { k: Number(k), midi: Number(midi), w: Number(w), g: Number(g), marks: marks ?? "", id: x };
@@ -926,10 +949,7 @@ const WideBar = memo(function WideBar({ b, rows, steps, notes, fits, head, sel }
         {fits && <div className="mg-chords mel-chords" aria-hidden="true">{fits.map((f, k) => (f?.name ? <span key={k} style={{ gridColumn: k + 1 }}>{f.name}</span> : null))}</div>}
       </div>
       <div className="mel-rows">
-        <div className="mel-cells">
-          {rows.map((r) => <i key={r.midi} className={`mel-row${r.inKey ? " in" : ""}${r.home ? " home" : ""}`} />)}
-          {dots}
-        </div>
+        <BarCells rows={rows} fits={fits} />
         {drawn.map((n) => {
           const i = index.get(n.midi);
           if (i === undefined) return null;

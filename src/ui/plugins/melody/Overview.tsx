@@ -10,7 +10,7 @@ import type { MelodyNote, MelodyRow } from "../../../song/melody";
 import { displayNote } from "../../../theory/notes";
 import { octaveOf, rowAt } from "./range";
 
-export const Overview = memo(function Overview({ rows, notes, ticks, size, rootRef, viewRef, onOctave, onGo }: {
+export const Overview = memo(function Overview({ rows, notes, ticks, size, rootRef, viewRef, onOctave, onGo, onWheel }: {
   /** the grid's rows, highest first */
   rows: MelodyRow[];
   notes: readonly MelodyNote[];
@@ -25,6 +25,8 @@ export const Overview = memo(function Overview({ rows, notes, ticks, size, rootR
   onOctave(dir: 1 | -1): void;
   /** bring a place of the range into view: 0 is the top row, 1 the bottom one. `glide`: move there smoothly (a press), or at once (a drag) */
   onGo(at: number, glide: boolean): void;
+  /** the wheel turned over the overview: the grid scrolls as if it had been turned over the grid */
+  onWheel(dy: number): void;
 }) {
   const drag = useRef<number | null>(null);
   const n = Math.max(1, rows.length);
@@ -51,21 +53,21 @@ export const Overview = memo(function Overview({ rows, notes, ticks, size, rootR
   };
   const w = Math.max(1, ticks);
   return (
-    <div className="mel-rail" ref={rootRef}>
+    <div className="mel-rail" ref={rootRef} onWheel={(e) => onWheel(e.deltaY)}>
       <button className="mel-oct up" aria-label="Show an octave higher" title="Show an octave higher (Page Up)" onClick={() => onOctave(1)}><span aria-hidden="true">▲</span></button>
       <div className="mel-map" title="The whole range: press where you want to be" onPointerDown={down} onPointerMove={move} onPointerUp={up} onPointerCancel={up}>
         <div className="mel-map-in">
-        <svg viewBox={`0 0 100 ${n}`} preserveAspectRatio="none" aria-hidden="true">
-          {rows.map((r, i) => (r.home ? <rect key={r.midi} className="mel-map-home" x={0} y={i} width={100} height={1} /> : null))}
-          {notes.map((x, i) => {
-            const row = rowAt(rows, x.midi);
-            const left = Math.max(0, Math.min(98, (x.at / w) * 100));
-            const wide = Math.max(4, ((x.len ?? size) / w) * 100);
-            return <rect key={i} className="mel-map-note" x={left} y={row - 0.4} width={Math.min(100 - left, wide)} height={1.8} />;
-          })}
-        </svg>
-        {rows.map((r, i) => (r.home ? <span key={r.midi} className="mel-map-oct" style={{ top: `${((i + 0.5) / n) * 100}%` }} aria-hidden="true">{displayNote(r.name)}{octaveOf(r.midi)}</span> : null))}
-        <i className="mel-view" ref={viewRef} />
+          <svg viewBox={`0 0 100 ${n}`} preserveAspectRatio="none" aria-hidden="true">
+            {rows.map((r, i) => (r.home ? <rect key={r.midi} className="mel-map-home" x={0} y={i} width={100} height={1} /> : null))}
+            {notes.map((x, i) => {
+              const row = rowAt(rows, x.midi);
+              const left = Math.max(0, Math.min(98, (x.at / w) * 100));
+              const wide = Math.max(4, ((x.len ?? size) / w) * 100);
+              return <rect key={i} className="mel-map-note" x={left} y={row - 0.4} width={Math.min(100 - left, wide)} height={1.8} />;
+            })}
+          </svg>
+          {rows.map((r, i) => (r.home ? <span key={r.midi} className="mel-map-oct" style={{ top: `${((i + 0.5) / n) * 100}%` }} aria-hidden="true">{displayNote(r.name)}{octaveOf(r.midi)}</span> : null))}
+          <i className="mel-view" ref={viewRef} />
         </div>
       </div>
       <button className="mel-oct down" aria-label="Show an octave lower" title="Show an octave lower (Page Down)" onClick={() => onOctave(-1)}><span aria-hidden="true">▼</span></button>

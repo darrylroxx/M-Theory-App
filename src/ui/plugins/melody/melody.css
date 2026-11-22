@@ -9,7 +9,8 @@
 
 /* the tools: one row while the window is wide enough for them */
 .mel-tools { flex: none; display: flex; align-items: center; flex-wrap: wrap; gap: 6px 8px; min-width: 0; min-height: 30px; }
-.mel-tools .dm-tabrow { flex: 0 1 auto; min-width: 0; }
+/* (the bar tabs take the room that is left: with many bars they scroll in it, and the tools stay on one row) */
+.mel-tools .dm-tabrow { flex: 1 1 150px; min-width: 0; }
 .mel-tools .dm-bars button { min-width: 30px; height: 26px; }
 .mel-tools .hz-go { margin-left: 0; }
 .mel-tools .chip { padding: 4px 11px; font-size: 0.82rem; white-space: nowrap; }
