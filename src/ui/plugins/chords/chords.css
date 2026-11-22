@@ -17,14 +17,14 @@
 .cp-pane[hidden] { display: none; }
 
 /* ── the board ── */
-.cp-board { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0; gap: 0; overflow: hidden; }
+.cp .cp-board { position: relative; flex: 1 1 auto; min-width: 0; min-height: 0; padding: 0; gap: 0; overflow: hidden; }
 .cp-scroll { flex: 1 1 auto; min-height: 0; overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; padding: 10px 12px 12px; display: flex; flex-direction: column; gap: 10px; }
 .cp-scroll > * { flex: none; }
 .cp-board .board-head { gap: 8px 10px; }
 .cp-board .board-head > .seg { flex: none; }
 .cp-board .board-set { margin-left: auto; flex: none; gap: 8px; }
 .cp-board .board-head .seg.kinds { order: 3; flex: 1 1 100%; align-self: stretch; }
-.cp-board .seg.kinds button { flex: 1 0 auto; padding: 4px 9px; }
+.cp-board .seg.kinds button { flex: 1 0 auto; padding: 4px 6px; font-size: 0.8rem; }
 .cp-board .key-chip { height: 28px; }
 .cp-board .capo select { padding: 3px 6px; }
 /* seven cards side by side, whatever the screen's width (the window's own width decides, further down) */
@@ -46,7 +46,7 @@
 .cp-dock .dock-inner > * { flex: none; }
 .cp-dock .dock-main { flex: 1 0 auto; align-items: stretch; }
 .cp-dock .dock-slots { min-height: 96px; padding: 2px; }
-.cp-dock .slot { justify-content: space-between; }
+.cp-dock .slot { justify-content: space-between; min-width: 0; }
 .cp-dock .dock-empty { font-size: 0.85rem; font-weight: 650; text-align: center; padding: 0 12px; }
 .cp-dock .arrange .span { margin-left: 4px; }
 .cp-dock .dock-foot { align-items: flex-start; }
@@ -60,7 +60,7 @@
 .cp-all:disabled { opacity: 0.45; cursor: default; border-color: var(--border-2); }
 .cp-hz { margin-left: auto; flex: none; display: inline-flex; align-items: center; gap: 6px; }
 .cp-hz .hz-go { margin-left: 0; }
-.cp-again { font-size: 1rem; padding: 2px 6px; }
+.cp-hz .cp-again { font-size: 1rem; padding: 2px 6px; }
 
 /* ── the shape finder, as a panel in the board's place ── */
 .cp-stage > .finder.panel { flex: 1 1 auto; width: auto; max-width: none; min-width: 0; margin: 0; padding: 10px 12px 12px; gap: 8px; border-radius: var(--radius); background: var(--card); border: 1px solid var(--accent); box-shadow: none; overscroll-behavior: contain; scrollbar-width: thin; }
@@ -72,22 +72,22 @@
 .finder.panel .finder-keys { align-self: flex-start; }
 
 /* ── the playing styles and the feel, as a panel in the board's place ── */
-.cp-play { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-color: var(--accent); }
+.cp .cp-play { flex: 1 1 auto; min-width: 0; min-height: 0; overflow: hidden auto; overscroll-behavior: contain; scrollbar-width: thin; display: flex; flex-direction: column; gap: 8px; padding: 10px 12px 12px; border-color: var(--accent); }
 .cp-play > * { flex: none; }
-.cp-play h3 { font-size: 0.7rem; text-transform: uppercase; letter-spacing: 0.08em; font-weight: 800; color: var(--faint); }
 .cp-play-head { display: flex; align-items: center; justify-content: space-between; min-height: 30px; }
 .cp-play-head .icon-btn { width: 30px; height: 30px; }
 .cp-play .dm-chips .chip { padding: 4px 10px; font-size: 0.82rem; }
 .cp-play .cp-styles { padding: 8px; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); }
 .cp-play .beat-item button { padding: 5px 10px; }
-.cp-play .knobs.feel { padding-top: 0; border-top: none; grid-template-columns: repeat(auto-fill, minmax(92px, 1fr)); }
+.cp-play .knobs.feel { padding: 10px; border-top: none; border-radius: 12px; background: var(--card-2); border: 1px solid var(--border); grid-template-columns: repeat(auto-fill, minmax(110px, 1fr)); gap: 12px 16px; }
 
 /* ── side by side: the window as it first opens, wide and low ── */
 @container cp (min-width: 480px) and (max-height: 469px) {
   .cp { flex-direction: row; }
   .cp-stage { flex: 1.12 1 0; }
   .cp-dock { flex: 1 1 0; }
-  .cp-dock .slot { flex-basis: 104px; }
+  .cp-dock .dock-slots { gap: 6px; }
+  .cp-dock .slot { flex-basis: 103px; }
   .cp-dock .slot-step button { width: 30px; }
 }
 

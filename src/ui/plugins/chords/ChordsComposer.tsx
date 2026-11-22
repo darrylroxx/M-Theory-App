@@ -235,7 +235,7 @@ const Body = memo(function Body({ win, at, track, target, clip, content, bar, fr
 
   const head = !synth || canHarmonize || written ? (
     <div className="cp-head">
-      {!synth && <PlayingRow style={style} open={stage === "playing"} onOpen={togglePlaying} onStyle={pickStyle} all={others ? { same: allSame, run: toAll } : undefined} />}
+      {!synth && <PlayingRow style={style} open={stage === "playing"} onOpen={togglePlaying} onStyle={pickStyle} all={others && hasChords ? { same: allSame, run: toAll } : undefined} />}
       <span className="cp-hz">
         {written && <HarmonyAgain track={written} className="cp-again" onOpen={again} />}
         {canHarmonize && <HarmonizeButton on={harmonizing} onClick={harmonize} />}
