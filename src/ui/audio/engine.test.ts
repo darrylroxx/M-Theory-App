@@ -5,7 +5,7 @@
 import { describe, expect, it } from "vitest";
 import type { AudioHost, EngineOpened, EngineStatus } from "../../desktop";
 import type { Recorded } from "../../song/takes";
-import { Claims, countText, delayText, devicesOf, dropoutText, engineStatus, makeDoor, makeStore, sessionNotes, type EngineNow, type EngineReadout } from "./useEngine";
+import { Claims, clockText, countText, delayText, devicesOf, dropoutText, engineStatus, foldRound, makeDoor, makeStore, sessionNotes, type EngineNow, type EngineReadout } from "./useEngine";
 
 const tick = () => new Promise<void>((r) => setTimeout(r, 0));
 const OPENED: EngineOpened = { host: "ASIO", device: "Test Interface", rate: 48000, inputs: 2, outputs: 2, format: "f32", min_buffer: 32, max_buffer: 1024 };
@@ -315,5 +315,52 @@ describe("a recording that comes back after the driver was reset", () => {
     // (begun, but the engine has not named its file yet: nothing is claimed)
     expect(claims.claim(recorded("a.wav"))).toBeNull();
     expect(claims.plan).toBe("bars 5–8");
+  });
+});
+
+describe("the song played once under a recording", () => {
+  const now = (o: Partial<EngineNow> = {}): EngineNow => ({ opened: OPENED, phase: "recording", pass: 0, track: "tv", bpm: 120, ...o });
+  const st = (o: Partial<EngineReadout["st"] & object>): EngineReadout => ({
+    st: { peak: [], rms: [], pos: 0, count_in: 0, length: 0, running: true, reduction: 0, invalid: false, xruns: 0, block: 64, latency: 0, ...o },
+    now: now(),
+  });
+
+  it("the readout counts the count-in as ever, then says how long it has run (it has no passes: the engine reports no loop)", () => {
+    expect(countText(st({ pos: 0, count_in: 96000 }))).toBe("4");
+    expect(countText(st({ pos: 95999, count_in: 96000 }))).toBe("1");
+    expect(countText(st({ pos: 96000, count_in: 96000 }))).toBe("0:00");
+    expect(countText(st({ pos: 96000 + 48000 * 75, count_in: 96000 }))).toBe("1:15");
+    // (on past the song's end, for as long as the recording runs)
+    expect(countText(st({ pos: 96000 + 48000 * 600, count_in: 96000 }))).toBe("10:00");
+    // a rehearsal the same; nothing running, nothing
+    expect(countText({ ...st({ pos: 96000 + 48000 * 5, count_in: 96000 }), now: now({ phase: "rehearsing" }) })).toBe("0:05");
+    expect(countText({ ...st({ pos: 96000 + 48000 * 5, count_in: 96000 }), now: now({ phase: "saving" }) })).toBe("");
+  });
+
+  it("seconds are written as m:ss", () => {
+    expect(clockText(0)).toBe("0:00");
+    expect(clockText(59.9)).toBe("0:59");
+    expect(clockText(61)).toBe("1:01");
+    expect(clockText(-3)).toBe("0:00");
+    expect(clockText(NaN)).toBe("0:00");
+  });
+});
+
+describe("a rendered song made to go round a stretch that reaches past its end", () => {
+  it("is as long as the stretch: silence after the song", () => {
+    const out = foldRound([Float32Array.from([1, 2, 3]), Float32Array.from([4, 5, 6])], 6);
+    expect(out.map((c) => [...c])).toEqual([[1, 2, 3, 0, 0, 0], [4, 5, 6, 0, 0, 0]]);
+  });
+
+  it("what rings on past the stretch comes round again at its start, and is lost nowhere", () => {
+    // four frames of song, a ring-out of three, a stretch of five: the last two frames of the ring-out come round
+    const out = foldRound([Float32Array.from([1, 1, 1, 1, 0.5, 0.25, 0.125])], 5);
+    expect([...out[0]]).toEqual([1.25, 1.125, 1, 1, 0.5]);
+    // a ring-out longer than the stretch goes round as often as it takes
+    expect([...foldRound([Float32Array.from([1, 0, 1, 1, 1, 1, 1])], 2)[0]]).toEqual([4, 2]);
+  });
+
+  it("a song exactly as long as the stretch is left as it is", () => {
+    expect([...foldRound([Float32Array.from([0.5, -0.5])], 2)[0]]).toEqual([0.5, -0.5]);
   });
 });

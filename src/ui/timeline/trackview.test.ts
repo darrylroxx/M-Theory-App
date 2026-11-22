@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vitest";
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
-import { addTrack, resizeClip, songEnd } from "../../timeline/edit";
-import type { Session, TimelineSong } from "../../timeline/model";
+import { addTrack, resizeClip, setTrack, songEnd } from "../../timeline/edit";
+import type { AudioClip, AudioTrack, Session, Take5, TimelineSong } from "../../timeline/model";
+import { TakeBlock } from "./draw";
+import { Menu, type MenuItem } from "./Menu";
 import { CLIP_OF, notches } from "../../timeline/model";
 import { barMap } from "../../timeline/bars";
 import { FIX, FIXTURE_KEY, fixturePeaks, fixtureSession, fixtureSong } from "./fixture";
@@ -149,6 +151,26 @@ describe("the track view, drawn", () => {
     expect(near).not.toContain('data-clip="fx-a1"');
   });
 
+  it("a track's input chip says its input, or its pair; with the interface open it has a small meter, two for a pair", () => {
+    const paired = setTrack<AudioTrack>(addTrack(song, "audio", "t-blank"), "t-blank", { input: { ch: 2, pair: true } });
+    const five = setTrack<AudioTrack>(paired, FIX.vocal, { input: { ch: 4 } });
+    const closed = view(five);
+    expect(closed).toContain('aria-label="Input of Audio 1: 3+4"');
+    expect(closed).toMatch(/title="Which inputs it records: these two, in stereo"[^>]*>3\+4</);
+    expect(closed).toMatch(/aria-label="Input of [^"]*: 5"/);
+    expect(closed).not.toContain("tlh-meter");
+    const open = view(five, {}, { inputs: { count: 8, level: () => 0.5, meters: true } });
+    const chips = open.split('class="tlh-in ').slice(1).map((c) => c.slice(0, c.indexOf("</button>")));
+    expect(chips.map((c) => count(c, 'class="tlh-meter"'))).toEqual([1, 2]);
+  });
+
+  it("the top bar's monitor control is left out where there is none to choose (a browser), and ● stays", () => {
+    const { setMonitor: _m, ...plain } = record;
+    const out = view(song, {}, { top: top({ record: plain }) });
+    expect(out).toContain('aria-label="Record"');
+    expect(out).not.toContain("tlv-mon");
+  });
+
   it("shows record and the monitor control only when it is given them", () => {
     expect(html).toContain('aria-label="Record"');
     expect(html).toContain("tlv-mon");
@@ -194,5 +216,71 @@ describe("the track view, drawn", () => {
     const lanes = [...out.matchAll(/class="tlv-lane ([^"]*)" data-lane="([^"]+)"/g)].map((m) => [m[2], m[1].includes("refuse"), m[1].includes("accept")]);
     expect(lanes).toEqual([[FIX.chords, true, false], [FIX.melody, true, false], [FIX.bass, true, false], [FIX.drums, false, true], [FIX.drums2, false, true], [FIX.vocal, true, false]]);
     expect(html).not.toContain(" refuse");
+  });
+});
+
+describe("a recorded clip, drawn", () => {
+  const take = (o: Partial<Take5> = {}): Take5 => ({ id: "k", n: 2, group: "g", dry: "d.wav", wet: "w.wav", rate: 48000, start: 0, frames: 96000, at: 0, ...o });
+  const clip: AudioClip = { id: "c", track: "t", kind: "audio", take: "k", start: 0, from: 0, to: 96000, off: 0, frames: 96000 };
+  const block = (k: Take5, c: AudioClip, l?: Float32Array, r?: Float32Array) => renderToStaticMarkup(createElement(TakeBlock, { clip: c, take: k, peaks: l, peaksR: r, ppb: 20, bpm: 120 }));
+  const left = Float32Array.from([0.2, 0.9, 0.4]);
+  const right = Float32Array.from([0.1, 0.1, 0.8]);
+
+  it("a take from one input is one waveform, as before", () => {
+    const html = block(take(), clip, left);
+    expect(count(html, "<svg")).toBe(1);
+    expect(html).toContain('class="tlc-take"');
+    expect(html).toContain('class="tlc-wave"');
+    expect(html).toContain("Take 2");
+    // (the second file of a voice is stereo too: it is still drawn as one, the take says nothing of two channels)
+    expect(count(block(take(), clip, left, right), "<svg")).toBe(1);
+  });
+
+  it("a stereo take is two waveforms, the left side over the right", () => {
+    const html = block(take({ channels: 2 }), clip, left, right);
+    expect(html).toContain('class="tlc-take stereo"');
+    expect(count(html, "<svg")).toBe(2);
+    expect(html.indexOf('class="tlc-wave left"')).toBeGreaterThan(-1);
+    expect(html.indexOf('class="tlc-wave right"')).toBeGreaterThan(html.indexOf('class="tlc-wave left"'));
+    // each side its own picture
+    const paths = [...html.matchAll(/<path d="([^"]+)"/g)].map((m) => m[1]);
+    expect(paths).toHaveLength(2);
+    expect(paths[0]).not.toBe(paths[1]);
+  });
+
+  it("a stereo clip whose edge was dragged out repeats both sides; one split or trimmed shows that stretch of both", () => {
+    // three seconds of a two-second take: the take comes round once more
+    const html = block(take({ channels: 2 }), { ...clip, frames: 144000 }, left, right);
+    expect(count(html, 'class="tlc-wave left"')).toBe(2);
+    expect(count(html, 'class="tlc-wave right"')).toBe(2);
+    // the second half alone (a split): each side is drawn from the middle of its picture on
+    const half = block(take({ channels: 2 }), { ...clip, off: 48000, frames: 48000 }, left, right);
+    expect([...half.matchAll(/viewBox="([\d.]+) /g)].map((m) => m[1])).toEqual(["1.500", "1.500"]);
+  });
+
+  it("a stereo take whose sound is not loaded yet is a plain block with its number", () => {
+    const html = block(take({ channels: 2 }), clip);
+    expect(count(html, "<svg")).toBe(0);
+    expect(html).toContain("Take 2");
+  });
+});
+
+describe("a menu line with live levels (a track's list of inputs)", () => {
+  const menu = (items: MenuItem[]) => renderToStaticMarkup(createElement(Menu, { at: { x: 0, y: 0 }, items, label: "Input", onClose: nothing }));
+  it("has one small meter for an input, two for a pair, and none on a line that has no level", () => {
+    const html = menu([
+      { title: "Records from" },
+      { label: "In 1", on: true, run: nothing, levels: [() => 0.3] },
+      { title: "Stereo pairs" },
+      { label: "In 1+2", run: nothing, levels: [() => 0.3, () => 0.6] },
+      { label: "In 5 (not there)", run: nothing },
+      { sep: true },
+      { label: "Audio setup…", run: nothing },
+    ]);
+    const lines = html.split('role="menuitem"').slice(1);
+    expect(lines.map((l) => count(l, 'class="tlv-menu-lv"'))).toEqual([1, 2, 0, 0]);
+    // (the tick of the line in force is the line's own, not the meters')
+    expect(lines[0]).toContain("tlv-menu-item on");
+    expect(html).toContain("In 5 (not there)");
   });
 });

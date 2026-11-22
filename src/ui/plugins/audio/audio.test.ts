@@ -15,7 +15,7 @@ import { App5Ctx, type App5State, type Ctx5 } from "../../app5";
 import type { EngineApi } from "../../audio/useEngine";
 import { AudioPart, SettingsPanel } from "../../components/SettingsPanel";
 import { DEFAULT_STATE } from "../../state";
-import { takesHeard } from "../../timeline/Host";
+import { peaksFrom, takesHeard } from "../../timeline/Host";
 import { V4View } from "../../windows/ClipLens";
 import { PLUGINS } from "../registry";
 import { recordSong, recordedLine, roundLabel, shownTrack } from "./RecordHost";
@@ -88,8 +88,43 @@ describe("the record window", () => {
     expect(html).toContain('aria-label="Input of Lead vocal"');
     expect(html).toMatch(/<option value="1" selected="">2<\/option>/);
     expect(html.split('class="rw-meter"').length - 1).toBe(1);
-    // an input the interface turned out not to have is still in the list (it is the track's saved choice)
-    expect(recordWindow({ track: { id: "tv", name: "Lead vocal", input: 5 } })).toMatch(/<option value="5" selected="">6<\/option>/);
+    // an input the interface turned out not to have is still in the list (it is the track's saved choice), and says so
+    expect(recordWindow({ track: { id: "tv", name: "Lead vocal", input: 5 } })).toMatch(/<option value="5" selected="">6 \(not there\)<\/option>/);
+  });
+
+  it("offers every input of the interface, and every pair of neighbours; a pair has a meter for each side", () => {
+    const html = recordWindow({ inputs: 8, track: { id: "ta", name: "Guitars", input: 2, pair: true } });
+    const list = html.slice(html.indexOf('aria-label="Input of Guitars"'), html.indexOf("</select>"));
+    expect([...list.matchAll(/<option value="(\d+\+?)"[^>]*>([^<]*)</g)].map((m) => `${m[1]}=${m[2]}`)).toEqual([
+      "0=1", "1=2", "2=3", "3=4", "4=5", "5=6", "6=7", "7=8", "0+=1+2", "2+=3+4", "4+=5+6", "6+=7+8",
+    ]);
+    expect(html).toContain('<optgroup label="Stereo pairs">');
+    expect(html).toMatch(/<option value="2\+" selected="">3\+4<\/option>/);
+    // the levels of inputs 3 and 4, the left over the right
+    expect([...html.matchAll(/class="rw-meter" data-ch="(\d)"/g)].map((m) => m[1])).toEqual(["2", "3"]);
+    // a pair the interface does not have stays the track's choice, marked
+    expect(recordWindow({ inputs: 2, track: { id: "ta", name: "Guitars", input: 4, pair: true } })).toMatch(/<option value="4\+" selected="">5\+6 \(not there\)<\/option>/);
+  });
+
+  it("with the loop off it says where the song is played from, once; while that runs there are no passes to keep", () => {
+    const idle = recordWindow({ round: "from bar 5", once: true });
+    expect(idle).toContain("→ from bar 5");
+    expect(idle).not.toContain("↻");
+    expect(idle).toContain("the song plays once, and the recording goes on until Stop");
+    const running = recordWindow({ once: true, engine: engine({ phase: "recording", once: true, pass: 0 }) });
+    expect(running).toContain('aria-label="Stop recording"');
+    expect(running).not.toContain('aria-label="Passes: tap to keep"');
+    expect(running).toMatch(/class="vc-star" style="visibility:hidden"/);
+    // (what runs counts, not what the next recording would do: the loop was switched on meanwhile)
+    expect(recordWindow({ once: false, engine: engine({ phase: "recording", once: true, pass: 0 }) })).not.toContain('aria-label="Passes: tap to keep"');
+    expect(recordWindow({ once: true, engine: engine({ phase: "recording", once: false, pass: 2 }) })).toContain('aria-label="Passes: tap to keep"');
+  });
+
+  it("a song kept from the last recording starts at once: nothing is said to be prepared", () => {
+    expect(recordWindow({ engine: engine({ phase: "preparing", again: true }) })).not.toContain("Preparing…");
+    expect(recordWindow({ engine: engine({ phase: "preparing", again: false }) })).toContain("Preparing… ");
+    // (Saving is said either way)
+    expect(recordWindow({ engine: engine({ phase: "saving", again: true }) })).toContain("Saving… ");
   });
 
   it("has no lane of its own, and no clip tools", () => {
@@ -136,16 +171,32 @@ describe("the record window", () => {
     expect(recordWindow({ engine: engine({ monitor: false }), studio: { checks: { direct: true } } })).not.toContain("you hear yourself twice");
   });
 
-  it("with no track that records it says how to add one; in a browser it says where recording is", () => {
+  it("with no track that records it says how to add one", () => {
     const none = recordWindow({ track: null });
-    expect(none).toContain("Add a Vocals track to record on");
+    expect(none).toContain("Add a Vocals or a Blank track to record on");
     expect(none).not.toContain("rec-btn");
-    const web = recordWindow({ engine: engine({ desktop: false, hosts: null, devices: [], chosen: undefined, opened: null }) }, createElement("div", { className: "the-takes" }));
-    expect(web).toContain("Recording: in the desktop app.");
-    expect(web).not.toContain("rec-btn");
-    expect(web).not.toContain("Monitor");
-    // (the takes already in the idea are still listed there)
-    expect(web).toContain("the-takes");
+  });
+
+  it("in a browser: Record, the microphone's level, one line about timing with the nudge in it, and nothing of the interface", () => {
+    const web = engine({ desktop: false, hosts: null, devices: [], chosen: undefined, opened: null });
+    const html = recordWindow({ engine: web, studio: { nudge: 12 }, round: "from bar 1", once: true }, createElement("div", { className: "the-takes" }));
+    expect(html).toContain('class="rec-btn" aria-label="Record"');
+    expect(html).toContain("Record the microphone while the song plays once");
+    expect(html).toContain("→ from bar 1");
+    expect(html).toContain("In a browser a take lands close to in time, not exact: set it with the timing nudge");
+    expect(html).toMatch(/aria-label="Timing nudge, in milliseconds"[^>]*value="12"/);
+    expect(html.split('class="rw-meter"').length - 1).toBe(1);
+    // nothing that only the desktop app's engine has
+    for (const gone of ["Rehearse", "Count-in", "Monitor", "Audio setup…", "Recording: in the desktop app"]) expect(html, gone).not.toContain(gone);
+    expect(html).toContain("the-takes");
+    // round a loop it says so, and keeps passes as the desktop app does
+    expect(recordWindow({ engine: web, round: "bars 1–2" })).toContain("take after take, while the loop goes round");
+    expect(recordWindow({ engine: { ...web, phase: "recording", pass: 2 } })).toContain('aria-label="Passes: tap to keep"');
+    // a browser that cannot record says so, and offers no button
+    const cannot = recordWindow({ engine: { ...web, ready: false } }, createElement("div", { className: "the-takes" }));
+    expect(cannot).toContain("This browser cannot record here");
+    expect(cannot).not.toContain("rec-btn");
+    expect(cannot).toContain("the-takes");
   });
 
   it("draws the take browser it is handed, right under Record", () => {
@@ -285,6 +336,17 @@ describe("the Audio part of the settings", () => {
     expect(html).toContain("Look again");
     expect(html).toContain("Everything the computer sees");
   });
+  it("marks both inputs of a pair as the track's, and says so", () => {
+    const html = within(app, createElement(V4View, null, createElement(AudioPart, { engine: engine(), setNudge: no, track: { name: "Guitars", input: 2, pair: true } })));
+    expect([...html.matchAll(/class="vm mine" data-ch="(\d)"/g)].map((m) => m[1])).toEqual(["2", "3"]);
+    expect(html).toContain("Guitars records Inputs 3 and 4, in stereo");
+  });
+  it("in a browser it says what is recorded there, and has the timing nudge", () => {
+    const html = part(engine({ desktop: false, hosts: null, devices: [], chosen: undefined, opened: null }));
+    expect(html).toContain("a track records the microphone the browser offers");
+    expect(html).toContain("Timing nudge");
+    for (const gone of ['aria-label="Record from"', "Buffer", "48V on", "Headphone mix"]) expect(html, gone).not.toContain(gone);
+  });
   it("says so while it is still looking, when there is no interface, and when the driver gave an error", () => {
     expect(part(engine({ hosts: null, devices: [], chosen: undefined, opened: null }))).toContain("Looking…");
     expect(part(engine({ hosts: [], devices: [], chosen: undefined, opened: null }))).toContain("No interface found. Plug it in");
@@ -350,6 +412,48 @@ describe("the song's side of a recording", () => {
     // the same plan while nothing it reads has changed
     expect(does.plan()).toBe(plan);
   });
+  it("with the loop off the plan plays the song once, from the cursor's bar, and reaches eight bars past the song's end", () => {
+    const { app, does } = setUp();
+    app.set((s) => ({ ...s, session: { ...s.session, cursor: 9, loop: { on: false, regions: [{ from: 16, to: 32 }] } } }));
+    const plan = does.plan()!;
+    expect(plan.once).toBe(true);
+    expect(roundLabel(app.peek().song, app.peek().session)).toBe("from bar 3");
+    // from bar 3 (beat 8) to the end of the eight-bar song (beat 32) and eight bars more
+    expect(does.spanOf(plan)).toEqual({ from: 8, to: 64 });
+    expect(plan.beats).toBe(56);
+    expect(plan.bars).toHaveLength(14);
+    // what is played is the song from there to its end, straight through (nothing of it comes round)
+    expect(plan.items.reduce((a, x) => a + x.beats, 0)).toBe(24);
+    // round the loop the plan says nothing of once, as before
+    app.set((s) => ({ ...s, session: { ...s.session, loop: { on: true, regions: [{ from: 16, to: 32 }] } } }));
+    expect("once" in does.plan()!).toBe(false);
+  });
+  it("a once-through recording is one take from the cursor's bar; from a pair of inputs, a stereo one", () => {
+    const { app, does } = setUp();
+    app.set((s) => ({ ...s, session: { ...s.session, cursor: 8, loop: null } }));
+    const plan = does.plan()!;
+    does.onRecorded({ ...recorded("C:/rec/g.wav", 48000 * 20), loop_frames: 0, channels: 2 }, { kept: [], sound: "", plan, track: "tv" });
+    const tv = app.peek().song.tracks.find((t) => t.id === "tv") as AudioTrack;
+    expect(tv.takes.map((k) => [k.n, k.at, k.frames, k.channels])).toEqual([[1, 8, 48000 * 20, 2]]);
+    expect(app.peek().song.clips.filter((c) => c.kind === "audio").map((c) => [c.start, c.frames])).toEqual([[8, 48000 * 20]]);
+  });
+  it("the song under a recording says when it can be played again: the same after a take on the armed track, another after a change elsewhere", () => {
+    const { app, does } = setUp();
+    app.set((s) => ({ ...s, session: { ...s.session, cursor: 8, loop: null } }));
+    const first = does.plan()!;
+    const key = first.backing!("tv");
+    expect(first.backing!("tv")).toBe(key);
+    // a take recorded onto the armed track, running on past the song's end: the song changed, the plan is another, what is sung over is not
+    does.onRecorded({ ...recorded("C:/rec/g.wav", 48000 * 40), loop_frames: 0 }, { kept: [], sound: "", plan: first, track: "tv" });
+    const second = does.plan()!;
+    expect(second).not.toBe(first);
+    expect(second.backing!("tv")).toBe(key);
+    // (a rehearsal hears that take too: for it the song is another)
+    expect(second.backing!(null)).not.toBe(first.backing!(null));
+    // another track changed: sung over another sound
+    app.edit("Tempo", (s) => ({ ...s, bpm: s.bpm + 1 }));
+    expect(does.plan()!.backing!("tv")).not.toBe(key);
+  });
   it("a finished recording is cut into takes and laid on its track as one undo step, and said in a line", () => {
     const { log, app, does } = setUp();
     const plan = does.plan()!;
@@ -397,5 +501,35 @@ describe("the takes a song plays, as they are read from disk", () => {
     expect(takesHeard(song, new Set(["tv"]), true).map((t) => t.wet)).toEqual(["b2-dry.wav"]);
     // (a bypass on another track asks for nothing of this one)
     expect(takesHeard(song, new Set(["tc"]), true)).toEqual([]);
+  });
+});
+
+describe("how loud a take is along its length, for its picture on the lane", () => {
+  /** a decoded take, stood in for: a second at 100 frames a second, the left side loud in its first half, the right quiet in its second */
+  const buffer = (channels: number) => {
+    const data = [new Float32Array(100), new Float32Array(100)];
+    for (let i = 0; i < 50; i++) data[0][i] = i % 2 ? 0.8 : -0.8;
+    for (let i = 50; i < 100; i++) data[1][i] = 0.2;
+    return { duration: 1, length: 100, numberOfChannels: channels, getChannelData: (ch: number) => data[ch] } as unknown as AudioBuffer;
+  };
+  it("one picture for all its channels together, or each side on its own, to one scale", () => {
+    const b = buffer(2);
+    const all = peaksFrom(b);
+    const left = peaksFrom(b, 0);
+    const right = peaksFrom(b, 1);
+    expect(all).toHaveLength(40);
+    // the left side: loud, then nothing; the right: nothing, then a quarter as loud (it is not drawn as loud as the left)
+    expect([left[0], left[39]]).toEqual([1, 0]);
+    expect(right[0]).toBe(0);
+    expect(right[39]).toBeCloseTo(0.25);
+    expect([all[0], all[39]]).toEqual([1, right[39]]);
+    // worked out once for a take
+    expect(peaksFrom(b, 0)).toBe(left);
+    expect(peaksFrom(b)).toBe(all);
+  });
+  it("a take with one channel has one picture, whichever side is asked for", () => {
+    const b = buffer(1);
+    expect([...peaksFrom(b, 1)]).toEqual([...peaksFrom(b, 0)]);
+    expect([...peaksFrom(b, 0)]).toEqual([...peaksFrom(b)]);
   });
 });
