@@ -5,10 +5,11 @@
 // page (melody/MelodyLegacy). Each has a host file of its own, so the plugin that replaces one does not touch the
 // other.
 //
-// A track that records (Vocals, Blank) has neither: its compose and FX buttons open the one record window
-// (plugins/audio/RecordHost), which holds its takes and its vocal sound.
+// A track that records (Vocals, Blank) has no composer of its own: its compose button opens the one record window
+// (plugins/audio/RecordHost), which holds its takes. Its FX button opens its own sound window (audio/VocalSound).
 import type { ComponentType } from "react";
 import type { TrackKind } from "../../timeline/model";
+import { VocalSound } from "./audio/VocalSound";
 import { ChordsLegacy } from "./chords/ChordsLegacy";
 import type { ComposerProps } from "./ComposerFrame";
 import { DrumSound } from "./drums/DrumSound";
@@ -20,7 +21,7 @@ import type { SoundProps } from "./SoundFrame";
 export interface Plugin {
   /** the window the compose button opens (null: the record window) */
   compose: ComponentType<ComposerProps> | null;
-  /** the window the FX button opens (null: the record window, at its vocal sound) */
+  /** the window the FX button opens */
   sound: ComponentType<SoundProps> | null;
 }
 
@@ -29,6 +30,6 @@ export const PLUGINS: Record<TrackKind, Plugin> = {
   melody: { compose: MelodyLegacy, sound: TrackSound },
   bass: { compose: MelodyLegacy, sound: TrackSound },
   drums: { compose: DrumsComposer, sound: DrumSound },
-  vocals: { compose: null, sound: null },
-  audio: { compose: null, sound: null },
+  vocals: { compose: null, sound: VocalSound },
+  audio: { compose: null, sound: VocalSound },
 };
