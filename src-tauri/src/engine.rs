@@ -1586,4 +1586,168 @@ mod tests {
         assert!(matches!(c.apply(Cmd::Backing(vec![0.2; 200])), Some(Trash::Backing(old)) if old.len() == 400));
         assert!(matches!(c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 0, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false }))), Some(Trash::Settings(_))));
     }
+
+    // ── one input, as it was before a pair of inputs and a once-through start were added ──
+    //
+    // The numbers in the three tests below were read off the engine as it was before those two
+    // were added, and the tests have not been changed since: a vocal recorded from one input
+    // must go on giving the very same file and the very same sound in the headphones.
+
+    /// A running sum of bytes (FNV-1a, 64 bits): two recordings with the same sum are the same.
+    fn sum(bytes: impl IntoIterator<Item = u8>) -> u64 {
+        bytes.into_iter().fold(0xcbf2_9ce4_8422_2325u64, |h, b| (h ^ b as u64).wrapping_mul(0x0000_0100_0000_01b3))
+    }
+    /// The same of samples, bit for bit (a zero counts as one zero, whatever its sign).
+    fn sum_of(samples: &[f32]) -> u64 {
+        sum(samples.iter().flat_map(|v| (*v + 0.0).to_bits().to_le_bytes()))
+    }
+
+    /// A vocal session as it is recorded today, block by block as an ASIO driver calls the
+    /// engine: Input 2 of a two-input interface, a count-in of two beats, a song of 6000 frames
+    /// going round, the voice in the headphones with the chain off. On the way three blocks of
+    /// voice never arrive, one finds the engine busy, the disk falls behind for twenty blocks,
+    /// the song stalls for three, the Song slider is moved and the input is changed. Every
+    /// sample is a number a float holds exactly, so the result is the same on any computer.
+    /// Returns the engine, what went into the file, what went to the headphones, and the two
+    /// moments the take is lined up by.
+    fn vocal_session() -> (Core, Vec<f32>, Vec<f32>, (Option<f64>, Option<f64>)) {
+        let mut c = core();
+        c.input = 1;
+        c.monitor = true;
+        c.set_fx(&VocalFx { on: false, ..VocalFx::default() });
+        c.backing_gain = 0.75;
+        c.click_gain = 0.0;
+        c.click_on = true;
+        c.set_backing((0..6000u32).flat_map(|i| [((i * 7) % 201) as f32 / 512.0 - 0.125, ((i * 13) % 157) as f32 / 1024.0]).collect());
+        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(8 * B);
+        c.start(96.0, 2, 4, downbeats(&[4, 3]), Some(p));
+        let mut out = vec![0.0f32; B * 2];
+        let (mut file, mut heard) = (vec![], vec![]);
+        for k in 0..1600usize {
+            let at = k as f64 * B as f64 / SR as f64;
+            if k == 500 {
+                c.missed(B as u64);
+            }
+            if k == 1200 {
+                c.backing_gain = 0.5;
+            }
+            if k == 1400 {
+                c.input = 0;
+            }
+            if !(300..303).contains(&k) && k != 500 {
+                let block: Vec<f32> = (0..B).map(|i| (k * B + i) as u32).flat_map(|n| [((n * 17) % 613) as f32 / 4096.0 - 0.07, ((n * 31) % 1021) as f32 / 4096.0 - 0.12]).collect();
+                c.on_input(&block, at - 0.004);
+            }
+            if !(1100..1103).contains(&k) {
+                c.on_output(&mut out, at + 0.006);
+                heard.extend_from_slice(&out);
+            }
+            if !(700..720).contains(&k) {
+                while let Ok(v) = cons.pop() {
+                    file.push(v);
+                }
+            }
+        }
+        let moments = c.stop();
+        while let Ok(v) = cons.pop() {
+            file.push(v);
+        }
+        (c, file, heard, moments)
+    }
+
+    #[test]
+    fn one_input_is_recorded_into_the_very_same_file_as_before() {
+        let (c, file, _, (heard, captured)) = vocal_session();
+        assert_eq!(file.len(), GOLD_FILE.0, "samples in the file");
+        assert_eq!(sum_of(&file), GOLD_FILE.1, "and every one of them");
+        assert_eq!((c.padded, c.dropped), GOLD_FILE.2, "silence written for lost voice, and voice lost");
+        assert_eq!((c.stats.padded.load(Ordering::Relaxed), c.stats.dropped.load(Ordering::Relaxed)), GOLD_FILE.2, "as reported");
+        assert_eq!((c.stats.pos.load(Ordering::Relaxed), c.stats.count_in.load(Ordering::Relaxed), c.stats.length.load(Ordering::Relaxed)), GOLD_FILE.3, "where the song is, the count-in, the loop");
+        // the take is lined up by the driver's two moments, as `Recorded.offset`
+        assert_eq!(((heard.unwrap() - captured.unwrap()) * SR as f64).round() as i64, GOLD_FILE.4, "the round trip, in frames");
+        assert_eq!(c.stats.latency.load(Ordering::Relaxed), GOLD_FILE.5, "the delay heard, as measured");
+        // and the file itself, byte for byte, as the writer makes it
+        let (mut p, cons) = rtrb::RingBuffer::<f32>::new(file.len());
+        for v in &file {
+            p.push(*v).unwrap();
+        }
+        drop(p);
+        let mut bytes = std::io::Cursor::new(vec![]);
+        let spec = hound::WavSpec { channels: 1, sample_rate: SR as u32, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
+        let st = Writing::default();
+        let (n, note) = recfile::write_voice(cons, hound::WavWriter::new(&mut bytes, spec).unwrap(), &AtomicBool::new(true), &st, SR as u32, MAX_FRAMES, || None);
+        assert_eq!((n, note), (file.len() as u64, None));
+        assert_eq!(st.written.load(Ordering::Relaxed), file.len() as u64);
+        let bytes = bytes.into_inner();
+        assert_eq!((bytes.len(), sum(bytes)), GOLD_FILE.6, "the WAV, header and all");
+    }
+    /// samples; their sum; (padded, dropped); (pos, count-in, loop); offset; latency bits; the WAV's (bytes, sum)
+    const GOLD_FILE: (usize, u64, (u64, u64), (u64, u64, u64), i64, u32, (usize, u64)) = (102_144, 0x3b28_588e_4a66_a7ed, (1152, 1344), (102_208, 60_000, 6000), 416, 0x4120_0000, (408_644, 0xc9c9_07eb_3fbb_0869));
+
+    #[test]
+    fn one_input_is_heard_in_the_headphones_exactly_as_before() {
+        let (_, _, heard, _) = vocal_session();
+        assert_eq!((heard.len(), sum_of(&heard)), GOLD_HEARD, "the song and the voice, left and right, sample for sample");
+        // through the vocal chain: what the chain and the safety stage (neither was touched) make
+        // of the same voice, in the same order, is exactly what comes out
+        let fx = VocalFx::default();
+        let mut c = core();
+        c.monitor = true;
+        c.click_gain = 0.0;
+        c.set_fx(&fx);
+        c.set_backing((0..5000u32).flat_map(|i| [((i * 7) % 201) as f32 / 1024.0, 0.0]).collect());
+        c.start(120.0, 0, 4, vec![], None);
+        let (mut chain, mut safe) = (Chain::new(SR, &fx), OutSafety::new(SR));
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..400usize {
+            let block: Vec<f32> = (0..B).map(|i| 0.25 * ((k * B + i) as f32 * 0.03).sin()).flat_map(|v| [v, -v]).collect();
+            c.on_input(&block, 0.0);
+            c.on_output(&mut out, 0.0);
+            for (i, f) in out.chunks(2).enumerate() {
+                let j = ((k * B + i) % 5000) * 2;
+                let (mut l, mut r) = (0.0f32, 0.0f32);
+                l += c.backing[j] * c.backing_gain;
+                r += c.backing[j + 1] * c.backing_gain;
+                l += 0.0;
+                r += 0.0;
+                let (a, b) = chain.run(block[i * 2]);
+                l += a;
+                r += b;
+                let (l, r) = safe.run(l, r);
+                assert!(f[0].to_bits() == l.to_bits() && f[1].to_bits() == r.to_bits(), "block {k}, frame {i}");
+            }
+        }
+    }
+    /// samples sent to the headphones (left and right); their sum
+    const GOLD_HEARD: (usize, u64) = (204_416, 0xebe6_9d6f_736e_0fd0);
+
+    #[test]
+    fn the_click_falls_on_the_same_frames_at_the_same_level_as_before() {
+        // the three ways the click is counted: a loop with its bars, a loop without, and no song at all
+        let click = |song: usize, bars: &[u32]| -> Vec<f32> {
+            let mut c = core();
+            c.set_backing(vec![0.0; song * 2]);
+            c.click_on = true;
+            c.click_gain = 0.5;
+            c.start(120.0, 4, 4, downbeats(bars), None);
+            let mut out = vec![0.0f32; 1024];
+            let mut heard = vec![];
+            while heard.len() < 96000 + 2 * 7 * 24000 + 5000 {
+                c.on_output(&mut out, 0.0);
+                assert!(out.chunks(2).all(|f| f[0] == f[1]), "the same on both sides");
+                heard.extend(out.chunks(2).map(|f| f[0]));
+            }
+            heard
+        };
+        for (k, heard) in [click(7 * 24000, &[4, 3]), click(7 * 24000, &[]), click(0, &[4, 3])].iter().enumerate() {
+            // which frames sound, and which way each swings: the same on any computer
+            let frames = sum(heard.iter().enumerate().filter(|(_, v)| **v != 0.0).flat_map(|(i, v)| (if *v > 0.0 { i as u32 } else { !(i as u32) }).to_le_bytes()));
+            assert_eq!(frames, GOLD_CLICK[k].0, "way {k}: the frames that sound");
+            // how loud: a sine and a fall-off are worked out a hair differently from one computer to the next
+            let (level, power) = heard.iter().fold((0.0f64, 0.0f64), |(a, b), v| (a + v.abs() as f64, b + (*v as f64).powi(2)));
+            assert!((level / GOLD_CLICK[k].1 - 1.0).abs() < 1e-6 && (power / GOLD_CLICK[k].2 - 1.0).abs() < 1e-6, "way {k}: {level} {power}");
+        }
+    }
+    /// for each way: the sum of the frames that sound; all the samples' sizes added up; their squares added up
+    const GOLD_CLICK: [(u64, f64, f64); 3] = [(0xc3d2_312c_31b2_09d7, 3246.3261131862237, 529.9885107886493), (0x0de0_9cff_2dc2_811f, 3181.838358121371, 508.13615976891), (0xc3d2_312c_31b2_09d7, 3246.3261131862237, 529.9885107886493)];
 }
