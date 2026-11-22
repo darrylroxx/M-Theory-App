@@ -51,9 +51,9 @@ export const Lane = memo(function Lane({ track, song, keyOf, view, width, select
   const mine = useMemo(() => song.clips.filter((c) => c.track === track.id), [song.clips, track.id]);
   // every melody clip of the track is drawn on one scale
   const range = useMemo(() => {
-    const all = mine.flatMap((c) => (c.kind === "melody" ? c.content.notes.map((n) => n.midi) : []));
+    const all = [...mine, ...(ghost ? [ghost] : [])].flatMap((c) => (c.kind === "melody" ? c.content.notes.map((n) => n.midi) : []));
     return all.length ? { lo: Math.min(...all) - 1, hi: Math.max(...all) + 1 } : { lo: 55, hi: 79 };
-  }, [mine]);
+  }, [mine, ghost]);
   const takes = "takes" in track ? track.takes : undefined;
   const shown = inView(song, view, width).filter((c) => c.track === track.id);
   const color = colorOf(track);

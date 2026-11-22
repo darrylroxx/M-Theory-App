@@ -869,7 +869,8 @@ export function Host() {
           tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} picked={session.sel.clips} recordingTo={recordingTo}
           round={round} playing={player.playing} toSound={recSound} ctl={recCtl} api={recApi} />
       </Guard>
-      {all.map((w) => {
+      {/* (always in the same order on the page, whichever is in front: a window pressed to bring it forward must not be moved in the page under the press, or the press is lost. What is in front is the stacking number's to say) */}
+      {[...all].sort((a, b) => (a.id < b.id ? -1 : 1)).map((w) => {
         const t = song.tracks.find((x) => x.id === w.track);
         if (!t || !mounted.current.has(w.id)) return null;
         const frame = { win: w, track: t, song, keyOf: key, focused: wins.focused === w.id, hidden: !w.open, z: zOf(session, w.id), player: playerApi };
