@@ -1,15 +1,25 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { HANDOFF_WAIT, QUIET_AFTER, Quiet, engineWanted, freeInterface, holdInterface, mayList } from "./handoff";
+import { HANDOFF_WAIT, QUIET_AFTER, Quiet, engineWanted, freeInterface, holdInterface, mayList, windowWants } from "./handoff";
 
 describe("when the recording engine has the interface", () => {
   const base = { recording: false, busy: false, monitor: false, active: false, quiet: true };
+  it("a window that needs it: the record window, or the Audio part of the settings; never an armed track", () => {
+    expect(windowWants({ record: true, setup: false })).toBe(true);
+    expect(windowWants({ record: false, setup: true })).toBe(true);
+    expect(windowWants({ record: true, setup: true })).toBe(true);
+    expect(windowWants({ record: false, setup: false })).toBe(false);
+    // arming a track opens nothing by itself (every Play would wait for the driver to close)
+    expect(windowWants({ record: false, setup: false, armed: true })).toBe(false);
+  });
   it("only while it is needed and the app is not sounding", () => {
-    // the Vocals page on screen, the app quiet: open
-    expect(engineWanted({ ...base, active: true })).toBe(true);
-    // the song (or a take heard alone) playing on the Vocals page: closed
+    // the record window open, the app quiet: open
+    expect(engineWanted({ ...base, active: windowWants({ record: true, setup: false }) })).toBe(true);
+    // the Audio part of the settings open with no record window, the app quiet: open
+    expect(engineWanted({ ...base, active: windowWants({ record: false, setup: true }) })).toBe(true);
+    // the song (or a take heard alone) playing with one of the two windows open: closed
     expect(engineWanted({ ...base, active: true, quiet: false })).toBe(false);
-    // another page: closed
-    expect(engineWanted(base)).toBe(false);
+    // neither window open (a track may be armed): closed
+    expect(engineWanted({ ...base, active: windowWants({ record: false, setup: false, armed: true }) })).toBe(false);
     // recording, rehearsing (or getting either ready) and hearing yourself through the effects: always open
     expect(engineWanted({ ...base, recording: true, quiet: false })).toBe(true);
     expect(engineWanted({ ...base, busy: true, quiet: false })).toBe(true);
@@ -17,7 +27,7 @@ describe("when the recording engine has the interface", () => {
   });
 });
 
-describe("when the interfaces are listed (the Vocals page opened while the song plays)", () => {
+describe("when the interfaces are listed (the record window or Settings → Audio opened while the song plays)", () => {
   const base = { recording: false, busy: false, monitor: false, active: true, quiet: false };
   it("waits for the app to be quiet, unless the engine is to be open while it sounds anyway", () => {
     // hardware monitoring: the engine would not open while the song plays, so nothing is listed until it stops
@@ -29,7 +39,7 @@ describe("when the interfaces are listed (the Vocals page opened while the song 
     // recording or rehearsing (the song is the engine's then)
     expect(mayList({ ...base, recording: true })).toBe(true);
     expect(mayList({ ...base, busy: true })).toBe(true);
-    // never from another page
+    // never with neither window open
     expect(mayList({ ...base, active: false, monitor: true, quiet: true })).toBe(false);
   });
 });

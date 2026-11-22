@@ -1,11 +1,14 @@
 // The host of the track view: it reads the app's state and builds everything the view is handed. It owns the player,
 // the plugin windows (a composer and a sound window for each track: see plugins/registry), what a composer has open
 // (a clip, or its track's draft, which is heard with the song while its window is worked in), the drag of a
-// composer's clip onto a lane, the one harmony sheet every composer asks for (plugins/harmonize/host), the one record
-// window (the old Vocals page, mounted once and for good), the Canvas as an overlay, and the two sheets (Ideas and
-// settings).
+// composer's clip onto a lane, the one harmony sheet every composer asks for (plugins/harmonize/host), the recording
+// engine (ui/audio/useEngine, mounted here once and for good) with the one record window and each recording track's
+// sound window, the Canvas as an overlay, and the two sheets (Ideas and settings).
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { windowWants } from "../../audio/handoff";
 import { saveFile } from "../../audio/midi";
+import { keepTakes as keepBuffers, loadTake, takeBuffer, type TakeRef } from "../../audio/takebuffers";
+import { FX_DEFAULT, reviveFx } from "../../audio/vocalfx";
 import { isDesktop } from "../../desktop";
 import { reviveSound } from "../../audio/rack";
 import { mixWith, quietWhy } from "../../audio/mix";
@@ -31,18 +34,18 @@ import { CLIP_OF, contentBeats, type AudioClip, type Clip, type ClipKind, type N
 import { draftClipId, previewSong } from "../../timeline/preview";
 import { voicingsFor } from "../../timeline/voicing";
 import { useApp5, type App5State } from "../app5";
+import { useEngine, type EngineApi, type EngineTrack } from "../audio/useEngine";
 import { CanvasPage } from "../components/CanvasPage";
 import { DraftBadge } from "../components/Desktop";
 import { IdeasPanel } from "../components/IdeasPanel";
-import { SettingsPanel } from "../components/SettingsPanel";
-import type { RecordPhase } from "../components/VocalsPage";
+import { SettingsPanel, type AudioSettings, type SettingsPart } from "../components/SettingsPanel";
 import { useLive } from "../live";
-import { REC_WIN, RecordHost, audioTracksOf, openRecordWin, roundLabel, shownTrack, type RecordApi, type RecordCtl } from "../plugins/audio/RecordHost";
+import { REC_WIN, RecordHost, audioTracksOf, openRecordWin, recordSong, roundLabel, shownTrack, type RecordCtl } from "../plugins/audio/RecordHost";
 import type { ComposerCtl } from "../plugins/ComposerFrame";
 import { useHarmonize } from "../plugins/harmonize/host";
 import { PLUGINS } from "../plugins/registry";
 import type { SoundCtl } from "../plugins/SoundFrame";
-import { newId, shapeKey, type Progression } from "../state";
+import { newId, shapeKey, type Progression, type Studio } from "../state";
 import { V4View } from "../windows/ClipLens";
 import { useClipDrag, type ClipDragHost } from "../windows/dragging";
 import { PANEL_W, TOP_H, closeWin, retargetWin, useWindows, zOf } from "../windows/windows";
@@ -124,6 +127,19 @@ function regionsOf(song: TimelineSong): { key: string; index: number; from: numb
 
 /** No track is heard without its effects. */
 const NO_BYPASS: ReadonlySet<string> = new Set();
+const NO_TAKES: TakeRef[] = [];
+const NO_STUDIO: Studio = {};
+/** A take as it is read from disk: its file with the track's sound on it, or (`dry`) as it was sung. */
+const takeRef = (k: Take5, dry?: boolean): TakeRef => ({ wet: dry ? k.dry : k.wet, start: k.start, frames: k.frames });
+/** The takes a song plays, as they are read from disk: those on its lanes, and for a bypassed track the files as they were sung. */
+export function takesHeard(song: Pick<TimelineSong, "tracks" | "clips">, bypass: ReadonlySet<string>, dry: boolean): TakeRef[] {
+  const out: TakeRef[] = [];
+  for (const t of song.tracks) {
+    if ((t.kind !== "vocals" && t.kind !== "audio") || (dry && !bypass.has(t.id))) continue;
+    for (const k of t.takes) if (k.dry !== k.wet || !dry) if (song.clips.some((c) => c.kind === "audio" && c.track === t.id && c.take === k.id)) out.push(takeRef(k, dry));
+  }
+  return out;
+}
 
 /** What a composer window is on, as the song's functions take it. */
 const targetOf = (w: Pick<WinState, "track" | "clip">): OpenTarget => (w.clip === undefined ? { track: w.track } : { track: w.track, clip: w.clip });
@@ -173,7 +189,19 @@ export function Host() {
   }), []);
   // (a track that is gone is not bypassed any more)
   useEffect(() => setBypass((b) => ([...b].every((id) => song.tracks.some((t) => t.id === id)) ? b : new Set([...b].filter((id) => song.tracks.some((t) => t.id === id))))), [song.tracks]);
-  const ctx = useMemo<FlattenCtx>(() => ({ voicingsOf, buffer, ...(bypass.size ? { bypass } : {}) }), [voicingsOf, buffer, bypass]);
+  // a track that records, bypassed: its takes are heard as they were sung, so those files are read too (and kept
+  // while they play, with the song's own)
+  const dryTakes = useMemo(() => (bypass.size ? takesHeard(song, bypass, true) : NO_TAKES), [song.tracks, song.clips, bypass]); // eslint-disable-line react-hooks/exhaustive-deps
+  const [dryReady, setDryReady] = useState(0);
+  useEffect(() => {
+    if (!dryTakes.length) return;
+    let on = true;
+    keepBuffers([...takesHeard(song, bypass, false), ...dryTakes]);
+    if (isDesktop()) for (const tk of dryTakes) if (!takeBuffer(tk)) void loadTake(tk).then((b) => on && b && setDryReady((n) => n + 1));
+    return () => { on = false; };
+  }, [dryTakes]); // eslint-disable-line react-hooks/exhaustive-deps
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const ctx = useMemo<FlattenCtx>(() => ({ voicingsOf, buffer, ...(bypass.size ? { bypass } : {}) }), [voicingsOf, buffer, bypass, dryReady]);
   const ctxRef = useRef(ctx);
   ctxRef.current = ctx;
 
@@ -259,18 +287,52 @@ export function Host() {
     },
   }), [player, toast, peek]);
 
-  // ── recording: the one record window, the top bar's ● and monitor control, the panels' inputs ──
+  // ── recording: the engine, the one record window, the top bar's ● and monitor control, the panels' inputs ──
   const desktop = isDesktop();
-  const recApi = useRef<RecordApi | null>(null);
-  const [rec, setRec] = useState<{ phase: RecordPhase; pass: number; open: boolean }>({ phase: "idle", pass: 0, open: false });
-  const recNow = useRef(rec);
-  recNow.current = rec;
-  const [recSound, setRecSound] = useState(0);
   const micLive = useLive();
   const audioTracks = useSame(useMemo(() => audioTracksOf(song), [song.tracks]));
   const audioClips = useSame(useMemo(() => song.clips.filter((c): c is AudioClip => c.kind === "audio"), [song.clips]));
+  const recordingTo = app.recordingTo;
+  // The track the engine is on (its input and its sound are heard through the effects, and a recording goes onto
+  // it), which is also the one the record window shows: the one being recorded on while that runs; else the armed
+  // track; else the selected track when it records; else the one it was on last; else the top one.
+  const lastRec = useRef<string | null>(null);
+  const recId = shownTrack(audioTracks, { recording: recordingTo, armed: session.armed, selected: session.sel.track, last: lastRec.current });
+  lastRec.current = recId;
+  const recTrack = audioTracks.find((t) => t.id === recId) ?? null;
+  const recFx = useMemo(() => reviveFx(recTrack?.fx) ?? FX_DEFAULT, [recTrack?.fx]);
+  const recInput = recTrack?.input?.ch ?? 0;
+  const engineTrack = useMemo<EngineTrack | null>(
+    () => (recTrack ? { id: recTrack.id, name: recTrack.name, input: recInput, fx: recFx } : null),
+    [recTrack?.id, recTrack?.name, recInput, recFx], // eslint-disable-line react-hooks/exhaustive-deps
+  );
+  /** which part of the settings is open (false: the sheet is closed) */
+  const [settings, setSettings] = useState<false | SettingsPart>(false);
+  const recWin = session.windows.find((w) => w.id === REC_WIN);
+  /** the song's side of a recording: what it goes round, and the finished recording laid on its track */
+  const recSong = useMemo(() => recordSong({ app: () => live.current.app, ctx: () => ctxRef.current }), []);
+  // K keeps a pass while the record window has the keys; while a recording runs, also from the timeline and from a
+  // recording track's sound window (wherever no other window has them)
+  const focusedOn = session.windows.find((w) => w.id === wins.focused);
+  const keysElsewhere = !!focusedOn && focusedOn.id !== REC_WIN && !(focusedOn.kind === "sound" && audioTracks.some((t) => t.id === focusedOn.track));
+  const engine = useEngine({
+    active: windowWants({ record: !!recWin?.open, setup: settings === "audio", armed: !!session.armed }),
+    playing: played.playing,
+    track: engineTrack,
+    bypassed: !!recId && bypass.has(recId),
+    keys: !keysElsewhere,
+    plan: recSong.plan,
+    onRecorded: recSong.onRecorded,
+    onRecording: (on) => {
+      // the interface plays the song: the app's own player stops, and stays silent meanwhile
+      recBusy.current = on;
+      if (on) playerRef.current.stop();
+    },
+  });
+  const engineNow = useRef<EngineApi>(engine);
+  engineNow.current = engine;
   /** open the record window (on a track: that track is the one shown, so the arm moves to it when another was armed) */
-  const openRecord = useCallback((track?: string, toSound = false) => {
+  const openRecord = useCallback((track?: string) => {
     const s = peek();
     const audio = audioTracksOf(s.song);
     const locked = live.current.app.recordingTo;
@@ -282,12 +344,11 @@ export function Host() {
       return { ...next, armed: x.armed && x.armed !== on ? on : x.armed, sel: next.sel.track === on ? next.sel : { ...next.sel, track: on } };
     });
     wins.focus(REC_WIN);
-    if (toSound) setRecSound((n) => n + 1);
   }, [peek, setSession, wins]);
   /** the top bar's ● and Ctrl+R: stop the recording that runs; else record onto the armed track (with none armed: the selected one that records, else the top one, armed first) */
   const recordToggle = useCallback(() => {
-    const ph = recNow.current.phase;
-    if (ph === "recording") return recApi.current?.toggle();
+    const ph = engineNow.current.phase;
+    if (ph === "recording") return engineNow.current.toggle();
     if (ph !== "idle") return;
     const s = peek();
     const audio = audioTracksOf(s.song);
@@ -297,7 +358,7 @@ export function Host() {
     setSession((x) => ({ ...openRecordWin(x, target, { w: window.innerWidth, h: window.innerHeight, panel: PANEL_W, top: TOP_H }), armed: target }));
     wins.focus(REC_WIN);
     // (in a browser there is no recording yet: the window says so)
-    if (desktop) recApi.current?.start(target);
+    if (desktop) engineNow.current.start(target);
   }, [peek, setSession, wins, desktop]);
   // Ctrl+R with the focus inside a window, in the take list or in a box (while recording it mostly is): the timeline's
   // keys leave it alone there, and the desktop app's own window would take it for "load the page again"
@@ -314,41 +375,49 @@ export function Host() {
     return () => window.removeEventListener("keydown", onKey);
   }, [desktop]);
   // a recording begun from the window itself arms its track too: the lit ● on the panel is always the track that records
-  const recordingTo = app.recordingTo;
   useEffect(() => {
     if (recordingTo) setSession((x) => (x.armed === recordingTo ? x : { ...x, armed: recordingTo }));
   }, [recordingTo, setSession]);
   const monitor = state.studio?.monitor ?? "hardware";
+  const isOpen = !!engine.opened;
   const setMonitor = useCallback((m: "hardware" | "effects") => {
     set((x) => ((x.studio?.monitor ?? "hardware") === m ? x : { ...x, studio: { ...x.studio, monitor: m } }));
     // through the effects needs the interface: where it is not open yet, the record window opens, and the interface with it
-    if (m === "effects" && desktop && !recNow.current.open) openRecord();
+    if (m === "effects" && desktop && !engineNow.current.opened) openRecord();
   }, [set, desktop, openRecord]);
   const record = useMemo(() => (audioTracks.length ? {
-    on: rec.phase === "recording",
-    busy: rec.phase === "preparing" || rec.phase === "saving" || rec.phase === "rehearsing",
+    on: engine.phase === "recording",
+    busy: engine.phase === "preparing" || engine.phase === "saving" || engine.phase === "rehearsing",
     live: micLive,
     toggle: recordToggle,
     monitor,
     setMonitor,
-    pass: rec.phase === "recording" ? rec.pass : 0,
-  } : undefined), [audioTracks.length, rec.phase, rec.pass, micLive, recordToggle, monitor, setMonitor]);
+    pass: engine.phase === "recording" ? engine.pass : 0,
+  } : undefined), [audioTracks.length, engine.phase, engine.pass, micLive, recordToggle, monitor, setMonitor]);
   // inputs 1 and 2 in this release (as many as the interface had when it was last open, two until it has been)
   const inputCount = Math.max(1, Math.min(2, state.studio?.inputs ?? 2));
   const inputs = useMemo(() => ({
     count: inputCount,
-    ...(rec.open ? { level: (ch: number) => recApi.current?.level(ch) ?? 0 } : {}),
-    setup: () => openRecord(),
-  }), [inputCount, rec.open, openRecord]);
-  const growing = useCallback(() => recApi.current?.growing() ?? null, []);
+    ...(isOpen ? { level: (ch: number) => engineNow.current.level(ch) } : {}),
+    // "Audio setup…" in a track's input list: the Audio part of the settings
+    setup: () => setSettings("audio"),
+  }), [inputCount, isOpen]);
+  /** the recording that runs, as it grows on its lane: from the beat it goes round from to where the music is in this pass */
+  const growing = useCallback(() => {
+    const to = live.current.app.recordingTo;
+    if (!to) return null;
+    const plan = engineNow.current.running();
+    const span = plan && recSong.spanOf(plan);
+    if (!span) return { track: to, from: 0, to: 0 };
+    const at = engineNow.current.at();
+    return { track: to, from: span.from, to: span.from + (at ? at.frac * (span.to - span.from) : 0) };
+  }, [recSong]);
   // eslint-disable-next-line react-hooks/exhaustive-deps
   const round = useMemo(() => (audioTracks.length ? roundLabel(song, session) : ""), [audioTracks.length, song, session.loop, session.cursor]);
   const recCtl = useMemo<RecordCtl>(() => ({
     app: () => live.current.app,
-    ctx: () => ctxRef.current,
     stopSong: () => playerRef.current.stop(),
-    busy: (on) => { recBusy.current = on; },
-    report: (r) => setRec((was) => (was.phase === r.phase && was.pass === r.pass && was.open === r.open ? was : r)),
+    setup: () => setSettings("audio"),
     focus: () => wins.focus(REC_WIN),
     close: () => {
       bookAhead();
@@ -356,19 +425,29 @@ export function Host() {
     },
     move: (r) => wins.move(REC_WIN, r),
   }), [wins]);
+  const audioSettings = useMemo<AudioSettings>(
+    () => ({ engine, setNudge: recSong.setNudge, track: engineTrack ? { name: engineTrack.name, input: engineTrack.input } : null }),
+    [engine, recSong, engineTrack],
+  );
 
   const open = useCallback((kind: "compose" | "sound", track: string, clip?: string) => {
     // (the state as it is this moment: a clip made just now, by the same press, is in it)
     const s = peek();
     const t = s.song.tracks.find((x) => x.id === track);
     if (!t) return;
-    // a track that records: the one record window (FX: at its vocal sound)
-    if (t.kind === "vocals" || t.kind === "audio") return openRecord(track, kind === "sound");
+    const records = t.kind === "vocals" || t.kind === "audio";
+    // a track that records: its compose button opens the one record window
+    if (records && kind === "compose") return openRecord(track);
     bookAhead();
-    if (kind === "sound") return wins.open("sound", track);
+    if (kind === "sound") {
+      // its FX button opens its own sound window. For a track that records, the engine goes over to it (it is
+      // selected, and armed when another was), so what is turned in the window is heard at once through the effects
+      if (records && !live.current.app.recordingTo) setSession((x) => ({ ...x, armed: x.armed && x.armed !== track ? track : x.armed, sel: x.sel.track === track ? x.sel : { ...x.sel, track } }));
+      return wins.open("sound", track);
+    }
     // the compose button opens the track's draft; a clip that was double-clicked (or just made) is opened itself
     wins.open("compose", track, clip !== undefined && s.song.clips.some((c) => c.id === clip && c.track === track && c.kind !== "audio") ? clip : undefined);
-  }, [wins, peek, openRecord]);
+  }, [wins, peek, openRecord, setSession]);
   const setAudit = useCallback((win: string | null, span?: Region) => {
     auditRef.current = win && span ? { win, span: `${span.from}:${span.to}` } : null;
     setAuditState(win);
@@ -650,7 +729,6 @@ export function Host() {
 
   // ── the top bar ──
   const [ideas, setIdeas] = useState<false | "open" | "named">(false);
-  const [settings, setSettings] = useState(false);
   const [canvas, setCanvas] = useState<"never" | "open" | "closed">("never");
   const [rendering, setRendering] = useState(false);
   const save = useCallback(() => {
@@ -741,7 +819,7 @@ export function Host() {
     exports: { ...exportsOf, busy: rendering },
     openCanvas,
     openIdeas: () => setIdeas("open"),
-    openSettings: () => setSettings(true),
+    openSettings: () => setSettings("guitar"),
   }), [idea, dirty, count, save, editKeyed, edit, peek, sung, record, undo, redo, canUndo, canRedo, exportsOf, rendering, openCanvas]);
 
   const editBusy = useCallback((label: string, fn: (s: TimelineSong) => TimelineSong, control?: string) => {
@@ -874,9 +952,8 @@ export function Host() {
           clipboard={clipboard} sound={sounds} top={top} stale={stale} again={again} say={say} inputs={inputs} recording={growing} dropKind={dropKind} bypass={bypassCtl} ghost={ghost} />
       </Guard>
       <Guard what="the record window" onClose={recCtl.close}>
-        <RecordHost win={session.windows.find((w) => w.id === REC_WIN)} focused={wins.focused === REC_WIN} otherFocused={!!wins.focused && wins.focused !== REC_WIN} z={zOf(session, REC_WIN)}
-          tracks={audioTracks} clips={audioClips} shelf={song.shelf} bpm={song.bpm} armed={session.armed} selected={session.sel.track} picked={session.sel.clips} recordingTo={recordingTo}
-          round={round} playing={player.playing} toSound={recSound} ctl={recCtl} api={recApi} />
+        <RecordHost win={recWin} focused={wins.focused === REC_WIN} z={zOf(session, REC_WIN)} track={recTrack} clips={audioClips} shelf={song.shelf} inputs={inputCount}
+          picked={session.sel.clips} round={round} engine={engine} studio={state.studio ?? NO_STUDIO} ctl={recCtl} />
       </Guard>
       {/* (always in the same order on the page, whichever is in front: a window pressed to bring it forward must not be moved in the page under the press, or the press is lost. What is in front is the stacking number's to say) */}
       {[...all].sort((a, b) => (a.id < b.id ? -1 : 1)).map((w) => {
@@ -914,7 +991,7 @@ export function Host() {
           </Guard>
         </div>
       )}
-      {settings && <V4View><SettingsPanel onClose={() => setSettings(false)} /></V4View>}
+      {settings && <V4View><SettingsPanel onClose={() => setSettings(false)} part={settings} onPart={setSettings} audio={audioSettings} /></V4View>}
       {ideas && <IdeasPanel onClose={() => setIdeas(false)} justSaved={ideas === "named"} />}
     </>
   );
