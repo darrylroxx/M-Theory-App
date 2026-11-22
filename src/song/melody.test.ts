@@ -4,7 +4,7 @@ import { FEEL_DEFAULT, itemTune, reviveFeel, styleNotes, type PlayItem } from ".
 import { chordRounds, DEFAULT_BEAT } from "../audio/beats";
 import type { ProgChord, Progression } from "../ui/state";
 import { fingerprint, reviveIdea, snapshot } from "./library";
-import { EMPTY_MELODY, MELODY_MAX_BARS, TICKS, cellTick, clearMelody, copyMelodyBar, hasTune, melodyBase, melodyBeats, melodyRows, notesInCell, reviveMelody, setMelodyBars, toggleNote, transposeMelody, tuneBetween, type Melody } from "./melody";
+import { EMPTY_MELODY, GRID_LOW, MELODY_MAX_BARS, TICKS, canShift, cellTick, clearMelody, copyMelodyBar, gridRows, hasTune, melodyBase, melodyBeats, melodyRows, notesInCell, reviveMelody, setMelodyBars, setNoteLen, shiftOctave, toggleNote, transposeMelody, tuneBetween, type Melody } from "./melody";
 import { addNewSection, ensureSong, reviveSong, sections, selectBlock, unlinkBlock, repeatSection } from "./structure";
 
 const C = { tonic: "C", scaleId: "ionian" };
@@ -14,8 +14,10 @@ let n = 0;
 const id = () => `m${++n}`;
 
 describe("the melody grid", () => {
-  it("shows two octaves from the home note, highest first, and knows which notes are in the key", () => {
-    const rows = melodyRows(C);
+  it("two octaves from the home note, highest first, and it knows which notes are in the key", () => {
+    const rows = gridRows(C, melodyBase(C), 2);
+    // (the rows the old Melody page shows)
+    expect(rows).toEqual(melodyRows(C));
     expect(rows.length).toBe(25);
     expect(rows[0].midi).toBe(84);
     expect(rows[24].midi).toBe(60);
@@ -23,15 +25,84 @@ describe("the melody grid", () => {
     expect(rows.filter((r) => r.home).map((r) => r.midi)).toEqual([84, 72, 60]);
     expect(rows.filter((r) => !r.inKey).length).toBe(10);
     // "key only" leaves just the scale: no wrong notes to tap
-    const only = melodyRows(C, true);
+    const only = gridRows(C, melodyBase(C), 2, true);
+    expect(only).toEqual(melodyRows(C, true));
     expect(only.length).toBe(15);
     expect(only.every((r) => r.inKey)).toBe(true);
     // every key starts on its own home note, near middle C, and spells its notes its own way
     for (const [tonic, low] of [["C", 60], ["G", 67], ["Ab", 68], ["A", 57], ["B", 59], ["F#", 66]] as const) expect(melodyBase({ tonic, scaleId: "ionian" }), tonic).toBe(low);
-    expect(melodyRows({ tonic: "F", scaleId: "ionian" }).find((r) => r.midi === 70)!.name).toBe("Bb");
-    expect(melodyRows({ tonic: "B", scaleId: "ionian" }).find((r) => r.midi === 70)!.name).toBe("A#");
+    const two = (tonic: string, scaleId = "ionian", only = false) => gridRows({ tonic, scaleId }, melodyBase({ tonic, scaleId }), 2, only);
+    expect(two("F").find((r) => r.midi === 70)!.name).toBe("Bb");
+    expect(two("B").find((r) => r.midi === 70)!.name).toBe("A#");
     // a five-note scale lights five rows to the octave
-    expect(melodyRows({ tonic: "A", scaleId: "minorPentatonic" }, true).length).toBe(11);
+    expect(two("A", "minorPentatonic", true).length).toBe(11);
+  });
+
+  it("seven octaves, from the lowest note a melody may hold to the highest, highest first", () => {
+    const rows = gridRows(C, GRID_LOW, 7);
+    expect(rows.length).toBe(85);
+    expect(rows[0].midi).toBe(108);
+    expect(rows[84].midi).toBe(24);
+    // the same seven names in every octave, the home note marked in each
+    expect(rows.filter((r) => r.inKey).map((r) => r.name).slice(-8).reverse()).toEqual(["C", "D", "E", "F", "G", "A", "B", "C"]);
+    expect(rows.filter((r) => r.home).map((r) => r.midi)).toEqual([108, 96, 84, 72, 60, 48, 36, 24]);
+    expect(rows.filter((r) => !r.inKey).length).toBe(35);
+    const only = gridRows(C, GRID_LOW, 7, true);
+    expect(only.length).toBe(50);
+    expect(only.every((r) => r.inKey)).toBe(true);
+    // a bass's low E and everything a melody had before are rows of it
+    for (const midi of [28, 40, 60, 72, 84]) expect(rows.some((r) => r.midi === midi), String(midi)).toBe(true);
+    const F = { tonic: "F", scaleId: "ionian" };
+    expect(melodyRows(F).every((r) => gridRows(F, GRID_LOW, 7).some((x) => x.midi === r.midi && x.name === r.name && x.home === r.home))).toBe(true);
+    // a five-note scale lights five rows to the octave, in every octave (and the C on the top row, which is one of its notes)
+    expect(gridRows({ tonic: "A", scaleId: "minorPentatonic" }, GRID_LOW, 7, true).length).toBe(36);
+  });
+
+  it("a note is given a length, and loses it again", () => {
+    let m: Melody = { div: 2, bars: 2, notes: [{ at: 0, midi: 60 }, { at: 6, midi: 64 }, { at: 6, midi: 67 }] };
+    const long = setNoteLen(m, 6, 64, 24);
+    expect(long.notes).toEqual([{ at: 0, midi: 60 }, { at: 6, midi: 64, len: 24 }, { at: 6, midi: 67 }]);
+    // (nothing else is touched: the other notes are the very same)
+    expect(long.notes[0]).toBe(m.notes[0]);
+    expect(long.notes[2]).toBe(m.notes[2]);
+    // the same length again changes nothing; a cell with no note changes nothing
+    expect(setNoteLen(long, 6, 64, 24)).toBe(long);
+    expect(setNoteLen(m, 12, 64, 24)).toBe(m);
+    expect(setNoteLen(m, 6, 65, 24)).toBe(m);
+    // never shorter than a twelfth of a beat, always a whole number of them
+    expect(setNoteLen(m, 0, 60, 0).notes[0].len).toBe(1);
+    expect(setNoteLen(m, 0, 60, 5.6).notes[0].len).toBe(6);
+    // with no length it is a note as it is tapped in: held until the next one
+    const plain = setNoteLen(long, 6, 64);
+    expect(plain.notes).toEqual(m.notes);
+    expect("len" in plain.notes[1]).toBe(false);
+    expect(setNoteLen(m, 6, 64)).toBe(m);
+    // a length is heard: the note says how long it is
+    expect(tuneBetween(long, 4, 0, 8).find((h) => h.midi === 64)!.len).toBe(24);
+    // and it stays with the note: copied with its bar, moved with its key
+    m = copyMelodyBar(long, 4, 0, 1);
+    expect(m.notes.find((n) => n.at === 54)).toEqual({ at: 54, midi: 64, len: 24 });
+    expect(transposeMelody(long, 2).notes[1]).toEqual({ at: 6, midi: 66, len: 24 });
+  });
+
+  it("every note moves an octave up or down, and back, and nothing is ever lost", () => {
+    const m: Melody = { div: 2, bars: 2, notes: [{ at: 0, midi: 28 }, { at: 12, midi: 40, len: 12 }, { at: 24, midi: 96 }] };
+    const up = shiftOctave(m, 1);
+    expect(up.notes).toEqual([{ at: 0, midi: 40 }, { at: 12, midi: 52, len: 12 }, { at: 24, midi: 108 }]);
+    expect(shiftOctave(up, -1).notes).toEqual(m.notes);
+    // the grid, the length and the switch are as they were
+    expect({ ...up, notes: [] }).toEqual({ ...m, notes: [] });
+    // one note would leave what a melody may hold: nothing moves
+    expect(canShift(up, 12)).toBe(false);
+    expect(shiftOctave(up, 1)).toBe(up);
+    expect(canShift(m, -12)).toBe(false);
+    expect(shiftOctave(m, -1)).toBe(m);
+    expect(canShift(m, 12)).toBe(true);
+    // to the very edges and no further
+    expect(canShift({ ...m, notes: [{ at: 0, midi: 36 }] }, -12)).toBe(true);
+    expect(canShift({ ...m, notes: [{ at: 0, midi: 35 }] }, -12)).toBe(false);
+    // nothing to move
+    expect(shiftOctave(EMPTY_MELODY, 1)).toBe(EMPTY_MELODY);
   });
 
   it("a tap puts a note in, a second tap takes it out", () => {

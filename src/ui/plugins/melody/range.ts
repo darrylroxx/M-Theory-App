@@ -74,8 +74,8 @@ export function octaveTop(rows: readonly MelodyRow[], top: number, dir: 1 | -1, 
   return clampTop(rows, to >= rows[0].midi ? 0 : rowAt(rows, to), inView);
 }
 
-/** The first row in view that puts a row in the middle (a press on the overview). */
-export const centreTop = (rows: readonly MelodyRow[], row: number, inView: number): number => clampTop(rows, row - Math.floor(inView) / 2 + 0.5, inView);
+/** The first row in view that puts a place among the rows in the middle (a press on the overview): `row` counts rows from the top, and may lie part of the way down one. */
+export const centreTop = (rows: readonly MelodyRow[], row: number, inView: number): number => clampTop(rows, row - Math.floor(inView) / 2, inView);
 
 /** Is a note on a row that is in view (wholly), when `top` is the first row in view and `inView` rows fit? */
 export function rowInView(rows: readonly MelodyRow[], midi: number, top: number, inView: number): boolean {
