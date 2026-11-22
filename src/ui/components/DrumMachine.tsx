@@ -681,7 +681,6 @@ export const DrumMachine = memo(function DrumMachine({ fresh, beat, setBeat, onP
     return (
       <section className="drums dp dp-sound" aria-label="Drum sound">
         <div className="dp-sec" data-sec="kit">
-          <h3>Kit</h3>
           <div className="dm-head">{kitPick}</div>
           {kitDrawer}
         </div>

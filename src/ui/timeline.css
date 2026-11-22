@@ -269,6 +269,7 @@
 .cs-grip svg { width: 9px; height: 13px; }
 .cs .cs-clip .tlc-in { left: 14px; }
 .cs .cs-clip .tlc-notch { margin-left: 14px; }
+.cs .cs-clip .tlc-empty { display: none; }
 .cs-hint { position: absolute; left: 44px; top: 50%; transform: translateY(-50%); color: var(--muted); font-size: 0.74rem; font-weight: 650; white-space: nowrap; pointer-events: none; }
 .cs-fit { flex: none; border-color: var(--ext); }
 .cs-len { flex: none; display: inline-flex; align-items: stretch; height: 30px; border: 1px solid var(--border-2); border-radius: 9px; overflow: hidden; background: var(--card-2); }

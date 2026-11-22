@@ -42,5 +42,6 @@ const subscribe = (fn: () => void) => {
 
 /** A track's view, drawn again when it changes. With no track (the old page, which keeps its own): the starting view, always. */
 export function useDrumView(track: string | null | undefined): DrumView {
-  return useSyncExternalStore(subscribe, () => (track ? drumView(track) : START), () => START);
+  const read = () => (track ? drumView(track) : START);
+  return useSyncExternalStore(subscribe, read, read);
 }
