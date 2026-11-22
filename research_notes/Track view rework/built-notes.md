@@ -346,6 +346,7 @@ Rough edges left:
 - A new Blank track is still named "Audio 1" while the chooser says "Blank".
 - A second take that is shorter than the first leaves the first's tail on the lane after it (the model's rule: a new clip trims what it covers, no more).
 - With eighteen or more inputs the chip's list is taller than a 800-pixel window and scrolls.
-- The step 6r note on "Recording: in the desktop app." text: the old Vocals page (not mounted) still says it; `vocalhost.test.ts` holds that.
+- The old Vocals page (`components/VocalsPage.tsx`, mounted nowhere, held by `vocalhost.test.ts` until step 7) still says "Recording: in the desktop app." in a browser; the record window no longer does.
+- In a browser Ctrl+R is the browser's own (it loads the page again): there the top bar's ● and the window's ● record.
 
 Tested against a stand-in for the desktop side with eight inputs (the builder's scratch folder `tv6`: `fake-tauri.js`, `lib.js`, `d1.js` to `d6.js`, and the step 5 scripts `v1.js`, `v2.js` for the vocal path) and with Chromium's pretend microphone (`w1.js` to `w3.js`), development and production build. Not tested, and to be tested by hand on Windows with the interface: everything that is the driver's (a real pair's left and right, the levels of every input in the list, the dry stereo monitor, the once-through's timing against the song, the list of inputs opening the interface).
