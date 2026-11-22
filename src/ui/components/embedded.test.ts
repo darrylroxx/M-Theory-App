@@ -1,13 +1,15 @@
 // The old view as one page in a window of the track view, drawn as text: exactly the one page, and nothing of the
-// old app around it. And the melody grid starting lower, for a bass.
+// old app around it, not a harmony sheet either (the track view hosts that). And the melody grid starting lower, for
+// a bass.
 import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { SOUND_DEFAULT } from "../../audio/rack";
 import { getTuning } from "../../guitar/tunings";
+import { writeHarmony } from "../../song/harmony";
 import { EMPTY_MELODY, melodyBase } from "../../song/melody";
 import { convertAll } from "../../timeline/convert";
-import type { Target } from "../../timeline/lens";
+import { lensOf, unlens, type Target } from "../../timeline/lens";
 import { bandSong } from "../../timeline/testsongs";
 import { App5Ctx, type App5State, type Ctx5 } from "../app5";
 import { DEFAULT_STATE } from "../state";
@@ -79,6 +81,50 @@ describe("the old view as one page in a window", () => {
     expect(bass).toContain(low + 24);
     expect(Math.min(...melody)).toBe(melodyBase(key));
     expect(melody).toContain(melodyBase(key) + 24);
+  });
+});
+
+describe("Harmonize on the old view in a window: the sheet is the host's", () => {
+  const ask = () => {};
+  const targets: [string, Target, EmbedHost["pane"]][] = [["Chords", { track: "tc", clip: "c1" }, "rhythm"], ["Melody", { track: "tm", clip: "m1" }, "melody"], ["Bass", { track: "tb", clip: "b1" }, "melody"]];
+  for (const [name, target, pane] of targets) {
+    it(`${name}: with onHarmonize set, the page's markup holds a Harmonize button and no harmony sheet`, () => {
+      const html = page(target, host(pane, { onHarmonize: ask }));
+      expect(count(html, /class="chip hz-go"/g)).toBe(1);
+      expect(html).toContain('aria-expanded="false"');
+      expect(html).not.toContain("hz-sheet");
+      expect(html).not.toContain('aria-label="Harmonize"');
+    });
+    it(`${name}: while the host says the sheet is open for it, the button is lit, and the page still holds no sheet`, () => {
+      const html = page(target, host(pane, { onHarmonize: ask, harmonizing: true }));
+      expect(count(html, /class="chip hz-go on"/g)).toBe(1);
+      expect(html).toMatch(/class="chip hz-go on" aria-expanded="true"/);
+      expect(html).not.toContain("hz-sheet");
+    });
+    it(`${name}: without onHarmonize the page has no Harmonize button (it has no sheet of its own to open)`, () => {
+      const html = page(target, host(pane));
+      expect(html).not.toContain("hz-go");
+      expect(html).not.toContain("hz-sheet");
+    });
+  }
+  it("the Drums page never has a Harmonize button", () => {
+    expect(page({ track: "td", clip: "d1" }, host("drums", { onHarmonize: ask, harmonizing: true }))).not.toContain("hz-go");
+  });
+  it("a track Harmonize wrote: its ⟳ row is there to ask the host with, and only with a host to ask", () => {
+    // a second melody track that Harmonize wrote from the melody
+    const t: Target = { track: "tm", clip: "m1" };
+    const lens = lensOf(state.song, t, key, 0)!;
+    const written = writeHarmony(lens.p, key, { kind: "melody", from: "melody", option: "third-above" }, { id: "hx", isNew: true, name: "x" }).p;
+    let n = 0;
+    const song = unlens(state.song, t, lens, written, () => `x${++n}`);
+    const clip = song.clips.find((c) => c.track === "hx")!.id;
+    const draw = (h: EmbedHost) => renderToStaticMarkup(createElement(App5Ctx.Provider, { value: { ...app, state: { ...state, song }, peek: () => ({ ...state, song }) } },
+      createElement(ClipLens, { target: { track: "hx", clip }, pane: "melody" }, createElement(GuitarView, { embedded: h }))));
+    const asked = draw(host("melody", { onHarmonize: ask }));
+    expect(asked).toContain('class="emb-again"');
+    expect(asked).toMatch(/aria-label="Write [^"]+ again"/);
+    expect(asked).not.toContain("hz-sheet");
+    expect(draw(host("melody"))).not.toContain("emb-again");
   });
 });
 

@@ -8,14 +8,16 @@
 // same lens the old pages use (windows/ClipLens), so the sheet itself is the old one, unchanged: it reads the lens
 // song, and what it keeps goes back into the real song as one undo step. While an option is chosen the track view's
 // player plays the open bars round with it written in (`preview`).
-import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, memo, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { createPortal } from "react-dom";
-import { previewHarmony } from "../../../song/harmony";
+import { harmonizeSources, previewHarmony } from "../../../song/harmony";
 import { allTracks, normalize, type Track as OldTrack } from "../../../song/tracks";
+import type { Key } from "../../../theory/keys";
 import type { OpenTarget } from "../../../timeline/content";
+import { lensOf } from "../../../timeline/lens";
 import type { TimelineSong, WinState } from "../../../timeline/model";
 import { AuditionCtx, HarmonyPicker, type Audition, type Preview } from "../../components/HarmonyPicker";
-import { useApp, type Progression } from "../../state";
+import { useApp, type Pane, type Progression } from "../../state";
 import { ESC_OPEN, onEscape } from "../../timeline/keys";
 import { ClipLens } from "../../windows/ClipLens";
 import { WinFocus } from "../../windows/windows";
@@ -41,6 +43,16 @@ export interface HarmonyOpen {
 export function asked(now: HarmonyOpen | null, ask: HarmonyOpen): HarmonyOpen | null {
   if (!ask.again && now && now.win === ask.win && !now.again) return null;
   return ask;
+}
+
+/**
+ * Is there anything to harmonize with from what a window has open: a chords, melody or bass track with music under
+ * its bars (a draft: its bars at `anchor`)? A composer shows its Harmonize button only then. (The old pages in
+ * windows ask the lens song the same thing themselves.)
+ */
+export function canHarmonize(song: TimelineSong, target: OpenTarget, key: Key, anchor: number): boolean {
+  const lens = lensOf(song, target, key, anchor);
+  return !!lens && harmonizeSources(lens.p).length > 0;
 }
 
 /** What the host of the track view gets back: how composers ask, and the sheet to draw. */
@@ -117,19 +129,41 @@ export function useHarmonize(o: {
   // Escape: one thing per press. The sheet goes first, its window after.
   useEffect(() => (focused ? onEscape(ESC_OPEN, () => (setOpen(null), true)) : undefined), [focused]);
 
+  // (the same two functions always: the sheet is drawn again only for what changed in it)
+  const does = useMemo<Hosted>(() => ({ preview: (id, t, heard) => live.current.preview(id, t, heard), close }), [close]);
   const sheet = on && open && body && target && lens ? createPortal(
-    <Fence key={`${open.win}:${open.kind}:${open.again ? "again" : "new"}`} onClose={close}>
-      <WinFocus.Provider value={focused}>
-        <ClipLens target={target} pane={lens}>
-          <HarmonySheet kind={open.kind} again={open.again} anchor={open.anchor} playing={o.playing && shown}
-            onPreview={(heard) => live.current.preview(open.win, target, heard)} onClose={close} />
-        </ClipLens>
-      </WinFocus.Provider>
-    </Fence>,
+    <InWindow key={`${open.win}:${open.kind}:${open.again ? "again" : "new"}`} win={open.win} kind={open.kind} again={open.again} anchor={open.anchor}
+      target={target} pane={lens} focused={focused} playing={o.playing && shown} does={does} />,
     body,
   ) : null;
   return { lit: on && open && !open.again ? open.win : null, ask, end, close, sheet };
 }
+
+interface Hosted {
+  preview(win: string, target: OpenTarget, heard: Progression | null): void;
+  close(): void;
+}
+
+/**
+ * The sheet with what a window gives the page inside it: whether it has the focus, and the lens onto what it has
+ * open. Drawn again only when something of its own changes, as the old page in the window is: not every time the
+ * host is (the lens of a track with nothing written yet is made anew each time it is asked for, and the sheet would
+ * take that for a change of the song).
+ */
+const InWindow = memo(function InWindow({ win, kind, again, anchor, target, pane, focused, playing, does }: {
+  win: string; kind: "chords" | "melody"; again: boolean; anchor: HTMLElement | null; target: OpenTarget; pane: Pane; focused: boolean; playing: boolean; does: Hosted;
+}) {
+  const onPreview = useCallback((heard: Progression | null) => does.preview(win, target, heard), [does, win, target]);
+  return (
+    <Fence onClose={does.close}>
+      <WinFocus.Provider value={focused}>
+        <ClipLens target={target} pane={pane}>
+          <HarmonySheet kind={kind} again={again} anchor={anchor} playing={playing} onPreview={onPreview} onClose={does.close} />
+        </ClipLens>
+      </WinFocus.Provider>
+    </Fence>
+  );
+});
 
 /**
  * The sheet on the lens song of what its window has open (it must be drawn inside that window's `ClipLens`): which
