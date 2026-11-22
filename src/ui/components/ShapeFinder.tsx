@@ -35,11 +35,17 @@ export function ShapesIcon() {
  * It opens on the shapes everybody knows; the other tabs branch out to small shapes,
  * inversions and everything else. Tap a shape to hear and use it, or drag it into the tray.
  */
-export function ShapeFinder({ slotShape, onPinSlot, keys }: {
+export function ShapeFinder({ slotShape, onPinSlot, keys, panel }: {
   slotShape: (slotId: string) => Voicing | undefined;
   onPinSlot: (slotId: string, voicingId: string) => void;
   /** a chords track on the keys: the sheet shows the keys it plays (a chord in the tray: the same keys the tray plays) in place of guitar shapes */
   keys?: (ref: ChordRef, slotId?: string) => number[];
+  /**
+   * In a plugin window (the Chords plugin): the finder is a panel of the window, beside the tray, and not a sheet
+   * lifted over the page. It is laid out by the window; Escape is the window's to hand out (what is open inside it
+   * first, then the window itself), so the finder does not listen for it.
+   */
+  panel?: boolean;
 }) {
   const { sheet, openSheet, state, set, tuning, shapeOf, setShape, addChord, toast } = useApp();
   const { capo, labels, leftHanded } = state.settings;
@@ -73,11 +79,11 @@ export function ShapeFinder({ slotShape, onPinSlot, keys }: {
   // (inside a window of the track view: only while that window is where the keys go)
   const focused = useWinFocus();
   useEffect(() => {
-    if (!sheet || !focused) return;
+    if (!sheet || !focused || panel) return;
     const onKey = (e: KeyboardEvent) => e.key === "Escape" && openSheet(null);
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [sheet, openSheet, focused]);
+  }, [sheet, openSheet, focused, panel]);
 
   if (!sheet || !ref || !book || gone) return null;
   const keyNotes = keys?.(ref, sheet.slotId);
@@ -122,7 +128,7 @@ export function ShapeFinder({ slotShape, onPinSlot, keys }: {
   const shown = TABS.filter((t) => has(t));
 
   return (
-    <section className="finder" role="dialog" aria-label={`${chordSymbol(ref)}: ways to play`}>
+    <section className={`finder${panel ? " panel" : ""}`} role={panel ? "region" : "dialog"} aria-label={`${chordSymbol(ref)}: ways to play`}>
       <div className="finder-head">
         <h2>{chordSymbol(ref)}{picked ? slash(picked) : ""}</h2>
         <ChordNotes chord={ref} />
