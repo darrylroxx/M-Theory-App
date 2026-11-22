@@ -281,15 +281,22 @@ function build(song: TimelineSong, ctx: FlattenCtx, s: Stretch, store: Memo): Pa
   });
 }
 
-/** What one chords track plays in a stretch: every chord of its clips there, with where it starts and how it is played. */
+/**
+ * What one chords track plays in a stretch: every chord of its clips there, with where it starts and how it is played.
+ * Each chord says the beat its playing style counts from (`from`, counted like `at` from the stretch's start): where
+ * its clip starts. So a style two bars long starts with the clip, wherever in a stretch the clip lies. (A clip whose
+ * left edge was moved, or the second piece of a split one, counts from where its content starts: what was heard
+ * before stays as it was.)
+ */
 function chordsOf(t: ChordsTrack, clips: ChordsClip[], s: Stretch, gone: readonly [number, number][], ctx: FlattenCtx): Chord[] {
   const sound = ctx.bypass?.has(t.id) ? drySound(soundOf(t.sound)) : soundOf(t.sound);
   const out: Chord[] = [];
   for (const c of clips) {
     const midi = notesOf(c.content, t.tone, ctx);
+    const from = c.start - c.off - s.from;
     for (const l of liesOf(c, s))
       for (const [a, b] of without(l.a, l.b, gone))
-        out.push({ track: t.id, at: a - s.from, beats: b - a, midi: midi[l.i] ?? [], style: c.content.style, ...(c.content.feel ? { feel: c.content.feel } : {}), sound, tone: t.tone });
+        out.push({ track: t.id, at: a - s.from, beats: b - a, midi: midi[l.i] ?? [], style: c.content.style, ...(c.content.feel ? { feel: c.content.feel } : {}), sound, tone: t.tone, from });
   }
   return out.sort((x, y) => x.at - y.at);
 }

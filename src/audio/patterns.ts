@@ -261,8 +261,11 @@ export interface PlayItem {
 
 /** What the tracks added on the Track page play in one section. */
 export interface ExtraPlay {
-  /** extra chords tracks: each chord with where it starts in the section, in beats */
-  chords: { track: string; at: number; beats: number; midi: (number | null)[]; style: PatternId; feel?: Partial<Feel>; sound: HarpSound; tone?: Tone }[];
+  /**
+   * extra chords tracks: each chord with where it starts in the section, in beats. `from`: the beat of the section its
+   * playing style counts from (its clip's start; before the section, below nothing). Not given: the section's start.
+   */
+  chords: { track: string; at: number; beats: number; midi: (number | null)[]; style: PatternId; feel?: Partial<Feel>; sound: HarpSound; tone?: Tone; from?: number }[];
   /** extra melody tracks */
   tunes: { track: string; tune: PlayTune }[];
   /** extra drum tracks */
@@ -277,6 +280,13 @@ export interface ExtraPlay {
  * the melody and the playing style all count from there.
  */
 export const sectionStart = (item: PlayItem, i: number, at: number, origin: number): number => (item.from !== undefined ? at - item.from : i === 0 || item.section ? at : origin);
+
+/**
+ * How far into its playing style's pattern a chord of an added chords track starts: counted from the beat the chord
+ * says (`from`), or from its section's start when it says none. (A style longer than a bar, and a style at half
+ * speed, start where the pattern is counted from.)
+ */
+export const styleAt = (c: { at: number; from?: number }): number => c.at - (c.from ?? 0);
 
 /** A melody ready to play: its notes, the length of a bar under it, and the drums' swing. */
 export interface PlayTune {
