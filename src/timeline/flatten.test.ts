@@ -7,7 +7,9 @@ import { getTuning } from "../guitar/tunings";
 import type { ChordRef } from "../theory/chords";
 import { drySound, flatten, songBeat, type Flat, type FlattenCtx } from "./flatten";
 import type { AudioClip, Take5, TimelineSong } from "./model";
-import { SIG44, SIG68, audioClip, audioTrack, chord, chordsClip, chordsContent, chordsTrack, drumsClip, drumsTrack, groove, melodyClip, mixedSong, songOf, take, tune, tuneTrack } from "./testsongs";
+import { renderLog } from "./renderlog";
+import { resizeClip, splitClips } from "./edit";
+import { SIG44, SIG68, audioClip, audioTrack, bandSong, chord, chordsClip, chordsContent, chordsTrack, counter, drumsClip, drumsTrack, groove, melodyClip, mixedSong, songOf, take, tune, tuneTrack } from "./testsongs";
 import { voicingsFor, type VoicingCtx } from "./voicing";
 
 const tuning = getTuning("standard");
@@ -147,6 +149,70 @@ describe("chords", () => {
     // part-way through a chord: the chord is cut where the span starts, and what is left of it comes back where the span ends
     const half = songOf(s.tracks, { clips: [chordsClip("c1", "tc", 0, 8, { content: chordsContent(2, undefined, [chord("x", "C", 8)]) }), chordsClip("h1", "th", 2, 4, { instead: "tc", content: chordsContent(1) })] });
     expect(flatten(half, ctx).items[0].extra!.chords.filter((c) => c.track === "tc").map((c) => [c.at, c.beats])).toEqual([[0, 2], [6, 2]]);
+  });
+});
+
+describe("where a clip's playing style counts from", () => {
+  /** drums over bars 1 to 4 (one stretch), chords from bar 2 for two bars and on bar 4, and a second chords track from bar 1 */
+  const late = (): TimelineSong =>
+    songOf([chordsTrack("tc", "Chords", { lead: true }), chordsTrack("t2", "Chords 2"), drumsTrack("td", "Drums", { lead: true })], {
+      clips: [chordsClip("c1", "tc", 4, 8), chordsClip("c2", "tc", 12, 4), chordsClip("e1", "t2", 0, 16), drumsClip("d1", "td", 0, 16)],
+    });
+  it("every chord of a clip carries the clip's start as `from`, counted like `at` from the stretch's start", () => {
+    const f = flatten(late(), ctx);
+    expect(new Set(f.origin)).toEqual(new Set([0]));
+    const chords = f.items[0].extra!.chords;
+    expect(chords.filter((c) => c.track === "tc").map((c) => [c.at, c.from])).toEqual([[4, 4], [8, 4], [12, 12]]);
+    expect(chords.filter((c) => c.track === "t2").map((c) => [c.at, c.from])).toEqual([[0, 0], [4, 0], [8, 0], [12, 0]]);
+  });
+  it("in every song: each chord's `from` is the start of the clip it comes from", () => {
+    for (const song of [late(), mixedSong(), bandSong()]) {
+      const f = flatten(song, ctx);
+      let seen = 0;
+      f.items.forEach((item, i) => {
+        for (const c of item.extra?.chords ?? []) {
+          const at = f.origin[i] + c.at;
+          const clip = song.clips.find((x) => x.kind === "chords" && x.track === c.track && x.start <= at + 1e-9 && x.start + x.len > at + 1e-9)!;
+          expect(c.from).toBeDefined();
+          expect(f.origin[i] + c.from!).toBeCloseTo(clip.start - clip.off, 9);
+          seen++;
+        }
+      });
+      expect(seen).toBeGreaterThan(0);
+    }
+  });
+  it("a clip that runs on over a cut counts from its start in the next stretch too: from before that stretch", () => {
+    // 6/8 from bar 3: the clip (written in 4/4) crosses the change, and is cut there
+    const s = songOf([chordsTrack("tc", "Chords", { lead: true })], { sigs: [{ bar: 2, sig: SIG68 }], clips: [chordsClip("c1", "tc", 4, 8)] });
+    const f = flatten(s, ctx);
+    const second = itemAt(f, 8);
+    expect(f.origin[f.at.indexOf(8)]).toBe(8);
+    expect(second.extra!.chords.map((c) => [c.at, c.from])).toEqual([[0, -4]]);
+  });
+  it("the second piece of a split clip, and a clip whose left edge was moved, count from where their content starts: what was heard stays", () => {
+    const whole = late();
+    const split = splitClips(whole, ["c1"], 8, counter());
+    expect(split.clips.filter((c) => c.track === "tc").map((c) => [c.start, c.off])).toEqual([[4, 0], [8, 4], [12, 0]]);
+    const of = (song: TimelineSong) => flatten(song, ctx).items[0].extra!.chords.filter((c) => c.track === "tc").map((c) => [c.at, c.beats, c.from]);
+    expect(of(split)).toEqual(of(whole));
+    // its left edge pulled in by a bar: the chord that is left counts as it did
+    const trimmed = resizeClip(whole, "c1", "left", 8);
+    expect(of(trimmed)).toEqual(of(whole).filter(([at]) => at !== 4));
+  });
+  it("heard: a style two bars long on a clip that starts on bar 2 of its stretch starts with the clip, as it does on a clip at the start", async () => {
+    const clave = (start: number) => chordsClip("c1", "tc", start, 8, { content: { ...chordsContent(2), style: "clave" } });
+    const tracks = [chordsTrack("tc", "Chords", { lead: true }), drumsTrack("td", "Drums", { lead: true })];
+    // (a drums clip with no hits over bars 1 to 3 keeps them one stretch)
+    const quiet = drumsClip("d1", "td", 0, 12, { content: { ...groove(3), rows: emptyRows(48) } });
+    const atBar2 = songOf(tracks, { clips: [clave(4), quiet] });
+    const atBar1 = songOf(tracks, { clips: [clave(0), quiet] });
+    expect(new Set(flatten(atBar2, ctx).origin)).toEqual(new Set([0]));
+    const spb = 60 / atBar2.bpm;
+    const notes = async (song: TimelineSong, shift: number) =>
+      (await renderLog(flatten(song, ctx).items, song.bpm)).notes.filter((n) => n.track === "tc").map((n) => `${n.midi}@${(n.when / spb - shift).toFixed(3)}`).sort();
+    const a = await notes(atBar2, 4);
+    expect(a.length).toBeGreaterThan(0);
+    expect(a).toEqual(await notes(atBar1, 0));
   });
 });
 

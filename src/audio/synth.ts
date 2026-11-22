@@ -10,7 +10,7 @@ import { FIRST_DRUMS, keepDrums, onKickHit, playStep, prepareBeat, setBedPlaying
 import { NOTE_LATE } from "./late";
 import { DRUM_IDS } from "./drums";
 import { melodyBeats, nextNote, tuneBetween } from "../song/melody";
-import { itemNotes, meterOf, sectionStart, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { itemNotes, meterOf, sectionStart, styleAt, styleNotes, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 import { dropPulses } from "./pulse";
 import { tapStem, untapStem } from "./stems";
 import { fader, sendFader } from "./mix";
@@ -328,12 +328,19 @@ export function prepFor(items: PlayItem[], pattern: PatternId, beat: Beat | null
     // the added chords tracks: every chord that starts under this item, in its own style
     for (const c of item.extra?.chords ?? [])
       if (c.at >= s0 - 1e-6 && c.at < s1 - 1e-6)
-        for (const e of styleNotes(c.midi, c.beats, c.style, c.at, meterOf(item.drums ?? beat, item.meter), c.feel)) add(e.midi, { track: c.track, kind: "chord", tone: c.tone, sound: c.sound }, origin + c.at + e.beat, i);
+        for (const e of styleNotes(c.midi, c.beats, c.style, styleAt(c), meterOf(item.drums ?? beat, item.meter), c.feel)) add(e.midi, { track: c.track, kind: "chord", tone: c.tone, sound: c.sound }, origin + c.at + e.beat, i);
     at += item.beats;
   });
   // (the queue is worked through in order: what sounds first is ready first)
   return out.sort((a, b) => a.at! - b.at!);
 }
+
+/**
+ * Where a chord of an added chords track is, for the voice that plays it. A playing style counts from the beat the
+ * chord says (its clip's start); the synth plays a whole section its own way and counts from the section's start,
+ * as it always did.
+ */
+const chordAt = (ch: { at: number; from?: number; tone?: Tone }, v: TrackVoice): number => ((ch.tone ?? v.tone).inst === "synth" ? ch.at : styleAt(ch));
 
 // ── Progression player (look-ahead scheduler) ─────────────────
 
@@ -756,12 +763,14 @@ export class ProgressionPlayer {
         const s1 = s0 + item.beats;
         const run = clipChords(ex.chords, s0 - items.slice(firstOf(i), i).reduce((a, x) => a + x.beats, 0), s0 + (this.secs.rest[i] ?? item.beats));
         for (const ch of run)
-          if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-            playChord(voiceFor({ track: ch.track, kind: "chord", tone: ch.tone, sound: ch.sound }), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, ch.at, this.beat, this.synthNotes, () => ({
+          if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6) {
+            const v = voiceFor({ track: ch.track, kind: "chord", tone: ch.tone, sound: ch.sound });
+            playChord(v, { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, this.pattern, chordAt(ch, v), this.beat, this.synthNotes, () => ({
               key: `${ch.track}@${t0.toFixed(4)}`,
               t0,
               chords: run.filter((x) => x.track === ch.track),
             }));
+          }
       }
       // recorded takes: whatever lies under this item, each heard once, in its place; going round, none runs past
       // where the loop ends (the next time round starts it again), nor past where the music jumps
@@ -1051,12 +1060,14 @@ export async function renderSong(items: PlayItem[], o: { bpm: number; pattern: P
       // (cut to the run of items it is in, as the live player does: a loop's edges)
       const run = clipChords(ex?.chords ?? [], runStart, s0 + secs.rest[i]);
       for (const ch of run)
-        if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6)
-          playChord(voice(ch.track, "chord", ch.sound, ch.tone), { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, ch.at, o.beat, cache, () => ({
+        if (ch.midi.length && ch.at >= s0 - 1e-6 && ch.at < s1 - 1e-6) {
+          const v = voice(ch.track, "chord", ch.sound, ch.tone);
+          playChord(v, { midi: ch.midi, beats: ch.beats, style: ch.style, feel: ch.feel, sound: ch.sound, tone: ch.tone, drums: item.drums, meter: item.meter }, t + (ch.at - s0) * spb, spb, o.pattern, chordAt(ch, v), o.beat, cache, () => ({
             key: `${ch.track}@${t0.toFixed(4)}`,
             t0,
             chords: run.filter((x) => x.track === ch.track),
           }));
+        }
       // every drums track on its own desk, each section's rhythm from where the section starts
       const drums = [{ beat: item.drums ?? o.beat, track: FIRST_DRUMS }, ...(ex?.drums ?? []).map((d) => ({ beat: d.beat, track: d.track }))];
       // an added track with no drums here goes quiet, its noise bed too, as it does live
