@@ -37,6 +37,10 @@ struct Running {
 
 static RUNNING: Mutex<Option<Running>> = Mutex::new(None);
 
+/// The most inputs a level is kept for. (An interface with more still opens and records; its
+/// inputs past this one report no level.)
+pub const MAX_METERS: usize = 32;
+
 /// The levels shared between the audio thread and the reporting thread, without locks:
 /// the audio thread only raises a peak and adds to a sum.
 pub struct Shared {
@@ -58,10 +62,10 @@ impl Shared {
         if ch == 0 {
             return;
         }
-        let mut peaks = [0f32; 8];
-        let mut sums = [0f32; 8];
+        let mut peaks = [0f32; MAX_METERS];
+        let mut sums = [0f32; MAX_METERS];
         for frame in data.chunks(ch) {
-            for (c, s) in frame.iter().enumerate().take(8) {
+            for (c, s) in frame.iter().enumerate().take(MAX_METERS) {
                 let v = f32::from_sample(*s).abs();
                 if v > peaks[c] {
                     peaks[c] = v;
@@ -69,7 +73,7 @@ impl Shared {
                 sums[c] += v * v;
             }
         }
-        for c in 0..ch.min(8) {
+        for c in 0..ch.min(MAX_METERS) {
             let _ = self.peak[c].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| (peaks[c] > f32::from_bits(old)).then(|| peaks[c].to_bits()));
             let _ = self.sum[c].fetch_update(Ordering::Relaxed, Ordering::Relaxed, |old| Some((f32::from_bits(old) + sums[c]).to_bits()));
         }
@@ -182,6 +186,30 @@ mod tests {
         assert_eq!(l.peak, vec![0.9, 0.03]);
         assert!((l.rms[0] - ((0.25 + 0.81 + 0.01) / 3f32).sqrt()).abs() < 1e-6);
         assert_eq!(s.take().peak, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn every_input_has_a_level_up_to_thirty_two() {
+        // an interface with 18 inputs: input n is a steady n / 32
+        let s = Shared::new(18);
+        let block: Vec<f32> = (0..64).flat_map(|_| (1..=18).map(|n| n as f32 / 32.0)).collect();
+        s.feed(&block);
+        let l = s.take();
+        assert_eq!((l.peak.len(), l.rms.len()), (18, 18), "one value for every input");
+        for n in 1..=18 {
+            let want = n as f32 / 32.0;
+            assert_eq!(l.peak[n - 1], want, "input {n}");
+            assert!((l.rms[n - 1] - want).abs() < 1e-4, "input {n}: {}", l.rms[n - 1]);
+        }
+        // one with 40: every input is in the report, the first 32 with their levels
+        let s = Shared::new(40);
+        let block: Vec<f32> = (0..16).flat_map(|_| (1..=40).map(|n| n as f32 / 64.0)).collect();
+        s.feed(&block);
+        let l = s.take();
+        assert_eq!(l.peak.len(), 40);
+        assert!((1..=MAX_METERS).all(|n| l.peak[n - 1] == n as f32 / 64.0), "the first 32 are metered");
+        assert!(l.peak[MAX_METERS..].iter().all(|v| *v == 0.0), "the rest report nothing");
+        assert_eq!(s.take().peak, vec![0.0; 40], "and it starts again after each report");
     }
 
     #[test]

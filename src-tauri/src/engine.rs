@@ -11,6 +11,11 @@
 //! the song sample for sample: wherever voice is lost (the recorder could not keep up, a block
 //! never arrived), silence takes its place and every later pass stays exactly where it was
 //! sung. If the driver resets in the middle, the recording is closed and handed back, not lost.
+//!
+//! One input is a voice: a mono file, and the vocal chain in the headphones. A pair of inputs
+//! is recorded as a stereo file and heard as it is, left and right, with no chain. And the song
+//! can be played once instead of round and round, for a recording from the cursor: after its
+//! last frame the recording goes on in silence until Stop.
 
 use std::collections::VecDeque;
 use std::path::{Path, PathBuf};
@@ -79,6 +84,8 @@ fn moment(a: &AtomicU64) -> Option<f64> {
 pub struct Settings {
     pub monitor: bool,
     pub input: usize,
+    /// the second input of a pair (none: one input)
+    pub input_b: Option<usize>,
     pub fx: VocalFx,
     pub backing_gain: f32,
     pub click_gain: f32,
@@ -90,8 +97,10 @@ pub struct Settings {
 pub enum Cmd {
     Set(Box<Settings>),
     Backing(Vec<f32>),
-    /// `downbeats`: one entry per beat of the loop, true where a bar begins (see `downbeats`)
-    Start { bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>> },
+    /// `downbeats`: one entry per beat of the loop, true where a bar begins (see `downbeats`).
+    /// `once`: the song is played once, then silence (not round and round). `stereo`: the
+    /// recorder takes two samples a frame, left then right (its file is a pair's).
+    Start { bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>>, once: bool, stereo: bool },
     Stop,
     /// the app's own sound comes through the engine from now on (its end of the queue), or no longer (see through.rs)
     App(Option<Box<AppIn>>),
@@ -134,10 +143,15 @@ pub struct Core {
     out_ch: usize,
     /// which input is recorded and monitored (0 = Input 1)
     pub input: usize,
+    /// the second input of a pair: `input` is then the left side and this the right, recorded
+    /// in stereo and heard as they are (no chain). None: one input, a voice.
+    pub input_b: Option<usize>,
     /// send the voice through the chain to the headphones
     pub monitor: bool,
     pub fx: VocalFx,
     chain: Chain,
+    /// what a pair is turned up or down by on its way to the headphones (see recfile::pair_gain)
+    pair_gain: f32,
     backing: Vec<f32>,
     pub backing_gain: f32,
     pub click_gain: f32,
@@ -153,17 +167,26 @@ pub struct Core {
     per_bar: u32,
     /// the loop's beats, true where a bar begins; empty: every `per_bar` beats, as in the count-in
     downbeats: Vec<bool>,
+    /// the song is played once, then silence, while the recording goes on (see `engine_start`)
+    once: bool,
+    /// beats in the last bar of `downbeats`: how the click goes on once a once-through has passed them
+    last_bar: u32,
     mon: VecDeque<f32>,
+    /// the right side of a pair waiting for the headphones: as long as `mon`, frame for frame (empty for one input)
+    mon_b: VecDeque<f32>,
     rec: Option<rtrb::Producer<f32>>,
+    /// the recorder takes two samples a frame (a pair's file); fixed from start to stop
+    rec_pair: bool,
     armed: bool,
     recording: bool,
     /// when the first frame of the count-in is heard, and when the first recorded sample was captured (seconds, driver clock)
     play0: Option<f64>,
     cap0: Option<f64>,
     /// samples of voice that never reached the file, and samples of silence written for them
+    /// (frames, in a pair's file: left and right are lost or filled together)
     pub dropped: u64,
     pub padded: u64,
-    /// the song's position (output frames) when recording began, and the samples the file holds
+    /// the song's position (output frames) when recording began, and the frames the file holds
     /// since: the two are kept equal, so the file never runs early or late against the song
     rec_pos0: u64,
     kept: u64,
@@ -195,8 +218,10 @@ impl Core {
             in_ch: in_ch.max(1),
             out_ch: out_ch.max(1),
             input: 0,
+            input_b: None,
             monitor: false,
             chain: Chain::new(sr, &fx),
+            pair_gain: recfile::pair_gain(&fx),
             fx,
             backing: vec![],
             backing_gain: 1.0,
@@ -209,8 +234,12 @@ impl Core {
             beat: sr as f64 * 0.5,
             per_bar: 4,
             downbeats: Vec::new(),
+            once: false,
+            last_bar: 4,
             mon: VecDeque::with_capacity(16384),
+            mon_b: VecDeque::with_capacity(16384),
             rec: None,
+            rec_pair: false,
             armed: false,
             recording: false,
             play0: None,
@@ -237,6 +266,14 @@ impl Core {
             Cmd::Set(s) => {
                 self.monitor = s.monitor;
                 self.input = s.input;
+                if self.input_b.is_some() != s.input_b.is_some() {
+                    // one input becomes a pair, or a pair one input: what was waiting for the
+                    // headphones was the other kind, so none of it is kept
+                    self.mon.clear();
+                    self.mon_b.clear();
+                    self.over = 0;
+                }
+                self.input_b = s.input_b;
                 if self.fx != s.fx {
                     self.set_fx(&s.fx);
                 }
@@ -246,7 +283,13 @@ impl Core {
                 Some(Trash::Settings(s))
             }
             Cmd::Backing(b) => Some(Trash::Backing(std::mem::replace(&mut self.backing, b))),
-            Cmd::Start { bpm, count_in_beats, per_bar, downbeats, rec } => Some(Trash::Downbeats(self.start(bpm, count_in_beats, per_bar, downbeats, rec))),
+            Cmd::Start { bpm, count_in_beats, per_bar, downbeats, rec, once, stereo } => {
+                let old = self.start(bpm, count_in_beats, per_bar, downbeats, rec);
+                // (nothing has played or been recorded yet: the next block is the first)
+                self.once = once;
+                self.rec_pair = stereo;
+                Some(Trash::Downbeats(old))
+            }
             Cmd::Stop => {
                 self.stop();
                 None
@@ -264,6 +307,7 @@ impl Core {
     pub fn set_fx(&mut self, fx: &VocalFx) {
         self.fx = fx.clone();
         self.chain.set(fx);
+        self.pair_gain = recfile::pair_gain(fx);
     }
     /// The song to play under the singer: stereo, interleaved, at the engine's rate.
     #[cfg(test)]
@@ -275,12 +319,18 @@ impl Core {
     }
     /// Start: the count-in, then the song round and round. With a recorder, everything sung is kept.
     /// The accents of the loop before are handed back, to be freed off the audio thread.
+    /// (This is the plain start: one input into a mono file, the song going round. A pair's
+    /// recorder and a once-through are set by `Cmd::Start`, right after it.)
     pub fn start(&mut self, bpm: f64, count_in_beats: u32, per_bar: u32, downbeats: Vec<bool>, rec: Option<rtrb::Producer<f32>>) -> Vec<bool> {
         self.beat = self.sr as f64 * 60.0 / bpm.max(20.0);
         self.count_in = (self.beat * count_in_beats as f64).round() as u64;
         self.per_bar = per_bar.max(1);
         let old = std::mem::replace(&mut self.downbeats, downbeats);
+        self.once = false;
+        // the last bar's beats: from its first beat to the end (a handful of steps, no more)
+        self.last_bar = self.downbeats.iter().rev().position(|d| *d).map_or(self.per_bar, |i| i as u32 + 1);
         self.rec = rec;
+        self.rec_pair = false;
         self.recording = false;
         self.armed = false;
         self.play0 = None;
@@ -318,6 +368,8 @@ impl Core {
         self.levels.feed(data);
         let ch = self.in_ch;
         let input = self.input.min(ch - 1);
+        // the right side of a pair (one input: none)
+        let input_b = self.input_b.map(|b| b.min(ch - 1));
         self.block_in = self.block_in.max(data.len() / ch);
         if self.armed && !self.recording {
             self.recording = true;
@@ -339,9 +391,21 @@ impl Core {
                     self.mon.pop_front();
                 }
                 self.mon.push_back(v);
+                if let Some(b) = input_b {
+                    if self.mon_b.len() >= 16384 {
+                        self.mon_b.pop_front();
+                    }
+                    self.mon_b.push_back(frame[b]);
+                }
             }
             if rec {
-                self.keep(v);
+                if self.rec_pair {
+                    // (should the pair have been given up for one input meanwhile, the file
+                    // stays stereo: that input on both sides)
+                    self.keep_pair(v, input_b.map_or(v, |b| frame[b]));
+                } else {
+                    self.keep(v);
+                }
             }
         }
     }
@@ -357,6 +421,28 @@ impl Core {
         self.owed += frames;
         self.padded += frames;
         self.dropped += frames;
+    }
+
+    /// One frame of a pair into the file, left then right: both or neither, so the two sides
+    /// can never change places. Otherwise as `keep`.
+    fn keep_pair(&mut self, l: f32, r: f32) {
+        if self.trim > 0 {
+            self.trim -= 1;
+            self.dropped += 1;
+            return;
+        }
+        self.kept += 1;
+        if self.owed == 0 {
+            if let Some(p) = self.rec.as_mut() {
+                if let Ok(chunk) = p.write_chunk_uninit(2) {
+                    chunk.fill_from_iter([l, r]);
+                    return;
+                }
+            }
+        }
+        self.owed += 1;
+        self.padded += 1;
+        self.dropped += 1;
     }
 
     /// One sample of voice into the file. While silence is still owed (the recorder was full),
@@ -381,22 +467,24 @@ impl Core {
     }
 
     /// Write the silence that is owed, as far as the recorder has room: at most 64k samples a
-    /// block, in one go, so the audio thread is never kept long.
+    /// block, in one go, so the audio thread is never kept long. (`owed` counts frames: in a
+    /// pair's file each is two samples, written together.)
     fn pay_silence(&mut self) {
         if self.owed == 0 {
             return;
         }
         let Some(p) = self.rec.as_mut() else { return };
-        let n = (self.owed as usize).min(p.slots()).min(1 << 16);
+        let w = if self.rec_pair { 2 } else { 1 };
+        let n = (self.owed as usize).min(p.slots() / w).min((1 << 16) / w);
         if n == 0 {
             return;
         }
-        if let Ok(chunk) = p.write_chunk_uninit(n) {
-            self.owed -= chunk.fill_from_iter(std::iter::repeat(0.0f32)) as u64;
+        if let Ok(chunk) = p.write_chunk_uninit(n * w) {
+            self.owed -= (chunk.fill_from_iter(std::iter::repeat(0.0f32)) / w) as u64;
         }
     }
 
-    /// The file must hold one sample for every frame of song played since recording began:
+    /// The file must hold one frame for every frame of song played since recording began:
     /// that is what lets the takes be cut at whole passes, however long the session. On an
     /// ASIO driver the voice and the song come and go together, block for block, so the two
     /// never differ. Should whole blocks of voice go missing while the song plays on (another
@@ -425,7 +513,8 @@ impl Core {
         // where it begins in its own section's meter.
         let len = self.backing_frames();
         let looped = !counting && !self.downbeats.is_empty();
-        let since = if looped && len > 0 { since % len } else { since };
+        // (a song played once is not gone round: its beats are counted straight on)
+        let since = if looped && len > 0 && !self.once { since % len } else { since };
         let beat = (since as f64 / self.beat).floor();
         let into = since as f64 - beat * self.beat;
         let t = into / self.sr as f64;
@@ -436,6 +525,8 @@ impl Core {
             let n = beat as usize;
             match self.downbeats.get(n) {
                 Some(d) => *d,
+                // once through, past the bars it was given: it clicks on in the last bar's meter
+                None if self.once => ((n - self.downbeats.len()) as u64).is_multiple_of(self.last_bar.max(1) as u64),
                 // only rounding at the loop's very end: the next pass's first beat is a frame away
                 None if len > 0 => return 0.0,
                 None => self.downbeats[n % self.downbeats.len()],
@@ -463,6 +554,14 @@ impl Core {
         let frames = out.len() / ch;
         self.block_out = self.block_out.max(frames);
         self.stats.block.store(frames as u64, Ordering::Relaxed);
+        // a pair of inputs: its right side waits in `mon_b`, in step with the left in `mon`
+        let pair = self.input_b.is_some();
+        if pair && self.mon_b.len() != self.mon.len() {
+            // (never expected: the two are filled and emptied together. Rather a moment of
+            // silence than left and right out of step.)
+            self.mon.clear();
+            self.mon_b.clear();
+        }
         if self.monitor {
             // Never let the voice run dry in the middle of a block: if it has not arrived yet, it
             // is held back by what is missing (a cushion of at most one block) instead of a gap
@@ -471,6 +570,9 @@ impl Core {
             if self.mon.len() > frames * 3 + 64 {
                 while self.mon.len() > frames {
                     self.mon.pop_front();
+                }
+                while self.mon_b.len() > frames {
+                    self.mon_b.pop_front();
                 }
             }
             self.over = if self.mon.len() > frames { self.over + 1 } else { 0 };
@@ -483,9 +585,15 @@ impl Core {
                     self.mon.push_front(0.0);
                 }
             }
+            if pair && self.mon_b.len() < frames {
+                for _ in self.mon_b.len()..frames {
+                    self.mon_b.push_front(0.0);
+                }
+            }
         } else if !self.mon.is_empty() {
             // nothing old is kept for when monitoring comes back on
             self.mon.clear();
+            self.mon_b.clear();
             self.over = 0;
         }
         // how late the singer hears themselves: the driver's own in and out delays (from its
@@ -509,7 +617,8 @@ impl Core {
                 r += y;
             }
             if self.running {
-                if self.pos >= self.count_in && len > 0 {
+                // the song: round and round, or once and then silence
+                if self.pos >= self.count_in && len > 0 && !(self.once && self.pos - self.count_in >= len) {
                     let i = ((self.pos - self.count_in) % len) as usize * 2;
                     l += self.backing[i] * self.backing_gain;
                     r += self.backing[i + 1] * self.backing_gain;
@@ -521,9 +630,15 @@ impl Core {
             }
             if self.monitor {
                 let v = self.mon.pop_front().unwrap_or(0.0);
-                let (a, b) = self.chain.run(v);
-                l += a;
-                r += b;
+                if pair {
+                    // a pair is heard as it is, left and right, at the Output level: no chain
+                    l += v * self.pair_gain;
+                    r += self.mon_b.pop_front().unwrap_or(0.0) * self.pair_gain;
+                } else {
+                    let (a, b) = self.chain.run(v);
+                    l += a;
+                    r += b;
+                }
             }
             // the song (turned up by the Song slider), the click and the voice together could go over
             // full scale, which the interface would flatten into a crackle: made safe instead (see dsp::OutSafety)
@@ -551,16 +666,27 @@ impl Core {
             self.mon[i] = self.mon[i] * (1.0 - a) + self.mon[i + extra] * a;
         }
         self.mon.drain(fade..fade + extra);
+        // the right side of a pair, the very same way (it is as long as the left)
+        if self.mon_b.len() >= fade + extra {
+            for i in 0..fade {
+                let a = (i + 1) as f32 / (fade + 1) as f32;
+                self.mon_b[i] = self.mon_b[i] * (1.0 - a) + self.mon_b[i + extra] * a;
+            }
+            self.mon_b.drain(fade..fade + extra);
+        }
     }
 
     fn publish(&self) {
         let st = &self.stats;
         st.pos.store(self.pos, Ordering::Relaxed);
         st.count_in.store(self.count_in, Ordering::Relaxed);
-        st.length.store(self.backing_frames(), Ordering::Relaxed);
+        // (a song played once has no loop: its length is reported as 0)
+        st.length.store(if self.once { 0 } else { self.backing_frames() }, Ordering::Relaxed);
         st.running.store(self.running || self.pending, Ordering::Relaxed);
-        st.reduction.store(self.chain.reduction().to_bits(), Ordering::Relaxed);
-        st.limit.store(self.chain.limiting().to_bits(), Ordering::Relaxed);
+        // (a pair does not go through the chain: its two meters rest)
+        let (reduction, limit) = if self.input_b.is_none() { (self.chain.reduction(), self.chain.limiting()) } else { (0.0, 0.0) };
+        st.reduction.store(reduction.to_bits(), Ordering::Relaxed);
+        st.limit.store(limit.to_bits(), Ordering::Relaxed);
         st.dropped.store(self.dropped, Ordering::Relaxed);
         st.padded.store(self.padded, Ordering::Relaxed);
         if let Some(a) = self.app.as_ref() {
@@ -579,6 +705,8 @@ pub struct Link {
     base: OnceLock<StreamInstant>,
     /// the page's end of the queue for the app's own sound, while it comes through (see through.rs)
     feed: Mutex<Option<AppFeed>>,
+    /// the settings sent last chose a pair of inputs: the next recording's file is stereo
+    pair: AtomicBool,
 }
 impl Link {
     fn send(&self, c: Cmd) {
@@ -600,6 +728,10 @@ struct Recording {
     /// the frames written, and why the writer stopped early, if it did
     thread: Option<JoinHandle<(u64, Option<String>)>>,
     rate: u32,
+    /// samples a frame in its file: 1 (one input) or 2 (a pair)
+    channels: u16,
+    /// the song was played once under it, not round and round
+    once: bool,
     /// the reports of the engine it was recorded on (kept here, so it can be closed even after
     /// that engine is gone)
     stats: Arc<Stats>,
@@ -646,7 +778,8 @@ pub struct Opened {
 pub struct Status {
     pub peak: Vec<f32>,
     pub rms: Vec<f32>,
-    /// frames since the first click; the count-in's length; the loop's length (frames)
+    /// frames since the first click; the count-in's length; the loop's length (frames; 0 while
+    /// a song is played once: it has no loop)
     pub pos: u64,
     pub count_in: u64,
     pub length: u64,
@@ -838,7 +971,7 @@ fn open(host: String, device_name: String, buffer: Option<u32>, status: Channel<
             }
             let shared = Arc::new(Shared::new(icfg.channels as usize));
             let c = Core::new(rate as f32, icfg.channels as usize, ocfg.channels as usize, shared.clone());
-            let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new(), feed: Mutex::new(None) });
+            let link = Arc::new(Link { cmds: Mutex::new(VecDeque::new()), stats: c.stats.clone(), base: OnceLock::new(), feed: Mutex::new(None), pair: AtomicBool::new(false) });
             let core = Arc::new(Mutex::new(c));
             let (trash_in, trash_out) = rtrb::RingBuffer::<Trash>::new(64);
             let input = match ic.sample_format() {
@@ -941,10 +1074,14 @@ fn close_inner() -> Option<Recorded> {
 }
 
 /// What the singer hears and how: monitoring through the chain, which input, the chain's settings, levels.
+/// `input_b` (left out for a voice): the second input of a pair. `input` is then the left side
+/// and `input_b` the right; the pair is heard as it is, left and right, at the chain's Output
+/// level and with nothing else of the chain, and the next recording started is a stereo file.
 #[tauri::command]
-pub fn engine_set(monitor: bool, input: usize, fx: VocalFx, backing_gain: f32, click_gain: f32, click_on: bool) -> Result<(), String> {
+pub fn engine_set(monitor: bool, input: usize, input_b: Option<usize>, fx: VocalFx, backing_gain: f32, click_gain: f32, click_on: bool) -> Result<(), String> {
     let (l, _) = link()?;
-    l.send(Cmd::Set(Box::new(Settings { monitor, input, fx, backing_gain: backing_gain.clamp(0.0, 2.0), click_gain: click_gain.clamp(0.0, 1.5), click_on })));
+    l.pair.store(input_b.is_some(), Ordering::Relaxed);
+    l.send(Cmd::Set(Box::new(Settings { monitor, input, input_b, fx, backing_gain: backing_gain.clamp(0.0, 2.0), click_gain: click_gain.clamp(0.0, 1.5), click_on })));
     Ok(())
 }
 
@@ -1007,12 +1144,19 @@ fn recordings_dir(app: &tauri::AppHandle) -> Result<PathBuf, String> {
 /// Start: the count-in, then the song round and round; with `record`, everything sung is written to a new file.
 /// `bars`: how many beats each bar of the loop has, in order (sections can differ); without it,
 /// every bar has `beats_per_bar`.
+/// `once` (left out: no): the song is played once, then silence, and the recording goes on
+/// until Stop (a recording from the cursor). There is then no loop: the status reports a
+/// length of 0 and `Recorded.loop_frames` is 0. The click, if it is on while recording, goes on
+/// past the song's end (in the last bar's meter).
+/// The file is stereo when the settings sent last chose a pair of inputs (`engine_set`).
+#[allow(clippy::too_many_arguments)]
 #[tauri::command]
-pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Option<Vec<u32>>, record: bool, name: String) -> Result<Option<String>, String> {
-    tauri::async_runtime::spawn_blocking(move || start(app, bpm, count_in_beats, beats_per_bar, bars.unwrap_or_default(), record, name)).await.map_err(|e| e.to_string())?
+pub async fn engine_start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Option<Vec<u32>>, record: bool, name: String, once: Option<bool>) -> Result<Option<String>, String> {
+    tauri::async_runtime::spawn_blocking(move || start(app, bpm, count_in_beats, beats_per_bar, bars.unwrap_or_default(), record, name, once.unwrap_or(false))).await.map_err(|e| e.to_string())?
 }
 
-fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Vec<u32>, record: bool, name: String) -> Result<Option<String>, String> {
+#[allow(clippy::too_many_arguments)]
+fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u32, bars: Vec<u32>, record: bool, name: String, once: bool) -> Result<Option<String>, String> {
     // a recording still going is closed and kept, never thrown away
     if let Ok(Some(r)) = engine_stop_inner() {
         stash(r);
@@ -1020,32 +1164,44 @@ fn start(app: tauri::AppHandle, bpm: f64, count_in_beats: u32, beats_per_bar: u3
     let (l, rate) = link()?;
     let mut producer = None;
     let mut path = None;
+    let mut stereo = false;
     if record {
         let safe: String = name.chars().map(|c| if c.is_alphanumeric() || c == '-' { c } else { '-' }).collect();
         let stamp = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
         let dry = recordings_dir(&app)?.join(format!("{safe}-{stamp}.wav"));
-        // twenty seconds of voice can wait here while the disk is busy
-        let (p, cons) = rtrb::RingBuffer::<f32>::new(rate as usize * 20);
-        let spec = hound::WavSpec { channels: 1, sample_rate: rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
-        let w = hound::WavWriter::create(&dry, spec).map_err(|e| e.to_string())?;
-        let stop = Arc::new(AtomicBool::new(false));
-        let flag = stop.clone();
-        let st = l.stats.clone();
-        st.writing.written.store(0, Ordering::Relaxed);
-        st.writing.free.store(0, Ordering::Relaxed);
-        st.writing.full.store(false, Ordering::Relaxed);
-        st.play0.store(f64::NAN.to_bits(), Ordering::Relaxed);
-        st.cap0.store(f64::NAN.to_bits(), Ordering::Relaxed);
-        let dir = dry.parent().map(Path::to_path_buf);
-        let thread = std::thread::spawn(move || recfile::write_voice(cons, w, &flag, &st.writing, rate, MAX_FRAMES, || dir.as_deref().and_then(recfile::free_space)));
+        // one input: a mono file. A pair (as the settings sent last say): a stereo one
+        let channels: u16 = if l.pair.load(Ordering::Relaxed) { 2 } else { 1 };
+        stereo = channels == 2;
+        let (p, rec) = recorder(dry, rate, channels, once, &l.stats)?;
         producer = Some(p);
-        path = Some(dry.to_string_lossy().to_string());
+        path = Some(rec.dry.to_string_lossy().to_string());
         if let Ok(mut g) = REC.lock() {
-            *g = Some(Recording { dry, stop, thread: Some(thread), rate, stats: l.stats.clone() });
+            *g = Some(rec);
         }
     }
-    l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, downbeats: downbeats(&bars), rec: producer });
+    l.send(Cmd::Start { bpm, count_in_beats, per_bar: beats_per_bar, downbeats: downbeats(&bars), rec: producer, once, stereo });
     Ok(path)
+}
+
+/// A new file for a recording, and the thread that writes into it what the audio thread sends:
+/// `channels` samples a frame (1: one input; 2: a pair, left then right). Returns the audio
+/// thread's end of the queue between the two, and the recording to keep until it is closed.
+fn recorder(dry: PathBuf, rate: u32, channels: u16, once: bool, stats: &Arc<Stats>) -> Result<(rtrb::Producer<f32>, Recording), String> {
+    // twenty seconds of voice can wait here while the disk is busy
+    let (p, cons) = rtrb::RingBuffer::<f32>::new(rate as usize * 20 * channels as usize);
+    let spec = hound::WavSpec { channels, sample_rate: rate, bits_per_sample: 32, sample_format: hound::SampleFormat::Float };
+    let w = hound::WavWriter::create(&dry, spec).map_err(|e| e.to_string())?;
+    let stop = Arc::new(AtomicBool::new(false));
+    let flag = stop.clone();
+    let st = stats.clone();
+    st.writing.written.store(0, Ordering::Relaxed);
+    st.writing.free.store(0, Ordering::Relaxed);
+    st.writing.full.store(false, Ordering::Relaxed);
+    st.play0.store(f64::NAN.to_bits(), Ordering::Relaxed);
+    st.cap0.store(f64::NAN.to_bits(), Ordering::Relaxed);
+    let dir = dry.parent().map(Path::to_path_buf);
+    let thread = std::thread::spawn(move || recfile::write_voice(cons, w, &flag, &st.writing, rate, MAX_FRAMES, || dir.as_deref().and_then(recfile::free_space)));
+    Ok((p, Recording { dry, stop, thread: Some(thread), rate, channels, once, stats: stats.clone() }))
 }
 
 #[derive(Serialize, Clone)]
@@ -1053,15 +1209,18 @@ pub struct Recorded {
     pub dry: String,
     pub wet: String,
     pub rate: u32,
-    /// samples in the file
+    /// samples a frame in the file: 1 (one input, a mono file) or 2 (a pair: left, right)
+    pub channels: u16,
+    /// frames in the file
     pub frames: u64,
     /// where the first frame of the count-in lies in the file (the driver's round trip), in frames
     pub offset: i64,
     pub count_in: u64,
+    /// the loop's length in frames; 0 when the song was played once (there are no passes to cut)
     pub loop_frames: u64,
-    /// samples of voice that never reached the file
+    /// frames of voice that never reached the file
     pub dropped: u64,
-    /// samples of silence the file holds in their place (so every later pass keeps its time)
+    /// frames of silence the file holds in their place (so every later pass keeps its time)
     pub padded: u64,
     /// why the recording stopped taking sound early, or why it has no vocal sound on it, if so
     pub note: Option<String>,
@@ -1084,7 +1243,11 @@ fn engine_stop_inner() -> Result<Option<Recorded>, String> {
         }
     }
     let rec = REC.lock().ok().and_then(|mut g| g.take());
-    let Some(mut rec) = rec else { return Ok(None) };
+    Ok(rec.map(finish))
+}
+
+/// Close a recording's file (what is still on its way is written first) and say what it holds.
+fn finish(mut rec: Recording) -> Recorded {
     let st = rec.stats.clone();
     let rate = rec.rate;
     rec.stop.store(true, Ordering::Relaxed);
@@ -1093,23 +1256,25 @@ fn engine_stop_inner() -> Result<Option<Recorded>, String> {
         (Some(heard), Some(captured)) => ((heard - captured) * rate as f64).round() as i64,
         _ => 0,
     };
-    Ok(Some(Recorded {
+    Recorded {
         dry: rec.dry.to_string_lossy().to_string(),
         wet: String::new(),
         rate,
+        channels: rec.channels,
         frames,
         offset,
         count_in: st.count_in.load(Ordering::Relaxed),
-        loop_frames: st.length.load(Ordering::Relaxed),
+        loop_frames: if rec.once { 0 } else { st.length.load(Ordering::Relaxed) },
         dropped: st.dropped.load(Ordering::Relaxed),
         padded: st.padded.load(Ordering::Relaxed),
         note,
-    }))
+    }
 }
 
 /// Stop playing; if recording, close the file and make the version with the vocal chain on it.
 /// If that version cannot be made (no room left on the disk), the takes are kept dry: they
-/// play as sung, and the vocal sound can be put on later.
+/// play as sung, and the vocal sound can be put on later. (A pair's second file is the pair at
+/// the chain's Output level and nothing else: see recfile::stream_pair.)
 #[tauri::command]
 pub async fn engine_stop(fx: VocalFx) -> Result<Option<Recorded>, String> {
     tauri::async_runtime::spawn_blocking(move || -> Result<Option<Recorded>, String> {
@@ -1131,7 +1296,7 @@ pub async fn engine_stop(fx: VocalFx) -> Result<Option<Recorded>, String> {
 }
 
 /// Make the version with the vocal chain again, after its settings were changed (or for a
-/// recording handed back without it).
+/// recording handed back without it). For a stereo file (a pair): the pair at the Output level.
 #[tauri::command]
 pub async fn fx_render(dry: String, fx: VocalFx) -> Result<String, String> {
     tauri::async_runtime::spawn_blocking(move || recfile::render_wet(Path::new(&dry), &fx)).await.map_err(|e| e.to_string())?
@@ -1148,7 +1313,8 @@ pub async fn read_take(path: String) -> Result<Response, String> {
     tauri::async_runtime::spawn_blocking(move || std::fs::read(p)).await.map_err(|e| e.to_string())?.map(Response::new).map_err(|e| e.to_string())
 }
 
-/// One take of a recording, as a small WAV of its own: `frames` frames from `start`. Only
+/// One take of a recording, as a small WAV of its own: `frames` frames from `start`, with as
+/// many channels as the file has (one for a voice, both of a pair). Only
 /// that part of the file is read, so a take from an hour-long session costs no more than any
 /// other. A first take can begin a moment before the file does (a timing nudge earlier than the
 /// driver's round trip, with no count-in): that moment comes back as silence.
@@ -1333,11 +1499,11 @@ mod tests {
     #[test]
     fn messages_reach_the_audio_thread_and_stops_are_reported() {
         let mut c = core();
-        c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 1, fx: VocalFx::default(), backing_gain: 0.5, click_gain: 0.2, click_on: true })));
+        c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 1, input_b: None, fx: VocalFx::default(), backing_gain: 0.5, click_gain: 0.2, click_on: true })));
         assert!(c.monitor && c.input == 1 && c.backing_gain == 0.5 && c.click_on);
         c.apply(Cmd::Backing(vec![0.1; 400]));
         assert_eq!(c.backing_frames(), 200);
-        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, downbeats: vec![], rec: None });
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, downbeats: vec![], rec: None, once: false, stereo: false });
         let mut out = vec![0.0f32; 512];
         c.on_output(&mut out, 0.0);
         assert!(c.stats.running.load(Ordering::Relaxed));
@@ -1365,7 +1531,7 @@ mod tests {
 
     #[test]
     fn a_dropout_is_counted_and_the_stream_carries_on_a_reset_reopens() {
-        let link = Link { cmds: Mutex::new(VecDeque::new()), stats: Arc::new(Stats::default()), base: OnceLock::new(), feed: Mutex::new(None) };
+        let link = Link { cmds: Mutex::new(VecDeque::new()), stats: Arc::new(Stats::default()), base: OnceLock::new(), feed: Mutex::new(None), pair: AtomicBool::new(false) };
         report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
         report(&link, cpal::Error::new(cpal::ErrorKind::Xrun));
         assert_eq!(link.stats.xruns.load(Ordering::Relaxed), 2);
@@ -1571,7 +1737,7 @@ mod tests {
     #[test]
     fn a_recording_closed_with_nobody_to_take_it_comes_back_on_a_close_never_on_a_stop() {
         // (the only test that touches the engine's recording slots)
-        let r = Recorded { dry: "old.wav".into(), wet: String::new(), rate: 48000, frames: 9, offset: 0, count_in: 0, loop_frames: 4, dropped: 0, padded: 0, note: None };
+        let r = Recorded { dry: "old.wav".into(), wet: String::new(), rate: 48000, channels: 1, frames: 9, offset: 0, count_in: 0, loop_frames: 4, dropped: 0, padded: 0, note: None };
         stash(r);
         // a rehearsal's stop finds nothing: it must not be handed an old recording to render
         assert!(engine_stop_inner().unwrap().is_none());
@@ -1584,7 +1750,452 @@ mod tests {
         let mut c = core();
         assert!(matches!(c.apply(Cmd::Backing(vec![0.1; 400])), Some(Trash::Backing(old)) if old.is_empty()));
         assert!(matches!(c.apply(Cmd::Backing(vec![0.2; 200])), Some(Trash::Backing(old)) if old.len() == 400));
-        assert!(matches!(c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 0, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false }))), Some(Trash::Settings(_))));
+        assert!(matches!(c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 0, input_b: None, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false }))), Some(Trash::Settings(_))));
+    }
+
+    // ── a pair of inputs ──
+
+    /// An interface with four inputs whose pair is inputs 3 and 4: the left side counts up (its
+    /// value is the frame's place in time), the right is the same below zero, and inputs 1 and
+    /// 2 carry something else that must never be recorded or heard.
+    fn pair_core(monitor: bool) -> Core {
+        let mut c = Core::new(SR, 4, 2, Arc::new(Shared::new(4)));
+        c.set_backing(vec![0.0; 2 * 4000]);
+        c.apply(Cmd::Set(Box::new(Settings { monitor, input: 2, input_b: Some(3), fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        c
+    }
+    fn pair_block(k: usize) -> Vec<f32> {
+        (0..B).map(|i| (k * B + i) as f32).flat_map(|t| [9.0, -9.0, t, -t]).collect()
+    }
+    /// `session`, for a pair: the same periods, the recorder taking two samples a frame.
+    fn pair_session(periods: usize, ring: usize, mut period: impl FnMut(usize, &mut Core) -> (bool, bool, bool)) -> (Core, Vec<f32>) {
+        let mut c = pair_core(false);
+        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(ring);
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: Some(p), once: false, stereo: true });
+        let mut out = vec![0.0f32; B * 2];
+        let mut file = vec![];
+        for k in 0..periods {
+            let (inp, outp, read) = period(k, &mut c);
+            if inp {
+                c.on_input(&pair_block(k), k as f64 * B as f64 / SR as f64);
+            }
+            if outp {
+                c.on_output(&mut out, k as f64 * B as f64 / SR as f64 + 0.005);
+            }
+            if read {
+                while let Ok(v) = cons.pop() {
+                    file.push(v);
+                }
+            }
+        }
+        c.stop();
+        while let Ok(v) = cons.pop() {
+            file.push(v);
+        }
+        (c, file)
+    }
+    /// Every frame of a pair's file from `from` on is the frame sung at that moment (left: its
+    /// place in time, right: the same below zero), as `in_time` for one input.
+    fn pair_in_time(file: &[f32], from: usize) -> bool {
+        file.chunks(2).enumerate().skip(from).all(|(j, f)| f[0] == (B + j) as f32 && f[1] == -((B + j) as f32))
+    }
+    /// Left and right are never apart: every frame is a frame as sung, or silence on both sides.
+    fn sides_together(file: &[f32]) -> bool {
+        file.len().is_multiple_of(2) && file.chunks(2).all(|f| f[1] == -f[0])
+    }
+
+    #[test]
+    fn a_pair_of_inputs_is_recorded_left_and_right_into_a_stereo_file() {
+        let mut c = pair_core(false);
+        let dry = recfile::scratch("pair.wav");
+        let (p, rec) = recorder(dry.clone(), SR as u32, 2, false, &c.stats).unwrap();
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: Some(p), once: false, stereo: true });
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..50 {
+            c.on_input(&pair_block(k), k as f64 * B as f64 / SR as f64);
+            c.on_output(&mut out, k as f64 * B as f64 / SR as f64 + 0.005);
+        }
+        c.apply(Cmd::Stop);
+        let r = finish(rec);
+        // recording begins with the second block (the first output block starts the song): 49 blocks of frames
+        assert_eq!((r.channels, r.frames, r.rate), (2, 49 * B as u64, 48000), "a stereo file, counted in frames");
+        assert_eq!((r.count_in, r.loop_frames, r.dropped, r.padded), (0, 4000, 0, 0));
+        assert_eq!(r.offset, 240 - B as i64, "heard 5 ms after the song's first frame, captured one block in");
+        assert_eq!(c.stats.writing.written.load(Ordering::Relaxed), 49 * B as u64, "the status counts frames too");
+        let mut rd = hound::WavReader::open(&dry).unwrap();
+        assert_eq!((rd.spec().channels, rd.spec().sample_rate, rd.duration()), (2, 48000, 49 * B as u32));
+        let file: Vec<f32> = rd.samples::<f32>().map(|v| v.unwrap()).collect();
+        assert!(pair_in_time(&file, 0), "input 3 on the left, input 4 on the right, every frame where it was played");
+        // a take of it comes back with both sides
+        let mut part = hound::WavReader::new(std::io::Cursor::new(recfile::read_range(&dry, 100, 50).unwrap())).unwrap();
+        assert_eq!((part.spec().channels, part.duration()), (2, 50));
+        let got: Vec<f32> = part.samples::<f32>().map(|v| v.unwrap()).collect();
+        assert_eq!((got[0], got[1], got[98], got[99]), ((B + 100) as f32, -((B + 100) as f32), (B + 149) as f32, -((B + 149) as f32)));
+        // its second file is the pair again (no chain), at the Output level: here 0 dB, so the same
+        let wet = recfile::render_wet(&dry, &VocalFx::default()).unwrap();
+        let mut wr = hound::WavReader::open(&wet).unwrap();
+        assert_eq!((wr.spec().channels, wr.duration()), (2, 49 * B as u32));
+        assert!(wr.samples::<f32>().map(|v| v.unwrap()).zip(&file).all(|(a, b)| a.to_bits() == b.to_bits()), "sample for sample");
+        let _ = std::fs::remove_file(wet);
+        let _ = std::fs::remove_file(dry);
+    }
+
+    #[test]
+    fn one_input_goes_through_the_same_recorder_into_a_mono_file() {
+        // the commands as they were always sent: no second input, no once-through
+        let mut c = core();
+        c.set_backing(vec![0.0; 2 * 4000]);
+        c.apply(Cmd::Set(Box::new(Settings { monitor: false, input: 1, input_b: None, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        let dry = recfile::scratch("voice.wav");
+        let (p, rec) = recorder(dry.clone(), SR as u32, 1, false, &c.stats).unwrap();
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: Some(p), once: false, stereo: false });
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..50 {
+            let block: Vec<f32> = (0..B).flat_map(|i| [-1.0, (k * B + i) as f32]).collect();
+            c.on_input(&block, k as f64 * B as f64 / SR as f64);
+            c.on_output(&mut out, k as f64 * B as f64 / SR as f64 + 0.005);
+        }
+        c.apply(Cmd::Stop);
+        let r = finish(rec);
+        assert_eq!((r.channels, r.frames, r.loop_frames, r.offset), (1, 49 * B as u64, 4000, 240 - B as i64));
+        let mut rd = hound::WavReader::open(&dry).unwrap();
+        assert_eq!((rd.spec().channels, rd.duration()), (1, 49 * B as u32));
+        let file: Vec<f32> = rd.samples::<f32>().map(|v| v.unwrap()).collect();
+        assert!(in_time(&file, 0), "input 2, one sample a frame");
+        let mut part = hound::WavReader::new(std::io::Cursor::new(recfile::read_range(&dry, 100, 50).unwrap())).unwrap();
+        assert_eq!((part.spec().channels, part.duration()), (1, 50));
+        assert_eq!(part.samples::<f32>().next().unwrap().unwrap(), (B + 100) as f32);
+        let _ = std::fs::remove_file(dry);
+    }
+
+    #[test]
+    fn the_commands_with_their_old_arguments_take_the_old_path() {
+        // one engine is driven as the tests always drove it; the other gets the messages the
+        // app sends, with no second input and no once-through: the same sound and the same file
+        let fx = VocalFx::default();
+        let backing: Vec<f32> = (0..5000).flat_map(|i| { let v = 0.2 * (i as f32 * 0.01).sin(); [v, 0.5 * v] }).collect();
+        let mut a = core();
+        a.monitor = true;
+        a.input = 1;
+        a.backing_gain = 0.8;
+        a.click_gain = 0.3;
+        a.click_on = true;
+        a.set_backing(backing.clone());
+        let (pa, mut ca) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        a.start(100.0, 2, 3, downbeats(&[3, 4]), Some(pa));
+        let mut b = core();
+        b.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 1, input_b: None, fx, backing_gain: 0.8, click_gain: 0.3, click_on: true })));
+        b.apply(Cmd::Backing(backing));
+        let (pb, mut cb) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        b.apply(Cmd::Start { bpm: 100.0, count_in_beats: 2, per_bar: 3, downbeats: downbeats(&[3, 4]), rec: Some(pb), once: false, stereo: false });
+        let (mut oa, mut ob) = (vec![0.0f32; B * 2], vec![0.0f32; B * 2]);
+        let mut turned_down = 0.0f32;
+        for k in 0..1500usize {
+            let block: Vec<f32> = (0..B).map(|i| 0.5 * ((k * B + i) as f32 * 0.02).sin()).flat_map(|v| [-v, v]).collect();
+            a.on_input(&block, 0.0);
+            b.on_input(&block, 0.0);
+            if k % 100 == 50 {
+                // a knob and a slider are moved while a block of voice is waiting for the
+                // headphones: it is still heard, and nothing clicks
+                let moved = VocalFx { level: -3.0 + (k / 100) as f32 * 0.5, ..VocalFx::default() };
+                a.set_fx(&moved);
+                a.backing_gain = 0.6;
+                b.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 1, input_b: None, fx: moved, backing_gain: 0.6, click_gain: 0.3, click_on: true })));
+                assert_eq!((a.mon.len(), b.mon.len(), b.mon_b.len()), (B, B, 0));
+            }
+            a.on_output(&mut oa, 0.0);
+            b.on_output(&mut ob, 0.0);
+            assert!(oa.iter().zip(&ob).all(|(x, y)| x.to_bits() == y.to_bits()), "block {k}: the headphones");
+            // the chain's two meters are reported for a voice, as ever
+            let meters = |c: &Core| (c.stats.reduction.load(Ordering::Relaxed), c.stats.limit.load(Ordering::Relaxed));
+            assert_eq!(meters(&a), meters(&b));
+            turned_down = turned_down.max(f32::from_bits(meters(&b).0));
+            loop {
+                match (ca.pop(), cb.pop()) {
+                    (Ok(x), Ok(y)) => assert_eq!(x.to_bits(), y.to_bits(), "block {k}: the file"),
+                    (Err(_), Err(_)) => break,
+                    _ => panic!("block {k}: one file is longer"),
+                }
+            }
+        }
+        assert!(turned_down > 1.0, "the compressors worked, and their meter showed it: {turned_down} dB");
+        assert_eq!(a.stats.length.load(Ordering::Relaxed), 5000);
+        assert_eq!(b.stats.length.load(Ordering::Relaxed), 5000);
+    }
+
+    #[test]
+    fn lost_voice_of_a_pair_is_silence_on_both_sides_and_the_sides_never_change_places() {
+        // the same three mishaps as for one input, each with the same count (in frames)
+        let (c, file) = pair_session(60, 1 << 16, |k, _| (!(10..13).contains(&k), true, true));
+        assert_eq!(file.len(), 2 * 59 * B, "two samples for every frame of song since recording began");
+        assert!(file[2 * 9 * B..2 * 12 * B].iter().all(|v| *v == 0.0), "silence where the pair was lost");
+        assert!(pair_in_time(&file[..2 * 9 * B], 0) && pair_in_time(&file, 12 * B));
+        assert_eq!((c.padded, c.dropped), (3 * B as u64, 3 * B as u64));
+
+        // the disk falls behind, with a recorder that holds an odd number of samples: a frame
+        // goes in whole or not at all
+        let (c, file) = pair_session(40, 2 * 8 * B + 1, |k, _| (true, true, !(1..13).contains(&k)));
+        assert_eq!((c.dropped, c.padded), (5 * B as u64, 5 * B as u64));
+        assert_eq!(file.len(), 2 * 39 * B);
+        assert!(sides_together(&file));
+        assert!(pair_in_time(&file[..2 * 8 * B], 0), "what waited went in, in order");
+        assert!(file[2 * 8 * B..2 * 13 * B].iter().all(|v| *v == 0.0), "silence in place of what was lost");
+        assert!(pair_in_time(&file, 13 * B), "and after it, every frame is where it was played");
+
+        // the song stalls: the extra frames are left out, whole
+        let (c, file) = pair_session(60, 1 << 16, |k, _| (true, !(10..13).contains(&k), true));
+        assert_eq!((c.padded, c.dropped), (0, 3 * B as u64));
+        assert_eq!(file.len(), 2 * (60 - 3 - 1) * B);
+        assert!(sides_together(&file));
+        assert!(file.chunks(2).enumerate().skip(12 * B).all(|(j, f)| f[0] == (j + 4 * B) as f32));
+
+        // a block that found the engine busy
+        let (c, file) = pair_session(40, 1 << 16, |k, c| {
+            if k == 20 {
+                c.missed(B as u64);
+            }
+            (k != 20, true, true)
+        });
+        assert_eq!((file.len(), c.padded), (2 * 39 * B, B as u64));
+        assert!(file[2 * 19 * B..2 * 20 * B].iter().all(|v| *v == 0.0) && pair_in_time(&file, 20 * B));
+    }
+
+    #[test]
+    fn a_pair_given_up_for_one_input_in_mid_recording_leaves_a_whole_stereo_file() {
+        // the file was begun as a pair's: one input from then on is written on both sides
+        let mut c = pair_core(false);
+        let (p, mut cons) = rtrb::RingBuffer::<f32>::new(1 << 16);
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: Some(p), once: false, stereo: true });
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..20 {
+            if k == 10 {
+                c.apply(Cmd::Set(Box::new(Settings { monitor: false, input: 3, input_b: None, fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+            }
+            c.on_input(&pair_block(k), 0.0);
+            c.on_output(&mut out, 0.0);
+        }
+        c.stop();
+        let mut file = vec![];
+        while let Ok(v) = cons.pop() {
+            file.push(v);
+        }
+        assert_eq!(file.len(), 2 * 19 * B);
+        assert!(pair_in_time(&file[..2 * 9 * B], 0), "the pair, until then");
+        assert!(file.chunks(2).enumerate().skip(9 * B).all(|(j, f)| f[0] == -((B + j) as f32) && f[1] == f[0]), "then input 4 on both sides");
+    }
+
+    #[test]
+    fn a_pair_is_heard_dry_in_stereo_left_and_right() {
+        // the default vocal sound is on, and would change a voice: a pair does not go through it
+        let mut c = pair_core(true);
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..30 {
+            let block: Vec<f32> = (0..B).map(|i| (k * B + i) as f32 / 65536.0).flat_map(|t| [0.9, -0.9, t, 0.25 - t]).collect();
+            c.on_input(&block, 0.0);
+            c.on_output(&mut out, 0.0);
+            assert!(out.chunks(2).zip(block.chunks(4)).all(|(o, i)| o[0] == i[2] && o[1] == i[3]), "block {k}: input 3 on the left, input 4 on the right, untouched");
+        }
+        assert_eq!((f32::from_bits(c.stats.reduction.load(Ordering::Relaxed)), f32::from_bits(c.stats.limit.load(Ordering::Relaxed))), (0.0, 0.0), "the chain's meters rest");
+        // the Output level is all of the vocal sound a pair has: 6 dB down is about half, on both sides
+        c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 2, input_b: Some(3), fx: VocalFx { level: -6.0, on: false, ..VocalFx::default() }, backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        let g = recfile::pair_gain(&VocalFx { level: -6.0, ..VocalFx::default() });
+        assert!((g - 0.5012).abs() < 1e-4);
+        let block: Vec<f32> = (0..B).flat_map(|_| [0.9, -0.9, 0.5, -0.25]).collect();
+        c.on_input(&block, 0.0);
+        c.on_output(&mut out, 0.0);
+        assert!(out.chunks(2).all(|o| o[0] == 0.5 * g && o[1] == -0.25 * g));
+        // monitoring off: silence, and nothing old is kept for when it comes back
+        c.apply(Cmd::Set(Box::new(Settings { monitor: false, input: 2, input_b: Some(3), fx: VocalFx::default(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        c.on_input(&block, 0.0);
+        c.on_output(&mut out, 0.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+        assert!(c.mon.is_empty() && c.mon_b.is_empty());
+    }
+
+    #[test]
+    fn a_pair_in_the_headphones_keeps_its_sides_in_step_whatever_the_blocks_do() {
+        // the left counts up and the right is the same below zero: any frame whose sides did
+        // not come in together would show
+        let mut c = pair_core(true);
+        let mut t = 0.0f32;
+        let mut next = |n: usize| -> Vec<f32> {
+            (0..n).flat_map(|_| {
+                t += 1e-5;
+                [0.7, 0.7, t, -t]
+            })
+            .collect()
+        };
+        let together = |out: &[f32]| out.chunks(2).all(|f| f[1] == -f[0]);
+        let mut out = vec![0.0f32; B * 2];
+        // the output asks before the input has arrived: silence, then the pair with no gap
+        c.on_output(&mut out, 0.0);
+        assert!(out.iter().all(|v| *v == 0.0));
+        // one extra block is left waiting: it is taken out smoothly, on both sides alike
+        c.on_input(&next(B), 0.0);
+        let mut heard = vec![];
+        for _ in 0..40 {
+            c.on_input(&next(B), 0.0);
+            c.on_output(&mut out, 0.0);
+            assert!(together(&out));
+            heard.extend(out.chunks(2).map(|f| f[0]));
+        }
+        assert!(c.mon.len() <= B && c.mon_b.len() == c.mon.len(), "the extra block is gone from both");
+        let worst = heard.windows(2).skip(B).map(|w| (w[1] - w[0]).abs()).fold(0.0f32, f32::max);
+        assert!(worst < B as f32 * 1e-5 / 16.0, "smooth, not a click: {worst}");
+        // the input runs far ahead: the output catches up at once, both sides by the same amount
+        for _ in 0..10 {
+            c.on_input(&next(B), 0.0);
+        }
+        c.on_output(&mut out, 0.0);
+        assert!(together(&out) && c.mon_b.len() == c.mon.len() && c.mon.len() <= B * 3 + 64);
+        // far more than the queue holds: the oldest goes, from both
+        for _ in 0..300 {
+            c.on_input(&next(B), 0.0);
+        }
+        assert_eq!((c.mon.len(), c.mon_b.len()), (16384, 16384));
+        c.on_output(&mut out, 0.0);
+        assert!(together(&out) && out[0] != 0.0);
+    }
+
+    #[test]
+    fn going_between_one_input_and_a_pair_keeps_nothing_of_the_other_kind() {
+        let voice = VocalFx { on: false, ..VocalFx::default() };
+        let set = |c: &mut Core, input_b: Option<usize>| c.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 2, input_b, fx: voice.clone(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        let mut c = Core::new(SR, 4, 2, Arc::new(Shared::new(4)));
+        set(&mut c, None);
+        let block: Vec<f32> = (0..B).flat_map(|_| [0.9, -0.9, 0.5, -0.25]).collect();
+        let mut out = vec![0.0f32; B * 2];
+        // one input: the voice on both sides (the chain is off: straight through)
+        c.on_input(&block, 0.0);
+        c.on_input(&block, 0.0);
+        c.on_output(&mut out, 0.0);
+        assert!(out.chunks(2).all(|f| f[0] == 0.5 && f[1] == 0.5));
+        // a pair from here: the block of voice still waiting is let go, and the pair starts clean
+        set(&mut c, Some(3));
+        assert!(c.mon.is_empty() && c.mon_b.is_empty());
+        c.on_input(&block, 0.0);
+        c.on_output(&mut out, 0.0);
+        assert!(out.chunks(2).all(|f| f[0] == 0.5 && f[1] == -0.25));
+        // and back: one input again, on both sides, with nothing left of the right side
+        c.on_input(&block, 0.0);
+        set(&mut c, None);
+        assert!(c.mon.is_empty() && c.mon_b.is_empty());
+        c.on_input(&block, 0.0);
+        c.on_output(&mut out, 0.0);
+        assert!(out.chunks(2).all(|f| f[0] == 0.5 && f[1] == 0.5));
+        // a pair on an interface with one input: that input on both sides, never out of range
+        let mut one = Core::new(SR, 1, 2, Arc::new(Shared::new(1)));
+        one.apply(Cmd::Set(Box::new(Settings { monitor: true, input: 0, input_b: Some(1), fx: voice.clone(), backing_gain: 1.0, click_gain: 0.5, click_on: false })));
+        one.on_input(&vec![0.25; B], 0.0);
+        one.on_output(&mut out, 0.0);
+        assert!(out.iter().all(|v| *v == 0.25));
+    }
+
+    // ── once through ──
+
+    #[test]
+    fn a_song_played_once_goes_silent_after_its_last_frame_and_the_recording_goes_on_until_stop() {
+        let mut c = core();
+        // a "song" of 6000 frames at a steady level
+        c.set_backing((0..6000).flat_map(|_| [0.25f32, -0.125]).collect());
+        let dry = recfile::scratch("once.wav");
+        let (p, rec) = recorder(dry.clone(), SR as u32, 1, true, &c.stats).unwrap();
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 1, per_bar: 4, downbeats: vec![], rec: Some(p), once: true, stereo: false });
+        let mut out = vec![0.0f32; B * 2];
+        let mut heard = vec![];
+        for k in 0..600 {
+            let block: Vec<f32> = (0..B).flat_map(|i| [(k * B + i) as f32, -1.0]).collect();
+            c.on_input(&block, k as f64 * B as f64 / SR as f64);
+            c.on_output(&mut out, k as f64 * B as f64 / SR as f64 + 0.005);
+            heard.extend_from_slice(&out);
+        }
+        // the count-in (one beat: 24000 frames), the song once, then nothing at all
+        let (l, r) = (|i: usize| heard[2 * i], |i: usize| heard[2 * i + 1]);
+        assert!(l(100).abs() > 0.01 && l(20000) == 0.0, "the count-in's click, then quiet");
+        assert!((24000..30000).all(|i| l(i) == 0.25 && r(i) == -0.125), "the song, every frame of it");
+        assert!((30000..600 * B).all(|i| l(i) == 0.0 && r(i) == 0.0), "silence after its last frame, not the song again");
+        // it has no loop: the status says so while it runs, and the place in the song counts on
+        assert!(c.stats.running.load(Ordering::Relaxed));
+        assert_eq!((c.stats.pos.load(Ordering::Relaxed), c.stats.count_in.load(Ordering::Relaxed), c.stats.length.load(Ordering::Relaxed)), (600 * B as u64, 24000, 0));
+        c.apply(Cmd::Stop);
+        let rd = finish(rec);
+        assert_eq!((rd.channels, rd.frames, rd.count_in, rd.loop_frames), (1, 599 * B as u64, 24000, 0), "everything until Stop, and no loop to cut it by");
+        assert_eq!((rd.dropped, rd.padded, rd.offset), (0, 0, 240 - B as i64));
+        let file: Vec<f32> = hound::WavReader::open(&dry).unwrap().samples::<f32>().map(|v| v.unwrap()).collect();
+        assert_eq!(file.len(), 599 * B);
+        assert!(in_time(&file, 0), "one sample for every frame, in place, long past the song's end");
+        let _ = std::fs::remove_file(dry);
+
+        // the next plain start goes round and round again, and says how long its loop is
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: None, once: false, stereo: false });
+        heard.clear();
+        for _ in 0..300 {
+            c.on_output(&mut out, 0.0);
+            heard.extend_from_slice(&out);
+        }
+        assert!(heard.chunks(2).all(|f| f[0] == 0.25 && f[1] == -0.125), "three passes and more, without a gap");
+        assert_eq!(c.stats.length.load(Ordering::Relaxed), 6000);
+    }
+
+    #[test]
+    fn a_pair_is_recorded_once_through_too() {
+        let mut c = pair_core(false);
+        let dry = recfile::scratch("pair-once.wav");
+        let (p, rec) = recorder(dry.clone(), SR as u32, 2, true, &c.stats).unwrap();
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: Some(p), once: true, stereo: true });
+        let mut out = vec![0.0f32; B * 2];
+        for k in 0..200 {
+            c.on_input(&pair_block(k), 0.0);
+            c.on_output(&mut out, 0.0);
+        }
+        c.apply(Cmd::Stop);
+        let r = finish(rec);
+        // the song is 4000 frames; the recording is three times that
+        assert_eq!((r.channels, r.frames, r.loop_frames), (2, 199 * B as u64, 0));
+        let file: Vec<f32> = hound::WavReader::open(&dry).unwrap().samples::<f32>().map(|v| v.unwrap()).collect();
+        assert!(file.len() == 2 * 199 * B && pair_in_time(&file, 0));
+        let _ = std::fs::remove_file(dry);
+    }
+
+    #[test]
+    fn the_click_of_a_song_played_once_counts_straight_on_past_its_end() {
+        // a 4/4 bar then a 3/4 bar at 120 bpm, played once with the click on: after its seven
+        // beats the click goes on in bars of three (the last bar's meter), not round to the top
+        let heard = |once: bool| -> Vec<f32> {
+            let mut c = core();
+            c.set_backing(vec![0.0; 7 * 24000 * 2]);
+            c.click_on = true;
+            c.click_gain = 1.0;
+            c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 4, per_bar: 4, downbeats: downbeats(&[4, 3]), rec: None, once, stereo: false });
+            let mut out = vec![0.0f32; 1024];
+            let mut heard = vec![];
+            while heard.len() < 96000 + 17 * 24000 {
+                c.on_output(&mut out, 0.0);
+                heard.extend(out.chunks(2).map(|f| f[0]));
+            }
+            heard
+        };
+        let accents = |heard: &[f32]| -> Vec<usize> {
+            let peak = |at: usize| heard[at..at + 1500].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+            assert!((0..16).all(|k| peak(96000 + k * 24000) > 0.5), "every beat clicks");
+            (0..16).filter(|k| peak(96000 + k * 24000) > 0.85).collect()
+        };
+        assert_eq!(accents(&heard(true)), vec![0, 4, 7, 10, 13], "once: 4, 3, then threes");
+        assert_eq!(accents(&heard(false)), vec![0, 4, 7, 11, 14], "round and round: 4, 3, 4, 3 (as ever)");
+        // with no bars given it counts on in the count-in's meter, as a loop without bars does
+        let mut c = core();
+        c.set_backing(vec![0.0; 7 * 24000 * 2]);
+        c.click_on = true;
+        c.click_gain = 1.0;
+        c.apply(Cmd::Start { bpm: 120.0, count_in_beats: 0, per_bar: 4, downbeats: vec![], rec: None, once: true, stereo: false });
+        let mut out = vec![0.0f32; 1024];
+        let mut plain = vec![];
+        while plain.len() < 13 * 24000 {
+            c.on_output(&mut out, 0.0);
+            plain.extend(out.chunks(2).map(|f| f[0]));
+        }
+        let peak = |at: usize| plain[at..at + 1500].iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        assert_eq!((0..12).filter(|k| peak(k * 24000) > 0.85).collect::<Vec<_>>(), vec![0, 4, 8]);
     }
 
     // ── one input, as it was before a pair of inputs and a once-through start were added ──

@@ -59,6 +59,7 @@ export async function checkUpdate(): Promise<Update | null> {
   }
 }
 
+/** One value for every input of the device, in order (levels are measured for the first 32). */
 export interface Levels { peak: number[]; rms: number[] }
 export interface Opened { host: string; device: string; channels: number; sample_rate: number; format: string }
 
@@ -81,6 +82,9 @@ export async function meterStop(): Promise<void> {
  * While recording: `recorded` frames are in the file, `room` more fit before it is as big as a
  * WAV can be, `free` bytes are left on the disk, and `full` says it has stopped taking sound.
  * `render`: how far the vocal sound is in being put on a recording (0..1; 0 when it is not).
+ * `peak`, `rms`: one value for every input of the interface, in order (measured for the first 32).
+ * `length`: the loop's length in frames; 0 while the song is played once (`engineStart`'s `once`): it has no loop.
+ * `reduction`, `limit`: the vocal chain's two meters; they rest at 0 while a pair of inputs is chosen (a pair has no chain).
  */
 export interface EngineStatus { peak: number[]; rms: number[]; pos: number; count_in: number; length: number; running: boolean; reduction: number; limit?: number; invalid: boolean; xruns: number; block: number; latency: number; recorded?: number; room?: number; free?: number | null; full?: boolean; render?: number; app_gaps?: number }
 export interface EngineOpened { host: string; device: string; rate: number; inputs: number; outputs: number; format: string; min_buffer: number | null; max_buffer: number | null }
@@ -107,15 +111,30 @@ export async function engineOpen(host: string, device: string, buffer: number | 
   return inTurn(() => invoke<EngineOpened>("engine_open", { host, deviceName: device, buffer, status: ch }));
 }
 /**
+ * What the engine reports when a recording stops: `Recorded` (song/takes.ts), and how many channels its files have.
+ * `channels`: 1, one input, a mono file; 2, a pair of inputs, a stereo file with the first input on the left.
+ * (When it is not there: one input.) `frames`, `offset`, `count_in`,
+ * `loop_frames`, `dropped` and `padded` are frames whatever the channels. `loop_frames` is 0 for a recording
+ * started with `once`: the whole of it is one take, from `offset + count_in` (plus the timing nudge) to its end.
+ */
+export type EngineRecorded = import("./song/takes").Recorded & { channels?: number };
+/**
  * Close the interface. A recording still going (the driver was reset mid-session) comes back,
  * dry, so its takes can be kept: put the vocal sound on it with `fxRender`.
  */
-export async function engineClose(): Promise<import("./song/takes").Recorded | null> {
+export async function engineClose(): Promise<EngineRecorded | null> {
   if (!isDesktop()) return null;
   const { invoke } = await core();
-  return (await inTurn(() => invoke<import("./song/takes").Recorded | null>("engine_close"))) ?? null;
+  return (await inTurn(() => invoke<EngineRecorded | null>("engine_close"))) ?? null;
 }
-export async function engineSet(o: { monitor: boolean; input: number; fx: import("./audio/vocalfx").VocalFx; backingGain: number; clickGain: number; clickOn: boolean }): Promise<void> {
+/**
+ * What is recorded and heard. `input`: which input, counted from 0.
+ * `inputB` (left out, or null: one input, a voice, as ever): the second input of a pair, counted from 0. `input` is
+ * then the left side and `inputB` the right. A pair is heard as it is, left and right, when `monitor` is on: none of
+ * the vocal chain but its Output level (`fx.level`, whatever `fx.on` says). And the next recording started is a
+ * stereo file: what counts is the last `engineSet` that was sent before `engineStart`.
+ */
+export async function engineSet(o: { monitor: boolean; input: number; inputB?: number | null; fx: import("./audio/vocalfx").VocalFx; backingGain: number; clickGain: number; clickOn: boolean }): Promise<void> {
   await (await core()).invoke("engine_set", o);
 }
 /** The song to sing over: left and right, at the engine's rate. */
@@ -139,24 +158,37 @@ export async function engineApp(rate: number | null): Promise<void> {
 export async function engineFeed(bytes: Uint8Array): Promise<number> {
   return (await core()).invoke<number>("engine_feed", bytes);
 }
-/** Start the count-in and the loop. `bars`: the beats in each bar of the loop, so the click accents every bar in its own meter. */
-export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; bars?: number[]; record: boolean; name: string }): Promise<string | null> {
+/**
+ * Start the count-in and the loop. `bars`: the beats in each bar of the loop, so the click accents every bar in its own meter.
+ * `once` (left out: no, the song goes round and round as ever): the song handed over with `engineBacking` is played
+ * once, then silence, and a recording goes on until `engineStop`. The status then reports a `length` of 0 (`pos` and
+ * `count_in` as ever) and the recording comes back with `loop_frames` 0. The click, when it is on while recording,
+ * goes on past the song's end, in the meter of the last bar in `bars`.
+ */
+export async function engineStart(o: { bpm: number; countInBeats: number; beatsPerBar: number; bars?: number[]; record: boolean; name: string; once?: boolean }): Promise<string | null> {
   const { invoke } = await core();
   return inTurn(() => invoke<string | null>("engine_start", o));
 }
-/** Stop; a recording is closed and comes back with its version through the vocal chain `fx`. */
-export async function engineStop(fx: import("./audio/vocalfx").VocalFx): Promise<import("./song/takes").Recorded | null> {
+/**
+ * Stop; a recording is closed and comes back with its version through the vocal chain `fx`. (A pair's second file is
+ * the pair again, left and right, at the chain's Output level `fx.level`: at 0 dB the same sound as the first.)
+ */
+export async function engineStop(fx: import("./audio/vocalfx").VocalFx): Promise<EngineRecorded | null> {
   const { invoke } = await core();
   return inTurn(() => invoke("engine_stop", { fx }));
 }
-/** The vocal chain over a whole recording again (after its settings changed): the new file. */
+/** The vocal chain over a whole recording again (after its settings changed): the new file. (A stereo recording: its Output level only.) */
 export async function fxRender(dry: string, fx: import("./audio/vocalfx").VocalFx): Promise<string> {
   return (await core()).invoke<string>("fx_render", { dry, fx });
 }
 export async function readTake(path: string): Promise<ArrayBuffer> {
   return (await core()).invoke<ArrayBuffer>("read_take", { path });
 }
-/** One take of a recording: `frames` frames from `start`, as a small WAV of its own (a part before the file's start comes back as silence). */
+/**
+ * One take of a recording: `frames` frames from `start`, as a small WAV of its own (a part before the file's start
+ * comes back as silence). The WAV has as many channels as the file: one for a voice's dry file, two for its version
+ * through the vocal chain and for both files of a pair.
+ */
 export async function readTakeRange(path: string, start: number, frames: number): Promise<ArrayBuffer> {
   return (await core()).invoke<ArrayBuffer>("read_take_range", { path, start: Math.round(start), frames: Math.max(0, Math.round(frames)) });
 }
