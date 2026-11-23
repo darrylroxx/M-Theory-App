@@ -123,7 +123,18 @@ describe("addTrack", () => {
 
   it("a blank track: the same chain, switched off", () => {
     const t = track<AudioTrack>(addTrack(empty, "audio", "t1"), "t1");
-    expect(t).toEqual({ id: "t1", kind: "audio", name: "Audio 1", fx: { ...FX_DEFAULT, on: false }, takes: [] });
+    expect(t).toEqual({ id: "t1", kind: "audio", name: "Blank 1", fx: { ...FX_DEFAULT, on: false }, takes: [] });
+  });
+
+  it("blank tracks are named as the add-track row names them: Blank 1, Blank 2; one from before keeps its name", () => {
+    const two = addTrack(addTrack(empty, "audio", "t1"), "audio", "t2");
+    expect(two.tracks.map((t) => t.name)).toEqual(["Blank 1", "Blank 2"]);
+    // an idea from before: its "Audio 1" stays, and the next blank track is the first of its name
+    const old = { ...empty, tracks: [audioTrack("t9", "audio", "Audio 1", [])] };
+    expect(addTrack(old, "audio", "t1").tracks.map((t) => t.name)).toEqual(["Audio 1", "Blank 1"]);
+    // a name that is taken is passed over
+    const taken = { ...empty, tracks: [audioTrack("t9", "audio", "Blank 1", [])] };
+    expect(addTrack(taken, "audio", "t1").tracks.map((t) => t.name)).toEqual(["Blank 1", "Blank 2"]);
   });
 
   it("goes below the last track, or to the row asked for", () => {

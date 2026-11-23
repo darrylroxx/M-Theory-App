@@ -51,6 +51,26 @@ export function firstPlace(kind: "compose" | "sound", view: { w: number; h: numb
   return { x: view.w - w, y: view.top, w, h: Math.max(0, view.h - view.top) };
 }
 
+/** How far a window steps aside from one that stands where it would open: the height of a title bar down, and a little to the left. */
+export const STEP_X = 28;
+export const STEP_Y = 40;
+
+/**
+ * Where a window opens when others may already stand at its first place: stepped down and to the left until its top
+ * left corner is its own (never past the panels' edge, and never lower than leaves it `MIN_H` high).
+ */
+export function clearOf(r: Rect, others: Rect[], view: { panel: number; h: number }): Rect {
+  let at = r;
+  for (let n = 0; n < 12 && others.some((o) => o.x === at.x && o.y === at.y); n++) {
+    const x = Math.max(view.panel, at.x - STEP_X);
+    const y = at.y + STEP_Y;
+    const h = Math.min(at.h, view.h - y);
+    if (h < MIN_H || (x === at.x && y === at.y)) break;
+    at = { x, y, w: at.w, h };
+  }
+  return at;
+}
+
 /** A window's box brought back inside the screen (one larger than the screen starts at its corner). */
 export function keepInside(r: Rect, view: { w: number; h: number }): Rect {
   const x = Math.max(0, Math.min(r.x, view.w - r.w));
@@ -85,6 +105,9 @@ export function openWin(session: Session, kind: "compose" | "sound", track: stri
   const old = session.windows.find((w) => w.id === id);
   let rest = session.windows.filter((w) => w.id !== id);
   let next: WinState = old ? { ...old, open: true } : { id, kind, track, ...firstPlace(kind, view), open: true };
+  // a sound window opening for the first time where another already stands: a step down and to the left of it, so
+  // both title bars can be reached (composers share their place on purpose: one track's is brought forward at a time)
+  if (!old && kind === "sound") next = { ...next, ...clearOf(next, rest.filter((w) => w.open && w.kind === "sound"), view) };
   if (kind === "compose") {
     if (clip !== undefined) next.clip = clip;
     else delete next.clip;

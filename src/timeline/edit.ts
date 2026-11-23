@@ -58,9 +58,10 @@ const RESERVED = new Set(["chords", "melody", "drums"]);
 
 // ── tracks ──────────────────────────────────────────────────
 
-const KIND_NAME: Record<TrackKind, string> = { chords: "Chords", melody: "Melody", bass: "Bass", drums: "Drums", vocals: "Vocal", audio: "Audio" };
+// (a new blank audio track is "Blank 1", as the add-track row calls it; a track made before that keeps the name it has)
+const KIND_NAME: Record<TrackKind, string> = { chords: "Chords", melody: "Melody", bass: "Bass", drums: "Drums", vocals: "Vocal", audio: "Blank" };
 
-/** The next free name for a new track of a kind: "Chords", then "Chords 2"; recorded tracks are numbered from the first ("Vocal 1"). */
+/** The next free name for a new track of a kind: "Chords", then "Chords 2"; recorded tracks are numbered from the first ("Vocal 1", "Blank 1"). */
 function nextName(song: Song, kind: TrackKind): string {
   const base = KIND_NAME[kind];
   const taken = new Set(song.tracks.map((t) => t.name));

@@ -5,7 +5,7 @@
 import { barBeats, barsOf, beatHitsBetween, type Beat } from "./beats";
 import { hasTune, melodyBeats } from "../song/melody";
 import type { DrumId } from "./drums";
-import { itemNotes, itemTune, meterOf, sectionStart, type PatternId, type PlayItem, type PlayTune } from "./patterns";
+import { itemNotes, itemTune, meterOf, sectionStart, styleAt, type ExtraPlay, type PatternId, type PlayItem, type PlayTune } from "./patterns";
 import { GUITAR, midiProgram, synthOf, type Tone, type Tones } from "./tone";
 import { playNotes, type PlayNote } from "../synth/play";
 import type { PlaySettings } from "../synth/params";
@@ -177,7 +177,9 @@ export function progressionToMidi(items: PlayItem[], bpm: number, pattern: Patte
     return 15;
   };
   for (const id of ids.chords) {
-    const own = extraChordItems(items, id);
+    // (a chord played by a playing style counts the style from where its clip's content starts, as the player does; a
+    // chord on the synth counts from its section's start, as the player does too)
+    const own = extraChordItems(items, id, (c) => (c.tone ?? toneOfTrack(id)).inst !== "synth");
     const a = arpOf(id, "chords");
     const ch = nextCh(program(id));
     const heldOwn = (i: number) => (own[i].tone ?? toneOfTrack(id)).inst === "synth";
@@ -372,8 +374,10 @@ function drumTrack(items: PlayItem[], drums: Beat | null, clock: Clock, name: st
  * What an added chords track plays, as items of its own: section by section, its chords where
  * they fall in the section, and silence around them, so its playing style counts from the
  * start of each section as it does in the app.
+ * `own`: for the chords it says yes to, the style counts from the beat the chord itself names (`from`: where its clip's
+ * content starts), as it does when the song plays; a chord that names none counts from the section's start as ever.
  */
-export function extraChordItems(items: PlayItem[], track: string): PlayItem[] {
+export function extraChordItems(items: PlayItem[], track: string, own?: (c: ExtraPlay["chords"][number]) => boolean): PlayItem[] {
   const out: PlayItem[] = [];
   let i = 0;
   while (i < items.length) {
@@ -392,7 +396,8 @@ export function extraChordItems(items: PlayItem[], track: string): PlayItem[] {
         at = c.at;
       }
       const beats = Math.min(c.beats, len - c.at);
-      push({ midi: c.midi, beats, style: c.style, feel: c.feel, tone: c.tone });
+      // (an item's own `from` says how far into its section's count it starts: see patterns' `sectionStart`)
+      push({ midi: c.midi, beats, style: c.style, feel: c.feel, tone: c.tone, ...(c.from !== undefined && own?.(c) ? { from: styleAt(c) } : {}) });
       at += beats;
     }
     if (at < len - 1e-6) push({ midi: [], beats: len - at });
