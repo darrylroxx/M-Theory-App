@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext } from "react";
 import { reviveBeat, reviveUserKits, type Beat, type BeatPattern, type UserKit } from "../audio/beats";
 import { hasStyle, reviveFeel, type Feel, type PatternId } from "../audio/patterns";
 import { reviveSig, sigBeats, type TimeSig } from "../song/meter";
@@ -10,26 +10,21 @@ import { isLayoutId, type LayoutId } from "../canvas/place";
 import { isLayer, type LayerKind } from "../canvas/layers";
 import type { HarpSound } from "../audio/rack";
 import { reviveUserSounds, type UserSound } from "../audio/sounds";
-import { strum } from "../audio/synth";
-import { stopAlone } from "../audio/takeplay";
-import { chordShape } from "../guitar/arrange";
-import { getTuning, type Tuning } from "../guitar/tunings";
+import type { Tuning } from "../guitar/tunings";
 import type { Voicing } from "../guitar/voicings";
 import { pc } from "../theory/notes";
 import type { ChordRef } from "../theory/chords";
-import { autoName, fingerprint, isBlank, mergeIdeas, reviveIdea, snapshot, toPush } from "../song/library";
+import { reviveIdea } from "../song/library";
 import { commit, reviveSong, settle, toneIdsIn, type Song } from "../song/structure";
 import { reviveClips, type Clips } from "../song/clip";
-import { reidea } from "./openidea";
 import { SOUND_V, migrateSong } from "../song/migrate";
 import { reviveView, type ViewPrefs } from "../song/window";
 import { reviveMix, type Mix } from "../audio/mix";
 import { reviveNotes, withoutNotes } from "../song/chordnotes";
-import { normalize, prune, reviveArrange, reviveFirstHarmony, reviveLayers, reviveTracks, type FirstHarmony, type Focus, type Layers, type Track } from "../song/tracks";
+import { prune, reviveArrange, reviveFirstHarmony, reviveLayers, reviveTracks, type FirstHarmony, type Focus, type Layers, type Track } from "../song/tracks";
 import { reviveSound } from "../audio/rack";
-import { keysVoicing, onKeys, reviveTones, toneOf, type Tones } from "../audio/tone";
-import { cloudReady, connectCloud, type Cloud, type CloudStatus } from "./cloud";
-import { joinOtherTab } from "./othertab";
+import { reviveTones, type Tones } from "../audio/tone";
+import type { CloudStatus } from "./cloud";
 import type { Key } from "../theory/keys";
 
 export type Tab = "guitar" | "piano";
@@ -169,7 +164,7 @@ export interface AppState {
   canvas?: CanvasPrefs;
   /** The saved idea that is open (null = not saved yet) */
   ideaId?: string | null;
-  /** The idea not saved yet that is open, told apart from the next one (see ./openidea) */
+  /** The idea not saved yet that is open, told apart from the next one (see ./openidea5) */
   draft?: string;
   /** Ideas that were deleted, and when, so other devices delete them too */
   tombs?: Record<string, number>;
@@ -216,9 +211,6 @@ export interface SheetState {
 }
 
 export const STORAGE_KEY = "m-theory-state-v1";
-
-/** Theme attribute set by an embedding host (e.g. the claude.ai artifact viewer), captured before we touch it. */
-const HOST_THEME = typeof document !== "undefined" ? document.documentElement.getAttribute("data-theme") : null;
 
 export const DEFAULT_STATE: AppState = {
   tab: "guitar",
@@ -269,25 +261,6 @@ export function reviveProgression(raw0: Partial<Progression> | undefined): Progr
   // Songs from before sections had lengths get them here.
   // Songs from before the time signature could be chosen get the one their first section played in.
   return conform(settle(prune(commit(p))));
-}
-
-/** After any change, the whole song is in the bars of its time signature (see song/unity). */
-function unify(s: AppState): AppState {
-  const p = conform(s.progression);
-  return p === s.progression ? s : { ...s, progression: p };
-}
-
-/** What was in storage when the app loaded (see AppProvider: another tab may write there too). */
-let loadedRaw: string | null = null;
-
-function load(): AppState {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    loadedRaw = raw;
-    return loadV4(raw);
-  } catch {
-    return DEFAULT_STATE;
-  }
 }
 
 /** A stored text made whole, with no browser needed: nothing stored, or a text that cannot be read, gives the state a new app starts with. */
@@ -398,256 +371,6 @@ const reviveChord = (c0: ProgChord): ProgChord => {
 };
 
 export const newId = () => Math.random().toString(36).slice(2, 10);
-
-export function AppProvider({ children }: { children: ReactNode }) {
-  const [state, setRaw] = useState<AppState>(load);
-  // every change goes through here, so the song can never disagree with its own time signature
-  const setState = useCallback((fn: (s: AppState) => AppState) => setRaw((s) => unify(fn(s))), []);
-  const [sheet, openSheet] = useState<SheetState | null>(null);
-  const [toastMsg, setToast] = useState<{ msg: string; action?: ToastAction } | null>(null);
-  const toastTimer = useRef<number | null>(null);
-
-  // The app may be open in other tabs too, all writing to the same place: what was last written
-  // there (by this tab, or by another and taken in), and the state that took in another tab's
-  // library (it is not written back: storage has the other tab's idea on screen, and no more).
-  const seen = useRef<string | null>(loadedRaw);
-  const takenIn = useRef<AppState | null>(null);
-  useEffect(() => {
-    if (state === takenIn.current) return;
-    try {
-      let s = state;
-      const there = localStorage.getItem(STORAGE_KEY);
-      // another tab wrote since, and this one has not taken it in yet: its library is kept, with this tab's
-      if (there !== null && there !== seen.current) {
-        s = joinOtherTab(state, JSON.parse(there), "both", newId);
-        if (s !== state) setRaw(s);
-      }
-      // kept with every track in its place, so what was being edited can never be mistaken for another track
-      const out = JSON.stringify({ ...s, progression: normalize(s.progression) });
-      localStorage.setItem(STORAGE_KEY, out);
-      seen.current = out;
-    } catch {
-      /* storage unavailable (private mode) — app still works */
-    }
-  }, [state]);
-  // an idea saved (or deleted, or a rhythm, kit or sound kept) in another tab is here too, at once
-  useEffect(() => {
-    const on = (e: StorageEvent) => {
-      if (e.key !== STORAGE_KEY || !e.newValue) return;
-      seen.current = e.newValue;
-      let theirs: unknown;
-      try {
-        theirs = JSON.parse(e.newValue);
-      } catch {
-        return;
-      }
-      setRaw((s) => {
-        const next = joinOtherTab(s, theirs as Parameters<typeof joinOtherTab>[1], "theirs", newId);
-        if (next !== s) takenIn.current = next;
-        return next;
-      });
-    };
-    window.addEventListener("storage", on);
-    return () => window.removeEventListener("storage", on);
-  }, []);
-
-  useEffect(() => {
-    const t = state.settings.theme;
-    // "auto" hands control back to whatever the host page set (or the OS setting)
-    if (t === "auto") {
-      if (HOST_THEME) document.documentElement.setAttribute("data-theme", HOST_THEME);
-      else document.documentElement.removeAttribute("data-theme");
-    } else document.documentElement.setAttribute("data-theme", t);
-  }, [state.settings.theme]);
-
-  const set = useCallback((fn: (s: AppState) => AppState) => setState(fn), []);
-  const tuning = useMemo(() => getTuning(state.settings.tuningId), [state.settings.tuningId]);
-
-  const toast = useCallback((msg: string, action?: ToastAction) => {
-    setToast({ msg, action });
-    if (toastTimer.current) window.clearTimeout(toastTimer.current);
-    toastTimer.current = window.setTimeout(() => setToast(null), action ? action.ms ?? 20000 : 1800);
-  }, []);
-
-  const { capo, avoidBarre, tuningId } = state.settings;
-  const shapes = state.shapes;
-  const shapeOf = useCallback(
-    // (a slot's shape is kept as frets: with another capo or tuning on, one that no longer makes its chord gives way)
-    (ref: ChordRef, slotVoicingId?: string) => chordShape(ref, tuning, capo, avoidBarre, slotVoicingId, shapes[shapeKey(ref, tuningId, capo)]),
-    [shapes, tuning, tuningId, capo, avoidBarre],
-  );
-  const setShape = useCallback(
-    (ref: ChordRef, voicingId: string) => setState((s) => ({ ...s, shapes: { ...s.shapes, [shapeKey(ref, s.settings.tuningId, s.settings.capo)]: voicingId } })),
-    [],
-  );
-  // a chords track on the keys is heard as the keyboard plays it, in its own voicing
-  const keysTone = useMemo(() => {
-    const t = toneOf(state.progression, state.progression.focus?.chords ?? "chords");
-    return onKeys(t) ? t : null;
-  }, [state.progression]);
-  const audition = useCallback(
-    (ref: ChordRef) => {
-      if (keysTone) return strum(keysVoicing(ref, keysTone));
-      const v = shapeOf(ref);
-      if (v) strum(v.midi);
-    },
-    [shapeOf, keysTone],
-  );
-
-  const addChord = useCallback(
-    (ref: ChordRef, opts: { voicingId?: string; afterId?: string } = {}) => {
-      setState((s) => {
-        const item: ProgChord = { id: newId(), ref, beats: chordBeats(s.progression), voicingId: opts.voicingId };
-        const chords = [...s.progression.chords];
-        const at = opts.afterId ? chords.findIndex((c) => c.id === opts.afterId) : -1;
-        if (at >= 0) chords.splice(at + 1, 0, item);
-        else chords.push(item);
-        return { ...s, progression: { ...s.progression, chords } };
-      });
-    },
-    [],
-  );
-
-  // ── Idea library ──
-  const idea = useMemo(() => state.saved.find((i) => i.id === state.ideaId) ?? null, [state.saved, state.ideaId]);
-  const dirty = useMemo(() => {
-    const now = fingerprint(snapshot(state.key, state.progression, capo, tuningId));
-    if (!idea) return !isBlank(state.progression);
-    return now !== fingerprint(snapshot(idea.key, idea.progression, idea.capo ?? capo, idea.tuningId ?? tuningId));
-  }, [idea, state.key, state.progression, capo, tuningId]);
-
-  const saveIdea = useCallback(
-    (asNew = false): "new" | "updated" | "nothing" => {
-      const update = !asNew && state.saved.some((i) => i.id === state.ideaId);
-      if (!update && isBlank(state.progression)) return "nothing";
-      setState((s) => {
-        const snap = snapshot(s.key, s.progression, s.settings.capo, s.settings.tuningId);
-        const at = Date.now();
-        const open = s.saved.find((i) => i.id === s.ideaId);
-        if (open && !asNew) return { ...s, saved: s.saved.map((i) => (i.id === open.id ? { ...i, ...snap, updatedAt: at } : i)) };
-        const id = newId();
-        const name = asNew && open ? `${open.name} copy` : autoName(s.key, s.saved);
-        // (saved for the first time, it is the same idea: a copy is another one)
-        const now = asNew && open ? { ...s, ideaId: id } : reidea(s, id);
-        return { ...now, saved: [{ id, name, ...snap, savedAt: at, updatedAt: at }, ...s.saved] };
-      });
-      return update ? "updated" : "new";
-    },
-    [state.saved, state.ideaId, state.progression],
-  );
-  const [recordingTo, setRecordingTo] = useState<string | null>(null);
-  const recRef = useRef(recordingTo);
-  recRef.current = recordingTo;
-  const [opened, setOpened] = useState(0);
-  const openIdea = useCallback((id: string) => {
-    if (recRef.current) return toast("Stop recording first");
-    // a take heard alone belongs to the idea it was recorded in: it stops with it
-    stopAlone();
-    setOpened((n) => n + 1);
-    setState((s) => {
-      const it = reviveIdea(s.saved.find((i) => i.id === id));
-      if (!it) return s;
-      return { ...s, ideaId: id, key: it.key, progression: { ...DEFAULT_STATE.progression, ...it.progression }, settings: { ...s.settings, capo: it.capo ?? s.settings.capo, tuningId: it.tuningId ?? s.settings.tuningId } };
-    });
-    openSheet(null);
-  }, [toast]);
-  const newIdea = useCallback(() => {
-    if (recRef.current) return toast("Stop recording first");
-    stopAlone();
-    setOpened((n) => n + 1);
-    setState((s) => ({ ...s, ideaId: null, draft: newId(), progression: { ...DEFAULT_STATE.progression, bpm: s.progression.bpm } }));
-    openSheet(null);
-  }, [toast]);
-  const renameIdea = useCallback((id: string, name: string) => setState((s) => ({ ...s, saved: s.saved.map((i) => (i.id === id ? { ...i, name, updatedAt: Date.now() } : i)) })), []);
-  const deleteIdea = useCallback(
-    // (the idea open stays on screen, not saved)
-    (id: string) => setState((s) => ({ ...(s.ideaId === id ? reidea(s, null, newId()) : s), saved: s.saved.filter((i) => i.id !== id), tombs: { ...s.tombs, [id]: Date.now() } })),
-    [],
-  );
-  const importIdeas = useCallback(
-    (incoming: SavedProgression[]) => {
-      const have = new Set(state.saved.map((i) => i.id));
-      const fresh = incoming.filter((i) => !have.has(i.id));
-      if (fresh.length)
-        setState((s) => {
-          const tombs = { ...s.tombs };
-          fresh.forEach((i) => delete tombs[i.id]);
-          return { ...s, saved: [...fresh.filter((i) => !s.saved.some((x) => x.id === i.id)).map((i) => ({ ...i, updatedAt: Date.now() })), ...s.saved], tombs };
-        });
-      return fresh.length;
-    },
-    [state.saved],
-  );
-
-  // ── Sync with the Claude account (only when the app runs as a claude.ai artifact) ──
-  const [cloud, setCloud] = useState<CloudStatus>("local");
-  const cloudRef = useRef<Cloud | null>(null);
-  const known = useRef(new Map<string, number>()); // what the cloud holds: id → time (negative = deleted)
-  const busy = useRef(false);
-  const syncNow = useCallback(() => {
-    if (cloudRef.current || busy.current) return;
-    busy.current = true;
-    setCloud("connecting");
-    (async () => {
-      try {
-        const c = await connectCloud();
-        if (!c) return setCloud("local");
-        const remote = await c.list();
-        remote.forEach((r) => known.current.set(r.id, r.deleted ? -r.updatedAt : r.updatedAt));
-        setState((s) => {
-          const m = mergeIdeas(s.saved, s.tombs ?? {}, remote);
-          const gone = !!s.ideaId && !m.ideas.some((i) => i.id === s.ideaId);
-          return { ...(gone ? reidea(s, null, newId()) : s), saved: m.ideas, tombs: m.tombs };
-        });
-        cloudRef.current = c;
-        setCloud("synced");
-      } catch {
-        setCloud("error");
-      } finally {
-        busy.current = false;
-      }
-    })();
-  }, []);
-  // connect quietly on load when the viewer has already allowed it
-  useEffect(() => {
-    void cloudReady().then((r) => r === "granted" && syncNow());
-  }, [syncNow]);
-  // send changes, one document at a time
-  useEffect(() => {
-    const c = cloudRef.current;
-    if (!c || cloud !== "synced") return;
-    const t = window.setTimeout(async () => {
-      if (busy.current) return;
-      busy.current = true;
-      try {
-        for (const r of toPush(state.saved, state.tombs ?? {}, known.current)) {
-          await c.put(r);
-          known.current.set(r.id, r.deleted ? -r.updatedAt : r.updatedAt);
-        }
-      } catch {
-        setCloud("error");
-        cloudRef.current = null; // "Sync" in the library tries again
-      } finally {
-        busy.current = false;
-      }
-    }, 700);
-    return () => window.clearTimeout(t);
-  }, [state.saved, state.tombs, cloud]);
-
-  const value: Ctx = { state, set, tuning, sheet, openSheet, toast, audition, shapeOf, setShape, addChord, idea, dirty, saveIdea, openIdea, newIdea, opened, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo };
-  const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
-  return (
-    <AppCtx.Provider value={value}>
-      {children}
-      {toastMsg && toastLive && (
-        <div className={`toast${toastMsg.action ? " act" : ""}`} role="status">
-          <span>{toastMsg.msg}</span>
-          {toastMsg.action && <button aria-label={toastMsg.action.aria} title={toastMsg.action.aria} onClick={() => { toastMsg.action!.run(); setToast(null); }}>{toastMsg.action.label}</button>}
-        </div>
-      )}
-    </AppCtx.Provider>
-  );
-}
 
 export function useApp(): Ctx {
   const c = useContext(AppCtx);

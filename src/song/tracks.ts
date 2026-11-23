@@ -557,15 +557,6 @@ export function forget(t: Track, tracks: Track[], gone?: string): Track {
   return where.length ? { ...rest, replaces: target, replacesIn: where } : old ? { ...rest, replaces: target } : rest;
 }
 
-/**
- * The mixer with a track muted because a harmony track plays instead of it, and marked so, so it
- * is heard again when that goes. One already muted (by hand) is left as it is, and stays muted.
- */
-export function muteInstead(mix: Mix | undefined, id: string): Mix | undefined {
-  const m = mix?.[id];
-  if (m?.mute) return mix;
-  return { ...mix, [id]: { ...m, mute: true, instead: true } };
-}
 /** The mixer with a track heard again that was muted only because a harmony track played instead of it. */
 export function unmuteInstead(mix: Mix | undefined, id: string): Mix | undefined {
   const m = mix?.[id];

@@ -205,9 +205,6 @@ export function newLetter(p: Progression): string {
   return letterAt(before.size);
 }
 
-/** The colour a new section would have. */
-export const newColor = (p: Progression): number => (p.song?.blocks.length ? freeColor(p.song.parts) : 1);
-
 /**
  * A brand-new section: no chords and no melody yet, and no added tracks. Its first tracks start
  * with a copy of how they sound in the section it was made from (the one on screen: its playing
