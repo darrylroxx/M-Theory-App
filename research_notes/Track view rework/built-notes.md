@@ -383,3 +383,85 @@ Deleted: `src/ui/views/GuitarView.tsx`; `src/ui/components/FrameSections.tsx`, `
 - `addTrack` names a new blank audio track "Blank 1" (`edit.ts` `KIND_NAME`); a stored track with no name is still read as "Audio" (`library5.ts`), and existing tracks keep their names. `edit.test.ts`'s one assertion of "Audio 1" was changed for it.
 - `openWin`: a sound window opening for the first time where another open sound window stands steps down and left (`clearOf`, `STEP_X` 28, `STEP_Y` 40). Composers still share their place.
 - `extraChordItems(items, track, own?)` (`audio/midi.ts`): with `own`, a chord that names `from` gets an item `from` of `styleAt(c)`, so `itemNotes` counts its style from where its clip's content starts. `progressionToMidi` passes it for chords not on the synth (the player's rule, `chordAt`). Without `own`, and for a chord with no `from`, nothing changes: both documented MIDI cases of `equal.test.ts` are as they were.
+
+## Track limit (how many tracks the audio thread carries, and what was done about it)
+Files made: `src/audio/overload.ts`, `overload.test.ts`, `block.test.ts`. Edited: `audio/context.ts` (`openLive`, `blockFrames`, `loopLag`, `blockFor`, `MAX_BLOCK`), `drumbus.ts` (a desk at rest, the room's gate, the echo's wait), `rack.ts` (one line: the echo's right-hand delay), `through.ts`, `through.worklet.ts`, `throughcore.ts` (a comment), `listen/bank.ts`, `ear.worklet.ts`, `live.ts`, `ui/timeline/Host.tsx` (the overload line), `drumbus.test.ts`. Nothing under `src-tauri/`. 2,464 tests before, ‹TESTS› now.
+
+### How it was measured
+Headless Chromium 157 on one core of a 2.3 GHz virtual server processor (four cores, no sound card: the browser's pretend one, 44,100 Hz, a buffer of 1,024 frames with the 'playback' hint), the production build. A song is put in the stored state, played on a loop, and the audio thread's processor time is read from the system's own count for that thread (`/proc/<pid>/task/<tid>/stat`) over 12 to 60 seconds. The earlier figures in these notes were read from the browser's trace instead, which itself costs the audio thread about two points (38.7 % by the trace, 36.5 % by the system, for the same five tracks). The same song measured several times in a row varies by about three points either way (61.4, 68.1, 62.6, 67.3 % for nine tracks), so every figure in the tables is from at least two runs, the builds measured turn about.
+
+### Where the time went (the branch as found)
+Six tracks of one kind, all sounding all the time (% of one core; "full" = the load song's effects: reverb 0.3, echo 0.2, chorus 0.3, drums reverb 0.3 and echo 0.1; "new" = as a new track is; "none" = every effect at nothing). With every track at rest the thread uses 2.3 %.
+
+| six tracks of | full | new | none | one track, full |
+|---|---|---|---|---|
+| strings, strummed chords | 43.2 | 38.8 | 29.8 | 6.8 |
+| strings, a melody in eighths | 31.1 | 25.6 | 18.2 | 4.8 |
+| grand piano, chords | 41.0 | 38.8 | 27.3 | 6.5 |
+| grand piano, melody | 39.6 | 35.8 | 29.2 | 6.2 |
+| electric piano, chords | 38.2 | 35.8 | 28.2 | 6.0 |
+| synth, chords (a pad) | 45.6 | 40.6 | 33.3 | 7.2 |
+| synth, melody (a lead) | 37.9 | 32.9 | 26.0 | 5.9 |
+| bass (synth) | 36.0 | 30.7 | 26.5 | 5.6 |
+| drums (a desk each) | 54.9 | 49.0 | 33.6 | 8.8 |
+| a recorded take | ‹TAKE› | | | ‹TAKE1› |
+
+What one node costs in this browser on this machine (many copies fed with noise; % of one core each, stereo unless said), in blocks of 128 frames and of 1,024:
+
+| node | in 128 | in 1,024 |
+|---|---|---|
+‹UNIT›
+
+What a track is made of (nodes the speakers can reach, counted in the running app): a chords or melody track awake 75 to 90 (about 47 gains, 16 to 18 filters, 6 delays, 4 wave shapers, 1 compressor, and the shared room's 6); at rest 9. A drums track 75 (45 gains, 12 filters, 9 panners, 4 wave shapers, 2 rooms, 2 delays, 1 compressor), 86 with Echo on. A note on the strings adds 4 (source, filter, gain, panner) for as long as it rings; a piano note 2 to 4; a drum hit 2; a synth note none (one audio-thread processor per synth track holds its voices). One limiter processor for the whole song.
+
+By stage, for one track that is sounding (unit costs times what is in the path; they add up to what the songs measure):
+- the instrument: strings 0.165 % a ringing note, 10 to 16 ringing in a strum (1.6 to 2.6 %), 2 in a melody; a piano 2 to 3 % (up to dozens of stereo recordings at once); the synth about 3 % (its processor: the voices, the ladder filter at twice the rate, its own effects);
+- the rack's path that is always there, about 2 %: the saturation's straight path (a four-times-oversampled stage that only keeps time while Drive is at 0) 0.7 %, the compressor 0.26 %, three tone filters 0.3 %, some twenty-five gains 0.5 %, the tape delay and the ceiling 0.15 %;
+- squeeze and the reverb send of a new track: 1.2 to 2 % (of which the shared room is 3.3 % once for all tracks that have it);
+- echo and chorus when on: 0.4 to 0.9 %;
+- a drum desk, 7.8 % as new: its own room 3.3 %, the saturation's straight path 0.7 % and its bend (Grit starts at 0.4) 1.3 %, the ceiling at twice the rate 0.4 %, compressor 0.26 %, three filters 0.3 %, the nine drums' strips and the hits about 1.5 %;
+- the fader, the canvas's tap (an analyser on every track, 0.035 %), the master and its safety stage: under 0.2 % a track; the safety stage itself is part of the 2.3 %.
+
+What was running for nothing:
+- **A drum desk never rested.** Eight desks that played two bars and then nothing, 25 seconds later: 35.2 % with Echo on (4.1 % each: an echo that feeds itself never reaches silence, and kept the desk's chain and its room going for good), 7.3 % without (0.6 % each, just for being there).
+- **A desk's room was fed with Reverb at 0** (and under Bypass): 2.7 % a desk.
+- **A track awake but silent** (its last note over, its echo dying away, 12 seconds until it rests) costs 2.5 to 3.4 %: nearly all of it the browser calling on some eighty silent nodes 344 times a second. This is what made the arrangement (below) cost a third more than nine tracks sounding.
+- **Being called on at all.** A stereo gain costs 0.02 % in blocks of 128; the multiplying is a twelfth of that.
+
+### What was changed
+1. **A drum desk rests** (`drumbus.ts` `sounding`, `deskTail`, `deskResting`): let go of its fader once everything booked on it has died away (the hit's own length + the room's impulse + with Echo the repeats until they are 100 dB down + 0.5 s), put back by its next hit or noise bed at the moment that is booked (a quarter of a second ahead in the player). A new desk rests after a moment if nothing is played. Live only.
+2. **A desk's room is fed only while Reverb is up** (`roomFeed`, a gate over every drum's send and the echo's way into the room, as `echoFeed` and `tapeFeed` are).
+3. **Blocks as long as the sound card's buffer** (`context.ts` `openLive`). The context is opened once as before; its `baseLatency × sampleRate` is how many frames the sound card is handed at a time; where the browser has `renderQuantumSize` it is opened again with `renderSizeHint` of that many (halved while over `MAX_BLOCK`, 30 ms) and the first one is closed. The second is used only if it has the block asked for, the same rate and the same `baseLatency`. Offline renders are not touched.
+4. **The overload line** (`overload.ts`, `Host.tsx`).
+
+What later work must know about blocks:
+- `blockFrames(c)` is the block of a context (128 offline, in tests, and in browsers that cannot choose). Nothing on the audio thread may take a block to be 128: a processor is told in its options (`block`), as the recording engine's tap and the ears are.
+- **A loop in the graph comes round one block later than its delay says** (the browser hands the delay what the loop put out a block ago: measured, clicks at 0.2 s + 128, + 256, + 1,024 frames for blocks of those sizes). `loopLag(c)` is what a block longer than 128 adds; whoever builds a loop takes it off the delay in the loop, and, when what goes in passes that same delay, makes it wait that long first (the desk's echo). Where the loop is entered decides which link is late: a rack's echo is entered at its left delay (the merger asks for its first input first), so the right delay, which takes over from the left, is the short one; a desk's is entered at its filter, so the feedback link is the late one.
+- A block may not be longer than the shortest delay in a loop. The shortest echo is a sixteenth at 200, 75 ms; `MAX_BLOCK` is 30 ms.
+- The compressor's knobs are read once a block (every 23 ms instead of every 3 while a knob is being turned; its own attack and release smooth that). Every other knob glides sample by sample as before.
+
+### The null test, and what it found about the render itself
+Ninety-nine songs (the 18 conversion fixtures, the load songs, the arrangement, one song for each instrument with every effect at nothing and as a new track is, one for each stage of the rack and of the desk at a setting that is not nothing, tracks together) are rendered by `renderSong` on a page of the production build, each on a freshly loaded page with `Math.random` seeded, and compared sample for sample (`null.js`, `nullsongs.js`, `nulltable.js` in the builder's scratch folder).
+
+**Two renders of the same build are not the same.** Ten of the songs (the synth's, and a one-note-at-a-time strings melody) come out bit for bit alike every time. The other 89 differ between two renders of the untouched branch by -67 to -140 dB under their peak. Why: when several notes sound at once the browser adds them up in whatever order its table of connections happens to hold them in, which is another order on every load, so the sum differs in its last bit; and the low-cut filters (8 Hz in the saturation's bend, 60 Hz in the rack) carry their own rounding noise far above that last bit (measured: seventy short sounds through an 8 Hz high-pass, two loads, -72 dB; through nothing, -138 dB). A synth track is one source, so it has no order to differ in. Keeping the render in step with the page block by block, and holding on to every node, change nothing of this. So "zero, or under -90 dB" cannot be shown for a song with strings, a piano or drums, changed or not; a change is judged instead against how far the baseline is from itself (four renders of it, the largest difference between any two), and the ten songs that repeat must stay bit for bit.
+
+Results (98 songs; the arrangement, ten minutes a render, once at the end):
+‹NULL›
+
+Live, recorded off the audio thread on the harness page (`live.js`):
+- a desk at rest (Reverb 0.3, Echo 0.2) rests 7.7 s after its hits; woken by a hit booked 0.25 s ahead, the 0.2 s before the hit are at -143 dB, the hit starts on the same frame as on a desk that was awake, and the two hits differ by -113 dB; no click;
+- drums with echo and reverb, live in blocks of 1,024, against the app's offline render of the same bars (blocks of 128): -99.8 dB, twice. (The same test on the branch as found, live in 128: -25 and -43 dB: the old live path was the less repeatable.) Strings with echo, live in 1,024 against live in 128: -82 dB; two live runs in 128: -81 dB;
+- the loop going round three times, a track muted, another soloed, a fader pulled down and back (soft synth sounds, so a click would stand out): no click, before or after;
+- a desk's Reverb and a track's Echo turned to 0, back, to 0 and back within 150 ms while playing: no click in what the turning changed.
+
+### Looked at and left
+- **A stage of the main path taken out while its knob is at 0** (the tone filters at 0 dB, the compressor at Squeeze 0): about 0.2 % a track each. Taking a node out of the path and putting the way round it in are two changes of the graph, and the audio thread can take one of them a block before the other: a gap or a doubling for one block, a click. Only the way into a side effect is ever cut (as `gate.ts` says). Left.
+- **The saturation's straight path** (0.7 % a track and a desk, the largest single thing that only keeps time): the oversampled stage with a straight curve is a fixed filter (its delay, a slight roll-off near the top), so a short convolution with its measured response would do the same for about half the cost. Measuring that response in each browser at each rate, swapping it in, and a null no better than -120 dB on every song: not for 0.35 % a track.
+- **The canvas's taps** only while the canvas is open: 0.035 % a track in blocks of 128, less now.
+- **Resting sooner.** A track with Echo rests 12 s after its last note whatever the echo; worked out from the echo itself it would be 8 to 10 s for a light one. The strings count 6 s for a ringing note where the note's own length is known. Small, and less matters now that a silent track costs a third of what it did.
+- **The synth's processor** (about 3 % a synth track): already works in control blocks and rests when silent; anything more is inside its per-sample sums, where a change of order changes the last bit.
+- **One note's buffer made once for all tracks with the same strings** (each track's strings render their own today): memory and the page's work before ▶, not the audio thread.
+- **Freezing**: a track nobody is editing rendered once to sound and played as one recording would cost 0.04 % instead of 4 to 8. That is what would carry any number of tracks; it needs the render kept in step with every edit of the track, and about 23 MB a minute a track.
+
+### After
+‹TABLE›
