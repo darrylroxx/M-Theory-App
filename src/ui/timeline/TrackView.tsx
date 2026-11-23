@@ -127,6 +127,8 @@ type ClipDrag = {
   /** a finger swiped sideways from a clip that was not lifted: time scrolls (the view as it was when the swipe began) */
   pan?: number;
   el?: HTMLElement;
+  /** what was selected when the finger came down (its menu can add this clip to that) */
+  was?: string[];
   ids: string[]; els: HTMLElement[]; stays: HTMLElement[]; oneTrack: boolean;
   by: number; to: string | null | undefined; copy: boolean; edge?: number;
 };
@@ -586,6 +588,7 @@ export function TrackView(props: TrackViewProps) {
         { title: "Timeline" },
         { label: "Follow the play line", on: f, run: () => setFollow(!f) },
         { label: "Show the whole song", run: fit },
+        { label: looped ? "Select the clips in the loop" : "Select every clip", disabled: !p.song.clips.length, run: () => key("select-all") },
         { label: "Paste at the cursor", disabled: !p.clipboard.has, run: () => key("paste") },
         { label: "Add a marker at the cursor", run: () => key("marker") },
         ...(mk ? [{ label: "Rename the selected marker", run: () => setNaming(mk) }, { label: "Delete the selected marker", danger: true, run: () => removeMarker(mk) }] : []),
@@ -761,7 +764,7 @@ export function TrackView(props: TrackViewProps) {
       });
     };
 
-    const openClipMenu = (at: MenuAt, id: string, beat: number) => {
+    const openClipMenu = (at: MenuAt, id: string, beat: number, was: string[] = []) => {
       const c = clipOf(id);
       if (!c) return;
       const p = P();
@@ -787,6 +790,10 @@ export function TrackView(props: TrackViewProps) {
           q.edit("Change clip length", (x) => resizeClip(x, id, "right", to));
         };
         items.splice(items.length - 1, 0, { label: "Repeat once more", run: () => round(1) }, { label: "Repeat once less", run: () => round(-1) });
+        // several clips at once, without a held key or a box drawn with a mouse: this clip added to what was selected
+        // before the finger came down on it (the six buttons, and a drag, then act on all of them)
+        const others = was.filter((x) => x !== id && clipOf(x));
+        if (others.length) items.unshift({ label: `Select with the ${others.length === 1 ? "other one" : `other ${others.length}`}`, run: () => h.select([...others, id]) }, { sep: true });
       }
       setMenu({ at, label: "Clip", items });
     };
@@ -878,7 +885,7 @@ export function TrackView(props: TrackViewProps) {
           }
           if (!P().session.sel.clips.includes(id)) h.select([id], c.track);
         }, HOLD_MS) : 0;
-        clipDrag.current = { pointer: e.pointerId, id, kind, x0: e.clientX, y0: e.clientY, beat0, moved: false, still, hold, el, ids: [], els: [], stays: [], oneTrack: true, by: 0, to: undefined, copy: false };
+        clipDrag.current = { pointer: e.pointerId, id, kind, x0: e.clientX, y0: e.clientY, beat0, moved: false, still, hold, el, was: P().session.sel.clips, ids: [], els: [], stays: [], oneTrack: true, by: 0, to: undefined, copy: false };
       },
       clipMove(e) {
         const d = clipDrag.current;
@@ -964,7 +971,7 @@ export function TrackView(props: TrackViewProps) {
         window.clearTimeout(d.hold);
         if (d.el) delete d.el.dataset.lifted;
         // lifted and let go where it was: its menu
-        if (!d.moved && d.lifted) return openClipMenu({ x: e.clientX, y: e.clientY }, d.id, d.beat0);
+        if (!d.moved && d.lifted) return openClipMenu({ x: e.clientX, y: e.clientY }, d.id, d.beat0, d.was);
         if (!d.moved) return tapClip(e, d.id);
         if (d.still) return;
         const p = P();
