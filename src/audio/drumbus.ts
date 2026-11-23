@@ -19,7 +19,8 @@
  * echoes too) it is let go of its fader, so the audio thread works none of it out; its next hit puts
  * it back first. A desk still ringing only with an echo's last repeats would otherwise keep its
  * whole chain, room and all, running for good: an echo that feeds itself never quite reaches
- * silence. An offline render keeps everything connected from start to end.
+ * silence. And its room is only fed while the Reverb is up (see gate.ts): a room is the costliest
+ * thing a desk has. An offline render keeps everything it uses connected from start to end.
  *
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
@@ -69,6 +70,8 @@ interface Bus {
   tape: DelayNode;
   /** the echo's way in (and round, and on to the room), let go while Echo is at 0 (see gate.ts) */
   echoFeed: Gate;
+  /** the room's way in (every drum's send, and the echo's), let go while Reverb is at 0: nothing of the room is heard then */
+  roomFeed: Gate;
   /** the tape's wobble, let go while Tape is at 0 */
   tapeFeed: Gate;
   low: BiquadFilterNode;
@@ -286,7 +289,6 @@ function getBus(track = FIRST_DRUMS): Bus {
   echo.connect(echoLp).connect(echoHp);
   echoHp.connect(echoFb);
   echoHp.connect(echoWet).connect(mix);
-  echoToVerb.connect(verbIn);
   // (at 0 the echo rests once its repeats have died away, and so does the room it fed)
   const echoFeed = gate(c, [[echoIn, echo], [echoFb, echo], [echoWet, echoToVerb]], 2.2);
 
@@ -338,6 +340,7 @@ function getBus(track = FIRST_DRUMS): Bus {
   if (!isRendering()) tapStem("drums", out, track);
 
   const channels = {} as Record<DrumId, Channel>;
+  const roomEdges: [AudioNode, AudioNode][] = [[echoToVerb, verbIn]];
   for (const id of DRUM_IDS) {
     const input = c.createGain();
     const pan = c.createStereoPanner();
@@ -345,11 +348,15 @@ function getBus(track = FIRST_DRUMS): Bus {
     const send = c.createGain();
     input.connect(pan);
     pan.connect(dry);
-    pan.connect(space).connect(verbIn);
+    pan.connect(space);
+    roomEdges.push([space, verbIn]);
     pan.connect(send).connect(echoIn);
     channels[id] = { input, pan, space, echo: send };
   }
-  const bus: Bus = { dry, sat, verbs, verbIns, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
+  // (with Reverb at 0 nothing of the room is heard: it is not fed, and once it has rung out it costs nothing.
+  // Let go only after the knob has glided down to nothing, τ 30 ms; fed again before it glides back up)
+  const roomFeed = gate(c, roomEdges, 0.3);
+  const bus: Bus = { dry, sat, verbs, verbIns, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, roomFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
   const desk: Desk = { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbRings: [0, 0], out, resting: false, quietAt: 0 };
   set.set(track, desk);
   // (a desk made and not played rests after a moment)
@@ -407,7 +414,11 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   // A new desk (a render makes its own) starts on these settings: its first hit must not glide in from the defaults
   const fresh = was.bpm === undefined;
   const to = (param: AudioParam, value: number, tc = 0.03) => (fresh ? (param.value = value) : param.cancelScheduledValues(t).setTargetAtTime(value, t, tc));
-  if (fx.space !== was.space) to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
+  if (fx.space !== was.space) {
+    if (fx.space > 0) b.roomFeed.on();
+    else b.roomFeed.off(t);
+    to(b.verbWet.gain, Math.pow(fx.space, 1.2) * 2.2);
+  }
   if (fx.size !== was.size || fx.verb !== was.verb) {
     // building a room takes a moment: wait until the knob stops moving (a section's own room: until its moment)
     window.clearTimeout(desk.sizeTimer);

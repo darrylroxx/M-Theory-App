@@ -252,3 +252,75 @@ describe("a desk that makes no sound rests", () => {
     expect(deskTail({ echo: 0, echoTime: "1/4", bpm: 120 }, 0, true)).toBeCloseTo(0.5 + 0.5, 6);
   });
 });
+
+describe("a desk's room is only fed while its Reverb is up", () => {
+  const wet = { ...kit("909"), space: 0.5 };
+  const dry = { ...kit("909"), space: 0 };
+  it("at 0 no drum reaches the room (the costliest thing a desk has); the drums themselves go out as before", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "ra");
+      playStep(dry, "snare", 3, 0.1, "ra");
+    });
+    const hit = c.started[0];
+    expect(roomsOf(c).length).toBe(2);
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(false);
+    expect(c.reaches(hit, fader("ra", asAudio(c)))).toBe(true);
+  });
+  it("turned up, it is fed at once (before its level glides up); turned back to 0, it is let go once the level has glided down", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "rb");
+      playStep(dry, "snare", 3, 0.1, "rb");
+    });
+    const hit = c.started[0];
+    withContext(asAudio(c), () => setDrumFx(fxOf(wet), 100, "rb"));
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(true);
+    withContext(asAudio(c), () => setDrumFx(fxOf(dry), 100, "rb"));
+    // still fed while the level glides down
+    vi.advanceTimersByTime(200);
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(true);
+    vi.advanceTimersByTime(200);
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(false);
+    // turned up again before it was let go: it simply stays
+    withContext(asAudio(c), () => {
+      setDrumFx(fxOf(wet), 100, "rb");
+      setDrumFx(fxOf(dry), 100, "rb");
+    });
+    vi.advanceTimersByTime(100);
+    withContext(asAudio(c), () => setDrumFx(fxOf(wet), 100, "rb"));
+    vi.advanceTimersByTime(1000);
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(true);
+  });
+  it("the echo's own way into the room goes with it", () => {
+    const c = new FakeAudio();
+    const echoing = { ...dry, echo: 0.5 };
+    withContext(asAudio(c), () => {
+      syncDrums(echoing, 100, "rc");
+      playStep(echoing, "snare", 3, 0.1, "rc");
+    });
+    const hit = c.started[0];
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(false);
+    withContext(asAudio(c), () => setDrumFx({ ...fxOf(echoing), space: 0.3 }, 100, "rc"));
+    expect(roomsOf(c).some((r) => c.reaches(hit, r))).toBe(true);
+  });
+  it("a render that never uses the room never feeds it; one that uses it anywhere has it fed from its first sample", () => {
+    const off = new FakeOffline();
+    withContext(asAudio(off), () => {
+      syncDrums(dry, 100, "rd");
+      playStep(dry, "snare", 3, 0.1, "rd");
+    });
+    expect(roomsOf(off).some((r) => off.reaches(off.started[0], r))).toBe(false);
+    const two = new FakeOffline();
+    withContext(asAudio(two), () => {
+      syncDrums(dry, 100, "re");
+      // a later section with its own kit: booked before the render starts, as every change of a render is
+      syncDrums(wet, 100, "re", 8);
+      playStep(dry, "snare", 3, 0.1, "re");
+      // … and back to none: a render keeps what it has connected
+      syncDrums(dry, 100, "re", 16);
+    });
+    vi.advanceTimersByTime(5000);
+    expect(roomsOf(two).some((r) => two.reaches(two.started[0], r))).toBe(true);
+  });
+});
