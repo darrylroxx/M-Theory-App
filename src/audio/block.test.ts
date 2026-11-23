@@ -2,7 +2,7 @@
 // the block asked for is the buffer's own size and never too long, an echo's loop keeps its timing whatever the block,
 // and nothing on the audio thread assumes a block is 128 frames.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_BLOCK, blockFor, blockFrames, loopLag, openLive, withContext } from "./context";
+import { MAX_BLOCK, blockFor, blockFrames, liveBlocks, loopLag, openLive, setLiveBlocks, withContext } from "./context";
 import { ECHO_TIMES, DEFAULT_BEAT, type Beat } from "./beats";
 import { playStep, syncDrums } from "./drumbus";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
@@ -114,6 +114,27 @@ describe("opening the live context", () => {
     expect(openLive(refuses.AC)).toBe(refuses.made[0]);
     expect(refuses.made.length).toBe(1);
     expect(refuses.made[0].closed).toBe(false);
+  });
+  it("turned off on this computer (Settings, Audio): opened once, as it always was; turned on again, in blocks of the buffer", () => {
+    const kept = new Map<string, string>();
+    vi.stubGlobal("localStorage", { getItem: (k: string) => kept.get(k) ?? null, setItem: (k: string, v: string) => void kept.set(k, v), removeItem: (k: string) => void kept.delete(k) });
+    expect(liveBlocks()).toBe(true);
+    setLiveBlocks(false);
+    expect(liveBlocks()).toBe(false);
+    const off = browser({});
+    expect(openLive(off.AC)).toBe(off.made[0]);
+    expect(off.made.length).toBe(1);
+    expect(off.made[0].opts).toEqual({ latencyHint: "playback" });
+    expect(blockFrames(off.made[0] as unknown as AudioContext)).toBe(128);
+    setLiveBlocks(true);
+    expect(kept.size).toBe(0);
+    const on = browser({});
+    expect(blockFrames(openLive(on.AC))).toBe(1024);
+  });
+  it("with nowhere to keep the choice (no storage, or storage that refuses) it is on, and nothing breaks", () => {
+    vi.stubGlobal("localStorage", { getItem: () => { throw new Error("no"); }, setItem: () => { throw new Error("no"); }, removeItem: () => { throw new Error("no"); } });
+    expect(liveBlocks()).toBe(true);
+    expect(() => setLiveBlocks(false)).not.toThrow();
   });
   it("a long buffer is worked out in two or more blocks, none longer than the shortest echo allows", () => {
     const b = browser({ handed: 4096, rate: 48000 });

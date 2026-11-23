@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { liveBlocks, setLiveBlocks } from "../../audio/context";
 import { dbOf, haloOf, meterPos } from "../../audio/levels";
 import { appInfo } from "../../desktop";
 import { TUNINGS } from "../../guitar/tunings";
@@ -88,6 +89,25 @@ const BUFFERS = [32, 48, 64, 96, 128, 192, 256, 512];
 const METERS = 8;
 
 /**
+ * The app's own sound (its instruments and drums, not the interface): whether it is worked out a whole buffer at a
+ * time (audio/context.ts `openLive`). On unless turned off here; the sound is opened once, so a change is heard from
+ * the next time the app is opened, which the line under it says once it has been changed.
+ */
+function AppSound() {
+  const [on, setOn] = useState(liveBlocks);
+  const was = useRef(on);
+  return (
+    <div className="au-box">
+      <b className="vc-title">The app's own sound</b>
+      <label className="toggle" title="The app works out its instruments and drums one buffer of sound at a time instead of in many small steps: the same sound for much less work, so many more tracks can play at once. If the app's own sound crackles or sounds wrong on this computer, turn this off">
+        <input type="checkbox" checked={on} onChange={(e) => { setLiveBlocks(e.target.checked); setOn(e.target.checked); }} /> Worked out a whole buffer at a time
+      </label>
+      <span className="tiny muted">Room for many more tracks before the sound breaks up. Turn it off if the app's own sound misbehaves on this computer.{on !== was.current ? " It changes the next time the app is opened." : ""}</span>
+    </div>
+  );
+}
+
+/**
  * The Audio part of the settings: the interface and its buffer, the delay the driver measures and the dropouts it
  * counts, a meter for every input, how loud the song and the click are in the headphones, the reminders of the
  * interface's own switches, and the timing nudge. The interface is open while this part is on screen and the app is
@@ -147,6 +167,7 @@ export function AudioPart({ engine, setNudge, track }: AudioSettings) {
           <span className="small muted">In a browser, a track records the microphone the browser offers (it asks the first time). The interface, its inputs and pairs, monitoring and the vocal sound are in the desktop app.</span>
           <label className="vc-mini" title="A browser does not say how long the sound takes to come in through the microphone. If takes sound late, raise this; early, lower it. The takes already in this song move too">Timing nudge <input type="number" step={1} value={studio.nudge ?? 0} disabled={running} onChange={(e) => setNudge(Number(e.target.value) || 0)} /> ms</label>
         </div>
+        <AppSound />
       </section>
     );
   /** the inputs the engine's track records: one, or the two of a pair */
@@ -209,6 +230,8 @@ export function AudioPart({ engine, setNudge, track }: AudioSettings) {
         {engine.monitor && checks.direct && <span className="small vc-err">Direct Monitor is on too: you hear yourself twice</span>}
         <label className="vc-mini" title="Takes are lined up using the delay the driver reports. If they sound late, raise this; early, lower it. The takes already in this song move too">Timing nudge <input type="number" step={0.5} value={studio.nudge ?? 0} onChange={(e) => setNudge(Number(e.target.value) || 0)} /> ms</label>
       </div>
+
+      <AppSound />
 
       {hosts && (
         <details className="small">

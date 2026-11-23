@@ -63,6 +63,30 @@ export function blockFor(handed: number, rate: number): number {
   return q > 128 && q / rate <= MAX_BLOCK ? q : 0;
 }
 
+/** Where the choice is kept on this computer (only when it was turned off). */
+const BLOCKS_KEY = "m-theory-live-blocks";
+/**
+ * May the live context be worked out in blocks as long as the sound card's buffer (see `openLive`)?
+ * Yes, unless it was turned off on this computer (Settings, Audio): it is the browser's newest way
+ * of working, and a computer on which it misbehaves has to be able to go back to blocks of 128.
+ */
+export function liveBlocks(): boolean {
+  try {
+    return globalThis.localStorage?.getItem(BLOCKS_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+/** Turn it on or off: the context is opened once, so this is heard from the next time the app is opened. */
+export function setLiveBlocks(on: boolean): void {
+  try {
+    if (on) globalThis.localStorage?.removeItem(BLOCKS_KEY);
+    else globalThis.localStorage?.setItem(BLOCKS_KEY, "off");
+  } catch {
+    /* nowhere to keep it: it stays as it is */
+  }
+}
+
 /**
  * Open the live context.
  *
@@ -79,10 +103,13 @@ export function blockFor(handed: number, rate: number): number {
  * less of the audio thread's time (measured: see the notes on the track limit). Nothing is
  * delayed by it: the buffer is the size it would have been, which is checked, and a context that
  * comes out otherwise is not used. The one thing a block's length is heard in, an echo's loop, is
- * set right for it (see `loopLag`). An offline render always works in blocks of 128.
+ * set right for it (see `loopLag`). An offline render always works in blocks of 128. It can be
+ * turned off on a computer where it misbehaves (`liveBlocks`).
  */
-export function openLive(AC: typeof AudioContext): AudioContext {
+export function openLive(AC: typeof AudioContext, blocks = liveBlocks()): AudioContext {
   const plain = new AC({ latencyHint: "playback" });
+  // (turned off on this computer: as it always was)
+  if (!blocks) return plain;
   // (a browser that cannot choose its block does not say what its block is)
   if (typeof (plain as { renderQuantumSize?: number }).renderQuantumSize !== "number") return plain;
   const want = blockFor(plain.baseLatency * plain.sampleRate, plain.sampleRate);
