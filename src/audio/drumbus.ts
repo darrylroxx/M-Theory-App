@@ -15,6 +15,12 @@
  * solo), going out through its own fader: Drums 2 drenched in reverb leaves Drums 1 dry, and
  * soloing or muting one never touches the other. The first drums track's desk is "drums".
  *
+ * A desk that is making no sound rests: a while after its last hit has rung out (its room and its
+ * echoes too) it is let go of its fader, so the audio thread works none of it out; its next hit puts
+ * it back first. A desk still ringing only with an echo's last repeats would otherwise keep its
+ * whole chain, room and all, running for good: an echo that feeds itself never quite reaches
+ * silence. An offline render keeps everything connected from start to end.
+ *
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
@@ -129,6 +135,15 @@ interface Desk {
   bedFade: GainNode | null;
   bedType: NoiseBed;
   bedOn: boolean;
+  /** the track's fader: where the desk's sound goes */
+  out: AudioNode;
+  /** live: silent, and let go of its fader until its next sound (see `sounding`) */
+  resting: boolean;
+  /** when everything booked on it so far has died away, its room and its echoes too (seconds on the audio clock) */
+  quietAt: number;
+  restTimer?: ReturnType<typeof setTimeout>;
+  /** its track is gone: it is never put back on its fader */
+  gone?: boolean;
 }
 const desks = new WeakMap<BaseAudioContext, Map<string, Desk>>();
 const deskOf = (track = FIRST_DRUMS): Desk => {
@@ -166,6 +181,63 @@ function impulse(c: AudioContext, size: number, type: VerbId): AudioBuffer {
   sides.forEach((d, ch) => buf.getChannelData(ch).set(d));
   return buf;
 }
+
+// ── a desk at rest ──
+/** (an offline render never rests: every render of a song is the same) */
+const isLive = (c: BaseAudioContext) => !("startRendering" in c);
+/** How far under a hit an echo's repeat must be before the desk may rest (dB). */
+const ECHO_GONE_DB = 100;
+/** Added on top of what a desk's effects ring for (seconds): its compressor has let go, the short delays of its saturation and tape have passed. */
+const DESK_REST = 0.5;
+
+/**
+ * How long a desk goes on sounding after a sound that went into it has ended (seconds): its
+ * room's whole echo (its Reverb may be at 0 now and up a moment later), and with Echo on, the
+ * repeats until they are far under hearing (each one quieter than the last by what the Echo knob
+ * feeds back; the filters round the loop only make them quieter still), each with the room after it.
+ */
+export function deskTail(fx: Partial<BeatFx> & { bpm?: number }, roomSeconds: number, echoFed = false): number {
+  const echo = fx.echo ?? 0;
+  const beats = ECHO_TIMES.find((e) => e.id === (fx.echoTime ?? "1/8."))?.beats ?? 0.75;
+  const gap = Math.min(1.9, (beats * 60) / (fx.bpm ?? 100));
+  // (an echo just turned to 0 still holds one pass of what was in it)
+  const repeats = echo > 0 ? Math.ceil(ECHO_GONE_DB / (-20 * Math.log10(0.25 + 0.4 * echo))) : echoFed ? 1 : 0;
+  return repeats * gap + roomSeconds + DESK_REST;
+}
+const tailOf = (d: Desk) => deskTail(d.applied, Math.max(0, ...d.bus.verbs.map((v) => v.buffer?.duration ?? 0)), d.bus.echoFeed.open);
+
+/**
+ * Live: a sound is booked on a desk and is over at `end` (seconds on the audio clock). A desk at
+ * rest is put back on its fader first (it was silent, so nothing is heard of that), and it rests
+ * again once everything booked on it has died away. Its noise bed, while it runs, keeps it awake.
+ */
+function sounding(d: Desk, c: BaseAudioContext, end: number) {
+  if (!isLive(c) || d.gone) return;
+  if (d.resting) {
+    d.resting = false;
+    d.tail.connect(d.out);
+  }
+  d.quietAt = Math.max(d.quietAt, end + tailOf(d));
+  if (d.restTimer !== undefined) return;
+  const wait = () => {
+    d.restTimer = setTimeout(
+      () => {
+        d.restTimer = undefined;
+        // (its noise bed runs on: the bed's own stop looks again)
+        if (d.gone || d.resting || d.bedSrc) return;
+        // more was booked meanwhile: it waits for that to be over too
+        if (c.currentTime < d.quietAt) return wait();
+        d.resting = true;
+        d.tail.disconnect();
+      },
+      Math.max(0, d.quietAt - c.currentTime) * 1000 + 20,
+    );
+  };
+  wait();
+}
+
+/** Is a track's desk at rest (let go of its fader until its next sound)? For the tests. */
+export const deskResting = (track = FIRST_DRUMS): boolean => !!desks.get(audioContext())?.get(track)?.resting;
 
 function getBus(track = FIRST_DRUMS): Bus {
   const c = audioContext();
@@ -278,7 +350,10 @@ function getBus(track = FIRST_DRUMS): Bus {
     channels[id] = { input, pan, space, echo: send };
   }
   const bus: Bus = { dry, sat, verbs, verbIns, verbOuts, verbIn, verbWet, echo, echoFb, echoWet, wow, flutter, tape, echoFeed, tapeFeed, low, high, air, comp, makeup, bed, channels };
-  set.set(track, { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbRings: [0, 0] });
+  const desk: Desk = { bus, tail, lfos, applied: {}, mixed: new Map(), openHat: null, pump: 0, pumps: [], bedSrc: null, bedFade: null, bedType: "off", bedOn: false, verbOn: 0, verbRings: [0, 0], out, resting: false, quietAt: 0 };
+  set.set(track, desk);
+  // (a desk made and not played rests after a moment)
+  sounding(desk, c, c.currentTime);
   return bus;
 }
 
@@ -296,6 +371,9 @@ export function keepDrums(tracks: string[]) {
     solos.delete(track);
     untapStem(track);
     stopBed(d);
+    // (nothing puts it back on its fader any more)
+    clearTimeout(d.restTimer);
+    d.gone = true;
     d.tail.gain.setTargetAtTime(0, c.currentTime, 0.015);
     window.setTimeout(() => {
       for (const o of d.lfos) {
@@ -324,6 +402,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   const fx = fxOf(settings);
   const desk = deskOf(track);
   const was = desk.applied;
+  const rang = tailOf(desk);
   // (a change booked for later that never came, because playing stopped or jumped, is let go)
   // A new desk (a render makes its own) starts on these settings: its first hit must not glide in from the defaults
   const fresh = was.bpm === undefined;
@@ -388,6 +467,8 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   }
   if (fx.level !== was.level || fx.glue !== was.glue || fx.tone !== was.tone) to(b.makeup.gain, (fx.level / 0.8) * OUT * trim(fx), 0.02);
   desk.applied = { ...fx, bpm };
+  // (what is sounding now rings for as long as the desk's effects now say: a longer echo is waited for)
+  if (!desk.resting && tailOf(desk) > rang) sounding(desk, c, t);
 }
 
 /** Bring a track's desk in line with a beat (now, or from `at`): effects, and each drum's level, pan and sends. */
@@ -479,8 +560,11 @@ function stopBed(d: Desk, at = 0) {
     } catch {
       /* stopped */
     }
+    const c = d.bedSrc.context;
     d.bedSrc = null;
     d.bedFade = null;
+    // (the bed kept the desk awake: it may rest once the bed has faded and the desk has rung out)
+    sounding(d, c, t + BED_FADE);
   }
   d.bedType = "off";
 }
@@ -568,6 +652,8 @@ function startBed(d: Desk, type: NoiseBed, at = 0) {
   d.bedFade = c.createGain();
   d.bedSrc.connect(d.bedFade).connect(d.bus.bed);
   d.bedSrc.start(at);
+  // (a desk at rest is put back on its fader: the bed keeps it there while it runs)
+  sounding(d, c, at);
 }
 /**
  * A track's noise bed runs while its drums are playing: a track whose drums stop (switched off, or
@@ -646,6 +732,8 @@ export function playDrum(beat: Beat, id: DrumId, when?: number, velocity = 0.8, 
   const r: Ringing = { src, gain: g };
   // booked late: it starts in a moment, as far into the hit as it is late, faded in (see late.ts); `at` is when it really starts
   const at = startRecorded(c, src, t, g, 0, "drums");
+  // a desk at rest is back on its fader before the hit sounds, and stays until the hit has rung out
+  sounding(desk, c, at + buffer.duration / speed);
   // (an offline render plays every hit as written: no choking hats, no pumping harps)
   if (isRendering()) return;
   if (id === "hat" || id === "open") {

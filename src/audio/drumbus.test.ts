@@ -3,7 +3,7 @@ import { withContext } from "./context";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
 import { FakeParam } from "../keys/fakeaudio";
 import { fader } from "./mix";
-import { playStep, setBedPlaying, setDrumFx, setDrumSolo, syncDrums } from "./drumbus";
+import { deskResting, deskTail, playStep, setBedPlaying, setDrumFx, setDrumSolo, syncDrums } from "./drumbus";
 import { DEFAULT_BEAT, fxOf, type Beat } from "./beats";
 
 const kit = (k: Beat["kit"]): Beat => ({ ...DEFAULT_BEAT, on: true, kit: k });
@@ -124,5 +124,131 @@ describe("every drums track has a noise bed of its own", () => {
     expect(beds.map((b) => b.stops.length > 0)).toEqual([false, true]);
     withContext(asAudio(c), () => setBedPlaying(false, null));
     expect(beds.every((b) => b.stops.length > 0)).toBe(true);
+  });
+});
+
+/** The moment the audio clock and the page's timers have both reached. */
+function passTo(c: FakeAudio, t: number) {
+  const by = Math.max(0, t - c.currentTime);
+  c.currentTime = t;
+  vi.advanceTimersByTime(by * 1000 + 50);
+}
+/** The rooms of every desk on a context (only a room is made with `normalize` off). */
+const roomsOf = (c: FakeAudio) => c.nodes.filter((n) => (n as FakeAny).normalize === false && "buffer" in n) as FakeAny[];
+
+describe("a desk that makes no sound rests", () => {
+  const dry = { ...kit("909"), space: 0, echo: 0 };
+  it("a while after its last hit has rung out it is let go of its fader; the next hit puts it back before it sounds", () => {
+    const c = new FakeAudio();
+    const out = () => fader("dr", asAudio(c));
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "dr");
+      playStep(dry, "kick", 3, 0.1, "dr");
+    });
+    const first = c.started[0];
+    const rings = (first.buffer as unknown as { duration: number }).duration;
+    expect(c.reaches(first, out())).toBe(true);
+    // while the hit rings, and for the moment after, it is still there
+    passTo(c, 0.1 + rings + 0.3);
+    expect(withContext(asAudio(c), () => deskResting("dr"))).toBe(false);
+    expect(c.reaches(first, out())).toBe(true);
+    // rung out: nothing of the desk reaches the speakers, so none of it is worked out
+    passTo(c, 0.1 + rings + 5);
+    expect(withContext(asAudio(c), () => deskResting("dr"))).toBe(true);
+    expect(c.reaches(first, out())).toBe(false);
+    // the next hit, booked a quarter of a second ahead as the player books it: on its fader at once, well before it sounds
+    withContext(asAudio(c), () => playStep(dry, "snare", 3, c.currentTime + 0.25, "dr"));
+    const next = c.started[c.started.length - 1];
+    expect(next.started!.when).toBeCloseTo(c.currentTime + 0.25, 6);
+    expect(c.reaches(next, out())).toBe(true);
+    expect(withContext(asAudio(c), () => deskResting("dr"))).toBe(false);
+  });
+
+  it("hits that keep coming keep it awake, however long", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => syncDrums(dry, 100, "dk"));
+    for (let i = 0; i < 40; i++) {
+      withContext(asAudio(c), () => playStep(dry, "hat", 2, c.currentTime + 0.25, "dk"));
+      passTo(c, c.currentTime + 0.5);
+      expect(withContext(asAudio(c), () => deskResting("dk"))).toBe(false);
+    }
+  });
+
+  it("with Echo on it waits until the repeats are far under hearing, then rests all the same", () => {
+    const c = new FakeAudio();
+    const echoing = { ...dry, echo: 0.5 };
+    withContext(asAudio(c), () => {
+      syncDrums(echoing, 100, "de");
+      playStep(echoing, "kick", 3, 0.1, "de");
+    });
+    const rings = (c.started[0].buffer as unknown as { duration: number }).duration;
+    const tail = deskTail({ echo: 0.5, echoTime: "1/8.", bpm: 100 }, roomsOf(c)[0].buffer ? (roomsOf(c)[0].buffer as { duration: number }).duration : 0);
+    // (each repeat about 7 dB under the one before, 0.45 s apart: some seconds)
+    expect(tail).toBeGreaterThan(5);
+    passTo(c, 0.1 + rings + tail - 0.5);
+    expect(withContext(asAudio(c), () => deskResting("de"))).toBe(false);
+    passTo(c, 0.1 + rings + tail + 0.5);
+    expect(withContext(asAudio(c), () => deskResting("de"))).toBe(true);
+  });
+
+  it("an echo turned up while a hit rings is waited for too", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "du");
+      playStep(dry, "kick", 3, 0.1, "du");
+      c.currentTime = 0.2;
+      setDrumFx({ ...fxOf(dry), echo: 0.9 }, 100, "du");
+    });
+    passTo(c, 6);
+    expect(withContext(asAudio(c), () => deskResting("du"))).toBe(false);
+    passTo(c, 60);
+    expect(withContext(asAudio(c), () => deskResting("du"))).toBe(true);
+  });
+
+  it("its noise bed keeps it awake while it runs, and lets it rest once it has stopped", () => {
+    const c = new FakeAudio();
+    const noisy = { ...dry, noise: "vinyl" as const, noiseAmt: 0.6 };
+    withContext(asAudio(c), () => {
+      syncDrums(noisy, 100, "dn");
+      setBedPlaying(true, noisy, "dn");
+    });
+    passTo(c, 120);
+    expect(withContext(asAudio(c), () => deskResting("dn"))).toBe(false);
+    withContext(asAudio(c), () => setBedPlaying(false, null, "dn"));
+    passTo(c, 130);
+    expect(withContext(asAudio(c), () => deskResting("dn"))).toBe(true);
+    // and the bed coming back wakes it
+    withContext(asAudio(c), () => setBedPlaying(true, noisy, "dn"));
+    expect(withContext(asAudio(c), () => deskResting("dn"))).toBe(false);
+  });
+
+  it("a desk made and never played rests too", () => {
+    const c = new FakeAudio();
+    withContext(asAudio(c), () => syncDrums(dry, 100, "dx"));
+    passTo(c, 30);
+    expect(withContext(asAudio(c), () => deskResting("dx"))).toBe(true);
+  });
+
+  it("an offline render's desk never rests: every render of a song is the same", () => {
+    const c = new FakeOffline();
+    withContext(asAudio(c), () => {
+      syncDrums(dry, 100, "dr");
+      playStep(dry, "kick", 3, 0.1, "dr");
+    });
+    const first = c.started[0];
+    c.currentTime = 25;
+    vi.advanceTimersByTime(60000);
+    expect(withContext(asAudio(c), () => deskResting("dr"))).toBe(false);
+    expect(c.reaches(first, fader("dr", asAudio(c)))).toBe(true);
+  });
+
+  it("how long a desk rings on: its room, and with Echo the repeats until they are 100 dB down", () => {
+    expect(deskTail({ echo: 0 }, 1.2)).toBeCloseTo(1.7, 6);
+    // Echo at 0.1 feeds back 0.29 of each repeat (10.75 dB less each time): ten repeats, a dotted eighth apart at 120
+    expect(deskTail({ echo: 0.1, echoTime: "1/8.", bpm: 120 }, 1.2)).toBeCloseTo(10 * 0.375 + 1.7, 6);
+    // more Echo rings longer, and a repeat is never further apart than the delay can hold
+    expect(deskTail({ echo: 1, echoTime: "1/4", bpm: 20 }, 0)).toBeCloseTo(27 * 1.9 + 0.5, 6);
+    // an echo just turned to 0 still holds one pass of what was in it
+    expect(deskTail({ echo: 0, echoTime: "1/4", bpm: 120 }, 0, true)).toBeCloseTo(0.5 + 0.5, 6);
   });
 });
