@@ -5,9 +5,11 @@
 // engine (ui/audio/useEngine, mounted here once and for good) with the one record window and each recording track's
 // sound window, the Canvas as an overlay, and the two sheets (Ideas and settings).
 import { Component, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { audioIfStarted } from "../../audio/context";
 import { windowWants } from "../../audio/handoff";
 import { saveFile } from "../../audio/midi";
 import { canLoad, keepTakes as keepBuffers, loadTake, takeBuffer, type TakeRef } from "../../audio/takebuffers";
+import { OVERLOAD_MESSAGE, watchOverload } from "../../audio/overload";
 import { FX_DEFAULT, reviveFx } from "../../audio/vocalfx";
 import { isDesktop } from "../../desktop";
 import { reviveSound } from "../../audio/rack";
@@ -264,6 +266,12 @@ export function Host() {
   /** the draft as it lies in what is heard: drawn faintly on its lane, so it is seen where it sounds */
   const ghost = useMemo(() => (drafted ? (heard.clips.find((c) => c.id === draftClipId(drafted) && c.kind !== "audio") as NoteClip | undefined) ?? null : null), [heard, drafted]);
   const played = usePlayer(heard, session, ctx);
+  // a song this computer cannot keep up with is said so in a line, once each time it is played (see audio/overload.ts)
+  useEffect(() => {
+    if (!played.playing) return;
+    const c = audioIfStarted();
+    return c ? watchOverload(c, () => toast(OVERLOAD_MESSAGE)) : undefined;
+  }, [played.playing, toast]);
   /** a recording or a rehearsal runs: the interface plays the song, so the app's own player stays silent */
   const recBusy = useRef(false);
   /** the recorder as it is this moment (the desktop app's engine, or a browser's microphone: set further down) */
