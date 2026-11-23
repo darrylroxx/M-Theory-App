@@ -305,17 +305,8 @@ body.strip-drag .tlw.strip-src .cs-clip { opacity: 0.45; }
 .sd-ghost.gliding { max-width: none; transition: transform 180ms ease, opacity 180ms ease; opacity: 0.3; }
 .sd-tag { position: fixed; left: 0; top: 0; z-index: 91; padding: 2px 7px; border-radius: 6px; background: var(--text); color: var(--bg); font-size: 0.72rem; font-weight: 800; white-space: nowrap; pointer-events: none; }
 
-/* a composer whose track has its own sound window: the old page's own sound controls are not shown in it.
-   On a Chords page the row keeps how the chords are played (the style and its feel); a synth has no such row */
-.lc-nosound .card.harp .sound-row > * { display: none; }
-.lc-nosound .card.harp .sound-row > .inst-switch + .pick-wrap { display: inline-flex; }
-.lc-nosound .card.harp > .synth, .lc-nosound .card.harp > .dm-tabs, .lc-nosound .card.harp > .dm-panel, .lc-nosound .card.harp > .syn { display: none; }
-.lc-nosound .card.harp:not(:has(.sound-row > .inst-switch + .pick-wrap)) { display: none; }
-.lc-nosound .melody > .sound-row, .lc-nosound .melody > .sound-row ~ * { display: none; }
-/* the record window: the old Vocals page as its body; hidden, not gone, when it is closed (the page owns the interface) */
+/* the record window: hidden, not gone, when it is closed */
 .rec-dock[hidden] { display: none; }
-.tlw .vocals.hosted { border: none; background: none; box-shadow: none; padding: 0; }
-.vc-on { gap: 8px 10px; }
 .vc-track { font-size: 1.02rem; font-weight: 800; }
 .tb-loose { flex: none; padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--border-2); color: var(--muted); white-space: nowrap; }
 .tb-shelf { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
