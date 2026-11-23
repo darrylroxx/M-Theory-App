@@ -1,6 +1,10 @@
 // The bar across the top of the track view: play, loop and record; where the music is; the key, the tempo and the
 // time signature; undo and redo; the idea and its Save; Export, Canvas, Ideas and settings.
 // Each of key, tempo, signature and Export opens a quiet panel under its button, closed by Escape or a press elsewhere.
+//
+// On a phone the bar is two short rows: play, loop, record, where the music is, undo and redo, and ⋯; under them the
+// key, the tempo, the signature and the idea with its Save. Export, Canvas, Ideas, settings and how you hear yourself
+// are lines of the ⋯ menu (the view builds it: it holds what the ruler's and the lanes' menus hold too).
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { TIME_SIGS, sameSig, sigName, type TimeSig } from "../../song/meter";
 import type { Key } from "../../theory/keys";
@@ -11,6 +15,7 @@ import { CopyIcon } from "../icons";
 import type { PlayerApi } from "./api";
 import { positionText } from "./gestures";
 import { KeyPopover, keyText } from "./KeyPopover";
+import type { MenuAt } from "./Menu";
 import { ESC_OPEN, onEscape } from "./keys";
 
 export interface TopBarProps {
@@ -42,6 +47,10 @@ export interface TopBarLive {
   /** the loop is on */
   looping: boolean;
   onLoop(): void;
+  /** the phone's bar (see above) */
+  phone?: boolean;
+  /** ⋯ pressed on the phone's bar: the view opens its menu there */
+  onMore?(at: MenuAt): void;
 }
 
 type Open = "key" | "tempo" | "sig" | "export" | null;
@@ -123,9 +132,9 @@ export function TopBar(p: TopBarProps & TopBarLive) {
   const toggle = (which: Exclude<Open, null>) => setOpen((o) => (o === which ? null : which));
 
   return (
-    <header className={`topbar tlv-top${open ? " popped" : ""}`} ref={bar}>
+    <header className={`topbar tlv-top${open ? " popped" : ""}${p.phone ? " tlv-top-phone" : ""}`} ref={bar}>
       <div className="tlv-top-in">
-        <div className="brand tlv-brand"><div className="brand-mark">M</div>{p.badge}</div>
+        {p.phone ? p.badge && <div className="brand tlv-brand">{p.badge}</div> : <div className="brand tlv-brand"><div className="brand-mark">M</div>{p.badge}</div>}
 
         <section className="transport tlv-transport" aria-label="Play">
           <button className={`play-btn sm${player.playing ? " stop" : ""}`} aria-label={player.playing ? "Stop" : p.looping ? "Play the loop" : "Play"} title={player.playing ? "Stop (Space)" : "Play from the cursor (Space)"} onClick={() => player.toggle()}>{player.playing ? "■" : "▶"}</button>
@@ -136,7 +145,7 @@ export function TopBar(p: TopBarProps & TopBarLive) {
                 ●{rec.live && <span className="live-dot" title="Your mic is live" aria-label="(mic live)" />}
               </button>
               {rec.on && !!rec.pass && <output className="tlv-pass mono" aria-label="Pass being recorded">Pass {rec.pass}</output>}
-              {rec.setMonitor && (
+              {rec.setMonitor && !p.phone && (
                 <div className="seg tlv-mon" role="radiogroup" aria-label="How you hear yourself while recording">
                   <button role="radio" aria-checked={rec.monitor === "hardware"} className={rec.monitor === "hardware" ? "on" : ""} title="Direct: you hear yourself straight from the interface" onClick={() => rec.setMonitor?.("hardware")}>Direct</button>
                   <button role="radio" aria-checked={rec.monitor === "effects"} className={rec.monitor === "effects" ? "on" : ""} title="Through effects: you hear yourself with the track's sound" onClick={() => rec.setMonitor?.("effects")}>Effects{rec.live && rec.monitor === "effects" && <span className="live-dot" aria-label="(mic live)" />}</button>
@@ -198,6 +207,9 @@ export function TopBar(p: TopBarProps & TopBarLive) {
           <button className={`btn sm save-btn${idea.dirty ? " primary" : ""}`} onClick={idea.save} disabled={!idea.dirty} title={idea.name ? `Save "${idea.name}" (Ctrl+S)` : "Save this idea to your library (Ctrl+S)"}>{idea.dirty || !idea.name ? "Save" : "Saved ✓"}</button>
         </span>
 
+        {p.phone && <button className="tlv-round tlv-more" aria-label="More: ideas, export, Canvas, settings and the timeline" aria-haspopup="menu" onClick={(e) => { const r = e.currentTarget.getBoundingClientRect(); p.onMore?.({ x: r.left, y: r.bottom + 4 }); }}>⋯</button>}
+        {p.phone && <i className="tlv-top-break" aria-hidden="true" />}
+        {!p.phone && <>
         <span className="tlv-popwrap end">
           <button className={`btn sm tlv-popbtn${open === "export" ? " on" : ""}`} aria-expanded={open === "export"} onClick={() => toggle("export")}>Export</button>
           {open === "export" && (
@@ -213,6 +225,7 @@ export function TopBar(p: TopBarProps & TopBarLive) {
         <button className="btn sm" onClick={p.openCanvas} title="The Canvas: the song as a painting">Canvas</button>
         <button className="btn sm ideas-btn" onClick={p.openIdeas} title="Your saved ideas" aria-haspopup="dialog">Ideas{idea.count ? <span className="count">{idea.count}</span> : null}</button>
         <button className="icon-btn" onClick={p.openSettings} aria-label="Settings" title="Tuning, capo, display and audio">⚙</button>
+        </>}
       </div>
     </header>
   );

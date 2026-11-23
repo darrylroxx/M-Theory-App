@@ -1,5 +1,5 @@
 // Small parts the chord board and its lists share: a chord as a pill, which chord was tapped last, and whether the
-// chords track that is open plays the keys. (Copied out of the old Chords page, views/GuitarView.)
+// chords track that is open plays the keys. (Copied out of the old Chords page, which is gone.)
 import { createContext, useContext } from "react";
 import { onKeys, toneOf, type Tone } from "../../../audio/tone";
 import { chordSymbol, type ChordRef } from "../../../theory/chords";

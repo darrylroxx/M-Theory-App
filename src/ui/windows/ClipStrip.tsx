@@ -2,6 +2,9 @@
 // timeline, to be dragged onto any lane of its own kind. Beside it: New (a fresh empty draft), ▶ (its bars go round,
 // with the song or alone), how many bars it is long, copy and paste, and "Fit to these bars" when it is written in
 // another time signature than the bars it lies in.
+// In a sheet (a phone) there is also Place: a tap lays a separate copy on the clip's own track at the cursor, for where
+// dragging out of a sheet that fills the screen is awkward. (The drag works there too: a finger rested on the clip
+// lifts it, and the sheet lets the lanes show through.)
 //
 // The strip changes nothing itself: everything it can do comes in as `on`.
 import { useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from "react";
@@ -16,6 +19,7 @@ import { letterClass } from "../letters";
 import { ChordBlock, DrumBlock, MelodyBlock } from "../timeline/draw";
 import { colorOf } from "../timeline/TrackHead";
 import type { DragLook } from "./dragging";
+import { useSheet } from "./windows";
 
 /** What the strip asks of its window. */
 export interface StripCtl {
@@ -32,6 +36,8 @@ export interface StripCtl {
   fit(): void;
   /** the clip was pressed: it may be dragged onto the timeline */
   drag(e: ReactPointerEvent<HTMLElement>, look: DragLook): void;
+  /** Place: a separate copy on its own track at the cursor (offered in a sheet) */
+  place?(): void;
 }
 
 /** What is open as it is drawn: a placed clip as it lies (from beat 0), a draft as a clip one round of its content long. */
@@ -63,6 +69,7 @@ export function ClipStrip({ open, keyOf, playing, alone, canPaste, fit, on }: {
   fit: boolean;
   on: StripCtl;
 }) {
+  const sheet = useSheet();
   const box = useRef<HTMLDivElement>(null);
   const [width, setWidth] = useState(GUESS_W);
   useLayoutEffect(() => {
@@ -105,6 +112,7 @@ export function ClipStrip({ open, keyOf, playing, alone, canPaste, fit, on }: {
         {cycles(look).slice(1).map((r) => <i key={r.at} className="tlc-notch" style={{ left: r.at * ppb }} />)}
         {empty && <span className="cs-hint">Nothing in it yet</span>}
       </div>
+      {sheet && on.place && <button className="btn sm primary cs-place" disabled={empty} aria-label={`Place this ${what} on the ${name} track at the cursor`} onClick={on.place}>Place</button>}
       {fit && <button className="btn sm cs-fit" title="It is written in another time signature than the bars it lies in: fit it to them" onClick={on.fit}>Fit to these bars</button>}
       <span className="cs-len" role="group" aria-label="Length">
         <button aria-label="One bar shorter" disabled={bars <= 1} onClick={() => on.bars(bars - 1)}>−</button>

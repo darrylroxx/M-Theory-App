@@ -1,5 +1,5 @@
 // The shapes a track's chords play on the guitar, worked out with no screen around.
-// Copied from the big view (GuitarView.tsx:96-125, `optsOf` and `voicingsOf`): what it took from its hooks is the argument here.
+// Copied from the old view (its `optsOf` and `voicingsOf`): what it took from its hooks is the argument here.
 import { arrangeProgression, type ArrangeOptions } from "../guitar/arrange";
 import { fingerNotes } from "../guitar/finger";
 import type { Tuning } from "../guitar/tunings";

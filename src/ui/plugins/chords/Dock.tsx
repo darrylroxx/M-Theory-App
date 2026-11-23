@@ -4,7 +4,7 @@
 // chosen for it, or all of them in one area of the neck) and "Voicing" for the keys. A chord dragged over the tray
 // shows where it will land.
 //
-// Copied out of the old Chords page (views/GuitarView: `Dock`). In a plugin window the tray is always in view, so it
+// Copied out of the old Chords page (its tray). In a plugin window the tray is always in view, so it
 // needs no slim stand-in while it is off screen, and it does not lift up beside the shape finder: the finder opens
 // in the board's place, next to it.
 import { useEffect, useRef, type ReactNode } from "react";

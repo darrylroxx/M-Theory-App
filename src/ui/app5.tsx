@@ -4,7 +4,11 @@
 //
 // The state is kept in one place the provider can read at any moment (not only when the screen is drawn), so two
 // changes made one straight after the other each see what the one before did, and a change is made exactly once.
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+//
+// Most screens read the whole state (`useApp5`) and are drawn again whenever anything in it changes. A part of a
+// window that only shows one track, or one clip, can ask for just that (`useApp5Part`, `useWinPart`): it is drawn
+// again only when its own part changes, however much is going on in the rest of the song.
+import { createContext, use, useCallback, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import type { BeatPattern, UserKit } from "../audio/beats";
 import type { UserSound } from "../audio/sounds";
 import { stopAlone } from "../audio/takeplay";
@@ -237,6 +241,58 @@ const WARN = {
 
 export const App5Ctx = createContext<Ctx5 | null>(null);
 
+/**
+ * What stays the same for as long as the app runs: where the state is read from, how to be told it changed, and the
+ * ways to change it. A component that takes the app through this is not drawn again just because the state changed.
+ */
+export interface Store5 {
+  peek(): App5State;
+  /** `fn` is called after every change of the state; the function returned stops that */
+  subscribe(fn: () => void): () => void;
+  set: Ctx5["set"]; edit: Ctx5["edit"]; setSession: Ctx5["setSession"]; toast: Ctx5["toast"];
+}
+export const App5Store = createContext<Store5 | null>(null);
+const NEVER = () => () => {};
+
+/** The store. (Under a provider that only hands out the whole state, as a test's does: the same things read from that, drawn again with it.) */
+export function useApp5Store(): Store5 {
+  const store = useContext(App5Store);
+  if (store) return store;
+  const c = use(App5Ctx);
+  if (!c) throw new Error("useApp5Store outside provider");
+  return { peek: c.peek, subscribe: NEVER, set: c.set, edit: c.edit, setSession: c.setSession, toast: c.toast };
+}
+
+/**
+ * A part of the state, picked out by `pick`: the component is drawn again only when that part changes (`same` says
+ * when two picks are the same part: by default, the very same value).
+ */
+export function useApp5Part<T>(pick: (s: App5State) => T, same: (a: T, b: T) => boolean = Object.is): T {
+  const store = useApp5Store();
+  const last = useRef<{ v: T } | null>(null);
+  const get = () => {
+    const v = pick(store.peek());
+    const was = last.current;
+    if (was && same(was.v, v)) return was.v;
+    last.current = { v };
+    return v;
+  };
+  return useSyncExternalStore(store.subscribe, get, get);
+}
+
+/** One window's own part of the song: its track, and the clip it has open (none: it is on the track's draft, which is the track's). */
+export interface WinPart { track: TimelineSong["tracks"][number] | undefined; clip: TimelineSong["clips"][number] | undefined }
+export const winPart = (s: App5State, track: string, clip?: string): WinPart => ({
+  track: s.song.tracks.find((t) => t.id === track),
+  clip: clip === undefined ? undefined : s.song.clips.find((c) => c.id === clip),
+});
+/** Is it the same part: the very same track and clip? (An edit elsewhere in the song leaves both objects as they were.) */
+export const sameWinPart = (a: WinPart, b: WinPart): boolean => a.track === b.track && a.clip === b.clip;
+/** A window's own track and clip: drawn again only for a change of one of them. */
+export function useWinPart(track: string, clip?: string): WinPart {
+  return useApp5Part((s) => winPart(s, track, clip), sameWinPart);
+}
+
 /** How long after a change the state is written (a knob being turned writes once, not at every step). */
 const WRITE_MS = 400;
 
@@ -262,10 +318,19 @@ export function App5Provider({ children }: { children: ReactNode }) {
   const takenIn = useRef<App5State | null>(null);
   const timer = useRef(0);
 
+  /** who asked to be told of every change (see `useApp5Part`) */
+  const listeners = useRef(new Set<() => void>());
+  const subscribe = useCallback((fn: () => void) => {
+    listeners.current.add(fn);
+    return () => {
+      listeners.current.delete(fn);
+    };
+  }, []);
   const commit = useCallback((next: App5State) => {
     if (next === now.current) return;
     now.current = next;
     setState(next);
+    for (const fn of [...listeners.current]) fn();
   }, []);
   const peek = useCallback(() => now.current, []);
   const set = useCallback((fn: (s: App5State) => App5State) => commit(fn(now.current)), [commit]);
@@ -612,11 +677,12 @@ export function App5Provider({ children }: { children: ReactNode }) {
     () => ({ state: shown, peek, set, edit, editKeyed, setSession, undo, redo, canUndo, canRedo, tuning, toast, idea, dirty, opened, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo }),
     [shown, peek, set, edit, editKeyed, setSession, undo, redo, canUndo, canRedo, tuning, toast, idea, dirty, opened, saveIdea, openIdea, newIdea, renameIdea, deleteIdea, importIdeas, cloud, syncNow, recordingTo, setRecordingTo],
   );
+  const store = useMemo<Store5>(() => ({ peek, subscribe, set, edit, setSession, toast }), [peek, subscribe, set, edit, setSession, toast]);
   const toastLive = useMemo(() => !toastMsg?.action?.when || toastMsg.action.when(state), [toastMsg, state]);
   const warn = boot.stuck === "storage" ? WARN.storage : boot.stuck ? WARN.stuck : failed ? WARN.full : null;
   return (
     <App5Ctx.Provider value={value}>
-      {children}
+      <App5Store.Provider value={store}>{children}</App5Store.Provider>
       {warn && <div className="store-warn" role="alert">{warn}</div>}
       {toastMsg && toastLive && (
         <div className={`toast${toastMsg.action ? " act" : ""}${toastMsg.msg.length > 60 ? " long" : ""}`} role="status">

@@ -1,7 +1,7 @@
 /* ── The track view: a top bar, a ruler, track panels on the left, lanes with clips. And the plugin window. ──
    Colours, fonts and button looks are the app's own (styles.css): this file only lays the view out. */
 
-.tlv { height: 100vh; height: 100dvh; width: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
+.tlv { --panel: 260px; --row: 64px; height: 100vh; height: 100dvh; width: 100%; display: flex; flex-direction: column; overflow: hidden; background: var(--bg); color: var(--text); user-select: none; -webkit-user-select: none; -webkit-touch-callout: none; }
 .tlv input, .tlw input, .tlw textarea { user-select: text; -webkit-user-select: text; }
 
 /* ── top bar: 48 px ── */
@@ -51,7 +51,7 @@
 
 /* ── ruler row: 36 px. Over the panels: Follow, − fit +. Then the ruler ── */
 .tlv-rulerrow { flex: none; height: 36px; box-sizing: border-box; display: flex; background: var(--card); border-bottom: 1px solid var(--border); }
-.tlv-corner { flex: none; width: 260px; box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-right: 1px solid var(--border); }
+.tlv-corner { flex: none; width: var(--panel); box-sizing: border-box; display: flex; align-items: center; gap: 6px; padding: 0 8px; border-right: 1px solid var(--border); }
 .tlv-follow { height: 22px; padding: 0 9px; border-radius: 999px; border: 1px solid var(--border-2); background: var(--card-2); color: var(--muted); font-size: 0.72rem; font-weight: 750; }
 .tlv-follow.on { background: var(--accent); border-color: var(--accent); color: var(--accent-ink); }
 .tlv-zoom { margin-left: auto; display: inline-flex; border: 1px solid var(--border-2); border-radius: 8px; overflow: hidden; }
@@ -86,10 +86,10 @@
 
 /* ── the box the panels and lanes share: it scrolls up and down, never sideways ── */
 .tlv-body { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; background: var(--card-2); }
-.tlv-rows { position: relative; min-height: 100%; display: grid; grid-template-columns: 260px minmax(0, 1fr); overflow: clip; }
+.tlv-rows { position: relative; min-height: 100%; display: grid; grid-template-columns: var(--panel) minmax(0, 1fr); overflow: clip; }
 
 /* a track's panel: 260 × 64, two lines beside its colour and grip */
-.tlh { grid-column: 1; position: relative; z-index: 4; height: 64px; box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); grid-template-rows: 1fr 1fr; column-gap: 7px; padding: 4px 8px 5px 0; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
+.tlh { grid-column: 1; position: relative; z-index: 4; height: var(--row); box-sizing: border-box; display: grid; grid-template-columns: 16px minmax(0, 1fr); grid-template-rows: 1fr 1fr; column-gap: 7px; padding: 4px 8px 5px 0; background: var(--card); border-right: 1px solid var(--border); border-bottom: 1px solid var(--border); }
 .tlh.on { background: color-mix(in srgb, var(--kc) 11%, var(--card)); }
 .tlh-grip { grid-row: 1 / 3; margin: -4px 0 -5px; padding: 0; border: none; border-radius: 0; background: color-mix(in srgb, var(--kc) 62%, var(--card)); color: color-mix(in srgb, #14161a 62%, transparent); display: grid; place-items: center; cursor: grab; touch-action: none; }
 .tlh.on .tlh-grip { background: var(--kc); }
@@ -124,14 +124,14 @@
 .tlh-meter b { position: absolute; inset: 0; background: var(--fifth); transform: scaleY(0); transform-origin: bottom; }
 
 /* a lane, and the clips on it */
-.tlv-lane { grid-column: 2; position: relative; z-index: 1; height: 64px; box-sizing: border-box; border-bottom: 1px solid var(--border); touch-action: pan-y; cursor: default; }
+.tlv-lane { grid-column: 2; position: relative; z-index: 1; height: var(--row); box-sizing: border-box; border-bottom: 1px solid var(--border); touch-action: pan-y; cursor: default; }
 .tlv-lane.on { background: color-mix(in srgb, var(--text) 4%, transparent); }
 .tlv-lane.lifting { z-index: 3; }
 .tlv-lane.refuse { opacity: 0.38; cursor: not-allowed; background: repeating-linear-gradient(135deg, transparent 0 7px, color-mix(in srgb, var(--text) 9%, transparent) 7px 8px); }
 .tlv-lane.accept { box-shadow: inset 0 0 0 2px var(--accent); }
 .tlv-lane.quiet .tlc { opacity: 0.4; }
 .tlv-strip { position: absolute; left: 0; top: 0; width: 0; height: 100%; }
-.tlc { position: absolute; top: 6px; height: 51px; box-sizing: border-box; border-radius: 7px; border: 1.5px solid color-mix(in srgb, var(--kc) 62%, var(--border)); background: color-mix(in srgb, var(--kc) 15%, var(--card)); overflow: hidden; cursor: grab; touch-action: pan-y; }
+.tlc { position: absolute; top: 6px; height: calc(var(--row, 64px) - 13px); box-sizing: border-box; border-radius: 7px; border: 1.5px solid color-mix(in srgb, var(--kc) 62%, var(--border)); background: color-mix(in srgb, var(--kc) 15%, var(--card)); overflow: hidden; cursor: grab; touch-action: pan-y; }
 .tlc:hover { border-color: color-mix(in srgb, var(--kc) 85%, var(--text)); }
 .tlc.sel { z-index: 2; border-color: var(--text); box-shadow: 0 0 0 1.5px var(--text); background: color-mix(in srgb, var(--kc) 26%, var(--card)); }
 .tlc.muted { opacity: 0.4; border-style: dashed; }
@@ -179,7 +179,7 @@
 
 /* the + row, and what is left of the box below it */
 .tlv-addrow { grid-column: 1 / -1; position: relative; z-index: 4; height: 44px; display: flex; pointer-events: none; }
-.tlv-add { box-sizing: border-box; width: 260px; height: 100%; display: flex; align-items: center; padding: 0 8px; background: var(--card); border-right: 1px solid var(--border); pointer-events: auto; }
+.tlv-add { box-sizing: border-box; width: var(--panel); height: 100%; display: flex; align-items: center; padding: 0 8px; background: var(--card); border-right: 1px solid var(--border); pointer-events: auto; }
 .tlv-add.open { width: auto; max-width: 100%; border-bottom: 1px solid var(--border); border-radius: 0 0 10px 0; }
 .tlv-plus { font-weight: 800; }
 .tlv-plus span { font-weight: 650; color: var(--muted); }
@@ -191,7 +191,7 @@
 .tlv-rest { grid-column: 2; position: relative; z-index: 1; }
 
 /* under the clips: bar lines and the loop's tint. Over them: the cursor, the play line, the box that selects */
-.tlv-under, .tlv-over { position: absolute; left: 260px; right: 0; top: 0; bottom: 0; overflow: hidden; pointer-events: none; }
+.tlv-under, .tlv-over { position: absolute; left: var(--panel); right: 0; top: 0; bottom: 0; overflow: hidden; pointer-events: none; }
 .tlv-under { z-index: 0; }
 .tlv-over { z-index: 5; }
 .tlv-gl { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px solid color-mix(in srgb, var(--border-2) 40%, transparent); }
@@ -202,7 +202,7 @@
 .tlv-tint.on { background: color-mix(in srgb, var(--accent) 10%, transparent); border-inline: 1px solid color-mix(in srgb, var(--accent) 55%, transparent); }
 .tlv-cursor { position: absolute; top: 0; bottom: 0; width: 0; border-left: 1px dashed var(--text); opacity: 0.8; }
 .tlv-line { display: none; position: absolute; left: 0; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--accent); }
-.tlv-rec { display: none; position: absolute; left: 0; top: 6px; height: 51px; box-sizing: border-box; border-radius: 7px; border: 1.5px solid #e5483b; background: rgba(229, 72, 59, 0.3); }
+.tlv-rec { display: none; position: absolute; left: 0; top: 6px; height: calc(var(--row) - 13px); box-sizing: border-box; border-radius: 7px; border: 1.5px solid #e5483b; background: rgba(229, 72, 59, 0.3); }
 .tlv-box { display: none; position: absolute; left: 0; top: 0; box-sizing: border-box; border: 1px dashed var(--accent); border-radius: 4px; background: color-mix(in srgb, var(--accent) 12%, transparent); }
 .tlv-drop { display: none; position: absolute; left: 0; right: 0; top: 0; height: 2px; z-index: 8; background: var(--accent); pointer-events: none; }
 .tlh.lifted, .tlv-lane.lifted { z-index: 7; box-shadow: var(--shadow); }
@@ -211,7 +211,7 @@
 
 /* ── the sideways scroll bar: always there ── */
 .tlv-side { flex: none; height: 16px; box-sizing: border-box; display: flex; background: var(--card); border-top: 1px solid var(--border); }
-.tlv-side-corner { flex: none; width: 260px; box-sizing: border-box; border-right: 1px solid var(--border); }
+.tlv-side-corner { flex: none; width: var(--panel); box-sizing: border-box; border-right: 1px solid var(--border); }
 .tlv-side-track { flex: 1; min-width: 0; position: relative; overflow: hidden; touch-action: none; }
 .tlv-side-thumb { position: absolute; left: 0; top: 3px; bottom: 3px; border-radius: 6px; background: var(--border-2); }
 .tlv-side-track:hover .tlv-side-thumb { background: var(--faint); }
@@ -311,9 +311,6 @@ body.strip-drag .tlw.strip-src .cs-clip { opacity: 0.45; }
 .tb-loose { flex: none; padding: 1px 7px; border-radius: 999px; border: 1px dashed var(--border-2); color: var(--muted); white-space: nowrap; }
 .tb-shelf { display: flex; flex-direction: column; gap: 4px; padding-top: 8px; border-top: 1px solid var(--border); }
 .tb-from { padding: 2px 6px 0; font-weight: 700; }
-/* on a narrow screen, or under a finger: a sheet across the bottom */
-.tlw.tlw-sheet { left: 0; right: 0; top: auto; bottom: 0; width: 100%; max-width: none; height: min(70vh, 520px); max-height: 92vh; padding: 0; border-radius: 20px 20px 0 0; }
-.tlw-sheet .tlw-bar { height: 44px; cursor: default; }
 
 /* ── narrower than a desktop window ── */
 @media (max-width: 1100px) {
@@ -329,4 +326,158 @@ body.strip-drag .tlw.strip-src .cs-clip { opacity: 0.45; }
 @media (pointer: coarse) {
   .tlc-act { width: 34px; height: 30px; }
   .tlc-grip { width: min(14px, 30%); }
+}
+
+/* ── The phone: a narrow screen, or a screen under a finger ──
+   The view carries .tlv-phone (the windows are sheets then, see .tlw-sheet). Everything here is sized for a finger,
+   nothing needs a pointer that hovers, and the page itself never scrolls: the track list scrolls up and down inside
+   the view, a swipe sideways moves through the song, and what does not fit a row wraps or goes into a menu. */
+.tlv.tlv-phone { --panel: 132px; --row: 72px; box-sizing: border-box; padding-left: env(safe-area-inset-left, 0px); padding-right: env(safe-area-inset-right, 0px); touch-action: manipulation; }
+
+/* the top bar: play, loop, record, where the music is, undo and redo, ⋯; under them key, tempo, signature, the idea */
+.tlv-phone .tlv-top { height: auto; }
+.tlv-phone .tlv-top-in { height: auto; min-height: 56px; flex-wrap: wrap; gap: 6px; padding: 6px 8px; }
+.tlv-phone .tlv-brand { order: 0; margin-right: 0; height: auto; }
+.tlv-phone .tlv-brand:empty { display: none; }
+.tlv-phone .tlv-transport { order: 1; gap: 6px; }
+.tlv-phone .tlv-transport .play-btn { width: 44px; height: 44px; font-size: 1.05rem; }
+.tlv-phone .tlv-round { width: 40px; height: 40px; font-size: 1.1rem; }
+.tlv-phone .tlv-round.rec { font-size: 0.9rem; }
+.tlv-phone .tlv-round.flat { width: 36px; font-size: 1.3rem; }
+.tlv-phone .tlv-pos { order: 2; flex: 0 1 auto; min-width: 0; overflow: hidden; padding: 9px 7px; font-size: 0.82rem; }
+.tlv-phone .tlv-undo { order: 3; margin-left: auto; }
+.tlv-phone .tlv-more { order: 4; font-size: 1.3rem; font-weight: 900; }
+.tlv-top-break { order: 5; flex: 0 0 100%; height: 0; }
+.tlv-phone .tlv-popwrap { order: 6; }
+.tlv-phone .tlv-val { height: 38px; padding: 0 11px; font-size: 0.86rem; }
+.tlv-phone .tlv-idea { order: 7; flex: 1 1 40px; margin-left: 0; justify-content: flex-end; gap: 6px; }
+.tlv-phone .tlv-idea-name { max-width: none; flex: 0 1 auto; font-size: 0.82rem; }
+.tlv-phone .tlv-idea .btn { min-height: 38px; padding-inline: 12px; }
+.tlv-phone .tlv-pass { font-size: 0.74rem; }
+/* held sideways, or on a wider screen under a finger: one row */
+@media (min-width: 600px) {
+  .tlv-phone .tlv-top-break { display: none; }
+  .tlv-phone .tlv-popwrap { order: 3; }
+  .tlv-phone .tlv-undo { order: 4; margin-left: 0; }
+  .tlv-phone .tlv-idea { order: 5; }
+  .tlv-phone .tlv-more { order: 6; }
+  .tlv-phone .tlv-top-in { flex-wrap: nowrap; }
+  .tlv-phone .tlv-idea-name { flex: 0 1 auto; min-width: 0; }
+}
+/* a message stands over the lanes, clear of the bar's buttons */
+body:has(.tlv-phone) .toast:not(.act) { top: calc(var(--tlv-top-h, 100px) + 50px); max-width: calc(100vw - 24px); }
+/* the panels under key, tempo, signature: across the screen, just under the bar, scrolling inside themselves */
+.tlv-phone .tlv-pop, .tlv-phone .tlv-pop.wide, .tlv-phone .tlv-pop.right { position: fixed; left: calc(8px + env(safe-area-inset-left, 0px)); right: calc(8px + env(safe-area-inset-right, 0px)); top: calc(var(--tlv-top-h, 100px) + 6px); width: auto; max-width: none; margin-top: 0; max-height: calc(100dvh - var(--tlv-top-h, 100px) - 16px); overflow: auto; overscroll-behavior: contain; }
+.tlv-phone .tlv-sigs { flex-wrap: wrap; }
+.tlv-phone .tlv-tempo { min-width: 0; }
+.tlv-phone .tlv-tempo .btn { min-width: 44px; min-height: 40px; }
+.tlv-phone .tlv-fromhere { white-space: normal; min-height: 36px; }
+
+/* the ruler row: over the panels − fit +; the loop's stretches with ends and a ✕ a finger can take */
+.tlv-phone .tlv-rulerrow { height: 40px; }
+.tlv-phone .tlv-corner { padding: 0 6px; }
+.tlv-phone .tlv-zoom { flex: 1; margin-left: 0; border-radius: 9px; }
+.tlv-phone .tlv-zoom button { flex: 1 1 0; min-width: 0; height: 30px; padding: 0; font-size: 1.05rem; }
+.tlv-phone .tlv-zoom button.fit { font-size: 0.78rem; }
+.tlv-phone .tlv-tick.n { height: 20px; font-size: 0.66rem; }
+.tlv-phone .tlv-band { height: 22px; }
+.tlv-phone .tlv-band-end { width: 18px; }
+.tlv-phone .tlv-band-end.l { left: -9px; }
+.tlv-phone .tlv-band-end.r { right: -9px; }
+.tlv-phone .tlv-band-x { right: 12px; top: 0; width: 20px; height: 20px; font-size: 0.62rem; }
+.tlv-phone .tlv-band-x.out { right: -30px; }
+.tlv-phone .tlv-marker { font-size: 0.7rem; }
+.tlv-phone .tlv-flag { font-size: 0.68rem; padding: 0 6px; }
+
+/* a track's panel: its name (a tap: everything else of the track), and compose, M, S */
+.tlh.narrow { grid-template-columns: 8px minmax(0, 1fr); grid-template-rows: 26px 1fr; column-gap: 6px; padding: 2px 6px 5px 0; }
+.tlh.narrow .tlh-grip { margin: -2px 0 -5px; cursor: default; }
+.tlh-namebtn { flex: 1; min-width: 0; height: 26px; display: flex; align-items: center; gap: 4px; padding: 0; border: none; border-radius: 6px; background: none; color: var(--text); text-align: left; font: inherit; }
+.tlh-namebtn .tlh-name { font-size: 0.82rem; }
+.tlh-dots { flex: none; color: var(--muted); font-weight: 900; line-height: 1; }
+.tlh-armed { flex: none; width: 8px; height: 8px; border-radius: 50%; background: #e5483b; }
+.tlh.narrow .tlh-line.two { gap: 4px; }
+.tlh.narrow .tlh-btn, .tlh.narrow .tlh-ms { flex: 1 1 0; width: auto; min-width: 0; height: 38px; border-radius: 9px; font-size: 0.86rem; }
+.tlh.narrow .tlh-compose { flex: 1.3 1 0; }
+.tlh.narrow .tlh-rename { height: 26px; font-size: 16px; }
+
+/* clips: the drawing in the middle of the taller row; a lifted clip stands out; a selected clip shows its two ends */
+.tlv-phone .tlc-in { top: 6px; }
+.tlv-phone .tlv-lane, .tlv-phone .tlc { -webkit-tap-highlight-color: transparent; }
+.tlc[data-lifted] { z-index: 6; box-shadow: 0 0 0 2px var(--accent), var(--shadow); }
+.tlv-phone .tlc.sel .tlc-grip { width: min(20px, 32%); background: color-mix(in srgb, var(--text) 16%, transparent); }
+.tlv-phone .tlc.sel .tlc-grip::after { content: ""; position: absolute; left: 50%; top: 50%; width: 3px; height: 18px; margin: -9px 0 0 -1.5px; border-radius: 2px; background: var(--text); opacity: 0.75; }
+.tlv-phone .tlc-acts { height: 42px; gap: 2px; padding: 3px; border-radius: 11px; max-width: calc(100% - 6px); }
+.tlv-phone .tlc-act { flex: 1 1 37px; width: 37px; min-width: 0; height: 34px; border-radius: 8px; }
+.tlv-phone .tlc-act svg { width: 18px; height: 18px; }
+.tlv-phone .tlv-rec { height: calc(var(--row) - 13px); }
+
+/* the + row */
+.tlv-phone .tlv-addrow { height: 56px; }
+.tlv-phone .tlv-add { padding: 0 6px; }
+.tlv-phone .tlv-plus { width: 100%; min-height: 40px; padding-inline: 4px; white-space: nowrap; }
+
+/* the bar that scrolls through the song: tall enough to take hold of */
+.tlv-phone .tlv-side { height: 26px; }
+.tlv-phone .tlv-side-thumb { top: 6px; bottom: 6px; border-radius: 8px; background: var(--faint); }
+
+/* a menu: a list across the bottom of the screen, each line a finger high; it scrolls inside itself */
+.tlv-phone .tlv-menu { left: calc(8px + env(safe-area-inset-left, 0px)) !important; right: calc(8px + env(safe-area-inset-right, 0px)); top: auto !important; bottom: calc(8px + env(safe-area-inset-bottom, 0px)); min-width: 0; max-width: 520px; margin-inline: auto; max-height: min(74dvh, calc(100dvh - 24px)); padding: 8px; border-radius: 16px; overscroll-behavior: contain; }
+/* (what a press beside the menu lands on: it puts the menu away, and does nothing else) */
+.tlv-menu-back { position: fixed; inset: 0; z-index: 74; background: rgba(0, 0, 0, 0.35); }
+.tlv-phone .tlv-menu-item { flex: none; min-height: 44px; padding: 8px 12px; font-size: 0.95rem; white-space: normal; }
+.tlv-phone .tlv-menu-item kbd { display: none; }
+.tlv-phone .tlv-menu-title { padding: 8px 12px 2px; font-size: 0.7rem; }
+.tlv-phone .tlv-menu-colours { gap: 10px; padding: 6px 12px 10px; flex-wrap: wrap; }
+.tlv-phone .tlv-swatch { width: 32px; height: 32px; }
+.tlv-phone .tlv-menu-lv { width: 64px; height: 6px; }
+.tlv-menu-range { flex: none; display: flex; align-items: center; gap: 10px; min-height: 44px; padding: 4px 12px; font-size: 0.95rem; font-weight: 650; }
+.tlv-menu-range input { flex: 1; min-width: 0; height: 32px; margin: 0; }
+.tlv-menu-range output { flex: none; min-width: 62px; text-align: right; font-size: 0.78rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+.tlv-menu-reset { flex: none; width: 36px; height: 36px; padding: 0; border-radius: 50%; border: 1px solid var(--border-2); background: var(--card-2); color: var(--text); font-size: 1rem; }
+.tlv-menu-reset:disabled { opacity: 0.35; }
+
+/* ── a plugin window as a sheet: on a narrow screen, or under a finger ──
+   It fills the screen under the top bar (so play, undo and redo stay in reach), one at a time: the window in front
+   is the one shown. Its body scrolls inside itself; its strip keeps clear of the bottom edge of a phone. While its
+   clip is dragged out it lets the lanes under it show through, as a window does. */
+.tlw.tlw-sheet { left: 0; right: 0; top: var(--tlv-top-h, 0px); bottom: 0; width: 100%; max-width: none; height: auto; max-height: none; padding: 0 env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px); border-radius: 16px 16px 0 0; border-bottom: none; }
+.tlw-sheet .tlw-bar { height: 48px; cursor: default; gap: 8px; padding: 0 4px 0 12px; touch-action: manipulation; }
+.tlw-sheet .tlw-x { width: 44px; height: 44px; font-size: 1rem; }
+.tlw-sheet .tlw-tools { gap: 6px; overflow-x: auto; scrollbar-width: none; }
+.tlw-sheet .tlw-tools::-webkit-scrollbar { display: none; }
+.tlw-sheet .tlw-tools > * { flex: none; }
+.tlw-sheet .tlw-tools .icon-btn { width: 38px; height: 38px; }
+.tlw-sheet .tlw-tools .lc-on, .tlw-sheet .tlw-tools .sw-bypass, .tlw-sheet .tlw-tools .bars-follow { min-height: 36px; padding-inline: 12px; }
+.tlw-sheet .tlw-body { padding: 10px; overscroll-behavior: contain; -webkit-overflow-scrolling: touch; }
+.tlw-sheet .tlw-strip { padding: 8px 10px calc(8px + env(safe-area-inset-bottom, 0px)); }
+/* the strip, in two short rows: ▶ and alone, the clip, Place; under them New, the length, copy and paste (one row where the sheet is wide) */
+.tlw-sheet .cs { flex-wrap: wrap; gap: 6px 8px; }
+.tlw-sheet .cs-play { order: 1; }
+.tlw-sheet .cs .cs-clip { order: 2; flex: 1 1 150px; height: 42px; }
+.tlw-sheet .cs-place { order: 3; }
+.tlw-sheet .cs-new, .tlw-sheet .cs-fit, .tlw-sheet .cs-len, .tlw-sheet .cs-clipb { order: 4; }
+.tlw-sheet .cs-go { width: 40px; height: 40px; font-size: 0.9rem; }
+.tlw-sheet .cs-new, .tlw-sheet .cs-alone, .tlw-sheet .cs-fit, .tlw-sheet .cs-place { min-height: 40px; padding-inline: 12px; }
+.tlw-sheet .cs-len { height: 40px; }
+.tlw-sheet .cs-len button { width: 36px; }
+.tlw-sheet .cs-len select { font-size: 16px; padding: 0 2px; }
+.tlw-sheet .cs-clipb { margin-left: auto; }
+.tlw-sheet .cs-clipb .icon-btn { width: 40px; height: 40px; }
+.tlw-sheet .cs-hint { left: 24px; }
+.cs-place { flex: none; font-weight: 800; }
+body.strip-drag .tlw.tlw-sheet > .tlw-body { opacity: 0.06; }
+body.strip-drag .tlw.tlw-sheet > .tlw-bar { opacity: 0.2; }
+/* the Chords composer in a sheet: the tray scrolls inside itself as the board does, so nothing in it is out of reach */
+.tlw-sheet .cp-dock .dock-inner { overflow: hidden auto; overscroll-behavior: contain; }
+/* a phone held sideways is low: the bars give up some of their height to what is being worked on */
+@media (max-height: 500px) {
+  .tlv-phone .tlv-top-in { min-height: 50px; padding-block: 4px; }
+  .tlv-phone .tlv-transport .play-btn { width: 40px; height: 40px; }
+  .tlv-phone .tlv-rulerrow { height: 36px; }
+  .tlw-sheet .tlw-bar { height: 42px; }
+  .tlw-sheet .tlw-x { height: 40px; }
+  .tlw-sheet .tlw-body { padding: 8px; }
+  .tlw-sheet .tlw-strip { padding-block: 5px calc(5px + env(safe-area-inset-bottom, 0px)); }
+  .tlw-sheet .tlw-body:has(> .cp) { padding: 8px; }
 }

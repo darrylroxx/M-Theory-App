@@ -5,8 +5,13 @@
 //
 // It reads no app state and plays nothing: the song, what is selected, and every way to change them come in as props.
 // A drag changes the song once, when it is let go; until then the clip's element is only moved on screen.
+//
+// On a phone (a narrow screen, or under a finger) the same view is laid out for a finger: narrow panels with four
+// large buttons, taller rows, a top bar of two short rows with a ⋯ menu, menus as lists across the bottom. A finger
+// swiped sideways over the lanes moves through the song, two fingers zoom it, a finger rested on a clip lifts it (drag:
+// it moves; let go without moving: its menu), and nothing needs a second mouse button, a held key or a keyboard.
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { audible, mixWith, type TrackMix } from "../../audio/mix";
+import { MAX_DB, MIN_DB, audible, mixWith, type TrackMix } from "../../audio/mix";
 import { isDesktop } from "../../desktop";
 import { sameSig, sigBeats, type TimeSig } from "../../song/meter";
 import type { Key } from "../../theory/keys";
@@ -16,12 +21,13 @@ import {
   removeTrack, renameTrack, resizeClip, setSig, setTrack, songEnd, splitClips,
 } from "../../timeline/edit";
 import { accepts, CLIP_OF, clipEnd, type Clip, type ClipKind, type InputRef, type NoteClip, type Session, type Take5, type TimelineSong, type TrackKind } from "../../timeline/model";
+import { useSheet } from "../windows/windows";
 import "../timeline.css";
-import { AddTrack } from "./AddTrack";
+import { ADD_KINDS, AddTrack } from "./AddTrack";
 import type { PlayerApi } from "./api";
 import { ClipActions, clipMenu, otherTakes, type ClipAct } from "./ClipActions";
 import {
-  MAX_PX, MIN_PX, ZOOM_STEP, barEvery, barRegion, beatOfX, boxHits, clipUnder, edgeTo, fitView, lengthText, moveBy, pageFor, positionText, reach, roomAt, snap,
+  MAX_PX, MIN_PX, ZOOM_STEP, barEvery, barRegion, beatOfX, boxHits, clipUnder, edgeTo, fitView, lengthText, moveBy, pageFor, pinchView, positionText, reach, repeatEnd, roomAt, snap,
   snapMode, xOfBeat, zoomAbout, type View,
 } from "./gestures";
 import { ESC_VIEW, listenKeys, onEscape, type KeyAction } from "./keys";
@@ -30,7 +36,7 @@ import { INPUTS_UNKNOWN, inputLines, metersOf, type InputLine } from "./inputs";
 import { Menu, type MenuAt, type MenuItem } from "./Menu";
 import { Ruler } from "./Ruler";
 import { TopBar, type TopBarProps } from "./TopBar";
-import { TrackHead, type HeadCtl } from "./TrackHead";
+import { TrackHead, dbText, fxOn, inputText, type HeadCtl } from "./TrackHead";
 
 export interface TrackViewProps {
   song: TimelineSong; keyOf: Key; session: Session;
@@ -66,25 +72,36 @@ export interface TrackViewProps {
   ghost?: NoteClip | null;
   /** the tracks heard without their effects just now, and the switch (Alt + click on a track's FX) */
   bypass?: { on: ReadonlySet<string>; toggle(track: string): void };
+  /** the phone's layout or the desktop's, said outright (not given: by the screen, as the windows decide to be sheets) */
+  phone?: boolean;
 }
 
 /** How tall a track's row is, how tall the + row is, and how wide the panels are. */
 export const ROW_H = 64;
 export const ADD_H = 44;
 export const PANEL = 260;
+/** The same on a phone: taller rows (a finger needs them), narrower panels (the lanes need the room). */
+export const ROW_PHONE = 72;
+export const ADD_PHONE = 56;
+export const PANEL_PHONE = 132;
 /** How wide the lanes are taken to be before the screen is measured (a 1280 window). */
 const GUESS_W = 1020;
 /** The row of buttons of a selected clip: how wide and how tall it is, and how far it stands clear of the clip. */
 const ACTS_W = 160;
 const ACTS_H = 26;
 const ACTS_GAP = 2;
+/** …and on a phone, where each of its buttons is large enough for a finger. */
+const ACTS_W_PHONE = 240;
+const ACTS_H_PHONE = 42;
 /** Where a clip's box starts and ends inside its lane (as the stylesheet lays it). */
 const CLIP_TOP = 6;
 const CLIP_BOTTOM = 57;
 /** A drag starts after this many pixels; less is a click. */
 const TAP_PX = 4;
-/** How long a finger rests on a clip before its menu opens. */
-const HOLD_MS = 500;
+/** How long a finger rests on a clip before it is lifted (dragged from there it moves; let go where it is, its menu opens), and on an empty lane or the ruler before the menu of that place opens. */
+const HOLD_MS = 400;
+/** A finger has moved (it is a swipe, not a rest) after this many pixels. */
+const SWIPE_PX = 8;
 /** How near the left or right edge of the lanes a drag makes time scroll, and how far each step goes (pixels). */
 const EDGE_PX = 24;
 const EDGE_STEP = 14;
@@ -103,15 +120,25 @@ type ClipDrag = {
   pointer: number; id: string; kind: "move" | "left" | "right"; x0: number; y0: number; beat0: number; moved: boolean;
   /** a finger on a clip that is not selected: the lanes scroll with it, and a tap selects */
   still: boolean; hold: number;
+  /** a finger rested on it long enough: it is lifted, and moves with the finger from here on */
+  lifted?: boolean;
+  /** a finger swiped sideways from a clip that was not lifted: time scrolls (the view as it was when the swipe began) */
+  pan?: number;
+  el?: HTMLElement;
   ids: string[]; els: HTMLElement[]; stays: HTMLElement[]; oneTrack: boolean;
   by: number; to: string | null | undefined; copy: boolean; edge?: number;
 };
-type LaneDrag = { pointer: number; track: string; x0: number; y0: number; beat0: number; moved: boolean; add: boolean };
+type LaneDrag = { pointer: number; track: string; x0: number; y0: number; beat0: number; moved: boolean; add: boolean; /** a finger: a swipe sideways scrolls time (from this scroll), a rest opens the lane's menu */ touch?: boolean; pan?: number; hold?: number };
 
 export function TrackView(props: TrackViewProps) {
   const { song, keyOf, session, setSession, player, top } = props;
   const map = barMap(song);
   const end = songEnd(song);
+
+  const sheet = useSheet();
+  const phone = props.phone ?? sheet;
+  const panel = phone ? PANEL_PHONE : PANEL;
+  const rowH = phone ? ROW_PHONE : ROW_H;
 
   const root = useRef<HTMLDivElement>(null);
   const body = useRef<HTMLDivElement>(null);
@@ -130,7 +157,7 @@ export function TrackView(props: TrackViewProps) {
     const el = body.current;
     if (!el) return;
     const measure = () => {
-      const w = el.clientWidth - PANEL;
+      const w = el.clientWidth - panel;
       if (w > 0) {
         setWidth(w);
         setMeasured(true);
@@ -141,7 +168,21 @@ export function TrackView(props: TrackViewProps) {
     const ro = new ResizeObserver(measure);
     ro.observe(el);
     return () => ro.disconnect();
-  }, []);
+  }, [panel]);
+  // how far down the top bar reaches, for whatever is laid under it (a phone's sheets start there)
+  useLayoutEffect(() => {
+    const el = root.current?.querySelector<HTMLElement>(".tlv-top");
+    if (!el || typeof ResizeObserver === "undefined") return;
+    const say = () => document.documentElement.style.setProperty("--tlv-top-h", `${Math.round(el.getBoundingClientRect().bottom)}px`);
+    say();
+    const ro = new ResizeObserver(say);
+    ro.observe(el);
+    window.addEventListener("resize", say);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", say);
+    };
+  }, [phone]);
   const set = session.pxPerBeat > 0;
   const fitted = useMemo(() => fitView(end, width, sigBeats(song.meter)), [end, width, song.meter]);
   const ppb = set ? clamp(session.pxPerBeat, MIN_PX, MAX_PX) : fitted.pxPerBeat;
@@ -170,20 +211,23 @@ export function TrackView(props: TrackViewProps) {
   /** how far down the track list is scrolled (to the nearest few pixels, and only kept while a clip is selected: its row of buttons must stay in sight) */
   const [scrolled, setScrolled] = useState(0);
 
-  const live = useRef({ props, view, width, map, end, total, follow, marker, naming, renaming, preview });
-  live.current = { props, view, width, map, end, total, follow, marker, naming, renaming, preview };
+  const live = useRef({ props, view, width, map, end, total, follow, marker, naming, renaming, preview, phone, panel, rowH });
+  live.current = { props, view, width, map, end, total, follow, marker, naming, renaming, preview, phone, panel, rowH };
   const pointer = useRef<{ x: number; y: number } | null>(null);
   const held = useRef(0);
   const auto = useRef<{ dir: number; timer: number; again?: () => void }>({ dir: 0, timer: 0 });
   const clipDrag = useRef<ClipDrag | null>(null);
   const laneDrag = useRef<LaneDrag | null>(null);
+  /** the fingers on the lanes, and two of them zooming: where each began, and the view as it was then */
+  const fingers = useRef(new Map<number, { x: number; y: number }>());
+  const pinch = useRef<{ a: number; b: number; d0: number; mid0: number; view: View } | null>(null);
 
   // ── small helpers every handler uses (they read what is current, so they never go stale) ──
   const h = useMemo(() => {
     const L = () => live.current;
-    const lanesLeft = () => over.current?.getBoundingClientRect().left ?? PANEL;
+    const lanesLeft = () => over.current?.getBoundingClientRect().left ?? L().panel;
     const beatAt = (clientX: number) => beatOfX(L().view, clientX - lanesLeft());
-    const rowAt = (clientY: number) => Math.floor((clientY - (rows.current?.getBoundingClientRect().top ?? 0)) / ROW_H);
+    const rowAt = (clientY: number) => Math.floor((clientY - (rows.current?.getBoundingClientRect().top ?? 0)) / L().rowH);
     const laneAtY = (clientY: number): string | null => L().props.song.tracks[rowAt(clientY)]?.id ?? null;
     const setView = (v: View) => {
       const { props: p, width: w } = L();
@@ -371,6 +415,16 @@ export function TrackView(props: TrackViewProps) {
       setAdding(false);
       setLit(id);
     };
+    /** on a phone the six kinds are a menu (the row under the tracks has no room for them) */
+    const addMenu = (at: MenuAt) => setMenu({ at, label: "Add a track", items: [{ title: "Add a track" }, ...ADD_KINDS.map((k): MenuItem => ({ label: k.name, run: () => add(k.kind) }))] });
+    /** ⟳: write the harmony again into the clip that is selected on the track, or the one under the cursor */
+    const againOf = (id: string) => {
+      const { song: s, session: se, again } = P();
+      const mine = s.clips.filter((c) => c.track === id);
+      const c = mine.find((x) => se.sel.clips.includes(x.id)) ?? mine.find((x) => x.start <= se.cursor && clipEnd(x, s) > se.cursor);
+      if (c) again?.(id, c.id);
+      else P().say?.("Select the clip to write again");
+    };
     const removeTrackOf = (id: string) => {
       const { props: p } = L();
       const t = p.song.tracks.find((x) => x.id === id);
@@ -385,6 +439,41 @@ export function TrackView(props: TrackViewProps) {
       const { props: p } = L();
       const t = p.song.tracks.find((x) => x.id === id);
       if (!t) return;
+      if (L().phone) {
+        // a phone's panel has room for the name, compose, M and S: everything else a panel holds is here
+        const at0 = at;
+        const i = p.song.tracks.findIndex((x) => x.id === id);
+        const db = p.song.mix?.[id]?.db ?? 0;
+        const items: MenuItem[] = [
+          { title: t.name },
+          { label: fxOn(t) ? "Sound and effects (some are on)" : "Sound and effects", run: () => p.open("sound", id) },
+          ...(p.bypass ? [{ label: "Hear it without its effects", on: p.bypass.on.has(id), run: () => p.bypass?.toggle(id) }] : []),
+          { range: { label: "Volume", min: MIN_DB, max: MAX_DB, step: 0.5, value: db, reset: 0, text: (v) => `${dbText(v)} dB`, set: (v) => P().edit("Volume", (s) => ({ ...s, mix: mixWith(s.mix, id, { db: v }) }), `mix:${id}:db`) } },
+        ];
+        if ("takes" in t)
+          items.push(
+            { sep: true },
+            { label: "Record on this track", on: p.session.armed === id, run: () => p.setSession((s) => ({ ...s, armed: s.armed === id ? null : id })) },
+            { label: `Input: ${inputText(t.input)}…`, run: () => inputMenu(at0, id) },
+          );
+        if ("role" in t && t.role === "harmony" && p.again) items.push({ label: "Write this harmony again", run: () => againOf(id) });
+        items.push(
+          { sep: true },
+          { label: "Rename", run: () => setRenaming(id) },
+          { label: "Move up", disabled: i <= 0, run: () => p.edit("Move track", (s) => moveTrack(s, id, i - 1)) },
+          { label: "Move down", disabled: i >= p.song.tracks.length - 1, run: () => p.edit("Move track", (s) => moveTrack(s, id, i + 1)) },
+          { label: "Duplicate track", run: () => p.edit("Duplicate track", (s) => duplicateTrack(s, id, fresh("t"))) },
+          { sep: true },
+          { label: "Copy sound", run: () => p.sound.copy(id) },
+          { label: "Paste sound", disabled: !p.sound.has(id), run: () => p.sound.paste(id) },
+          { sep: true },
+          { title: "Colour" },
+          { colours: true, now: t.color, pick: (n) => p.edit("Track colour", (s) => setTrack(s, id, { color: n })) },
+          { sep: true },
+          { label: "Remove track", danger: true, run: () => removeTrackOf(id) },
+        );
+        return setMenu({ at, label: `${t.name} track`, items });
+      }
       setMenu({ at, label: `${t.name} track`, items: [
         { label: "Remove track", danger: true, run: () => removeTrackOf(id) },
         { label: "Duplicate track", run: () => p.edit("Duplicate track", (s) => duplicateTrack(s, id, fresh("t"))) },
@@ -472,7 +561,46 @@ export function TrackView(props: TrackViewProps) {
         case "escape": return;
       }
     };
-    return { zoomBy, fit, setLoop, toggleLoop, clipAct, openClip, addMarker, insert, cutLoop, flag, add, trackMenu, inputMenu, key };
+    /**
+     * The phone's ⋯ menu: what the wide top bar has as buttons (Ideas, Canvas, settings, Export, how you hear yourself),
+     * and what the desktop does with a right-click on the ruler or a key (Follow, fit, paste, markers, bars put in and
+     * taken out, the loop).
+     */
+    const more = (at: MenuAt) => {
+      const { props: p, follow: f, marker: mk, end: e } = L();
+      const t = p.top;
+      const looped = !!p.session.loop?.regions.length;
+      const rec = t.record;
+      const items: MenuItem[] = [
+        { label: `Ideas${t.idea.count ? ` (${t.idea.count})` : ""}`, run: t.openIdeas },
+        { label: "Canvas", run: t.openCanvas },
+        { label: "Settings", run: t.openSettings },
+        { title: "Export" },
+        { label: t.exports.busy ? "WAV: being made…" : "WAV: the whole song as you hear it", disabled: !!t.exports.busy, run: t.exports.wav },
+        { label: "MIDI: every track as notes", run: t.exports.midi },
+        { label: "Chords + tab, as text", run: t.exports.chart },
+        { title: "Timeline" },
+        { label: "Follow the play line", on: f, run: () => setFollow(!f) },
+        { label: "Show the whole song", run: fit },
+        { label: "Paste at the cursor", disabled: !p.clipboard.has, run: () => key("paste") },
+        { label: "Add a marker at the cursor", run: () => key("marker") },
+        ...(mk ? [{ label: "Rename the selected marker", run: () => setNaming(mk) }, { label: "Delete the selected marker", danger: true, run: () => removeMarker(mk) }] : []),
+        { label: "Insert a bar at the cursor", run: () => key("insert-bar") },
+        { label: "Insert the looped length at the cursor", disabled: !looped, run: () => key("insert-loop") },
+        { label: "Remove the looped time", disabled: !looped, danger: true, run: cutLoop },
+        { label: "Loop the whole song", run: () => setLoop({ regions: [{ from: 0, to: e }], on: true }) },
+        ...(looped ? [{ label: "Clear the loop", run: () => setLoop(null) }] : []),
+      ];
+      const setMonitor = rec?.setMonitor;
+      if (rec && setMonitor)
+        items.push(
+          { title: "Hear yourself while recording" },
+          { label: "Direct, from the interface", on: rec.monitor === "hardware", run: () => setMonitor("hardware") },
+          { label: "Through the track's effects", on: rec.monitor === "effects", run: () => setMonitor("effects") },
+        );
+      setMenu({ at, label: "More", items });
+    };
+    return { zoomBy, fit, setLoop, toggleLoop, clipAct, openClip, addMarker, insert, cutLoop, flag, add, addMenu, againOf, trackMenu, inputMenu, key, more };
   }, [h]);
 
   // ── keys ──
@@ -549,7 +677,7 @@ export function TrackView(props: TrackViewProps) {
       if (!r || row < 0) grow.style.display = "none";
       else {
         grow.style.display = "block";
-        grow.style.transform = `translate(${xOfBeat(v, r.from).toFixed(2)}px, ${row * ROW_H}px)`;
+        grow.style.transform = `translate(${xOfBeat(v, r.from).toFixed(2)}px, ${row * live.current.rowH}px)`;
         grow.style.width = `${Math.max(2, (r.to - r.from) * v.pxPerBeat).toFixed(2)}px`;
       }
       raf = requestAnimationFrame(tick);
@@ -579,7 +707,8 @@ export function TrackView(props: TrackViewProps) {
     const el = body.current;
     const grid = rows.current;
     if (!el || !grid) return;
-    const win = docked ? document.querySelector<HTMLElement>(`.tlw[data-win="${CSS.escape(docked.id)}"]`) : null;
+    // (a phone's composer is a sheet over the whole view: there is nothing to keep in sight beside it)
+    const win = docked && !phone ? document.querySelector<HTMLElement>(`.tlw[data-win="${CSS.escape(docked.id)}"]`) : null;
     const b = el.getBoundingClientRect();
     const w = win?.getBoundingClientRect();
     // (only a window that lies across the bottom of the lanes: one dragged up into them covers what it covers)
@@ -589,7 +718,7 @@ export function TrackView(props: TrackViewProps) {
     const seen = b.height - cover;
     if ((dockedRow + 1) * ROW_H - el.scrollTop > seen) el.scrollTop = (dockedRow + 1) * ROW_H - seen;
     else if (dockedRow * ROW_H < el.scrollTop) el.scrollTop = dockedRow * ROW_H;
-  }, [docked?.id, docked?.clip, docked?.y, docked?.h, dockedRow]);
+  }, [docked?.id, docked?.clip, docked?.y, docked?.h, dockedRow, phone]);
 
   // ── clips and lanes: pressed, dragged, let go ──
   const ctl: LaneCtl = useMemo(() => {
@@ -642,7 +771,66 @@ export function TrackView(props: TrackViewProps) {
         recOf: (take: Take5) => [...new Set(t.takes.map((k) => k.group))].indexOf(take.group) + 1,
         useTake: (take: Take5) => p.edit("Use take", (s) => ({ ...s, clips: s.clips.map((x) => (x.id === id && x.kind === "audio" ? { ...x, take: take.id } : x)) })),
       } : undefined;
-      setMenu({ at, label: "Clip", items: clipMenu(c, (a) => act.clipAct(a, id, beat), more) });
+      const items = clipMenu(c, (a) => act.clipAct(a, id, beat), more);
+      if (L().phone) {
+        // what a drag of the right edge does, as two lines: the content once more, or once less
+        const round = (by: 1 | -1) => {
+          const q = P();
+          const now = clipOf(id);
+          const to = now ? repeatEnd(q.song, now, by) : null;
+          if (to === null) return q.say?.("It is one round long: it cannot be shorter");
+          if (resizeClip(q.song, id, "right", to) === q.song) return q.say?.(by > 0 ? "No room: the next clip is in the way" : "It cannot be shorter");
+          q.edit("Change clip length", (x) => resizeClip(x, id, "right", to));
+        };
+        items.splice(items.length - 1, 0, { label: "Repeat once more", run: () => round(1) }, { label: "Repeat once less", run: () => round(-1) });
+      }
+      setMenu({ at, label: "Clip", items });
+    };
+    /** everything in hand is let go, changing nothing (two fingers have come down: they zoom) */
+    const abort = () => {
+      const d = clipDrag.current;
+      clipDrag.current = null;
+      if (d) {
+        window.clearTimeout(d.hold);
+        if (d.el) delete d.el.dataset.lifted;
+        if (d.moved && !d.still) {
+          endVisuals(d, true);
+          setPreview(null);
+        }
+      }
+      const l = laneDrag.current;
+      laneDrag.current = null;
+      if (l) window.clearTimeout(l.hold);
+      if (box.current) box.current.style.display = "none";
+    };
+    const newClipAt = (track: string, clientX: number) => {
+      const p = P();
+      const t = p.song.tracks.find((x) => x.id === track);
+      if (!t || "takes" in t) return;
+      const kind = CLIP_OF[t.kind];
+      const room = roomAt(p.song, track, h.beatAt(clientX), kind === "drums");
+      if (!room) return;
+      const sig = L().map.sigAt(room.from);
+      const id = fresh("c");
+      let content = blankContent(kind, sig);
+      // (an empty tune as long as its clip, so nothing in it looks repeated)
+      if (kind === "melody") content = { ...content, bars: Math.max(1, Math.round((room.to - room.from) / sigBeats(sig))) };
+      const clip = { id, track, kind, start: room.from, len: room.to - room.from, off: 0, sig, content } as NoteClip;
+      p.edit("New clip", (s) => layDown(s, clip));
+      h.select([id], track);
+      p.open("compose", track, id);
+    };
+    const laneMenuAt = (at: MenuAt, track: string) => {
+      const p = P();
+      const t = p.song.tracks.find((x) => x.id === track);
+      if (!t) return;
+      const beat = h.beatAt(at.x);
+      const bar = L().map.snapBar(beat);
+      const notes = !("takes" in t);
+      setMenu({ at, label: `${t.name} lane`, items: [
+        { label: "Paste here", hint: "Ctrl+V", disabled: !p.clipboard.has, run: () => p.clipboard.paste(bar, track, false) },
+        ...(notes ? [{ label: "New clip here", disabled: !roomAt(p.song, track, beat, t.kind === "drums"), run: () => newClipAt(track, at.x) }] : []),
+      ] });
     };
 
     const ctl: LaneCtl = {
@@ -654,7 +842,10 @@ export function TrackView(props: TrackViewProps) {
         const edge = (e.target as HTMLElement).dataset?.edge;
         const kind = edge === "left" || edge === "right" ? edge : "move";
         const touch = e.pointerType === "touch";
+        // (a second finger: the two zoom, and nothing is pressed)
+        if (touch && fingers.current.size > 1) return;
         const still = touch && kind === "move" && !P().session.sel.clips.includes(id);
+        const el = e.currentTarget;
         if (!still) {
           try {
             e.currentTarget.setPointerCapture(e.pointerId);
@@ -662,15 +853,28 @@ export function TrackView(props: TrackViewProps) {
             /* (a pretend pointer) */
           }
         }
-        const at = { x: e.clientX, y: e.clientY };
         const beat0 = h.beatAt(e.clientX);
-        const hold = touch ? window.setTimeout(() => {
+        // a finger rested on a clip lifts it: from then on it moves with the finger (also up and down, onto another
+        // track), and let go where it is, its menu opens
+        const hold = touch && kind === "move" ? window.setTimeout(() => {
           const d = clipDrag.current;
           if (!d || d.moved || d.id !== id) return;
-          clipDrag.current = null;
-          openClipMenu(at, id, beat0);
+          d.lifted = true;
+          d.still = false;
+          try {
+            el.setPointerCapture(d.pointer);
+          } catch {
+            /* (a pretend pointer) */
+          }
+          el.dataset.lifted = "1";
+          try {
+            navigator.vibrate?.(8);
+          } catch {
+            /* (not allowed here) */
+          }
+          if (!P().session.sel.clips.includes(id)) h.select([id], c.track);
         }, HOLD_MS) : 0;
-        clipDrag.current = { pointer: e.pointerId, id, kind, x0: e.clientX, y0: e.clientY, beat0, moved: false, still, hold, ids: [], els: [], stays: [], oneTrack: true, by: 0, to: undefined, copy: false };
+        clipDrag.current = { pointer: e.pointerId, id, kind, x0: e.clientX, y0: e.clientY, beat0, moved: false, still, hold, el, ids: [], els: [], stays: [], oneTrack: true, by: 0, to: undefined, copy: false };
       },
       clipMove(e) {
         const d = clipDrag.current;
@@ -679,9 +883,10 @@ export function TrackView(props: TrackViewProps) {
         const c = clipOf(d.id);
         if (!c) return;
         if (!d.moved) {
-          if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < TAP_PX) return;
+          if (Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < (e.pointerType === "touch" ? SWIPE_PX : TAP_PX)) return;
           d.moved = true;
           window.clearTimeout(d.hold);
+          // (a swipe from a clip that was not lifted moves through the song, or scrolls the tracks: see the lanes' box)
           if (d.still) return;
           // the drag begins: what moves is the selection, or this clip alone when it was not selected
           const sel = p.session.sel.clips;
@@ -727,7 +932,7 @@ export function TrackView(props: TrackViewProps) {
         d.by = by;
         d.to = to;
         d.copy = e.ctrlKey || e.metaKey;
-        for (const el of d.els) el.style.transform = `translate(${(by * v.pxPerBeat).toFixed(2)}px, ${rowsBy * ROW_H}px)`;
+        for (const el of d.els) el.style.transform = `translate(${(by * v.pxPerBeat).toFixed(2)}px, ${rowsBy * L().rowH}px)`;
         root.current?.classList.toggle("refused", to === null);
         root.current?.classList.toggle("copying", d.copy);
         // a copy leaves the original where it is: a still picture of it stays behind while the copy is dragged
@@ -753,6 +958,9 @@ export function TrackView(props: TrackViewProps) {
         if (!d || d.pointer !== e.pointerId) return;
         clipDrag.current = null;
         window.clearTimeout(d.hold);
+        if (d.el) delete d.el.dataset.lifted;
+        // lifted and let go where it was: its menu
+        if (!d.moved && d.lifted) return openClipMenu({ x: e.clientX, y: e.clientY }, d.id, d.beat0);
         if (!d.moved) return tapClip(e, d.id);
         if (d.still) return;
         const p = P();
@@ -783,6 +991,7 @@ export function TrackView(props: TrackViewProps) {
         if (!d || d.pointer !== e.pointerId) return;
         clipDrag.current = null;
         window.clearTimeout(d.hold);
+        if (d.el) delete d.el.dataset.lifted;
         if (d.moved && !d.still) {
           endVisuals(d, true);
           setPreview(null);
@@ -797,11 +1006,27 @@ export function TrackView(props: TrackViewProps) {
       clipMenu(e, id) {
         e.preventDefault();
         e.stopPropagation();
+        // (a finger rested on a clip lifts it, and its menu opens when it is let go: the browser's own long press says nothing more)
+        if ((e.nativeEvent as PointerEvent).pointerType === "touch") return;
         openClipMenu({ x: e.clientX, y: e.clientY }, id, h.beatAt(e.clientX));
       },
 
       laneDown(e, track) {
         if (e.button !== 0 || (e.target as Element).closest("[data-clip]")) return;
+        if (e.pointerType === "touch") {
+          // a finger: a tap places the cursor, a swipe moves through the song or the tracks (see the lanes' box), and
+          // a rest on a track's lane opens the lane's menu (paste here, a new clip here)
+          if (fingers.current.size > 1) return;
+          const at = { x: e.clientX, y: e.clientY };
+          const hold = track ? window.setTimeout(() => {
+            const d = laneDrag.current;
+            if (!d || d.moved || d.pointer !== e.pointerId) return;
+            laneDrag.current = null;
+            laneMenuAt(at, track);
+          }, HOLD_MS) : 0;
+          laneDrag.current = { pointer: e.pointerId, track, x0: e.clientX, y0: e.clientY, beat0: h.beatAt(e.clientX), moved: false, add: false, touch: true, hold };
+          return;
+        }
         try {
           e.currentTarget.setPointerCapture(e.pointerId);
         } catch {
@@ -813,8 +1038,11 @@ export function TrackView(props: TrackViewProps) {
         const d = laneDrag.current;
         const el = box.current;
         if (!d || d.pointer !== e.pointerId || !el) return;
-        if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < TAP_PX) return;
+        if (!d.moved && Math.hypot(e.clientX - d.x0, e.clientY - d.y0) < (d.touch ? SWIPE_PX : TAP_PX)) return;
         d.moved = true;
+        window.clearTimeout(d.hold);
+        // (under a finger there is no box that selects: the swipe moves through the song)
+        if (d.touch) return;
         // the box that selects: from the lane it began in to the lane under the pointer
         const n = P().song.tracks.length;
         if (!n) return;
@@ -824,15 +1052,17 @@ export function TrackView(props: TrackViewProps) {
         const x1 = Math.min(d.x0, e.clientX) - left;
         const x2 = Math.max(d.x0, e.clientX) - left;
         el.style.display = "block";
-        el.style.transform = `translate(${x1}px, ${Math.min(a, b) * ROW_H}px)`;
+        el.style.transform = `translate(${x1}px, ${Math.min(a, b) * L().rowH}px)`;
         el.style.width = `${x2 - x1}px`;
-        el.style.height = `${(Math.abs(a - b) + 1) * ROW_H}px`;
+        el.style.height = `${(Math.abs(a - b) + 1) * L().rowH}px`;
       },
       laneUp(e) {
         const d = laneDrag.current;
         if (!d || d.pointer !== e.pointerId) return;
         laneDrag.current = null;
+        window.clearTimeout(d.hold);
         if (box.current) box.current.style.display = "none";
+        if (d.touch && d.moved) return;
         const p = P();
         if (!d.moved) {
           // a click on an empty part: the cursor goes there, nothing is selected, that track is
@@ -851,44 +1081,98 @@ export function TrackView(props: TrackViewProps) {
         const d = laneDrag.current;
         if (!d || d.pointer !== e.pointerId) return;
         laneDrag.current = null;
+        window.clearTimeout(d.hold);
         if (box.current) box.current.style.display = "none";
       },
       laneNew(e, track) {
         if ((e.target as Element).closest("[data-clip]")) return;
-        const p = P();
-        const t = p.song.tracks.find((x) => x.id === track);
-        if (!t || "takes" in t) return;
-        const kind = CLIP_OF[t.kind];
-        const room = roomAt(p.song, track, h.beatAt(e.clientX), kind === "drums");
-        if (!room) return;
-        const sig = L().map.sigAt(room.from);
-        const id = fresh("c");
-        let content = blankContent(kind, sig);
-        // (an empty tune as long as its clip, so nothing in it looks repeated)
-        if (kind === "melody") content = { ...content, bars: Math.max(1, Math.round((room.to - room.from) / sigBeats(sig))) };
-        const clip = { id, track, kind, start: room.from, len: room.to - room.from, off: 0, sig, content } as NoteClip;
-        p.edit("New clip", (s) => layDown(s, clip));
-        h.select([id], track);
-        p.open("compose", track, id);
+        newClipAt(track, e.clientX);
       },
       laneMenu(e, track) {
         e.preventDefault();
         if ((e.target as Element).closest("[data-clip]")) return;
-        const p = P();
-        const t = p.song.tracks.find((x) => x.id === track);
-        if (!t) return;
-        const beat = h.beatAt(e.clientX);
-        const at = L().map.snapBar(beat);
-        const notes = !("takes" in t);
-        const event = e;
-        setMenu({ at: { x: e.clientX, y: e.clientY }, label: `${t.name} lane`, items: [
-          { label: "Paste here", hint: "Ctrl+V", disabled: !p.clipboard.has, run: () => p.clipboard.paste(at, track, false) },
-          ...(notes ? [{ label: "New clip here", disabled: !roomAt(p.song, track, beat, t.kind === "drums"), run: () => ctl.laneNew(event, track) }] : []),
-        ] });
+        // (a finger's rest has opened it already, or has lifted a clip: the browser's own long press says nothing more)
+        if (L().phone && (e.nativeEvent as PointerEvent).pointerType === "touch") return;
+        laneMenuAt({ x: e.clientX, y: e.clientY }, track);
       },
     };
-    return ctl;
+    return Object.assign(ctl, { abort });
   }, [h, act]);
+
+  // ── fingers on the lanes: one swiped sideways moves through the song, two zoom it ──
+  // (Up and down the browser scrolls the track list itself. The clips and the lanes see the same fingers: a tap, a
+  // rest and a lifted clip are theirs; this only takes the swipe they leave alone, and the second finger.)
+  const swipe = useRef<{ pointer: number; x0: number; y0: number; scroll0: number; mode: "wait" | "pan" | "no" } | null>(null);
+  const touch = useMemo(() => {
+    const lanesOf = (t: EventTarget | null) => t instanceof Element && !!t.closest(".tlv-lane, .tlv-rest") && !t.closest(".tlc-acts");
+    const end = (e: React.PointerEvent<HTMLElement>) => {
+      fingers.current.delete(e.pointerId);
+      if (pinch.current && (pinch.current.a === e.pointerId || pinch.current.b === e.pointerId)) pinch.current = null;
+      if (swipe.current?.pointer === e.pointerId) swipe.current = null;
+    };
+    return {
+      down(e: React.PointerEvent<HTMLElement>) {
+        if (e.pointerType !== "touch" || !lanesOf(e.target)) return;
+        fingers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (fingers.current.size === 2) {
+          // the second finger: whatever the first had begun is let go, and the two zoom
+          (ctl as LaneCtl & { abort(): void }).abort();
+          swipe.current = null;
+          const [[a, pa], [b, pb]] = [...fingers.current];
+          const left = h.lanesLeft();
+          pinch.current = { a, b, d0: Math.max(24, Math.hypot(pa.x - pb.x, pa.y - pb.y)), mid0: (pa.x + pb.x) / 2 - left, view: h.L().view };
+          return;
+        }
+        if (fingers.current.size > 2) return;
+        // a swipe from a clip's edge, or from a clip that is selected, is the clip's own (it is dragged)
+        const clip = (e.target as Element).closest<HTMLElement>("[data-clip]");
+        const own = !!clip && (!!(e.target as HTMLElement).dataset?.edge || h.L().props.session.sel.clips.includes(clip.dataset.clip ?? ""));
+        swipe.current = { pointer: e.pointerId, x0: e.clientX, y0: e.clientY, scroll0: h.L().view.scroll, mode: own ? "no" : "wait" };
+      },
+      move(e: React.PointerEvent<HTMLElement>) {
+        if (e.pointerType !== "touch") return;
+        const f = fingers.current.get(e.pointerId);
+        if (f) {
+          f.x = e.clientX;
+          f.y = e.clientY;
+        }
+        const z = pinch.current;
+        if (z) {
+          const pa = fingers.current.get(z.a);
+          const pb = fingers.current.get(z.b);
+          if (!pa || !pb) return;
+          held.current = performance.now();
+          return h.setView(pinchView(z.view, z.d0, Math.max(24, Math.hypot(pa.x - pb.x, pa.y - pb.y)), z.mid0, (pa.x + pb.x) / 2 - h.lanesLeft()));
+        }
+        const w = swipe.current;
+        if (!w || w.pointer !== e.pointerId || w.mode === "no") return;
+        const dx = e.clientX - w.x0;
+        const dy = e.clientY - w.y0;
+        if (w.mode === "wait") {
+          if (Math.hypot(dx, dy) < SWIPE_PX) return;
+          // (a clip that was lifted meanwhile moves with the finger; up and down is the browser's scroll of the tracks)
+          w.mode = clipDrag.current?.lifted || Math.abs(dx) <= Math.abs(dy) ? "no" : "pan";
+          if (w.mode === "no") return;
+        }
+        held.current = performance.now();
+        const v = h.L().view;
+        h.setView({ ...v, scroll: w.scroll0 - dx / v.pxPerBeat });
+      },
+      up: end,
+      cancel: end,
+    };
+  }, [h, ctl]);
+  // while two fingers zoom, a lifted clip is dragged or a swipe moves through the song, the page itself stays put
+  useEffect(() => {
+    const el = body.current;
+    if (!el) return;
+    const stay = (e: TouchEvent) => {
+      if (!e.cancelable) return;
+      if (e.touches.length > 1 || pinch.current || swipe.current?.mode === "pan" || clipDrag.current?.lifted) e.preventDefault();
+    };
+    el.addEventListener("touchmove", stay, { passive: false });
+    return () => el.removeEventListener("touchmove", stay);
+  }, []);
 
   // ── the track panels ──
   const head: HeadCtl = useMemo(() => {
@@ -915,13 +1199,14 @@ export function TrackView(props: TrackViewProps) {
           if (!moved && Math.abs(dy) < TAP_PX) return;
           if (!moved) for (const el of els) el.classList.add("lifted");
           moved = true;
-          to = clamp(Math.round(from + dy / ROW_H), 0, tracks.length - 1);
-          const lo = -from * ROW_H;
-          const hi = (tracks.length - 1 - from) * ROW_H;
+          const rh = h.L().rowH;
+          to = clamp(Math.round(from + dy / rh), 0, tracks.length - 1);
+          const lo = -from * rh;
+          const hi = (tracks.length - 1 - from) * rh;
           for (const el of els) el.style.transform = `translateY(${clamp(dy, lo, hi)}px)`;
           if (drop.current) {
             drop.current.style.display = to === from ? "none" : "block";
-            drop.current.style.transform = `translateY(${(to > from ? to + 1 : to) * ROW_H - 1}px)`;
+            drop.current.style.transform = `translateY(${(to > from ? to + 1 : to) * rh - 1}px)`;
           }
         };
         const done = (ev: PointerEvent) => {
@@ -955,13 +1240,7 @@ export function TrackView(props: TrackViewProps) {
       arm: (id) => P().setSession((s) => ({ ...s, armed: s.armed === id ? null : id })),
       menu: (at, id) => act.trackMenu(at, id),
       inputMenu: (at, id) => act.inputMenu(at, id),
-      again(id) {
-        const { song: s, session: se, again } = P();
-        const mine = s.clips.filter((c) => c.track === id);
-        const c = mine.find((x) => se.sel.clips.includes(x.id)) ?? mine.find((x) => x.start <= se.cursor && clipEnd(x, s) > se.cursor);
-        if (c) again?.(id, c.id);
-        else P().say?.("Select the clip to write again");
-      },
+      again: (id) => act.againOf(id),
     };
   }, [h, act]);
 
@@ -993,39 +1272,41 @@ export function TrackView(props: TrackViewProps) {
   const leadRow = lead ? tracks.findIndex((t) => t.id === lead.track) : -1;
   const leadX = lead ? xOfBeat(view, lead.start) : 0;
   const leadEnd = lead ? xOfBeat(view, clipEnd(lead, song)) : 0;
-  const actsX = clamp(leadX, 3, Math.max(3, width - ACTS_W - 3));
-  const actsFree = (row: number) => row < 0 || row >= tracks.length || !song.clips.some((c) => c.track === tracks[row].id && xOfBeat(view, c.start) < actsX + ACTS_W && xOfBeat(view, clipEnd(c, song)) > actsX);
-  const actsAbove = leadRow * ROW_H + CLIP_TOP - ACTS_GAP - ACTS_H;
+  const actsW = phone ? Math.min(ACTS_W_PHONE, width - 6) : ACTS_W;
+  const actsH = phone ? ACTS_H_PHONE : ACTS_H;
+  const actsX = clamp(leadX, 3, Math.max(3, width - actsW - 3));
+  const actsFree = (row: number) => row < 0 || row >= tracks.length || !song.clips.some((c) => c.track === tracks[row].id && xOfBeat(view, c.start) < actsX + actsW && xOfBeat(view, clipEnd(c, song)) > actsX);
+  const actsAbove = leadRow * rowH + CLIP_TOP - ACTS_GAP - actsH;
   const actsUp = actsAbove >= scrolled && (actsFree(leadRow - 1) || !actsFree(leadRow + 1));
-  const actsY = actsUp ? actsAbove : leadRow * ROW_H + CLIP_BOTTOM + ACTS_GAP;
+  const actsY = actsUp ? actsAbove : leadRow * rowH + (rowH - ROW_H + CLIP_BOTTOM) + ACTS_GAP;
   const beats: ReactNode[] = [];
   if (ppb >= 24) for (let b = Math.ceil(scroll); b < scroll + screen; b++) beats.push(<i key={b} className="tlv-gl beat" style={{ left: xOfBeat(view, b) }} />);
 
   return (
-    <div className="tlv" ref={root}
+    <div className={`tlv${phone ? " tlv-phone" : ""}`} ref={root}
       onPointerMove={(e) => { pointer.current = { x: e.clientX, y: e.clientY }; }} onPointerLeave={() => { pointer.current = null; }}>
-      <TopBar {...top} song={song} keyOf={keyOf} cursor={session.cursor} player={player} looping={!!loop?.on} onLoop={act.toggleLoop} />
-      <Ruler song={song} view={view} width={width} session={session} follow={follow} onFollow={setFollow} onZoom={act.zoomBy} onFit={act.fit}
+      <TopBar {...top} song={song} keyOf={keyOf} cursor={session.cursor} player={player} looping={!!loop?.on} onLoop={act.toggleLoop} phone={phone} onMore={act.more} />
+      <Ruler song={song} view={view} width={width} session={session} follow={follow} onFollow={setFollow} onZoom={act.zoomBy} onFit={act.fit} phone={phone}
         onCursor={onCursor} onLoop={act.setLoop} edit={props.edit} marker={marker} onMarker={setMarker} naming={naming} onNaming={onNaming}
         menu={openMenu} onInsert={act.insert} onCutLoop={act.cutLoop} onAddMarker={act.addMarker} onFlag={act.flag} onEdge={h.edge} />
-      <div className="tlv-body" ref={body} onScroll={(e) => {
+      <div className="tlv-body" ref={body} onPointerDownCapture={touch.down} onPointerMove={touch.move} onPointerUp={touch.up} onPointerCancel={touch.cancel} onScroll={(e) => {
         if (e.currentTarget.scrollLeft) e.currentTarget.scrollLeft = 0;
         if (live.current.props.session.sel.clips.length) setScrolled(Math.ceil(e.currentTarget.scrollTop / 4) * 4);
       }}>
-        <div className={`tlv-rows${dropKind ? " dropping" : ""}`} ref={rows} style={{ gridTemplateRows: `repeat(${tracks.length}, ${ROW_H}px) ${ADD_H}px minmax(0, 1fr)` }}>
+        <div className={`tlv-rows${dropKind ? " dropping" : ""}`} ref={rows} style={{ gridTemplateRows: `repeat(${tracks.length}, ${rowH}px) ${phone ? ADD_PHONE : ADD_H}px minmax(0, 1fr)` }}>
           {tracks.map((t, i) => {
             const quiet = !audible(song.mix, t.id);
             const kind = CLIP_OF[t.kind];
             return [
               <TrackHead key={`h:${t.id}`} track={t} mix={song.mix?.[t.id]} quiet={quiet} selected={session.sel.track === t.id} armed={session.armed === t.id} fresh={lit === t.id} bypassed={!!props.bypass?.on.has(t.id)}
-                renaming={renaming === t.id} canAgain={"role" in t && t.role === "harmony" && !!props.again} level={props.inputs?.level} row={i} rows={tracks.length} ctl={head} />,
+                renaming={renaming === t.id} canAgain={"role" in t && t.role === "harmony" && !!props.again} level={props.inputs?.level} row={i} rows={tracks.length} narrow={phone} ctl={head} />,
               <Lane key={`l:${t.id}`} track={t} song={song} keyOf={keyOf} view={view} width={width} selected={session.sel.clips} on={session.sel.track === t.id} quiet={quiet}
                 refuse={!!dropKind && dropKind !== kind} accept={!!props.dropKind && props.dropKind === kind} stale={props.stale}
                 preview={preview && preview.track === t.id ? preview : null} ghost={props.ghost && props.ghost.track === t.id ? props.ghost : null} peaks={props.peaks} ctl={ctl} />,
             ];
           })}
           <div className="tlv-addrow">
-            <AddTrack open={adding} onOpen={setAdding} onAdd={act.add} />
+            <AddTrack open={adding && !phone} onOpen={setAdding} onAdd={act.add} onMenu={phone ? act.addMenu : undefined} />
           </div>
           <div className="tlv-rest-head" />
           <div className="tlv-rest" onPointerDown={(e) => ctl.laneDown(e, "")} onPointerMove={ctl.laneMove} onPointerUp={ctl.laneUp} onPointerCancel={ctl.laneCancel} />
@@ -1052,7 +1333,7 @@ export function TrackView(props: TrackViewProps) {
       </div>
       <SideScroll view={view} width={width} total={total} onScroll={(to) => { held.current = performance.now(); h.setView({ ...view, scroll: to }); }} />
       <div className="tlv-tag mono" ref={tag} aria-hidden="true" />
-      {menu && <Menu at={menu.at} items={typeof menu.items === "function" ? menu.items() : menu.items} label={menu.label} onClose={closeMenu} />}
+      {menu && <Menu at={menu.at} items={typeof menu.items === "function" ? menu.items() : menu.items} label={menu.label} onClose={closeMenu} back={phone} />}
     </div>
   );
 }

@@ -49,7 +49,7 @@ import type { SoundCtl } from "../plugins/SoundFrame";
 import { newId, shapeKey, type Progression, type Studio } from "../state";
 import { V4View } from "../windows/ClipLens";
 import { useClipDrag, type ClipDragHost } from "../windows/dragging";
-import { PANEL_W, TOP_H, closeWin, retargetWin, useWindows, zOf } from "../windows/windows";
+import { PANEL_W, TOP_H, closeWin, retargetWin, useSheet, useWindows, zOf } from "../windows/windows";
 import type { PlayerApi } from "./api";
 import { ESC_OPEN, onEscape, whereOf } from "./keys";
 import { INPUTS_UNKNOWN, engineInputs, inputCount as countInputs } from "./inputs";
@@ -528,6 +528,9 @@ export function Host() {
   }, [wins, setCandidate, setAudit]);
   // (the record window is not one of these: it is drawn on its own, below)
   const all = session.windows.filter((w) => w.id !== REC_WIN);
+  const sheet = useSheet();
+  /** the window in front (the list's order is the stacking order) */
+  const front = [...session.windows].reverse().find((w) => w.open)?.id;
   const shown = all.filter((w) => w.open);
   /** the windows that were open at some time since this idea opened: closed, they are hidden, not gone */
   const mounted = useRef(new Set<string>());
@@ -781,6 +784,27 @@ export function Host() {
     },
   }), [peek, edit, setSession, wins]);
   const stripDrag = useClipDrag(dragHost, key);
+  /**
+   * The strip's Place button (a phone): what a drop on the window's own lane at the cursor does, by a tap. The copy
+   * lands on the bar the cursor is in, and the cursor goes to its end, so the next one lands after it.
+   */
+  const placeWin = useCallback((id: string) => {
+    const s = peek();
+    const w = s.session.windows.find((x) => x.id === id);
+    const t = w && s.song.tracks.find((x) => x.id === w.track);
+    if (!w || !t) return;
+    const at = barMap(s.song).floorBar(Math.max(0, s.session.cursor));
+    const before = new Set(s.song.clips.map((c) => c.id));
+    if (!dragHost.drop({ type: "clip", kind: CLIP_OF[t.kind], from: targetOf(w) }, w.track, at)) return toast("Nothing to place yet");
+    const now = peek();
+    const made = now.song.clips.find((c): c is NoteClip => !before.has(c.id) && c.track === w.track && c.kind !== "audio");
+    if (!made) return;
+    const end = made.start + made.len;
+    setSession((x) => ({ ...x, cursor: end }));
+    playerRef.current.seek(end);
+    const bar = barMap(now.song).barAt(made.start).bar + 1;
+    toast(`Placed at bar ${bar}`);
+  }, [peek, dragHost, setSession, toast]);
   const dragWin = useCallback((e: React.PointerEvent<HTMLElement>, id: string, look: Parameters<typeof stripDrag.start>[2]) => {
     const s = peek();
     const w = s.session.windows.find((x) => x.id === id);
@@ -949,8 +973,8 @@ export function Host() {
     return on as Clip;
   }) })), [edit]);
   /** what every composer window asks of the host: one object for all of them, the same from one draw to the next */
-  const does = useRef({ wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass });
-  does.current = { wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, sounds, toggleBypass };
+  const does = useRef({ wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, placeWin, sounds, toggleBypass });
+  does.current = { wins, close, harmony, onHearNow, showKey, muteClip, copyOpen, pasteInto, open, playWin, onAlone, dragWin, placeWin, sounds, toggleBypass };
   const ctl = useMemo<ComposerCtl>(() => {
     const winOf = (id: string) => peek().session.windows.find((x) => x.id === id);
     return {
@@ -995,6 +1019,7 @@ export function Host() {
         if (w) edit("Fit to these bars", (x) => fitOpen(x, targetOf(w), draftAnchor(x, session)));
       },
       drag: (e, id, look) => does.current.dragWin(e, id, look),
+      place: (id) => does.current.placeWin(id),
     };
   }, [peek, edit, setSession]);
   const soundCtl = useMemo<SoundCtl>(() => ({
@@ -1021,7 +1046,8 @@ export function Host() {
       {[...all].sort((a, b) => (a.id < b.id ? -1 : 1)).map((w) => {
         const t = song.tracks.find((x) => x.id === w.track);
         if (!t || !mounted.current.has(w.id)) return null;
-        const frame = { win: w, track: t, song, keyOf: key, focused: wins.focused === w.id, hidden: !w.open, z: zOf(session, w.id), player: playerApi };
+        // (as sheets, on a phone, one is shown at a time: the one in front; the others wait behind it as they were left)
+        const frame = { win: w, track: t, song, keyOf: key, focused: wins.focused === w.id, hidden: !w.open || (sheet && w.id !== front), z: zOf(session, w.id), player: playerApi };
         if (w.kind === "sound") {
           const Sound = PLUGINS[t.kind].sound;
           if (!Sound) return null;

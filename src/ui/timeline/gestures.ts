@@ -5,7 +5,7 @@ import { MIN_CLIP, snapMove, sixteenths } from "../../song/clips";
 import { isCompound, sigBeats } from "../../song/meter";
 import { barMap, ceilBar, type BarMap } from "../../timeline/bars";
 import { songEnd } from "../../timeline/edit";
-import { beatsToFrames, clipBeats, clipEnd, contentBeats, framesToBeats, rateOf, type Clip, type Marker, type Region, type TimelineSong } from "../../timeline/model";
+import { beatsToFrames, clipBeats, clipEnd, contentBeats, contentFrames, framesToBeats, rateOf, type Clip, type Marker, type Region, type TimelineSong } from "../../timeline/model";
 
 /** How the timeline is shown: how wide a beat is, and which beat is at the left edge of the lanes. */
 export interface View { pxPerBeat: number; scroll: number }
@@ -33,6 +33,15 @@ export function zoomAbout(v: View, factor: number, atX: number): View {
 export function fitView(end: number, width: number, barBeats: number): View {
   const beats = Math.max(end, 16 * Math.max(1, barBeats));
   return { pxPerBeat: clamp(Math.max(1, width) / beats, MIN_PX, MAX_PX), scroll: 0 };
+}
+
+/**
+ * Two fingers on the lanes: they began `d0` pixels apart about `mid0` (pixels from the lanes' left edge) and are now
+ * `d` apart about `mid`. The zoom follows how far apart they are, and the beat that was between them stays between them.
+ */
+export function pinchView(v: View, d0: number, d: number, mid0: number, mid: number): View {
+  const pxPerBeat = clamp(v.pxPerBeat * (Math.max(1, d) / Math.max(1, d0)), MIN_PX, MAX_PX);
+  return { pxPerBeat, scroll: Math.max(0, beatOfX(v, mid0) - mid / pxPerBeat) };
 }
 
 /** A beat brought to the nearest bar line, the nearest beat, or left where it is (never before the song starts). */
@@ -239,4 +248,19 @@ export function pageFor(v: View, width: number, beat: number): number | null {
   if (x >= 0 && x < width - 1) return null;
   const screen = width / v.pxPerBeat;
   return Math.max(0, Math.floor(beat / screen + EPS) * screen);
+}
+
+/**
+ * Where a clip's right edge goes to play its content one round more (`by` 1) or one round less (-1): the next or the
+ * last place its content starts again (what a drag of the edge would snap to, as a button). Null when one round less
+ * would leave nothing. The edit itself is `resizeClip`, which stops at the next clip.
+ */
+export function repeatEnd(song: TimelineSong, c: Clip, by: 1 | -1): number | null {
+  const rate = c.kind === "audio" ? rateOf(song, c) : 0;
+  const size = c.kind === "audio" ? framesToBeats(contentFrames(c), rate, song.bpm) : contentBeats(c);
+  const off = c.kind === "audio" ? framesToBeats(c.off, rate, song.bpm) : c.off;
+  if (!(size > 0)) return null;
+  const rounds = (off + lenOf(song, c)) / size;
+  const to = (by > 0 ? Math.floor(rounds + 1e-6) + 1 : Math.ceil(rounds - 1e-6) - 1) * size - off;
+  return to > 1e-6 ? c.start + to : null;
 }

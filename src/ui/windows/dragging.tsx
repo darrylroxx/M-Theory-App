@@ -145,6 +145,10 @@ export function useClipDrag(host: ClipDragHost, keyOf: Key): ClipDragApi {
       const body = document.querySelector<HTMLElement>(".tlv-body");
       const b = body?.getBoundingClientRect();
       if (!lanes || !body || !b) return;
+      // (not while the pointer is still on the strip it was lifted from: in a sheet that fills the screen the strip
+      // lies over the lower edge of the track list, and the list would run away before the drag had begun)
+      const strip = srcWin?.querySelector<HTMLElement>(".tlw-strip")?.getBoundingClientRect();
+      if (strip && last.y >= strip.top && last.y <= strip.bottom && last.x >= strip.left && last.x <= strip.right) return;
       const inside = last.y > b.top - 8 && last.y < b.bottom + 8 && last.x > lanes.left - 8;
       const dx = !inside ? 0 : last.x < lanes.left + EDGE_PX ? -1 : last.x > lanes.right - EDGE_PX ? 1 : 0;
       const dy = !inside ? 0 : last.y < b.top + EDGE_PX ? -1 : last.y > b.bottom - EDGE_PX ? 1 : 0;

@@ -42,6 +42,8 @@ export interface RulerProps {
   onFlag(bar: number, sig: TimeSig | null): void;
   /** a drag is at this place (time scrolls when that is the ruler's left or right edge; `again` works the drag out anew); with nothing: the drag is over */
   onEdge?(clientX?: number, again?: () => void): void;
+  /** the phone's ruler row: over the narrow panels there is room for − fit + only (Follow is a line of the ⋯ menu) */
+  phone?: boolean;
 }
 
 type Drag =
@@ -49,8 +51,11 @@ type Drag =
   | { kind: "move" | "from" | "to"; pointer: number; x0: number; beat0: number; moved: boolean; index: number }
   | { kind: "marker"; pointer: number; x0: number; beat0: number; moved: boolean; id: string };
 
-/** A drag starts after this many pixels; less is a click. */
+/** A drag starts after this many pixels; less is a click. Under a finger: a few more. */
 const TAP_PX = 4;
+const TOUCH_PX = 8;
+/** How long a finger rests on the ruler before its menu opens (what a right-click opens). */
+const HOLD_MS = 500;
 
 export function Ruler(p: RulerProps) {
   const { song, view, width, session } = p;
@@ -58,6 +63,7 @@ export function Ruler(p: RulerProps) {
   const end = songEnd(song);
   const el = useRef<HTMLDivElement>(null);
   const drag = useRef<Drag | null>(null);
+  const hold = useRef(0);
   /** the loop as it is being dragged, and a marker as it is being dragged */
   const [ghost, setGhost] = useState<Region[] | null>(null);
   const [moving, setMoving] = useState<{ id: string; beat: number } | null>(null);
@@ -76,6 +82,18 @@ export function Ruler(p: RulerProps) {
     if (mk) drag.current = { ...base, kind: "marker", id: mk.dataset.marker! };
     else if (band && !e.ctrlKey && !e.metaKey) drag.current = { ...base, kind: t.dataset.end === "from" ? "from" : t.dataset.end === "to" ? "to" : "move", index: Number(band.dataset.band) };
     else drag.current = { ...base, kind: "new", add: e.ctrlKey || e.metaKey };
+    // a finger rested where it came down: the menu of that place (a marker's, or the ruler's)
+    window.clearTimeout(hold.current);
+    if (e.pointerType === "touch") {
+      const at = { x: e.clientX, y: e.clientY };
+      const pointer = e.pointerId;
+      hold.current = window.setTimeout(() => {
+        const d = drag.current;
+        if (!d || d.moved || d.pointer !== pointer) return;
+        drag.current = null;
+        menuAt(at, mk?.dataset.marker);
+      }, HOLD_MS);
+    }
     try {
       e.currentTarget.setPointerCapture(e.pointerId);
     } catch {
@@ -87,8 +105,9 @@ export function Ruler(p: RulerProps) {
   const move = (e: React.PointerEvent<HTMLDivElement>) => {
     const d = drag.current;
     if (!d || d.pointer !== e.pointerId) return;
-    if (!d.moved && Math.abs(e.clientX - d.x0) < TAP_PX) return;
+    if (!d.moved && Math.abs(e.clientX - d.x0) < (e.pointerType === "touch" ? TOUCH_PX : TAP_PX)) return;
     d.moved = true;
+    window.clearTimeout(hold.current);
     const at = { pointerId: e.pointerId, clientX: e.clientX, shiftKey: e.shiftKey, altKey: e.altKey } as React.PointerEvent<HTMLDivElement>;
     p.onEdge?.(e.clientX, () => moveNow.current(at));
     const beat = beatAt(e.clientX);
@@ -115,6 +134,7 @@ export function Ruler(p: RulerProps) {
     const d = drag.current;
     if (!d || d.pointer !== e.pointerId) return;
     drag.current = null;
+    window.clearTimeout(hold.current);
     p.onEdge?.();
     if (!d.moved) {
       if (d.kind === "marker") {
@@ -139,6 +159,7 @@ export function Ruler(p: RulerProps) {
   };
   const cancel = () => {
     drag.current = null;
+    window.clearTimeout(hold.current);
     p.onEdge?.();
     setGhost(null);
     setMoving(null);
@@ -158,18 +179,21 @@ export function Ruler(p: RulerProps) {
 
   const context = (e: React.MouseEvent<HTMLDivElement>) => {
     e.preventDefault();
-    const t = e.target as HTMLElement;
-    const at = { x: e.clientX, y: e.clientY };
-    const mk = t.closest<HTMLElement>("[data-marker]");
-    if (mk) {
-      const id = mk.dataset.marker!;
+    // (a finger's rest has opened it already)
+    if ((e.nativeEvent as PointerEvent).pointerType === "touch") return;
+    menuAt({ x: e.clientX, y: e.clientY }, (e.target as HTMLElement).closest<HTMLElement>("[data-marker]")?.dataset.marker);
+  };
+  /** the menu of a place on the ruler: a marker's (rename, delete), or the ruler's own (bars put in and taken out, a marker, the loop) */
+  const menuAt = (at: MenuAt, marker: string | undefined) => {
+    if (marker) {
+      const id = marker;
       p.onMarker(id);
       return p.menu(at, [
         { label: "Rename", hint: "F2", run: () => p.onNaming(id) },
         { label: "Delete", hint: "Del", danger: true, run: () => p.edit("Delete marker", (s) => ({ ...s, markers: (s.markers ?? []).filter((m) => m.id !== id) })) },
       ], "Marker");
     }
-    const beat = map.snapBar(beatAt(e.clientX));
+    const beat = map.snapBar(beatAt(at.x));
     const has = !!session.loop?.regions.length;
     p.menu(at, [
       { label: "Insert a bar here", hint: "Ins", run: () => p.onInsert(beat, false) },
@@ -219,7 +243,7 @@ export function Ruler(p: RulerProps) {
   return (
     <div className="tlv-rulerrow">
       <div className="tlv-corner">
-        <button className={`tlv-follow${p.follow ? " on" : ""}`} aria-pressed={p.follow} title="Follow: the view turns a page when the play line leaves it" onClick={() => p.onFollow(!p.follow)}>Follow</button>
+        {!p.phone && <button className={`tlv-follow${p.follow ? " on" : ""}`} aria-pressed={p.follow} title="Follow: the view turns a page when the play line leaves it" onClick={() => p.onFollow(!p.follow)}>Follow</button>}
         <span className="tlv-zoom" role="group" aria-label="Zoom">
           <button aria-label="Zoom out" title="Zoom out (−)" onClick={() => p.onZoom(1 / ZOOM_STEP)}>−</button>
           <button className="fit" aria-label="Fit the whole song" title="Show the whole song" onClick={p.onFit}>fit</button>

@@ -1,8 +1,10 @@
 // The + row under the last track: it opens, in place, the six kinds of track to choose from.
+// (On a phone the row has no room for them: the button asks the view for a menu of the six instead.)
 import { useEffect } from "react";
 import type { TrackKind } from "../../timeline/model";
 import { KindIcon } from "../icons";
 import { ESC_OPEN, onEscape } from "./keys";
+import type { MenuAt } from "./Menu";
 
 /** The six choices, in the order they are offered. "Blank" is an empty audio track that records any input. */
 export const ADD_KINDS: { kind: TrackKind; name: string; hint: string }[] = [
@@ -14,7 +16,7 @@ export const ADD_KINDS: { kind: TrackKind; name: string; hint: string }[] = [
   { kind: "audio", name: "Blank", hint: "An empty audio track: it records any input" },
 ];
 
-export function AddTrack({ open, onOpen, onAdd }: { open: boolean; onOpen(open: boolean): void; onAdd(kind: TrackKind): void }) {
+export function AddTrack({ open, onOpen, onAdd, onMenu }: { open: boolean; onOpen(open: boolean): void; onAdd(kind: TrackKind): void; /** the phone: the kinds are a menu, opened at the button */ onMenu?(at: MenuAt): void }) {
   // Escape puts the choices away
   useEffect(() => (open ? onEscape(ESC_OPEN, () => (onOpen(false), true)) : undefined), [open, onOpen]);
   return (
@@ -27,7 +29,8 @@ export function AddTrack({ open, onOpen, onAdd }: { open: boolean; onOpen(open: 
           <button className="chip tlv-kinds-x" aria-label="Cancel" onClick={() => onOpen(false)}>✕</button>
         </span>
       ) : (
-        <button className="btn sm tlv-plus" aria-label="Add a track" aria-expanded={false} title="Add a track" onClick={() => onOpen(true)}>+ <span>Add track</span></button>
+        <button className="btn sm tlv-plus" aria-label="Add a track" aria-expanded={false} aria-haspopup={onMenu ? "menu" : undefined} title="Add a track"
+          onClick={(e) => { if (!onMenu) return onOpen(true); const r = e.currentTarget.getBoundingClientRect(); onMenu({ x: r.left, y: r.bottom + 4 }); }}>+ <span>Add track</span></button>
       )}
     </div>
   );

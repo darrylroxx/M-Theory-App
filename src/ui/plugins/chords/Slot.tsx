@@ -1,7 +1,7 @@
 // One chord in the tray: its name and its shape (on the keys: the keys it plays). Tap to hear it, drag it to another
 // place in the row, ✕ takes it out, ‹ › step through the shapes that fit between its neighbours, and the middle
 // button opens the shape finder for it. A rest is a silence with a length and nothing else.
-// (Copied out of the old Chords page, views/GuitarView: `Slot`.)
+// (Copied out of the old Chords page, which is gone.)
 import { strum } from "../../../audio/synth";
 import type { Voicing } from "../../../guitar/voicings";
 import { chordSymbol } from "../../../theory/chords";

@@ -87,6 +87,8 @@ export interface ComposerCtl {
   fit(win: string): void;
   /** the strip's clip was pressed: it may be dragged onto the timeline */
   drag(e: React.PointerEvent<HTMLElement>, win: string, look: DragLook): void;
+  /** the strip's Place button (a phone, where dragging out of a sheet is awkward): a separate copy lands on its own track at the cursor */
+  place?(win: string): void;
 }
 
 /** The track's M while it is muted, or S while others are soloed and it is not: a tap lets it be heard. Nothing while it is heard. */
@@ -136,6 +138,7 @@ export function ComposerFrame({ p, open, tools, children }: {
     paste: () => ctl.paste(id),
     fit: () => ctl.fit(id),
     drag: (e, look) => ctl.drag(e, id, look),
+    place: ctl.place ? () => ctl.place?.(id) : undefined,
   };
   return (
     <Window win={win} focused={p.focused} hidden={p.hidden} z={p.z} title={title} icon={<KindIcon kind={track.kind} />}

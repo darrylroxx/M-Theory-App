@@ -1,5 +1,5 @@
 // "Next": chords that could follow the last chord in the tray, in four groups from safe to bold. It reads the chords
-// of what the window has open. (Copied out of the old Chords page, views/GuitarView.)
+// of what the window has open. (Copied out of the old Chords page, which is gone.)
 import { useMemo } from "react";
 import { suggestNext, type SuggestionGroup } from "../../../theory/progression";
 import { useApp } from "../../state";

@@ -1,6 +1,9 @@
 // One track's panel, at the left of its lane. Two lines: what the track is (its colour and grip, its kind, its name,
 // its level, the ⋯ menu), and what can be done with it (compose, sound, mute, solo, volume; ⟳ on a harmony track;
 // arm and input on a track that records).
+//
+// On a phone (`narrow`) the panel holds four things a finger can hit: the name, compose, M and S. A tap on the name
+// opens the track's menu, where everything else of the wide panel is (sound, volume, arm, input, rename, move, ⟳).
 import { memo, useEffect, useRef } from "react";
 import { SOUND_DEFAULT } from "../../audio/rack";
 import { MAX_DB, MIN_DB, type TrackMix } from "../../audio/mix";
@@ -47,7 +50,7 @@ export function fxOn(t: Track): boolean {
   return s.drive > 0 || s.chorus > 0 || s.phaser > 0 || s.trem > 0 || s.wobble > 0 || s.echo > 0 || s.space > 0 || s.shimmer > 0;
 }
 
-export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, armed, fresh, renaming, canAgain, bypassed, level, row, rows, ctl }: {
+export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, armed, fresh, renaming, canAgain, bypassed, level, row, rows, narrow, ctl }: {
   track: Track;
   mix: TrackMix | undefined;
   /** not heard: muted, or another track is soloed */
@@ -65,6 +68,8 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
   level?: (ch: number) => number;
   /** its place in the list, for what is said aloud */
   row: number; rows: number;
+  /** the phone's panel: name, compose, M and S, each large enough for a finger */
+  narrow?: boolean;
   ctl: HeadCtl;
 }) {
   const db = mix?.db ?? 0;
@@ -91,6 +96,39 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
     const r = e.currentTarget.getBoundingClientRect();
     return { x: r.left, y: r.bottom + 4 };
   };
+  const rename = (
+    <input className="tlh-rename" autoFocus defaultValue={track.name} maxLength={32} aria-label={`Name of ${track.name}`} enterKeyHint="done"
+      onFocus={(e) => e.currentTarget.select()} onPointerDown={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") ctl.rename(id, e.currentTarget.value);
+        else if (e.key === "Escape") ctl.rename(id, null);
+      }}
+      onBlur={(e) => ctl.rename(id, e.currentTarget.value)} />
+  );
+  if (narrow)
+    return (
+      <div className={`tlh narrow k-${track.kind} ${letterClass(colorOf(track))}${selected ? " on" : ""}${quiet ? " quiet" : ""}${fresh ? " fresh" : ""}`} data-track={id} role="group" aria-label={`${track.name} track`}
+        onPointerDown={(e) => { if (e.button === 0 && !(e.target as Element).closest("input")) ctl.select(id); }}
+        onContextMenu={(e) => e.preventDefault()}>
+        <i className="tlh-grip" aria-hidden="true" />
+        <div className="tlh-line">
+          {renaming ? rename : (
+            <button className="tlh-namebtn" aria-label={`${track.name}: sound, volume and more`} aria-haspopup="menu" onClick={(e) => ctl.menu(at(e), id)}>
+              <span className="tlh-kind"><KindIcon kind={track.kind} /></span>
+              <span className="tlh-name">{track.name}</span>
+              {armed && <i className="tlh-armed" aria-label="(armed: this track records)" />}
+              <span className="tlh-dots" aria-hidden="true">⋯</span>
+            </button>
+          )}
+        </div>
+        <div className="tlh-line two">
+          <button className="tlh-btn tlh-compose" aria-label="Compose" onClick={() => ctl.compose(id)}><ClefIcon /></button>
+          <button className={`tlh-ms${mix?.mute ? " on" : ""}`} aria-pressed={!!mix?.mute} aria-label={`Mute ${track.name}`} onClick={() => ctl.mix(id, { mute: !mix?.mute })}>M</button>
+          <button className={`tlh-ms solo${mix?.solo ? " on" : ""}`} aria-pressed={!!mix?.solo} aria-label={`Solo ${track.name}`} onClick={() => ctl.mix(id, { solo: !mix?.solo })}>S</button>
+        </div>
+      </div>
+    );
   return (
     <div className={`tlh k-${track.kind} ${letterClass(colorOf(track))}${selected ? " on" : ""}${quiet ? " quiet" : ""}${fresh ? " fresh" : ""}`} data-track={id} role="group" aria-label={`${track.name} track`}
       onPointerDown={(e) => { if (e.button === 0 && !(e.target as Element).closest("input")) ctl.select(id); }}
@@ -98,16 +136,7 @@ export const TrackHead = memo(function TrackHead({ track, mix, quiet, selected, 
       <button className="tlh-grip" aria-label={`Move ${track.name}: ${row + 1} of ${rows}`} title="Drag to move this track" onPointerDown={(e) => ctl.grab(e, id)}><GripIcon /></button>
       <div className="tlh-line">
         <span className="tlh-kind"><KindIcon kind={track.kind} /></span>
-        {renaming ? (
-          <input className="tlh-rename" autoFocus defaultValue={track.name} maxLength={32} aria-label={`Name of ${track.name}`} enterKeyHint="done"
-            onFocus={(e) => e.currentTarget.select()} onPointerDown={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") ctl.rename(id, e.currentTarget.value);
-              else if (e.key === "Escape") ctl.rename(id, null);
-            }}
-            onBlur={(e) => ctl.rename(id, e.currentTarget.value)} />
-        ) : (
+        {renaming ? rename : (
           <span className="tlh-name" title={`${track.name}: double-click to rename (F2)`} onDoubleClick={() => ctl.startRename(id)}>{track.name}</span>
         )}
         <span className="tlh-db mono" title="Volume, in dB">{dbText(db)}</span>

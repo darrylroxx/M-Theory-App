@@ -1,7 +1,7 @@
 // Dragging a chord into the tray: from a card or a pill of the board, from a shape of the shape finder, or a slot of
 // the tray to another place in its row. It starts after a few pixels (a long press on a touch screen), a ghost
 // follows the pointer, and the tray shows where the chord would land. The click that ends a drag is not a tap.
-// (The engine of the old Chords page, views/GuitarView: `dragApi`, for a tray that is always in view.)
+// (The drag engine of the old Chords page, for a tray that is always in view.)
 import type { DragApi, Payload } from "../../drag";
 
 /**

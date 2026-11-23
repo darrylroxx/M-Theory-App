@@ -3,7 +3,7 @@
 // chords borrowed from other scales, lead-ins and swaps. "Next": what could follow the last chord in the tray.
 // A chord is added with its + or by dragging it into the tray; "Shapes" opens the shape finder for it.
 //
-// Copied out of the old Chords page (views/GuitarView: `ChordBoard`, `ChordCard`, `OutsideChords`, `CapoPick`), and
+// Copied out of the old Chords page (its board, its chord cards, the chords outside the key, the capo picker), and
 // laid out for a plugin window: the lists scroll inside the board, and the bar for the chord last tapped (its name,
 // Shapes and +) stays in sight at the board's lower edge. It reads the open clip's key, capo and shapes through the
 // old pages' context (windows/ClipLens).
