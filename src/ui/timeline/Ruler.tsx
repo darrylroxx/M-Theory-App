@@ -8,7 +8,7 @@ import { TIME_SIGS, sameSig, sigBeats, sigName, type TimeSig } from "../../song/
 import { barMap } from "../../timeline/bars";
 import { songEnd } from "../../timeline/edit";
 import type { Region, Session, TimelineSong } from "../../timeline/model";
-import { ZOOM_STEP, barEvery, barsText, beatOfX, dragRegion, markerRegion, mergeRegions, snap, snapMode, xOfBeat, type View } from "./gestures";
+import { ZOOM_STEP, barEvery, barRegion, barsText, beatOfX, dragRegion, markerRegion, mergeRegions, snap, snapMode, xOfBeat, type View } from "./gestures";
 import type { MenuAt, MenuItem } from "./Menu";
 
 export interface RulerProps {
@@ -56,6 +56,8 @@ const TAP_PX = 4;
 const TOUCH_PX = 8;
 /** How long a finger rests on the ruler before its menu opens (what a right-click opens). */
 const HOLD_MS = 500;
+/** Zoomed in this far (pixels to a beat), a finger places the cursor and the loop's ends on the beat, as Shift does for a mouse. */
+const FINE_PX = 24;
 
 export function Ruler(p: RulerProps) {
   const { song, view, width, session } = p;
@@ -69,6 +71,7 @@ export function Ruler(p: RulerProps) {
   const [moving, setMoving] = useState<{ id: string; beat: number } | null>(null);
 
   const beatAt = (clientX: number) => beatOfX(view, clientX - (el.current?.getBoundingClientRect().left ?? 0));
+  const fine = (e: { shiftKey: boolean; pointerType?: string }) => e.shiftKey || (e.pointerType === "touch" && view.pxPerBeat >= FINE_PX);
   const regions = ghost ?? session.loop?.regions ?? [];
   const looping = !!ghost || !!session.loop?.on;
 
@@ -108,10 +111,10 @@ export function Ruler(p: RulerProps) {
     if (!d.moved && Math.abs(e.clientX - d.x0) < (e.pointerType === "touch" ? TOUCH_PX : TAP_PX)) return;
     d.moved = true;
     window.clearTimeout(hold.current);
-    const at = { pointerId: e.pointerId, clientX: e.clientX, shiftKey: e.shiftKey, altKey: e.altKey } as React.PointerEvent<HTMLDivElement>;
+    const at = { pointerId: e.pointerId, pointerType: e.pointerType, clientX: e.clientX, shiftKey: e.shiftKey, altKey: e.altKey } as React.PointerEvent<HTMLDivElement>;
     p.onEdge?.(e.clientX, () => moveNow.current(at));
     const beat = beatAt(e.clientX);
-    const mode = e.altKey ? "free" : e.shiftKey ? "beat" : "bar";
+    const mode = e.altKey ? "free" : fine(e) ? "beat" : "bar";
     if (d.kind === "marker") return setMoving({ id: d.id, beat: snap(map, beat, mode) });
     const old = session.loop?.regions ?? [];
     if (d.kind === "new") {
@@ -143,7 +146,7 @@ export function Ruler(p: RulerProps) {
         if (m) p.onCursor(m.beat);
       } else {
         p.onMarker(null);
-        p.onCursor(snap(map, d.beat0, snapMode({ shift: e.shiftKey, alt: e.altKey })));
+        p.onCursor(snap(map, d.beat0, snapMode({ shift: fine(e), alt: e.altKey })));
       }
       return;
     }
@@ -201,6 +204,8 @@ export function Ruler(p: RulerProps) {
       { label: "Remove the looped time", hint: "Ctrl+Shift+Del", disabled: !has, danger: true, run: p.onCutLoop },
       { sep: true },
       { label: "Add marker", hint: "M", run: () => p.onAddMarker(beat) },
+      // (a mouse adds a stretch to the loop by a drag with Ctrl held: a finger has this line)
+      ...(p.phone ? [{ label: "Add this bar to the loop", run: () => p.onLoop({ regions: mergeRegions([...(session.loop?.regions ?? []), barRegion(map, beatAt(at.x))]), on: true }) }] : []),
       { label: "Loop the whole song", run: () => p.onLoop({ regions: [{ from: 0, to: end }], on: true }) },
     ], "Ruler");
   };

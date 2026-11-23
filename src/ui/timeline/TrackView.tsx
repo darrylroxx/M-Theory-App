@@ -102,6 +102,8 @@ const TAP_PX = 4;
 const HOLD_MS = 400;
 /** A finger has moved (it is a swipe, not a rest) after this many pixels. */
 const SWIPE_PX = 8;
+/** Zoomed in this far (pixels to a beat: where the beat lines are drawn), a finger moves a clip, an edge or the cursor to the beat, as Shift does for a mouse. */
+const FINE_PX = 24;
 /** How near the left or right edge of the lanes a drag makes time scroll, and how far each step goes (pixels). */
 const EDGE_PX = 24;
 const EDGE_STEP = 14;
@@ -282,7 +284,9 @@ export function TrackView(props: TrackViewProps) {
         a.again?.();
       }, 30);
     };
-    return { L, lanesLeft, beatAt, rowAt, laneAtY, setView, setCursor, select, showTag, hideTag, edge };
+    /** to the beat, not the bar: Shift held, or a finger while the view is zoomed in to the beats */
+    const fine = (e: { shiftKey: boolean; pointerType?: string }) => e.shiftKey || (e.pointerType === "touch" && L().view.pxPerBeat >= FINE_PX);
+    return { L, lanesLeft, beatAt, rowAt, laneAtY, setView, setCursor, select, showTag, hideTag, edge, fine };
   }, []);
   useEffect(() => () => window.clearInterval(auto.current.timer), []);
 
@@ -904,11 +908,11 @@ export function TrackView(props: TrackViewProps) {
         }
         if (d.still) return;
         // near the left or right edge of the lanes, time scrolls under the drag
-        const at = { pointerId: e.pointerId, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
+        const at = { pointerId: e.pointerId, pointerType: e.pointerType, clientX: e.clientX, clientY: e.clientY, shiftKey: e.shiftKey, altKey: e.altKey, ctrlKey: e.ctrlKey, metaKey: e.metaKey };
         h.edge(e.clientX, () => ctl.clipMove(at as React.PointerEvent<HTMLElement>));
         if (d.kind !== "move") {
           // an edge: the clip is drawn as it would be, so each repeat shows its notch as it is crossed
-          const to = edgeTo(p.song, c, d.kind, h.beatAt(e.clientX), { shift: e.shiftKey });
+          const to = edgeTo(p.song, c, d.kind, h.beatAt(e.clientX), { shift: h.fine(e) });
           const now = resizeClip(p.song, c.id, d.kind, to).clips.find((x) => x.id === c.id) ?? c;
           if (to !== d.edge) {
             d.edge = to;
@@ -917,7 +921,7 @@ export function TrackView(props: TrackViewProps) {
           return h.showTag(e, lengthText(p.song, now));
         }
         const group = d.ids.map(clipOf).filter((x): x is Clip => !!x);
-        const by = Math.max(moveBy(p.song, c, h.beatAt(e.clientX) - d.beat0, { shift: e.shiftKey, alt: e.altKey }), -Math.min(...group.map((x) => x.start)));
+        const by = Math.max(moveBy(p.song, c, h.beatAt(e.clientX) - d.beat0, { shift: h.fine(e), alt: e.altKey }), -Math.min(...group.map((x) => x.start)));
         // up and down: onto another track, when every clip that moves is on one track and that track takes them
         let to: string | null | undefined;
         let rowsBy = 0;
@@ -1066,7 +1070,7 @@ export function TrackView(props: TrackViewProps) {
         const p = P();
         if (!d.moved) {
           // a click on an empty part: the cursor goes there, nothing is selected, that track is
-          h.setCursor(snap(L().map, d.beat0, snapMode({ shift: e.shiftKey, alt: e.altKey })));
+          h.setCursor(snap(L().map, d.beat0, snapMode({ shift: h.fine(e), alt: e.altKey })));
           return h.select([], d.track || null);
         }
         const n = p.song.tracks.length;

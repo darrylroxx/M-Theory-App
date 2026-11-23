@@ -1044,7 +1044,8 @@ body:has(.hz-sheet) .toast.act { bottom: calc(var(--hz-sheet-h, 0px) + 22px + en
 .hz-foot .hz-hint { white-space: normal; display: -webkit-box; -webkit-line-clamp: 2; line-clamp: 2; -webkit-box-orient: vertical; line-height: 1.25; }
 
 /* ── The track view as the app: what its windows need of this sheet, and what lies over it ── */
-.app5 { height: 100vh; height: 100dvh; display: flex; flex-direction: column; overflow: hidden; }
+/* (the page keeps clear of a phone's notch and home bar by padding the root: the app is the screen less those, so the page itself never scrolls) */
+.app5 { height: 100vh; height: calc(100dvh - env(safe-area-inset-top, 0px) - env(safe-area-inset-bottom, 0px)); display: flex; flex-direction: column; overflow: hidden; }
 .app5 > .tlv { flex: 1 1 auto; height: auto; min-height: 0; }
 .app5 > .guard { margin: 24px auto; max-width: 520px; }
 .guard { align-items: center; }

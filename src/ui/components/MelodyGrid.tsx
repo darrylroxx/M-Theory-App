@@ -18,6 +18,8 @@ type Fit = { pcs: Set<number>; name: string } | null;
 
 /** After a tap or a drag the view holds still this long, so it never moves under the pointer. */
 const HOLD_MS = 1500;
+/** How long a finger rests on a note before it takes hold of the note's length. */
+const REST_MS = 350;
 
 const clamp = (x: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, x));
 /** Would the person rather things did not glide about? */
@@ -539,7 +541,24 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     return best;
   };
   /** a note's right end being dragged: the note (by the square it starts in), the step the drag began on, and how long it has been made */
-  const stretch = useRef<{ b: number; k: number; midi: number; from: number | null; cells: number | null; moved: boolean } | null>(null);
+  const stretch = useRef<{ b: number; k: number; midi: number; from: number | null; cells: number | null; moved: boolean; /** taken hold of by a finger's rest on the note */ finger?: boolean } | null>(null);
+  /** a finger that has come down on a note and may be resting there: where, and the timer that takes hold of the note's length */
+  const rest = useRef({ x: 0, y: 0, timer: 0 });
+  /** when a finger last let go of a note's length */
+  const fingerHeld = useRef(0);
+  // while a finger holds a note's length the grid does not scroll under it
+  useEffect(() => {
+    const box = stepsRef.current;
+    if (!box || !wide) return;
+    const stay = (e: TouchEvent) => {
+      if (stretch.current?.finger && e.cancelable) e.preventDefault();
+    };
+    box.addEventListener("touchmove", stay, { passive: false });
+    return () => {
+      box.removeEventListener("touchmove", stay);
+      window.clearTimeout(rest.current.timer);
+    };
+  }, [wide]);
   /** the square the pointer is over is outlined, as a square of the plain grid is */
   const hovered = useRef<{ el: HTMLElement; key: string } | null>(null);
   const hover = (el: HTMLElement | null, c: { b: number; k: number; midi: number } | null) => {
@@ -590,8 +609,35 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
       cursor.current = null;
       drawCursor();
     }
-    // a finger may be scrolling: its tap is taken on click, once it is clearly a tap
-    if (e.pointerType === "touch" || e.button !== 0) return;
+    // a finger may be scrolling: its tap is taken on click, once it is clearly a tap. A finger that rests on a note
+    // takes hold of its length: dragged sideways from there the note is made longer or shorter (what a mouse does by
+    // the note's right end), and the grid does not scroll under it
+    if (e.pointerType === "touch") {
+      window.clearTimeout(rest.current.timer);
+      const t = e.target as HTMLElement;
+      const c = t.closest("button") ? null : cellAt(t, e.clientX, e.clientY);
+      if (!c || !c.on) return;
+      const box = e.currentTarget;
+      const id = e.pointerId;
+      const at = { x: e.clientX, y: e.clientY };
+      rest.current = { x: at.x, y: at.y, timer: window.setTimeout(() => {
+        gesture.current++;
+        stretch.current = { b: c.b0, k: c.k0, midi: c.midi, from: stepAt(at.x), cells: null, moved: false, finger: true };
+        try {
+          box.setPointerCapture(id);
+        } catch {
+          /* (a pretend pointer) */
+        }
+        box.classList.add("stretching");
+        try {
+          navigator.vibrate?.(8);
+        } catch {
+          /* (not allowed here) */
+        }
+      }, REST_MS) };
+      return;
+    }
+    if (e.button !== 0) return;
     const t = e.target as HTMLElement;
     if (t.closest("button")) {
       const num = t.closest<HTMLElement>("[data-pick]");
@@ -614,6 +660,8 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     }
   };
   const wMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    // (a finger that moves before it has rested is scrolling the grid)
+    if (e.pointerType === "touch" && !stretch.current && Math.hypot(e.clientX - rest.current.x, e.clientY - rest.current.y) > 8) window.clearTimeout(rest.current.timer);
     const s = stretch.current;
     const p = paint.current;
     if (s) {
@@ -646,16 +694,26 @@ export const MelodyGrid = memo(function MelodyGrid({ fresh, place, melody, setMe
     const s = stretch.current;
     stretch.current = null;
     paint.current = null;
+    window.clearTimeout(rest.current.timer);
+    stepsRef.current?.classList.remove("stretching");
+    // (a finger that took hold of a note's length: the click that follows its letting go is not a tap on the note)
+    if (s?.finger) {
+      fingerHeld.current = performance.now();
+      return;
+    }
     // its end pressed and let go where it was: a press on the note, which takes it out
     if (s && !s.moved) tap(s.b, s.k, s.midi);
   };
   const wCancel = () => {
     stretch.current = null;
     paint.current = null;
+    window.clearTimeout(rest.current.timer);
+    stepsRef.current?.classList.remove("stretching");
   };
   // a tap with a finger
   const wClick = (e: React.MouseEvent<HTMLDivElement>) => {
     if (pointer.current !== "touch") return;
+    if (performance.now() - fingerHeld.current < 400) return;
     hold();
     const t = e.target as HTMLElement;
     if (t.closest("button")) {
