@@ -100,9 +100,9 @@ function AppSound() {
     <div className="au-box">
       <b className="vc-title">The app's own sound</b>
       <label className="toggle" title="The app works out its instruments and drums one buffer of sound at a time instead of in many small steps: the same sound for much less work, so many more tracks can play at once. If the app's own sound crackles or sounds wrong on this computer, turn this off">
-        <input type="checkbox" checked={on} onChange={(e) => { setLiveBlocks(e.target.checked); setOn(e.target.checked); }} /> Worked out a whole buffer at a time
+        <input type="checkbox" checked={on} onChange={(e) => { setLiveBlocks(e.target.checked); setOn(e.target.checked); }} /> Room for more tracks
       </label>
-      <span className="tiny muted">Room for many more tracks before the sound breaks up. Turn it off if the app's own sound misbehaves on this computer.{on !== was.current ? " It changes the next time the app is opened." : ""}</span>
+      <span className="tiny muted">The app works out its sound in bigger pieces, so many more tracks can play before it breaks up. Turn it off if the app's own sound crackles or sounds wrong on this computer.{on !== was.current ? " It changes the next time the app is opened." : ""}</span>
     </div>
   );
 }

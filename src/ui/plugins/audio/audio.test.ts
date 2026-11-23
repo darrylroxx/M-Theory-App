@@ -339,11 +339,11 @@ describe("the Audio part of the settings", () => {
   it("has the switch for the app's own sound (a whole buffer at a time), on unless it was turned off on this computer", () => {
     const html = part();
     expect(html).toContain("The app&#x27;s own sound");
-    expect(html).toMatch(/<input type="checkbox" checked=""[^>]*\/?> Worked out a whole buffer at a time/);
+    expect(html).toMatch(/<input type="checkbox" checked=""[^>]*\/?> Room for more tracks/);
     // (nothing changed yet: it does not say when a change would be heard)
     expect(html).not.toContain("the next time the app is opened");
     // a browser's Audio part has it too
-    expect(part(engine({ desktop: false, hosts: null, devices: [], chosen: undefined, opened: null }))).toContain("Worked out a whole buffer at a time");
+    expect(part(engine({ desktop: false, hosts: null, devices: [], chosen: undefined, opened: null }))).toContain("Room for more tracks");
   });
   it("marks both inputs of a pair as the track's, and says so", () => {
     const html = within(app, createElement(V4View, null, createElement(AudioPart, { engine: engine(), setNudge: no, track: { name: "Guitars", input: 2, pair: true } })));
