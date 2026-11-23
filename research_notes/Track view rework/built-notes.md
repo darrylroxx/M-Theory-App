@@ -385,7 +385,7 @@ Deleted: `src/ui/views/GuitarView.tsx`; `src/ui/components/FrameSections.tsx`, `
 - `extraChordItems(items, track, own?)` (`audio/midi.ts`): with `own`, a chord that names `from` gets an item `from` of `styleAt(c)`, so `itemNotes` counts its style from where its clip's content starts. `progressionToMidi` passes it for chords not on the synth (the player's rule, `chordAt`). Without `own`, and for a chord with no `from`, nothing changes: both documented MIDI cases of `equal.test.ts` are as they were.
 
 ## Track limit (how many tracks the audio thread carries, and what was done about it)
-Files made: `src/audio/overload.ts`, `overload.test.ts`, `block.test.ts`. Edited: `audio/context.ts` (`openLive`, `blockFrames`, `loopLag`, `blockFor`, `MAX_BLOCK`), `drumbus.ts` (a desk at rest, the room's gate, the echo's wait), `rack.ts` (one line: the echo's right-hand delay), `through.ts`, `through.worklet.ts`, `throughcore.ts` (a comment), `listen/bank.ts`, `ear.worklet.ts`, `live.ts`, `ui/timeline/Host.tsx` (the overload line), `drumbus.test.ts`. Nothing under `src-tauri/`. 2,464 tests before, ‹TESTS› now.
+Files made: `src/audio/overload.ts`, `overload.test.ts`, `block.test.ts`. Edited: `audio/context.ts` (`openLive`, `blockFrames`, `loopLag`, `blockFor`, `MAX_BLOCK`), `drumbus.ts` (a desk at rest, the room's gate, the echo's wait), `rack.ts` (one line: the echo's right-hand delay), `through.ts`, `through.worklet.ts`, `throughcore.ts` (a comment), `listen/bank.ts`, `ear.worklet.ts`, `live.ts`, `ui/timeline/Host.tsx` (the overload line), `ui/components/SettingsPanel.tsx` (the switch), `drumbus.test.ts`, `ui/plugins/audio/audio.test.ts`. Nothing under `src-tauri/`. 2,464 tests before, 2,499 now (35 new: a desk at rest 8, the room's gate 4, the blocks, their switch and how the context is opened 17, the overload line 5, the switch on the settings 1); no existing assertion was changed.
 
 ### How it was measured
 Headless Chromium 157 on one core of a 2.3 GHz virtual server processor (four cores, no sound card: the browser's pretend one, 44,100 Hz, a buffer of 1,024 frames with the 'playback' hint), the production build. A song is put in the stored state, played on a loop, and the audio thread's processor time is read from the system's own count for that thread (`/proc/<pid>/task/<tid>/stat`) over 12 to 60 seconds. The earlier figures in these notes were read from the browser's trace instead, which itself costs the audio thread about two points (38.7 % by the trace, 36.5 % by the system, for the same five tracks). The same song measured several times in a row varies by about three points either way (61.4, 68.1, 62.6, 67.3 % for nine tracks), so every figure in the tables is from at least two runs, the builds measured turn about.
@@ -404,13 +404,25 @@ Six tracks of one kind, all sounding all the time (% of one core; "full" = the l
 | synth, melody (a lead) | 37.9 | 32.9 | 26.0 | 5.9 |
 | bass (synth) | 36.0 | 30.7 | 26.5 | 5.6 |
 | drums (a desk each) | 54.9 | 49.0 | 33.6 | 8.8 |
-| a recorded take | ‹TAKE› | | | ‹TAKE1› |
+| a recorded take (16 of them: 1.8 %, on the page that has the engine alone, where nothing playing is 0.6 %) | | | | 0.08 |
 
 What one node costs in this browser on this machine (many copies fed with noise; % of one core each, stereo unless said), in blocks of 128 frames and of 1,024:
 
 | node | in 128 | in 1,024 |
 |---|---|---|
-‹UNIT›
+| gain | 0.02 | 0.012 |
+| filter | 0.08 | 0.06 |
+| stereo panner on a mono sound | 0.045 | 0.014 |
+| compressor | 0.26 | 0.19 |
+| wave shaper | 0.055 | 0.03 |
+| wave shaper at twice the rate | 0.39 | 0.30 |
+| wave shaper at four times the rate | 0.70 | 0.57 |
+| delay, steady | 0.075 | 0.04 |
+| delay, swept (mono) | 0.065 | 0.037 |
+| room (a convolution of 2 s) | 3.3 | 2.8 |
+| analyser tap | 0.035 | 0.014 |
+| a processor that passes sound through | 0.065 | 0.03 |
+| a ringing recording (mono) | 0.02 | 0.007 |
 
 What a track is made of (nodes the speakers can reach, counted in the running app): a chords or melody track awake 75 to 90 (about 47 gains, 16 to 18 filters, 6 delays, 4 wave shapers, 1 compressor, and the shared room's 6); at rest 9. A drums track 75 (45 gains, 12 filters, 9 panners, 4 wave shapers, 2 rooms, 2 delays, 1 compressor), 86 with Echo on. A note on the strings adds 4 (source, filter, gain, panner) for as long as it rings; a piano note 2 to 4; a drum hit 2; a synth note none (one audio-thread processor per synth track holds its voices). One limiter processor for the whole song.
 
@@ -432,7 +444,7 @@ What was running for nothing:
 1. **A drum desk rests** (`drumbus.ts` `sounding`, `deskTail`, `deskResting`): let go of its fader once everything booked on it has died away (the hit's own length + the room's impulse + with Echo the repeats until they are 100 dB down + 0.5 s), put back by its next hit or noise bed at the moment that is booked (a quarter of a second ahead in the player). A new desk rests after a moment if nothing is played. Live only.
 2. **A desk's room is fed only while Reverb is up** (`roomFeed`, a gate over every drum's send and the echo's way into the room, as `echoFeed` and `tapeFeed` are).
 3. **Blocks as long as the sound card's buffer** (`context.ts` `openLive`). The context is opened once as before; its `baseLatency × sampleRate` is how many frames the sound card is handed at a time; where the browser has `renderQuantumSize` it is opened again with `renderSizeHint` of that many (halved while over `MAX_BLOCK`, 30 ms) and the first one is closed. The second is used only if it has the block asked for, the same rate and the same `baseLatency`. Offline renders are not touched.
-4. **The overload line** (`overload.ts`, `Host.tsx`).
+4. **The overload line** (`overload.ts`, `Host.tsx`), and **the switch** for the blocks (below).
 
 What later work must know about blocks:
 - `blockFrames(c)` is the block of a context (128 offline, in tests, and in browsers that cannot choose). Nothing on the audio thread may take a block to be 128: a processor is told in its options (`block`), as the recording engine's tap and the ears are.
@@ -446,7 +458,10 @@ Ninety-nine songs (the 18 conversion fixtures, the load songs, the arrangement, 
 **Two renders of the same build are not the same.** Ten of the songs (the synth's, and a one-note-at-a-time strings melody) come out bit for bit alike every time. The other 89 differ between two renders of the untouched branch by -67 to -140 dB under their peak. Why: when several notes sound at once the browser adds them up in whatever order its table of connections happens to hold them in, which is another order on every load, so the sum differs in its last bit; and the low-cut filters (8 Hz in the saturation's bend, 60 Hz in the rack) carry their own rounding noise far above that last bit (measured: seventy short sounds through an 8 Hz high-pass, two loads, -72 dB; through nothing, -138 dB). A synth track is one source, so it has no order to differ in. Keeping the render in step with the page block by block, and holding on to every node, change nothing of this. So "zero, or under -90 dB" cannot be shown for a song with strings, a piano or drums, changed or not; a change is judged instead against how far the baseline is from itself (four renders of it, the largest difference between any two), and the ten songs that repeat must stay bit for bit.
 
 Results (98 songs; the arrangement, ten minutes a render, once at the end):
-‹NULL›
+- **Offline renders, the branch as found against the finished work** (the render path was not changed: every render still works in blocks of 128). Two renders of the finished work, each against four of the baseline. Each time: 10 songs bit for bit, 85 no further from the baseline than the baseline is from itself, 1 further but under -90 dB, and 2 a few dB past the largest difference four baseline renders happened to show (`load-12-full` -71.3 dB against -76.8, `fixture-18` -77.7 against -100.6, `fx-everything-synth` -82.4 against -91.4 both times). That last one was followed up: the baseline rendered twice more gave one render that is bit for bit the finished work's and one that is bit for bit the baseline's earlier ones, so that song comes out one of two ways, 82 dB under its peak apart (-108 dB in energy), in either build. Counted over all the renders: for 24 of the 98 songs a render of the finished work is bit for bit a render of the baseline (the ten that always repeat, and fourteen where the order happened to fall the same).
+- **The arrangement** (109 seconds, 30 tracks): the baseline against itself -73.1 dB; the finished work against the two baseline renders -77.8 and -76.8 dB.
+- **The drum songs without saturation** (the desk's rest, the room's gate and the echo's wait are all in their path): -118 to -120 dB, as the baseline against itself.
+- **The same engine made to render offline in blocks of 1,024** (what the live context now does; `null.js --rq=1024`): 84 songs no further from the baseline than it is from itself, every echo song among them (a desk's echo -120 dB; a track's -89 dB where the baseline against itself is -88); 13 by -75 to -89 dB where the baseline is closer to itself than that (the browser lets a fade that has all but ended jump to its end, and looks for that once a block, so the last, inaudible moment of a fade ends up to 20 ms sooner or later; the tape's slow wave drifts by a thousandth of a cycle); and one song (fixture 4, a kit with Human on) in which one hit lands one frame, 21 millionths of a second, earlier. Before the echo's loop was set right for the block, the same test gave -8 dB on a track's echo.
 
 Live, recorded off the audio thread on the harness page (`live.js`):
 - a desk at rest (Reverb 0.3, Echo 0.2) rests 7.7 s after its hits; woken by a hit booked 0.25 s ahead, the 0.2 s before the hit are at -143 dB, the hit starts on the same frame as on a desk that was awake, and the two hits differ by -113 dB; no click;
@@ -464,4 +479,23 @@ Live, recorded off the audio thread on the harness page (`live.js`):
 - **Freezing**: a track nobody is editing rendered once to sound and played as one recording would cost 0.04 % instead of 4 to 8. That is what would carry any number of tracks; it needs the render kept in step with every edit of the track, and about 23 MB a minute a track.
 
 ### After
-‹TABLE›
+Every track sounding all the time, two runs each, the build as found and the new one measured turn about (% of one core; "full" = 95 %, the thread cannot keep up and the sound breaks up):
+
+| tracks | effects on, before | effects on, now | as new tracks are, before | as new tracks are, now |
+|---|---|---|---|---|
+| 5 | 37.6, 34.0 | 21.9, 25.9 | 34.1, 32.5 | 21.5, 20.9 |
+| 9 | 61.9, 68.8 | 39.5, 43.6 | 55.9, 55.9 | 35.4, 32.8 |
+| 16 | 94.3, full | 67.7, 65.7 | 88.2, 85.3 | 56.4, 55.7 |
+| 24 | full, full | 92.2, 92.9 | full, full | 78.0, 80.9 |
+| 32 | full, full | full, full | full, full | full, full |
+
+The arrangement (30 tracks, twelve stretches of four bars, 8 to 10 tracks sounding in each, the rest with nothing there; one minute measured): effects on 80.4 and 79.8 % before, 45.6 and 50.5 % now; as new tracks are 67.5 and 66.3 % before, 42.1 and 39.6 % now.
+
+So a sounding track with those effects costs about 4 % of a core here where it cost 7, and about 3 % as a new track is; under 70 % of a core fit about 17 tracks all sounding with effects on every one (10 before), about 20 as new tracks are (12 before). The page's own thread is unchanged (5 to 13 %). On a desktop these figures are lower (the earlier desktop figure for nine tracks was two thirds of this machine's), and they were not measured on Windows.
+
+By mechanism, each measured as it went in: the desk at rest, 8 silent desks with Echo 35.2 % to 0.7 %, the arrangement 81 % to 79 %; the room's gate, six desks with no effects 35.4 % to 19.5 %; the blocks, 9 tracks 62 % to 35–40 %, the arrangement 79 % to 48 %.
+
+### The switch, the overload line, a tapped note
+- **Settings, Audio, "Worked out a whole buffer at a time"** (`context.ts` `liveBlocks`, `setLiveBlocks`; kept in the browser's storage under `m-theory-live-blocks`, only when turned off). Off, `openLive` opens the context once, exactly as before this work, and everything else follows from `blockFrames` being 128. It is read when the sound opens, so a change is heard from the next time the app is opened.
+- **The overload line.** This browser has no measure of the thread's load (`renderCapacity`), but it counts the sound it failed to deliver (`playbackStats`), and that is what the line goes by here. Checked in the running app: nine tracks, nothing missed in 13 s and nothing said; forty tracks, 12 s of 21 s not delivered, the line shown after 3 s, once.
+- **A note tapped to be heard** (asked for a hundredth of a second from now), with a nine-track song worked out underneath, 60 taps, twice (`tap.js`): from the tap to the note's first sample on the audio clock, in blocks of 128 the middle tap 99 ms, nine in ten within 105 ms, the slowest 107 ms (most of that is the buffer and how the two clocks are paired, the same in both); in blocks of the buffer 103 to 105 ms, 109 ms and 134 ms. A tap that lands while a buffer is being worked out could still get into that buffer when it was worked out in eight pieces; now it waits for the next one: about 4 ms more on a typical tap, a whole buffer (23 ms) more at worst. The song's own notes are booked a quarter of a second ahead and start on their frame either way, ▶ starts 80 ms after the press as before, and the buffer itself (`baseLatency`) is the size it was.
