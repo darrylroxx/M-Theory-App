@@ -94,6 +94,8 @@ export function Menu({ at, items, label, onClose, back }: { at: MenuAt; items: M
     {back && <div className="tlv-menu-back" aria-hidden="true" onClick={(e) => { e.stopPropagation(); if (performance.now() - born.current > 350) onClose(); }} />}
     <div className="tlv-menu" ref={ref} role="menu" aria-label={label} tabIndex={-1} data-keys="own" style={{ left: at.x, top: at.y }}
       onContextMenu={(e) => e.preventDefault()}
+      // (a finger let go of a clip opens this menu under itself: the click of that very letting go must not choose a line)
+      onClickCapture={(e) => { if (back && performance.now() - born.current < 350) { e.stopPropagation(); e.preventDefault(); } }}
       onKeyDown={(e) => {
         if (e.key === "ArrowDown") { e.preventDefault(); step(1); }
         else if (e.key === "ArrowUp") { e.preventDefault(); step(-1); }
