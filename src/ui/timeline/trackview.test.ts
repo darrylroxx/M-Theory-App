@@ -155,7 +155,7 @@ describe("the track view, drawn", () => {
     const paired = setTrack<AudioTrack>(addTrack(song, "audio", "t-blank"), "t-blank", { input: { ch: 2, pair: true } });
     const five = setTrack<AudioTrack>(paired, FIX.vocal, { input: { ch: 4 } });
     const closed = view(five);
-    expect(closed).toContain('aria-label="Input of Audio 1: 3+4"');
+    expect(closed).toContain('aria-label="Input of Blank 1: 3+4"');
     expect(closed).toMatch(/title="Which inputs it records: these two, in stereo"[^>]*>3\+4</);
     expect(closed).toMatch(/aria-label="Input of [^"]*: 5"/);
     expect(closed).not.toContain("tlh-meter");
