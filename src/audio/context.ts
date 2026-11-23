@@ -81,9 +81,10 @@ export function blockFor(handed: number, rate: number): number {
  * comes out otherwise is not used. The one thing a block's length is heard in, an echo's loop, is
  * set right for it (see `loopLag`). An offline render always works in blocks of 128.
  */
-function openLive(AC: typeof AudioContext): AudioContext {
+export function openLive(AC: typeof AudioContext): AudioContext {
   const plain = new AC({ latencyHint: "playback" });
-  if (!("renderQuantumSize" in plain)) return plain;
+  // (a browser that cannot choose its block does not say what its block is)
+  if (typeof (plain as { renderQuantumSize?: number }).renderQuantumSize !== "number") return plain;
   const want = blockFor(plain.baseLatency * plain.sampleRate, plain.sampleRate);
   if (!want) return plain;
   let big: AudioContext | null = null;

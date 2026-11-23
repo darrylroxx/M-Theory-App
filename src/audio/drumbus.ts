@@ -204,7 +204,9 @@ export function deskTail(fx: Partial<BeatFx> & { bpm?: number }, roomSeconds: nu
   const beats = ECHO_TIMES.find((e) => e.id === (fx.echoTime ?? "1/8."))?.beats ?? 0.75;
   const gap = Math.min(1.9, (beats * 60) / (fx.bpm ?? 100));
   // (an echo just turned to 0 still holds one pass of what was in it)
-  const repeats = echo > 0 ? Math.ceil(ECHO_GONE_DB / (-20 * Math.log10(0.25 + 0.4 * echo))) : echoFed ? 1 : 0;
+  // (what the knob feeds back, as `setDrumFx` sets it: never more than 0.65 of each repeat)
+  const back = Math.min(0.9, 0.25 + 0.4 * echo);
+  const repeats = echo > 0 ? Math.ceil(ECHO_GONE_DB / (-20 * Math.log10(back))) : echoFed ? 1 : 0;
   return repeats * gap + roomSeconds + DESK_REST;
 }
 const tailOf = (d: Desk) => deskTail(d.applied, Math.max(0, ...d.bus.verbs.map((v) => v.buffer?.duration ?? 0)), d.bus.echoFeed.open);

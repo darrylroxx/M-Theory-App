@@ -2,7 +2,7 @@
 // the block asked for is the buffer's own size and never too long, an echo's loop keeps its timing whatever the block,
 // and nothing on the audio thread assumes a block is 128 frames.
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_BLOCK, blockFor, blockFrames, loopLag, withContext } from "./context";
+import { MAX_BLOCK, blockFor, blockFrames, loopLag, openLive, withContext } from "./context";
 import { ECHO_TIMES, DEFAULT_BEAT, type Beat } from "./beats";
 import { playStep, syncDrums } from "./drumbus";
 import { FakeAudio, FakeOffline, asAudio, type FakeAny } from "./fakectx";
@@ -56,6 +56,68 @@ describe("the block the live context asks for", () => {
     expect(blockFrames(asAudio(inBlocksOf(1024)))).toBe(1024);
     expect(loopLag(asAudio(new FakeAudio()))).toBe(0);
     expect(loopLag(asAudio(inBlocksOf(1024, new FakeAudio(44100))))).toBeCloseTo(896 / 44100, 12);
+  });
+});
+
+describe("opening the live context", () => {
+  /** A pretend browser: what each context it opens comes out as, and what became of it. */
+  function browser(o: { blocks?: boolean; handed?: number; rate?: number; grows?: boolean; refuses?: boolean }) {
+    const made: { opts: Record<string, unknown>; closed: boolean; renderQuantumSize?: number; baseLatency: number; sampleRate: number }[] = [];
+    const rate = o.rate ?? 44100;
+    const handed = o.handed ?? 1024;
+    class AC {
+      baseLatency: number;
+      sampleRate = rate;
+      closed = false;
+      renderQuantumSize?: number;
+      constructor(readonly opts: Record<string, unknown> = {}) {
+        const hint = opts.renderSizeHint as number | undefined;
+        if (hint && o.refuses) throw new Error("no");
+        // (a browser that grows the buffer to fit the block: later, not wanted)
+        this.baseLatency = (hint && o.grows ? handed * 2 : handed) / rate;
+        if (o.blocks !== false) this.renderQuantumSize = hint ?? 128;
+        made.push(this);
+      }
+      close() {
+        this.closed = true;
+        return Promise.resolve();
+      }
+    }
+    return { AC: AC as unknown as typeof AudioContext, made };
+  }
+  it("opens it as before, reads how much the sound card is handed at a time, and opens it again in blocks of that; the first one is closed", () => {
+    const b = browser({});
+    const c = openLive(b.AC);
+    expect(b.made.map((m) => m.opts)).toEqual([{ latencyHint: "playback" }, { latencyHint: "playback", renderSizeHint: 1024 }]);
+    expect(c).toBe(b.made[1]);
+    expect(blockFrames(c)).toBe(1024);
+    expect(b.made.map((m) => m.closed)).toEqual([true, false]);
+  });
+  it("a browser that cannot choose its block: opened once, as it always was", () => {
+    const b = browser({ blocks: false });
+    const c = openLive(b.AC);
+    expect(b.made.length).toBe(1);
+    expect(c).toBe(b.made[0]);
+    expect(b.made[0].closed).toBe(false);
+    expect(blockFrames(c)).toBe(128);
+  });
+  it("a buffer that is no longer than a block already: nothing is asked for", () => {
+    const b = browser({ handed: 128 });
+    expect(openLive(b.AC)).toBe(b.made[0]);
+    expect(b.made.length).toBe(1);
+  });
+  it("a context that comes out with a longer buffer (the sound would be later), or a browser that refuses: the first one is used, the other closed", () => {
+    const grows = browser({ grows: true });
+    expect(openLive(grows.AC)).toBe(grows.made[0]);
+    expect(grows.made.map((m) => m.closed)).toEqual([false, true]);
+    const refuses = browser({ refuses: true });
+    expect(openLive(refuses.AC)).toBe(refuses.made[0]);
+    expect(refuses.made.length).toBe(1);
+    expect(refuses.made[0].closed).toBe(false);
+  });
+  it("a long buffer is worked out in two or more blocks, none longer than the shortest echo allows", () => {
+    const b = browser({ handed: 4096, rate: 48000 });
+    expect(blockFrames(openLive(b.AC))).toBe(1024);
   });
 });
 
