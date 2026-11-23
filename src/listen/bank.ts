@@ -34,8 +34,8 @@ export class EarBank {
   readonly keys: string[];
   private mono = new Float32Array(128);
 
-  /** `inputs`: the whole mix first, then the tracks. */
-  constructor(sr: number, inputs: BankInput[]) {
+  /** `inputs`: the whole mix first, then the tracks. `block`: how many frames one block of the context is. */
+  constructor(sr: number, inputs: BankInput[], private readonly block = 128) {
     this.keys = inputs.map((i) => i.key);
     // an ear that only gives a track's texture (its notes are known) takes its turn every other hundredth of a second:
     // its texture changes no faster than that, and the audio thread has more room
@@ -53,7 +53,7 @@ export class EarBank {
     const mixRef = this.ears[0]?.loudest ?? -54;
     for (let i = 0; i < this.ears.length; i++) {
       const input = inputs[i];
-      const n = input && input[0] ? input[0].length : 128;
+      const n = input && input[0] ? input[0].length : this.block;
       if (this.mono.length !== n) this.mono = new Float32Array(n);
       const mono = this.mono;
       if (!input || input.length === 0) mono.fill(0);

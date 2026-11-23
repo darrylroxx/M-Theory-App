@@ -25,7 +25,7 @@
  * The sound of each hit is rendered by `renderDrum`; this file only plays and mixes it.
  */
 import { ECHO_TIMES, STEP_VELOCITY, fxOf, soundOf, voiceOf, type Beat, type BeatFx, type NoiseBed, type VerbId } from "./beats";
-import { atRenderTime, audioContext, audioIfStarted, isRendering, soonest } from "./context";
+import { atRenderTime, audioContext, audioIfStarted, isRendering, loopLag, soonest } from "./context";
 import { gate, type Gate } from "./gate";
 import { lateCount, pastEnd, startRecorded } from "./late";
 import { listening, pulse } from "./pulse";
@@ -289,8 +289,19 @@ function getBus(track = FIRST_DRUMS): Bus {
   echo.connect(echoLp).connect(echoHp);
   echoHp.connect(echoFb);
   echoHp.connect(echoWet).connect(mix);
+  // The loop comes round a block later than its delay says (see context.ts loopLag). In blocks longer than 128 frames
+  // the delay is made that much shorter, so the repeats stay as far apart as they always were, and what goes in for the
+  // first time waits that much on its way in, so the first repeat stays where it was too.
+  const lag = loopLag(c);
+  let echoWay: AudioNode = echo;
+  if (lag > 0) {
+    const wait = c.createDelay(0.1);
+    wait.delayTime.value = lag;
+    wait.connect(echo);
+    echoWay = wait;
+  }
   // (at 0 the echo rests once its repeats have died away, and so does the room it fed)
-  const echoFeed = gate(c, [[echoIn, echo], [echoFb, echo], [echoWet, echoToVerb]], 2.2);
+  const echoFeed = gate(c, [[echoIn, echoWay], [echoFb, echo], [echoWet, echoToVerb]], 2.2);
 
   // tape: a very short delay whose length drifts (slow "wow") and shivers (fast "flutter")
   const tape = c.createDelay(0.05);
@@ -446,7 +457,7 @@ export function setDrumFx(settings: Partial<BeatFx>, bpm = 100, track = FIRST_DR
   }
   if (fx.echoTime !== was.echoTime || bpm !== was.bpm) {
     const beats = ECHO_TIMES.find((e) => e.id === fx.echoTime)?.beats ?? 0.75;
-    to(b.echo.delayTime, Math.min(1.9, (beats * 60) / bpm), 0.05);
+    to(b.echo.delayTime, Math.min(1.9, (beats * 60) / bpm) - loopLag(c), 0.05);
   }
   if (fx.grit !== was.grit || fx.color !== was.color || fx.blend !== was.blend) {
     // (its curve cannot be booked ahead: it changes exactly where the section starts, as the room does)

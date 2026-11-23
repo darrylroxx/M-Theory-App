@@ -10,16 +10,16 @@ declare const currentTime: number;
 declare class AudioWorkletProcessor {
   readonly port: MessagePort;
 }
-declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { inputs?: BankInput[] } }) => AudioWorkletProcessor): void;
+declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { inputs?: BankInput[]; block?: number } }) => AudioWorkletProcessor): void;
 
 class EarsProcessor extends AudioWorkletProcessor {
   private bank: EarBank;
   private t0 = -1;
   private on = true;
 
-  constructor(opts: { processorOptions?: { inputs?: BankInput[] } }) {
+  constructor(opts: { processorOptions?: { inputs?: BankInput[]; block?: number } }) {
     super();
-    this.bank = new EarBank(sampleRate, opts.processorOptions?.inputs ?? [{ key: "mix", light: false }]);
+    this.bank = new EarBank(sampleRate, opts.processorOptions?.inputs ?? [{ key: "mix", light: false }], opts.processorOptions?.block ?? 128);
     this.port.onmessage = (e: MessageEvent) => {
       if (e.data === "stop") this.on = false;
     };

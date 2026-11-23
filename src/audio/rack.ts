@@ -16,6 +16,7 @@
  * Works on any audio context, live or offline, so the same chain can be measured in tests.
  */
 import { ECHO_TIMES, type EchoTime, type VerbId } from "./beats";
+import { loopLag } from "./context";
 import { gate } from "./gate";
 import { HARP_VOICES, STRING_DEFAULT, type HarpString } from "./harp";
 import { VERB_PRE, enterRoom, leaveRoom, roomKey, type Room } from "./rooms";
@@ -457,7 +458,9 @@ export function createRack(c: BaseAudioContext, out: AudioNode = c.destination, 
       if (s.echoTime !== was.echoTime || bpm !== was.bpm) {
         const sec = Math.min(1.9, ((ECHO_TIMES.find((x) => x.id === s.echoTime)?.beats ?? 0.75) * 60) / bpm);
         to(left.delayTime, sec, 0.05);
-        to(right.delayTime, sec, 0.05);
+        // (the loop comes round a block later than its delays say, where the right one takes over from the left: in
+        // blocks longer than 128 frames it is made that much shorter, so the repeats fall where they always did)
+        to(right.delayTime, sec - loopLag(c), 0.05);
       }
       if (s.space !== was.space || s.verb !== was.verb) {
         to(verbSend.gain, verbSendOf(s));

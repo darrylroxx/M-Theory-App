@@ -21,7 +21,7 @@
  * as it was before.
  */
 import throughUrl from "./through.worklet.ts?worker&url";
-import { audioContext, soonest } from "./context";
+import { audioContext, blockFrames, soonest } from "./context";
 import { masterOut } from "./mix";
 import { setExtraDelay } from "./outdelay";
 import { CHUNK, GapWatch, Sender, THROUGH_PROCESSOR } from "./throughcore";
@@ -105,7 +105,7 @@ async function start(engine: ThroughEngine): Promise<boolean> {
     }
     await ready;
     await engine.start(c.sampleRate);
-    node = new AudioWorkletNode(c, THROUGH_PROCESSOR, { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: "explicit", processorOptions: { chunk: CHUNK } });
+    node = new AudioWorkletNode(c, THROUGH_PROCESSOR, { numberOfInputs: 1, numberOfOutputs: 0, channelCount: 2, channelCountMode: "explicit", processorOptions: { chunk: CHUNK, block: blockFrames(c) } });
     const sender = new Sender((b) => engine.feed(b), c.sampleRate, () => void comeBack());
     sender.onDelay = setExtraDelay;
     // (nothing goes to the engine while the computer's sound still plays it: it would be heard twice)

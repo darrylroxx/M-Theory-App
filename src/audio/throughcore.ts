@@ -8,7 +8,7 @@ export const THROUGH_PROCESSOR = "m-theory-through";
 export const CHUNK = 1024;
 
 /**
- * Gathers the audio thread's blocks of 128 into blocks of `chunk` frames, left and right
+ * Gathers the audio thread's blocks (128 frames, or as many as the context works in) into blocks of `chunk` frames, left and right
  * interleaved, and hands each one over as it fills (its buffer moves to whoever takes it, so a
  * fresh one is made: once every `chunk` frames, not every block). Silence where nothing is
  * connected, so the engine's queue keeps time while the app is quiet.

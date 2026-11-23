@@ -10,15 +10,19 @@ declare class AudioWorkletProcessor {
   readonly port: MessagePort;
 }
 declare const sampleRate: number;
-declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { chunk?: number } }) => AudioWorkletProcessor): void;
+declare function registerProcessor(name: string, ctor: new (opts: { processorOptions?: { chunk?: number; block?: number } }) => AudioWorkletProcessor): void;
 
 class ThroughProcessor extends AudioWorkletProcessor {
   private on = true;
   private chunks: Chunker;
   private box: Outbox;
 
-  constructor(opts: { processorOptions?: { chunk?: number } }) {
+  /** how many frames one block of the context is (128 unless it was opened with larger ones) */
+  private block: number;
+
+  constructor(opts: { processorOptions?: { chunk?: number; block?: number } }) {
     super();
+    this.block = opts.processorOptions?.block ?? 128;
     this.box = new Outbox((b) => this.port.postMessage(b, [b.buffer]), sampleRate);
     this.chunks = new Chunker((b) => this.box.add(b), opts.processorOptions?.chunk ?? CHUNK);
     this.port.onmessage = (e: MessageEvent) => {
@@ -31,7 +35,7 @@ class ThroughProcessor extends AudioWorkletProcessor {
     if (!this.on) return false;
     const inp = inputs[0];
     // (nothing sounding: an input with no channels; it is still a block of time, sent as silence)
-    this.chunks.push(inp?.[0], inp?.[1], inp?.[0]?.length ?? 128);
+    this.chunks.push(inp?.[0], inp?.[1], inp?.[0]?.length ?? this.block);
     return true;
   }
 }

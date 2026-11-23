@@ -5,6 +5,7 @@
  * A tap is any audio node: a track's fader today; a drum track's own output, when added drum
  * tracks have one, can be tapped the same way.
  */
+import { blockFrames } from "../audio/context";
 import { master } from "../audio/mix";
 import type { Frame } from "./ear";
 import type { BankInput, BankOut } from "./bank";
@@ -41,7 +42,7 @@ export async function listenLive(c: AudioContext, taps: Tap[] = []): Promise<Lis
       numberOfOutputs: 0,
       channelCount: 2,
       channelCountMode: "explicit",
-      processorOptions: { inputs },
+      processorOptions: { inputs, block: blockFrames(c) },
     });
     let mix: Frame[] = [];
     let byTap = new Map<string, Frame[]>();
